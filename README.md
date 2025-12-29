@@ -90,12 +90,13 @@ It can be either empty, random or constant:
 
 - `empty`: body is always empty, `0` bytes length.
 - `random`: body length is random, it is bound between `TYPHOON_FAKE_BODY_LENGTH_MIN` and `TYPHOON_FAKE_BODY_LENGTH_MAX` constant values, making all the packets different in size.
+- `service`: same as `random`, but is only applied to [health check](#health-check-packets) and [handshake](#handshake-packets) packets.
 - `constant`: body length depend on the other packet parts length and compliment them to a constant size.
 
 > NB! Handling `constant` body length might not be trivial, as it imposes a strict limit on packet data contents length.
 > TYPHOON protocol specifically does not support data fragmentation, so `constant` body length just won't have any effect if real packet body length is not always strictly limited.
 
-By default, fake body is either `empty` or `random`, with equal probability.
+By default, fake body is mode is chosen with equal probability for every option except for `service`, which is `TYPHOON_FAKE_BODY_SERVICE_PROBABILITY` heavier than the others.
 
 ### Fake header
 
@@ -379,12 +380,25 @@ By default, maintenance mode is chosen with equal probability for every option e
 
 Replication mode defines the way how decoy packets are replicated.
 Resending packets with the same contents mimics data retransmission in reliable protocols.
+Even though replication is only applied to the decoy packets, it does not result in any observable patterns, since all of them look similar from outside.
+Also note, that only the decoy packet "bodies" are replicated, while [fake headers](#fake-header) and [fake bodies](#fake-body) are generated anew, that represents lower-level protocol headers.
 
-TODO!
+Packet duplicates are sent with a probability within `TYPHOON_DECOY_REPLICATION_PROBABILITY_MIN` and `TYPHOON_DECOY_REPLICATION_PROBABILITY_MAX`, selected upon a flow manager initialization.
+After the first duplication, the subsequent duplication probability is multiplied by `TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE`, becoming effectively lower.
+Packet duplicates are sent within `TYPHOON_DECOY_REPLICATION_DELAY_MIN` and `TYPHOON_DECOY_REPLICATION_DELAY_MAX` milliseconds since the original packet departure.
+
+The replication mode can have these values:
+
+- `none`: No packets will be replicated.
+- `maintenance`: Only maintenance packets can be replicated (just like in TYPHOON protocol).
+- `all`: All packets can be replicated.
+
+By default, maintenance mode is chosen with equal probability for every option except for `all`, which is `TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY` heavier than the others.
 
 #### Subheader pattern
 
-TODO!
+Subheader mode defines the way how an additional [fake header](#fake-header) structure is added to some of the decoy packets.
+
 
 ## Cryptography
 
@@ -449,8 +463,9 @@ These constants are used in some of the protocol values computation:
 | --- | --- | :---: |
 | `TYPHOON_FAKE_BODY_LENGTH_MIN` | Minimum length of the fake body random byte string | `0` |
 | `TYPHOON_FAKE_BODY_LENGTH_MAX` | Maximum length of the fake body random byte string | `1024` |
+| `TYPHOON_FAKE_BODY_SERVICE_PROBABILITY` | Multiplier of `service` fake body mode probability | `5` |
 | `TYPHOON_FAKE_HEADER_LENGTH_MIN` | Minimum length of the fake header structure | `4` |
-| `TYPHOON_FAKE_HEADER_NONE_PROBABILITY` | Multiplier of `none` feke header mode probability | `3` |
+| `TYPHOON_FAKE_HEADER_NONE_PROBABILITY` | Multiplier of `none` fake header mode probability | `3` |
 | `TYPHOON_FAKE_HEADER_LENGTH_MAX` | Maximum length of the fake header structure | `32` |
 | `TYPHOON_HEALTH_CHECK_NEXT_IN_MIN` | Minimum delay between health checking packets | `64000` |
 | `TYPHOON_HEALTH_CHECK_NEXT_IN_MAX` | Maximum delay between health checking packets | `256000` |
@@ -516,6 +531,12 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_DECOY_MAINTENANCE_DELAY_MIN` |
 | `TYPHOON_DECOY_MAINTENANCE_DELAY_MAX` |
 | `TYPHOON_DECOY_MAINTENANCE_MODE_NONE_PROBABILITY` |
+| `TYPHOON_DECOY_REPLICATION_PROBABILITY_MIN` |
+| `TYPHOON_DECOY_REPLICATION_PROBABILITY_MAX` |
+| `TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE` |
+| `TYPHOON_DECOY_REPLICATION_DELAY_MIN` |
+| `TYPHOON_DECOY_REPLICATION_DELAY_MAX` |
+| `TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY` |
 
 > Applying `TYPHOON_HANDSHAKE_NEXT_IN_FACTOR` to handshake next in makes minimal next in equal to `1.3` seconds and maximal next in equal to `5.1` seconds.
 > These values are not clamped by any constant bounds.
