@@ -62,7 +62,7 @@ The tailor structure consists of the following fields:
 | **FG** | flags | `1` | Flags defining packet contents | - |
 | **CD** | code | `1` | Client type in client handshake, handshake result in server handshake | - |
 | **TM** | time | `4` | Delay before the next health check packet (milliseconds), unused for other packets | Packet sending timestamp |
-| **PN** | packet number | `4` | Incremental packet number | - |
+| **PN** | packet number | `8` | Combined packet number | - |
 | **PL** | payload length | `2` | Length of encrypted packet payload | - |
 | **ID** | identity | constant | Client version in client handshake, client identification number afterwards | - |
 
@@ -128,8 +128,8 @@ Upon connection startup, a set of server proxies is selected and a flow manager 
 During packet delivery, a random flow manager picks up the packet, where randomness is regulated by its weight.
 
 On the server side, everything is a little more complex.
-The server [keeps a set of clients](#client-management), but it is never notified about client proxy selection.
-Whenever it receives a packet from a client, it updates a set of packet source addresses for the client, and whenever it wants to send a packet back, it selects the packet destination address from the set randomly (no weights are involved).
+The server keeps a set of clients mapped to their unique identifiers (**ID** tailor field), but it is never notified about client proxy selection.
+Whenever it receives a valid packet from a client, it [updates a set of packet source addresses for the client](#sockets-and-listeners), and whenever it wants to send a packet back, it selects the packet destination address from the set randomly (no weights are involved).
 
 Finally, since server IP addresses and port numbers are static, clients can just send packets to it directly.
 But it’s not the same for servers: according to UDP specification, the client IP address and port can change at any time.
@@ -171,9 +171,9 @@ The state itself is dictated by client, and the server simply follows it.
 
 Health checking cycle is also here and after called "decay" cycle.
 The decay behavior is mostly defined by [**TM** and **PN** fields of the tailor](#tailor-structure).
-The _current health check packet number_ variable starts from 0.
+The _current incremental packet number_ variable starts from 0.
 
-Client initiates the exchange (the first health check exchange is embedded into handshake), setting **PN** field to the _current health check packet number_ plus `1` and **TM** to a [random next in delay](#next-in-computation).
+Client initiates the exchange (the first health check exchange is embedded into handshake), setting higher `4` bytes of **PN** field to the current unix timestamp (in seconds), [lower `4` bytes](#sockets-and-listeners) of **PN** to _current incremental packet number_ and **TM** to a [random next in delay](#next-in-computation).
 The **PN** field value is remembered and used as the _current health check packet number_.
 After that client sleeps for server response for **TM** seconds plus [timeout value](#timeout-computation).
 If it receives a health check message from server with unexpected packet number (either during waiting or sleeping), it will be silently discarded.
@@ -441,7 +441,7 @@ These values are pre-defined and shared via third channels:
 - `VSK` and `VPK` (verification secret and public keys): the asymmetric identification key, secret is kept by the server only while public is embedded into certificates.
 - `OBFS` (obfuscation symmetric key): 32-byte obfuscation key, kept by server and embedded in certificates, relevant in `fast` mode only.
 - the global cryptographic and also the [marshalling encryption](#marshalling-encryption) modes are embedded into the certificate.
-- `OSK` and `OPK` (obfuscation secret and public keys, for every user): the asymmetric encryption key, both are embedded into certificates, but public key should be transferred to the server as an [initial data](#initial-data-handling) upon initialization.
+- `OSK` and `OPK` (obfuscation secret and public keys, for every user): the asymmetric encryption key, both are embedded into certificates, but public key should be transferred to the server as an initial data upon initialization.
 
 For `fast` mode:
 
@@ -459,6 +459,10 @@ Choice of Classic McEliece might be unusual, but apparently of all the post-quan
 All the other post-quantum algorithms would produce the ciphertext that long, so the handshake message containing it would be easily identifiable among the rest of the traffic.
 The length of the public key (as it was already mentioned above) does not really matter in this case.
 
+Theoretically, `VSK` and `VPK` can be omitted at all, as knowledge of `ESK` already implicitly verifies the server identity.
+However, `VPK` can still be used for public server verification, meaning that it can be provided by an external certificate authority.
+In that case it can be safely omitted from the TYPHOON certificate (otherwise it still should be embedded).
+
 > All the cryptography primitives mentioned here are referenced once again in the [supporting math](#supporting-math) chapter.
 
 ### Handshake encryption
@@ -473,15 +477,15 @@ There are only two packets that have to be encrypted and decrypted: cliemt hands
 The handshake in TYPHOON resembles [OBFS4](TODO!) and [NTORv3](TODO!) from cryptographic point of view.
 Client handshake packet encryption consists of the following steps:
 
-0. Client comes up with [initial data](#initial-data-handling).
-1. Client generates a random 32-byte nonce `CliNnc` (it's required for replay protection).
-2. Client generates ephemeral `X25519` keypair, retrieving a public key (`CliEphPubKey`) and a secret key (`CliEphSecKey`).
-3. Client performs encapsulation using `CliEphSecKey` and `EPK`, retrieving a ciphertext (`Ciph`) and a shared secret (`CliShrSec`).
-4. Client obfuscates `CliEphPubKey` and `Ciph` using a mode-dependant method (see below), producing `CliEphPubKeyObf` and `CiphObf`.
-5. Client encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm.
-6. Client encrypts initial data with [masrshalling encryption](#marshalling-encryption) algorithm with key derived by `HKDF` from concatenation of `Nnc`, `CliShrSec`, `CliEphPubKey` and `EPK`.
-7. Client constructs the handshake encrypted tailor by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and the encrypted tailor itself, encrypted initial data is passed in the handshake message body.
-8. The payload is sent to the server inside of a handshake packet.
+1. Client comes up with initial data.
+2. Client generates a random 32-byte nonce `CliNnc` (it's required for replay protection).
+3. Client generates ephemeral `X25519` keypair, retrieving a public key (`CliEphPubKey`) and a secret key (`CliEphSecKey`).
+4. Client performs encapsulation using `CliEphSecKey` and `EPK`, retrieving a ciphertext (`Ciph`) and a shared secret (`CliShrSec`).
+5. Client obfuscates `CliEphPubKey` and `Ciph` using a mode-dependant method (see below), producing `CliEphPubKeyObf` and `CiphObf`.
+6. Client encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm.
+7. Client encrypts initial data with [masrshalling encryption](#marshalling-encryption) algorithm with key derived by `HKDF` from concatenation of `Nnc`, `CliShrSec`, `CliEphPubKey` and `EPK`.
+8. Client constructs the handshake encrypted tailor by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and the encrypted tailor itself, encrypted initial data is passed in the handshake message body.
+9. The payload is sent to the server inside of a handshake packet.
 
 As for the obfuscation (step 4), in `fast` mode the following process is used:
 
@@ -596,7 +600,7 @@ Since it is used for the majority of all data transferred, the requirements for 
 
 Just like with [cryptographic modes](#cryptography), two different options are supported by TYPHOON protocol.
 By default, [XChaCha-Poly1305](TODO!) should be used, while in certain cases [AES-GCM-256](TODO!) can be used instead.
-Normally, the latter should be used in case the server has limited resources and also has `AES-GCM` hardware support enabled.
+Normally, the latter should be used in case the server has limited resources and also has `AES-GCM` hardware acceleration enabled.
 
 Please note, that this cipher selection is also dictated by server and embedded in all the certificates.
 
@@ -608,38 +612,60 @@ TODO!
 
 ## Proposed implementation
 
-TODO!
+Below a few tips on protocol implementation are given.
+These details are not specified by the protocol itself and can vary from one implementation to another depending on usage domain.
+However, below some safe and reasonable defaults (that can be used at least for reference purposes) are given:
 
 ### Sockets and listeners
 
-TODO!
+As it was mentioned in [architecture](#architecture) chapter, it is suggested that both TYPHOON client and servers consist of two parts: a session manager and one or more flow managers.
+Session manager keeps track of the session health, encryption and data transferring, while flow managers send decoy packets, obfuscate traffic and can only decrypt packet tailors.
+It is suggested that a flow manager would hold an UDP port, while session manager would be purely virtual.
+
+On client side there is only one session manager that is tightly coupled with all the flow managers (normally they only have different ports, but similar IP addresses).
+On server side, they can be more loosely coupled: flow manager can be connected to multiple clients at the same time, they perform traffic demultiplexing (will be described below) and deliver the packets to virtual session managers (a manager is unique per user).
+Theoretically, different server flow managers can occupy different IP addresses, but in case they reside in separate processes (or on separate machines) - their communication is out of scope of TYPHOON protocol.
+
+TYPHOON listener is a logical structure that keeps track of all the flow managers (they are constant), spawns and recycles session managers for users.
+The listener should also be capable of producing client certificates, that are guaranteed to be valid while the listener is alive (or restarted but with similar flow manager configuration).
+
+#### Identification and rebinding
 
 As it is obvious from the [tailor structure](#tailor-structure), tailor carries a constant number of bytes number for client authentication.
-These bytes are used for packets demultiplexing: all the TYPHOON packets arrive to the same UDP socket, but are delivered to different logical TYPHOON sockets based on the **ID** tailor field.
-Another important challenge is client address binding, since it can change randomly mid-session according to the [UDP specification](TODO!).
+These bytes are used for packets demultiplexing: all the TYPHOON packets arrive to the same UDP socket of a flow manager, but are delivered to different logical session managers based on the **ID** tailor field.
+Another important challenge is client address binding, since client addresses can change randomly mid-session according to the [UDP specification](TODO!).
 
 In general, the client-to-identification mapping should be safe (considering unique client identification is long enough) thanks to:
 
 - Session key authentication that is used for [tailor encryption](#tailor-encryption).
-- Incremental packet number [in tailor](#tailor-structure).
+- Incremental packet number [in tailor](#tailor-structure), stored in lower `4` bytes of **PN** field (it's always filled, even in data and decoy packets).
 
 By default, the **ID** field is `16` bytes ([UUID](TODO!)) long, which should be sufficient for most of the cases (but may be changed using `TYPHOON_ID_LENGTH` constant).
 The UDP source address rebinding happens only if a correctly-authenticated packet with incremental number higher than before arrives from a new source address.
 That approach allows verifying packet tailor identity, safe attribution and rebinding.
 
-### Client management
+#### Global user structures
 
-TODO!
+In order to maintain all the user sessions and decoy flows, it is proposed to maintain a global table in the listener, mapping user **ID**s to user information (including session manager, session key, connected flow managers, etc.).
+In addition to that, every flow manager keeps a table of all the connected user **ID**s mapped to the connected source address.
 
-### Initial data handling
-
-Initial data can include any data a user and a server would like to exchange before the connection starts.
-It is especially useful in `full` cryptographic mode, where client initial data should carry client obfuscation public key (`OSK`).
-Server should save and keep it during all the connection lifetime for client packet tailor decryption.
-
-TODO!
+Rebinding happens on flow manager only, without session manager or any other listener parts being involved.
+The only thing that is required for that is packet validation, that is [made using user session key](#tailor-encryption) - that indeed is pulled from the global user table.
 
 ### Error handling
+
+The error handling rule is simple: it is safe to never reply to any of the invalid packages.
+The protocol is fully-functional without any error handling at all.
+
+However, in order to speed things up and improve logging, a few things are highly advisable:
+
+- If a handshake message contains an error, server should send a handshake response with appropriate **CD** field set.
+- If a fatal error happens during connection (socket being closed) or one of the parties is about to shut down the connection, they should send a termination packet, also with **CD** field set.
+
+The sample valid **CD** values are given below:
+
+- `0`: No error (successful handshake or graceful termination).
+- `101`: Unknown error (some error happened indeed, but it is not clear which one exactly).
 
 TODO!
 
@@ -736,12 +762,17 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_DECOY_SUBHEADER_LENGTH_MIN` |
 | `TYPHOON_DECOY_SUBHEADER_LENGTH_MAX` |
 
-> Applying `TYPHOON_HANDSHAKE_NEXT_IN_FACTOR` to handshake next in makes minimal next in equal to `1.3` seconds and maximal next in equal to `5.1` seconds.
-> These values are not clamped by any constant bounds.
-
 A protocol implementation should allow overriding these values at runtime as well as embedding them into certificate.
 Still keep in mind that it might be dangerous because some of these constants affect both client and server behavior at the same time.
 As a final attempt, an implementation should attempt to read these constants from environment during initialization.
+
+There are also some deduced constants, defined by some external factors rather than selected values:
+
+| Constant | Value |
+| --- | :---: |
+| Tailor length | `32` |
+| Handshake packet next in minimum value (seconds) | `1.3` |
+| Handshake packet next in maximum value (seconds) | `5.1` |
 
 TODO!
 
