@@ -442,7 +442,6 @@ These values are pre-defined and shared via third channels:
 - `VSK` and `VPK` (verification secret and public keys): the asymmetric identification key, secret is kept by the server only while public is embedded into certificates.
 - `OBFS` (obfuscation symmetric key): 32-byte obfuscation key, kept by server and embedded in certificates, relevant in `fast` mode only.
 - the global cryptographic and also the [marshalling encryption](#marshalling-encryption) modes are embedded into the certificate.
-- `OSK` and `OPK` (obfuscation secret and public keys, for every user): the asymmetric encryption key, both are embedded into certificates, but public key should be transferred to the server as an initial data upon initialization.
 
 For `fast` mode:
 
@@ -454,7 +453,7 @@ For `full` mode:
 
 - For `ESK` and `EPK` [X25519](https://cr.yp.to/ecdh.html) algorithm is used.
 - For `VSK` and `VPK` Ed25519 algorithm is used.
-- For `OSK` and `OPK` X25519 and [Elligator2](https://elligator.cr.yp.to/) algorithms are used.
+- For obfuscation X25519 and [Elligator2](https://elligator.cr.yp.to/) algorithms are used.
 
 Choice of Classic McEliece might be unusual, but apparently of all the post-quantum algorithms it fits the requirements the best.
 All the other post-quantum algorithms would produce the ciphertext that long, so the handshake message containing it would be easily identifiable among the rest of the traffic.
@@ -584,15 +583,12 @@ In case of the `full` mode (which should be used if obfuscation should be able t
 
 1. Come up with the raw tailor `Tailor`.
 2. Generate ephemeral `X25519` keypair, retrieving a public key (`MyEphPubKey`) and a secret key (`MyEphSecKey`).
-3. Perform encapsulation by using `MyEphSecKey` and `OtherEphPubKey`, retrieving a shared secret (`ShrSec`).
+3. Perform encapsulation by using `MyEphSecKey` and `EPK`, retrieving a shared secret (`ShrSec`).
 4. Encrypt the `Tailor` with `ShrSec`, producing `TailorEnc`.
 5. Obfuscate the `MyEphPubKey` with Elligator2, producing `MyEphPubKeyObf`.
 6. Construct the encrypted tail by concatenating `MyEphPubKeyObf` with `TailorEnc`.
 
-The other party uses `OtherEphSecKey` and deobfuscated `MyEphPubKeyObf` in order to decrypt `TailorEnc`.
-
-> Just as [it was mentioned](#handshake-packets), handshake packets might not be the first packets sent from client to server.
-> In that case, in `full` mode tailor should be replaced with random bytes - and server should [handle these packets correctly](#error-handling).
+The other party uses `ESK` and deobfuscated `MyEphPubKeyObf` in order to decrypt `TailorEnc`.
 
 ### Marshalling encryption
 
@@ -600,7 +596,7 @@ Marshalling encryption defines the encryption algorithm used for packet payloads
 Since it is used for the majority of all data transferred, the requirements for its performance are the most critical.
 
 Just like with [cryptographic modes](#cryptography), two different options are supported by TYPHOON protocol.
-By default, [XChaCha-Poly1305](https://en.wikipedia.org/wiki/ChaCha20-Poly1305#XChaCha20-Poly1305_%E2%80%93_extended_nonce_variant) should be used, while in certain cases [AES-GCM-256](https://en.wikipedia.org/wiki/Galois/Counter_Mode) can be used instead.
+By default, [XChaCha-Poly1305](https://en.wikipedia.org/wiki/ChaCha20-Poly1305#XChaCha20-Poly1305_%E2%80%93_extended_nonce_variant) should be used (_software_ marshalling encryption mode), while in certain cases [AES-GCM-256](https://en.wikipedia.org/wiki/Galois/Counter_Mode) can be used instead (_hardware_ marshalling encryption mode).
 Normally, the latter should be used in case the server has limited resources and also has `AES-GCM` hardware acceleration enabled.
 
 Please note, that this cipher selection is also dictated by server and embedded in all the certificates.
