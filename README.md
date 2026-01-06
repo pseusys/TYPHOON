@@ -477,19 +477,19 @@ There are only two packets that have to be encrypted and decrypted: client hands
 The handshake in TYPHOON resembles [OBFS4](https://gitweb.torproject.org/pluggable-transports/obfs4.git) and [NTORv3](https://gitweb.torproject.org/torspec.git/tree/ntor-handshake.txt) from cryptographic point of view.
 Client handshake packet encryption consists of the following steps:
 
-1. Client comes up with initial data.
-2. Client generates a random 32-byte nonce `CliNnc` (it's required for replay protection).
-3. Client generates ephemeral `X25519` keypair, retrieving a public key (`CliEphPubKey`) and a secret key (`CliEphSecKey`).
-4. Client performs encapsulation using `CliEphSecKey` and `EPK`, retrieving a ciphertext (`Ciph`) and a shared secret (`CliShrSec`).
-5. Client obfuscates `CliEphPubKey` and `Ciph` using a mode-dependant method (see below), producing `CliEphPubKeyObf` and `CiphObf`.
-6. Client encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm.
-7. Client encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with key derived by `HKDF` from concatenation of `Nnc`, `CliShrSec`, `CliEphPubKey` and `EPK`.
-8. Client constructs the handshake encrypted tailor by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and the encrypted tailor itself, encrypted initial data is passed in the handshake message body.
-9. The payload is sent to the server inside of a handshake packet.
+0. Client comes up with initial data.
+1. Client generates a random 32-byte nonce `CliNnc` (it's required for replay protection).
+2. Client generates ephemeral `X25519` keypair, retrieving a public key (`CliEphPubKey`) and a secret key (`CliEphSecKey`).
+3. Client performs encapsulation using `CliEphSecKey` and `EPK`, retrieving a ciphertext (`Ciph`) and a shared secret (`CliShrSec`).
+4. Client obfuscates `CliEphPubKey` and `Ciph` using a mode-dependant method (see below), producing `CliEphPubKeyObf` and `CiphObf`.
+5. Client encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with key derived by `HKDF` from concatenation of `CliShrSec` and `CliEphPubKeyObf`, with `CliNnc` used as salt.
+6. Client encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm (NB! Here initial data encryption key is used for additional data instead of session key).
+7. Client constructs the handshake encrypted tailor by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and the encrypted tailor itself, encrypted initial data is passed in the handshake message body.
+8. The payload is sent to the server inside of a handshake packet.
 
 As for the obfuscation (step 4), in `fast` mode the following process is used:
 
-1. A masking key `MasKey` is derived using `HKDF` from concatenation of `CliNnc` and `OBFS`, its length is equal to the sum of `CliEphPubKey` and `Ciph` lengths.
+1. A masking key `MasKey` is derived using `HKDF` from `OBFS` using `CliNnc` as salt, its length is equal to the sum of `CliEphPubKey` and `Ciph` lengths.
 2. `CliEphPubKeyObf` is produced by applying `XOR` to `CliEphPubKey` and the first part of `MasKey`.
 3. `CiphObf` is produced by applying `XOR` to `Ciph` and the second part of `MasKey`.
 
@@ -514,7 +514,7 @@ After the client receives the encrypted handshake message from the server, it de
 
 As for the deobfuscation (step 1), in `fast` mode the following process is used:
 
-1. A masking key `MasKey` is derived using `HKDF` from concatenation of `SrvNnc` and `OBFS`, its length is equal to the `SrvEphPubKeyObf` length.
+1. A masking key `MasKey` is derived using `HKDF` from `OBFS` using `SrvNnc` as salt, its length is equal to the `SrvEphPubKeyObf` length.
 2. `SrvEphPubKey` is produced by applying `XOR` to `SrvEphPubKeyObf` and the `MasKey`.
 
 While in `full` mode:
@@ -573,10 +573,10 @@ While in `full` mode:
 
 ### Tailor encryption
 
-Tailor encryption differs significantly depending on cryptographical mode chosen.
+Tailor encryption differs significantly depending on cryptographic mode chosen.
 Since tailor is appended to every single TYPHOON packet, that is where performance becomes really critical.
 
-So in case of the `fast` mode (which should be used if large amounts of data are expected to be transferred), tailor is encrypted using [marshalling encryption](#marshalling-encryption) algorithm with `OBFS` used for encryption and session key used for authentication (the marshalling encryption algorithm here is decoupled from authentication).
+So in case of the `fast` mode (which should be used if large amounts of data are expected to be transferred), tailor is encrypted using [marshalling encryption](#marshalling-encryption) algorithm with `OBFS` used for key and session key provided as additional data.
 Please note that `OBFS` is a public symmetric key, which means that obfuscation stops making sense immediately after a single certificate leaks (but not authentication).
 
 In case of the `full` mode (which should be used if obfuscation should be able to resist certificate leaking), tailor is encrypted using the following steps (same for client and server):
