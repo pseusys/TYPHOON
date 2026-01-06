@@ -560,7 +560,7 @@ After the server initiates the internal state for the user and waits for an appr
 10. Server constructs the handshake encrypted tailor by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and the encrypted tailor itself.
 11. The payload is sent to the client inside of a handshake packet.
 
-> Server _should always_ transfer some initial data to the client for session key verification, even if it is just a random byte string.
+> Initial data is not required, since correctly encrypted tailor already verifies session key by authentication.
 
 As for the obfuscation (step 4), in `fast` mode the following process is used:
 

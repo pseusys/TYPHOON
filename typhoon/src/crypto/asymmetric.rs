@@ -39,7 +39,7 @@ fn generate_key<'a>(inputs: &[&[u8]], salt: &[u8], info: &str, container: &mut B
 
 #[cfg(all(feature = "client", feature = "fast"))]
 impl Certificate<'_> {
-    pub fn encrypt<'a, 'b>(&'_ self, plaintext: ByteBuffer<'a>, initial_data: ByteBuffer<'b>) -> DynResult<(ByteBuffer<'a>, ByteBuffer<'b>, ClientData<'_>)> {
+    pub fn encrypt<'a, 'b>(&'_ self, plaintext: ByteBuffer<'a>, initial_data: Option<ByteBuffer<'b>>) -> DynResult<(ByteBuffer<'a>, Option<ByteBuffer<'b>>, ClientData<'_>)> {
         let plaintext_buffer = plaintext.ensure_size(plaintext.len() + MAC_LEN + DEFAULT_KEY_LENGTH + X25519_KEY_LENGTH + CRYPTO_CIPHERTEXTBYTES);
         let nonce = ByteBuffer::from(&get_rng().generate_key()[..]);
 
@@ -60,15 +60,21 @@ impl Certificate<'_> {
         generate_key(&[&shared_buffer.slice(), &ephemeral_public.slice()], &nonce.slice(), "initial data key", &mut initial_encryption_key)?;
 
         let tailor = Symmetric::new(&self.obfs)?.encrypt(plaintext_buffer, Some(&initial_encryption_key))?.append_buf(&nonce).append_buf(&ciphertext_obfuscated).append_buf(&ephemeral_public);
-        let initial = Symmetric::new(&initial_encryption_key)?.encrypt(initial_data, None)?;
-        Ok((tailor, initial, ClientData {
+        let client_data = ClientData {
             private_key: ephemeral_secret,
             shared_secret: shared_buffer,
             nonce,
-        }))
+        };
+
+        if let Some(initial) = initial_data {
+            let initial_encrypted = Symmetric::new(&initial_encryption_key)?.encrypt(initial, None)?;
+            Ok((tailor, Some(initial_encrypted), client_data))
+        } else {
+            Ok((tailor, None, client_data))
+        }
     }
 
-    pub fn decrypt<'a, 'b>(&self, ciphertext: ByteBuffer<'a>, initial_data: ByteBuffer<'b>, data: ClientData) -> DynResult<(ByteBuffer<'a>, ByteBuffer<'b>, Symmetric)> {
+    pub fn decrypt<'a, 'b>(&self, ciphertext: ByteBuffer<'a>, initial_data: Option<ByteBuffer<'b>>, data: ClientData) -> DynResult<(ByteBuffer<'a>, Option<ByteBuffer<'b>>, Symmetric)> {
         let (ciphertext, rest) = ciphertext.split_buf(KEY_LEN);
         let (ephemeral_public_obfuscated, rest) = rest.split_buf(X25519_KEY_LENGTH);
         let (transcript_authenticated, rest) = rest.split_buf(Signature::BYTE_SIZE);
@@ -92,8 +98,13 @@ impl Certificate<'_> {
 
         let mut session_symmetric = Symmetric::new(&session_key)?;
         let tailor = Symmetric::new(&self.obfs)?.decrypt(ciphertext, Some(&session_key))?;
-        let initial = session_symmetric.decrypt(initial_data, None)?;
-        Ok((tailor, initial, session_symmetric))
+
+        if let Some(initial) = initial_data {
+            let initial_decrypted = session_symmetric.decrypt(initial, None)?;
+            Ok((tailor, Some(initial_decrypted), session_symmetric))
+        } else {
+            Ok((tailor, None, session_symmetric))
+        }
     }
 }
 
