@@ -2,8 +2,6 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 use std::slice::from_raw_parts_mut;
 
-use chacha20poly1305::aead::{Buffer, Error, Result};
-
 use crate::bytes::pool::KeptVector;
 
 pub struct ByteBuffer<'a> {
@@ -233,36 +231,6 @@ impl<'a> AsRef<[u8]> for ByteBuffer<'a> {
     fn as_ref(&self) -> &[u8] {
         let pointer = self.slice_mut().as_ptr() as *mut u8;
         unsafe { from_raw_parts_mut(pointer, self.len()) }
-    }
-}
-
-impl<'a> Buffer for ByteBuffer<'a> {
-    #[inline]
-    fn len(&self) -> usize {
-        self.len()
-    }
-
-    #[inline]
-    fn is_empty(&self) -> bool {
-        self.start == self.end
-    }
-
-    #[inline]
-    fn extend_from_slice(&mut self, other: &[u8]) -> Result<()> {
-        let other_length = other.len();
-        let new_end = self.end + other_length;
-        if new_end <= self.length {
-            self.data.borrow_mut()[self.end..new_end].copy_from_slice(other);
-            self.end = new_end;
-            Ok(())
-        } else {
-            Err(Error {})
-        }
-    }
-
-    #[inline]
-    fn truncate(&mut self, len: usize) {
-        self.end = self.start + len
     }
 }
 

@@ -1,3 +1,4 @@
+use generic_array::{ArrayLength, GenericArray};
 use rand::CryptoRng;
 use rand::Rng;
 
@@ -7,15 +8,15 @@ use rand::rngs::OsRng;
 pub const DEFAULT_KEY_LENGTH: usize = 32;
 
 pub trait SupportRng {
-    fn generate_key(&mut self) -> [u8; DEFAULT_KEY_LENGTH];
+    fn random_byte_array<T: ArrayLength>(&mut self) -> GenericArray<u8, T>;
 }
 
 #[cfg(not(test))]
 impl SupportRng for OsRng {
-    fn generate_key(&mut self) -> [u8; DEFAULT_KEY_LENGTH] {
-        let mut key = [0u8; DEFAULT_KEY_LENGTH];
-        self.fill(&mut key);
-        key
+    fn random_byte_array<T: ArrayLength>(&mut self) -> GenericArray<u8, T> {
+        let mut empty_array = GenericArray::<u8, T>::default();
+        self.fill(&mut empty_array[..]);
+        empty_array
     }
 }
 
@@ -46,8 +47,8 @@ impl CryptoRng for MockRng {}
 
 #[cfg(test)]
 impl SupportRng for MockRng {
-    fn generate_key(&mut self) -> [u8; DEFAULT_KEY_LENGTH] {
-        [0u8; DEFAULT_KEY_LENGTH]
+    fn random_byte_array<T: ArrayLength>(&mut self) -> GenericArray<u8, T> {
+        GenericArray::<u8, T>::default()
     }
 }
 

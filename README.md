@@ -441,6 +441,7 @@ These values are pre-defined and shared via third channels:
 - `ESK` and `EPK` (encryption secret and public keys): the asymmetric encryption key, secret is kept by the server only while public is kept by server and also embedded into certificates.
 - `VSK` and `VPK` (verification secret and public keys): the asymmetric identification key, secret is kept by the server only while public is embedded into certificates.
 - `OBFS` (obfuscation symmetric key): 32-byte obfuscation key, kept by server and embedded in certificates, relevant in `fast` mode only.
+- `OSK` and `OPK` (obfuscation secret and public keys): the asymmetric obfuscation key, secret is kept by the server only while public is kept by server and also embedded into certificates, relevant in `full` mode only.
 - the global cryptographic and also the [marshalling encryption](#marshalling-encryption) modes are embedded into the certificate.
 
 For `fast` mode:
@@ -451,13 +452,13 @@ For `fast` mode:
 
 For `full` mode:
 
-- For `ESK` and `EPK` [X25519](https://cr.yp.to/ecdh.html) algorithm is used.
+- For `ESK` and `EPK` Classic McEliece algorithm is used.
 - For `VSK` and `VPK` Ed25519 algorithm is used.
-- For obfuscation X25519 and [Elligator2](https://elligator.cr.yp.to/) algorithms are used.
+- For `OSK` and `OPK` [X25519](https://cr.yp.to/ecdh.html) algorithm is used, combined with [Elligator2](https://elligator.cr.yp.to/) obfuscation algorithm.
 
 Choice of Classic McEliece might be unusual, but apparently of all the post-quantum algorithms it fits the requirements the best.
 All the other post-quantum algorithms would produce the ciphertext that long, so the handshake message containing it would be easily identifiable among the rest of the traffic.
-The length of the public key (as it was already mentioned above) does not really matter in this case.
+The length of the public key (as it was already mentioned above) does not really matter in this case, since shorter X25519 is used for ephemeral key exchange.
 
 Theoretically, `VSK` and `VPK` can be omitted at all, as knowledge of `ESK` already implicitly verifies the server identity.
 However, `VPK` can still be used for public server verification, meaning that it can be provided by an external certificate authority.
@@ -481,114 +482,70 @@ Client handshake packet encryption consists of the following steps:
 1. Client generates a random 32-byte nonce `CliNnc` (it's required for replay protection).
 2. Client generates ephemeral `X25519` keypair, retrieving a public key (`CliEphPubKey`) and a secret key (`CliEphSecKey`).
 3. Client performs encapsulation using `CliEphSecKey` and `EPK`, retrieving a ciphertext (`Ciph`) and a shared secret (`CliShrSec`).
-4. Client obfuscates `CliEphPubKey` and `Ciph` using a mode-dependant method (see below), producing `CliEphPubKeyObf` and `CiphObf`.
-5. Client encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with key derived by `HKDF` from concatenation of `CliShrSec` and `CliEphPubKeyObf`, with `CliNnc` used as salt.
+4. Client obfuscates `CliEphPubKey` and `Ciph` using _anonymous_ [marshalling encryption](#marshalling-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `CliNnc`), producing `CliEphPubKeyObf` and `CiphObf`.
+5. Client encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with key derived by `BLAKE3` from concatenation of `CliShrSec`, `CliEphPubKeyObf` and `CliNnc`.
 6. Client encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm (NB! Here initial data encryption key is used for additional data instead of session key).
 7. Client constructs the handshake encrypted tailor by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and the encrypted tailor itself, encrypted initial data is passed in the handshake message body.
 8. The payload is sent to the server inside of a handshake packet.
 
-As for the obfuscation (step 4), in `fast` mode the following process is used:
-
-1. A masking key `MasKey` is derived using `HKDF` from `OBFS` using `CliNnc` as salt, its length is equal to the sum of `CliEphPubKey` and `Ciph` lengths.
-2. `CliEphPubKeyObf` is produced by applying `XOR` to `CliEphPubKey` and the first part of `MasKey`.
-3. `CiphObf` is produced by applying `XOR` to `Ciph` and the second part of `MasKey`.
-
-While in `full` mode:
-
-> In this mode `Ciph` is omitted, because `CliEphPubKey` plays its role.
-> The `CliEphPubKey` is a `X25519` public key.
-
-1. `CliEphPubKeyObf` is produced by applying Elligator2 masking to `CliEphPubKey`.
-
 After the client receives the encrypted handshake message from the server, it decrypts it using the following steps:
 
-0. Client extracts `SrvEphPubKeyObf`, `TransAuth` and `SrvNnc` from the server handshake message.
-1. Client deobfuscates `SrvEphPubKeyObf` using a mode-dependant method (see below), producing `SrvEphPubKey`.
-2. Client performs encapsulation by using `CliEphSecKey` and `SrvEphPubKey`, retrieving a shared secret (`SrvShrSec`).
-3. Client builds a transcript by applying `SHA256` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
-4. Client verifies server identity using `Ed25529` with `VPK`, applying it to `Trans` and `TransAuth`.
-5. Client computes the session key `Sess` using `HKDF` on `CliShrSec` and `SrvShrSec`, applying `Trans` as salt.
-6. Client decrypts the server initial data, verifying `Sess` correctness.
+1. Client extracts `SrvEphPubKeyObf`, `TransAuth` and `SrvNnc` from the server handshake message.
+2. Client deobfuscates `SrvEphPubKeyObf` using _anonymous_ [marshalling encryption](#marshalling-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `SrvNnc`), producing `SrvEphPubKey`.
+3. Client performs encapsulation by using `CliEphSecKey` and `SrvEphPubKey`, retrieving a shared secret (`SrvShrSec`).
+4. Client builds a transcript by applying `SHA256` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
+5. Client verifies server identity using `Ed25529` with `VPK`, applying it to `Trans` and `TransAuth`.
+6. Client computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
+7. Client decrypts the server initial data, verifying `Sess` correctness.
 
 > In case of an authentication or initial data decryption failure, client should terminate connection silently.
-
-As for the deobfuscation (step 1), in `fast` mode the following process is used:
-
-1. A masking key `MasKey` is derived using `HKDF` from `OBFS` using `SrvNnc` as salt, its length is equal to the `SrvEphPubKeyObf` length.
-2. `SrvEphPubKey` is produced by applying `XOR` to `SrvEphPubKeyObf` and the `MasKey`.
-
-While in `full` mode:
-
-1. `SrvEphPubKey` is produced by applying Elligator2 unmasking to `SrvEphPubKeyObf`.
 
 #### Server handshake
 
 Client handshake packet decryption consists of the following steps:
 
 0. Server extracts `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and `InitEnc` from the client handshake message.
-1. Server deobfuscates `CliEphPubKeyObf` and `CiphObf` using a mode-dependant method (see below), producing `CliEphPubKey` and `Ciph`.
+1. Server deobfuscates `CliEphPubKeyObf` and `CiphObf` using _anonymous_ [marshalling encryption](#marshalling-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `CliNnc`), producing `CliEphPubKey` and `Ciph`.
 2. Server performs decapsulation using `ESK` and `Ciph`, receiving a shared secret (`CliShrSec`).
-3. Server decrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with key derived by `HKDF` from concatenation of `Nnc`, `ShrSec`, `CliEphPubKey` and `EPK` and processes it.
+3. Server decrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with key derived by `BLAKE3` from concatenation of `Nnc`, `ShrSec`, `CliEphPubKey` and `EPK` and processes it.
 
-As for the deobfuscation (step 1), in `fast` mode the following process is used:
-
-1. A masking key `MasKey` is derived using `HKDF` from concatenation of `CliNnc` and `OBFS`, its length is equal to the sum of `CliEphPubKeyObf` and `CiphObf` lengths.
-2. `CliEphPubKey` is produced by applying `XOR` to `CliEphPubKeyObf` and the first part of `MasKey`.
-3. `Ciph` is produced by applying `XOR` to `CiphObf` and the second part of `MasKey`.
-
-While in `full` mode:
-
-> In this mode `CiphObf` is omitted, because `CliEphPubKeyObf` plays its role.
-> The `CliEphPubKeyObf` is a `X25519` public key, obfuscated with `Elligator2`.
-
-1. `CliEphPubKey` is produced by applying Elligator2 unmasking to `CliEphPubKeyObf`.
-
-> In case of a decryption failure, server still _must_ wait for the specified time (or random time within [handshake next in limits](#handshake-packets) if decryption happens earlier) and reply with random bytes.
+> In case of a decryption failure, server should terminate connection silently.
 
 After the server initiates the internal state for the user and waits for an appropriate time, it encrypts the client response using the following steps:
 
-0. Server comes up with initial data (might be just a random byte string).
-1. Server generates a random 32-byte nonce `SrvNnc` (it's required for replay protection).
-2. Server generates ephemeral `X25519` keypair, retrieving a public key (`SrvEphPubKey`) and a secret key (`SrvEphSecKey`).
-3. Server performs encapsulation by using `SrvEphSecKey` and `CliEphPubKey`, retrieving a shared secret (`SrvShrSec`).
-4. Server obfuscates `SrvEphPubKey` using a mode-dependant method (see below), producing `SrvEphPubKeyObf`.
-5. Server builds a transcript by applying `SHA256` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
-6. Server authenticates `Trans` using `Ed25529` with `VSK`, producing `TransAuth`.
-7. Server computes the session key `Sess` using `HKDF` on `CliShrSec` and `SrvShrSec`, applying `Trans` as salt.
-8. Server encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm.
-9. Server encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with `Sess` as a key.
-10. Server constructs the handshake encrypted tailor by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and the encrypted tailor itself.
-11. The payload is sent to the client inside of a handshake packet.
-
-> Initial data is not required, since correctly encrypted tailor already verifies session key by authentication.
-
-As for the obfuscation (step 4), in `fast` mode the following process is used:
-
-1. A masking key `MasKey` is derived using `HKDF` from concatenation of `SrvNnc` and `OBFS`, its length is equal to the `SrvEphPubKey` length.
-2. `SrvEphPubKeyObf` is produced by applying `XOR` to `SrvEphPubKey` and the `MasKey`.
-
-While in `full` mode:
-
-1. `SrvEphPubKeyObf` is produced by applying Elligator2 masking to `SrvEphPubKey`.
+1. Server comes up with initial data (might be just a random byte string).
+2. Server generates a random 32-byte nonce `SrvNnc` (it's required for replay protection).
+3. Server generates ephemeral `X25519` keypair, retrieving a public key (`SrvEphPubKey`) and a secret key (`SrvEphSecKey`).
+4. Server performs encapsulation by using `SrvEphSecKey` and `CliEphPubKey`, retrieving a shared secret (`SrvShrSec`).
+5. Server obfuscates `SrvEphPubKey` using _anonymous_ [marshalling encryption](#marshalling-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `SrvNnc`), producing `SrvEphPubKeyObf`.
+6. Server builds a transcript by applying `BLAKE3` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
+7. Server authenticates `Trans` using `Ed25529` with `VSK`, producing `TransAuth`.
+8. Server computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans` as salt.
+9. Server encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm.
+10. Server encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with `Sess` as a key.
+11. Server constructs the handshake encrypted tailor by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and the encrypted tailor itself.
+12. The payload is sent to the client inside of a handshake packet.
 
 ### Tailor encryption
 
 Tailor encryption differs significantly depending on cryptographic mode chosen.
 Since tailor is appended to every single TYPHOON packet, that is where performance becomes really critical.
 
-So in case of the `fast` mode (which should be used if large amounts of data are expected to be transferred), tailor is encrypted using [marshalling encryption](#marshalling-encryption) algorithm with `OBFS` used for key and session key provided as additional data.
-Please note that `OBFS` is a public symmetric key, which means that obfuscation stops making sense immediately after a single certificate leaks (but not authentication).
+So in case of the `fast` mode (which should be used if large amounts of data are expected to be transferred), tailor is encrypted using [marshalling encryption](#marshalling-encryption) algorithm with `OBFS` used for key.
+Additionally, after encryption, the ciphertext is also authenticated with `BLAKE3` using the session key; that helps to make sure that tailor was not modified, even if it was decrypted.
+Again, please note that `OBFS` is a public symmetric key, which means that obfuscation stops making sense immediately after a single certificate leaks (but not authentication).
 
 In case of the `full` mode (which should be used if obfuscation should be able to resist certificate leaking), tailor is encrypted using the following steps (same for client and server):
 
 1. Come up with the raw tailor `Tailor`.
-2. Generate ephemeral `X25519` keypair, retrieving a public key (`MyEphPubKey`) and a secret key (`MyEphSecKey`).
-3. Perform encapsulation by using `MyEphSecKey` and `EPK`, retrieving a shared secret (`ShrSec`).
-4. Encrypt the `Tailor` with `ShrSec`, producing `TailorEnc`.
+2. Generates a random 32-byte nonce `Nnc` (it's required for replay protection).
+3. Generate ephemeral `X25519` keypair, retrieving a public key (`MyEphPubKey`) and a secret key (`MyEphSecKey`).
+4. Perform encapsulation by using `MyEphSecKey` and `OPK`, retrieving a shared secret (`ShrSec`).
 5. Obfuscate the `MyEphPubKey` with Elligator2, producing `MyEphPubKeyObf`.
-6. Construct the encrypted tail by concatenating `MyEphPubKeyObf` with `TailorEnc`.
+6. Encrypt the `Tailor` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on concatenation of `ShrSec`, `MyEphPubKeyObf`, `OPK` and `Nnc` as key, producing `TailorEnc`.
+7. Construct the encrypted tail by concatenating `MyEphPubKeyObf` with `TailorEnc`.
 
-The other party uses `ESK` and deobfuscated `MyEphPubKeyObf` in order to decrypt `TailorEnc`.
+The other party uses `OSK` and deobfuscated `MyEphPubKeyObf` in order to decrypt `TailorEnc`.
 
 ### Marshalling encryption
 
@@ -596,10 +553,16 @@ Marshalling encryption defines the encryption algorithm used for packet payloads
 Since it is used for the majority of all data transferred, the requirements for its performance are the most critical.
 
 Just like with [cryptographic modes](#cryptography), two different options are supported by TYPHOON protocol.
-By default, [XChaCha-Poly1305](https://en.wikipedia.org/wiki/ChaCha20-Poly1305#XChaCha20-Poly1305_%E2%80%93_extended_nonce_variant) should be used (_software_ marshalling encryption mode), while in certain cases [AES-GCM-256](https://en.wikipedia.org/wiki/Galois/Counter_Mode) can be used instead (_hardware_ marshalling encryption mode).
+By default, [XChaCha20-Poly1305](https://en.wikipedia.org/wiki/ChaCha20-Poly1305#XChaCha20-Poly1305_%E2%80%93_extended_nonce_variant) should be used (_software_ marshalling encryption mode), while in certain cases [AES-GCM-256](https://en.wikipedia.org/wiki/Galois/Counter_Mode) can be used instead (_hardware_ marshalling encryption mode).
 Normally, the latter should be used in case the server has limited resources and also has `AES-GCM` hardware acceleration enabled.
 
 Please note, that this cipher selection is also dictated by server and embedded in all the certificates.
+
+A special case of marshalling encryption is _anonymous_ encryption, which does not include ciphertext authentication.
+It should only be used for obfuscation, not real encryption.
+For _software_ mode, plain [XChaCha20](https://en.wikipedia.org/wiki/Salsa20#ChaCha20_adoption) cipher is used.
+For _hardware_ mode, [AES-256-CTR](https://en.wikipedia.org/wiki/Block_cipher_mode_of_operation#Counter_(CTR)) cipher is used.
+Use of _anonymous_ marshalling encryption mode is always marked specifically.
 
 > All the cryptography primitives mentioned here are referenced once again in the [supporting math](#supporting-math) chapter.
 
@@ -797,10 +760,10 @@ The following helper functions are used in the specification:
 - `random_uniform(min, max)`: Returns uniform random float between min and max.
 - `random_gauss(mean, sigma)`: Gaussian random with mean and std dev sigma.
 - `exponential_variance(rate)`: Exponential random with rate (mean = 1/rate).
-- Classic McEliece, X25519, Ed25519, XChaCha-Poly1305, AES-GCM-256, Elligator according to the official specifications.
-- HKDF, SHA256, UUID, XOR as per standard crypto libs.
+- Classic McEliece, X25519, Ed25519, XChaCha20, XChaCha20-Poly1305, AES-CTR-256, AES-GCM-256, Elligator according to the official specifications.
+- BLAKE3, UUID as per standard crypto libs.
 
-Remember to always use secure random sources!
+> Remember to always use secure random sources!
 
 ## Code and tests
 

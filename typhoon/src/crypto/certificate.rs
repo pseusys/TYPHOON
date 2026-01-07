@@ -1,5 +1,10 @@
+#[cfg(feature = "full")]
+use std::marker::PhantomData;
+
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use x25519_dalek::EphemeralSecret;
+
+use crate::bytes::ByteBuffer;
 
 #[cfg(feature = "full")]
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -7,15 +12,13 @@ use x25519_dalek::{PublicKey, StaticSecret};
 #[cfg(feature = "fast")]
 use classic_mceliece_rust::PublicKey;
 
-#[cfg(feature = "fast")]
-use crate::bytes::ByteBuffer;
-
 // Server data is a server certificate, should be kept by server:
 
 #[cfg(feature = "full")]
-pub struct ServerData<'_> {
+pub struct ServerData<'a> {
     pub(super) esk: StaticSecret,
     pub(super) vsk: SigningKey,
+    _phantom: PhantomData<&'a ()>,
 }
 
 #[cfg(feature = "fast")]
@@ -28,9 +31,11 @@ pub struct ServerData<'a> {
 // Certificate is a client certificate, should be kept by client:
 
 #[cfg(feature = "full")]
-pub struct Certificate<'_> {
+pub struct Certificate<'a> {
     pub(super) epk: PublicKey,
     pub(super) vpk: VerifyingKey,
+    pub(super) opk: PublicKey,
+    _phantom: PhantomData<&'a ()>,
 }
 
 #[cfg(feature = "fast")]
