@@ -154,6 +154,8 @@ The packets destinations, lengths and contents should be similar to data and dec
 That's why, technically it is not even necessary that the first packet of the session is handshake (instead, some decoy packets can go first).
 Still, data packets can only go after the client receives the second handshake message.
 
+> NB! Even though client is allowed to start sending decoy packets whenever it likes, server should not answer to any decoy packets before handshake is complete.
+
 The handshake packets carry implementation-dependent encrypted initial data and also are prefixed with a [fake header](#fake-header) and postfixed with an [encrypted tailor](#tailor-structure).
 In terms of behavior, the packets are treated just like the [health check packets](#health-check-packets), meaning that the server handshake response does not arrive immediately, but instead with a [next in delay](#next-in-computation) (this delay however is multiplied by `TYPHOON_HANDSHAKE_NEXT_IN_FACTOR` constant).
 Also, just like the health check packets, handshake packets are retransmitted.
@@ -454,7 +456,7 @@ For `full` mode:
 
 - For `ESK` and `EPK` Classic McEliece algorithm is used.
 - For `VSK` and `VPK` Ed25519 algorithm is used.
-- For `OSK` and `OPK` [X25519](https://cr.yp.to/ecdh.html) algorithm is used, combined with [Elligator2](https://elligator.cr.yp.to/) obfuscation algorithm.
+- For `OSK` and `OPK` [X25519](https://cr.yp.to/ecdh.html) algorithm is used.
 
 Choice of Classic McEliece might be unusual, but apparently of all the post-quantum algorithms it fits the requirements the best.
 All the other post-quantum algorithms would produce the ciphertext that long, so the handshake message containing it would be easily identifiable among the rest of the traffic.
@@ -496,13 +498,13 @@ Client handshake packet encryption consists of the following steps:
 
 After the client receives the encrypted handshake message from the server, it decrypts it using the following steps:
 
-1. Client extracts `SrvEphPubKeyObf`, `TransAuth` and `SrvNnc` from the server handshake message.
-2. Client deobfuscates `SrvEphPubKeyObf` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `SrvNnc`), producing `SrvEphPubKey`.
-3. Client performs encapsulation by using `CliEphSecKey` and `SrvEphPubKey`, retrieving a shared secret (`SrvShrSec`).
-4. Client builds a transcript by applying `SHA256` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
-5. Client verifies server identity using `Ed25529` with `VPK`, applying it to `Trans` and `TransAuth`.
-6. Client computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
-7. Client decrypts the server initial data, verifying `Sess` correctness.
+0. Client extracts `SrvEphPubKeyObf`, `TransAuth` and `SrvNnc` from the server handshake message.
+1. Client deobfuscates `SrvEphPubKeyObf` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `SrvNnc`), producing `SrvEphPubKey`.
+2. Client performs encapsulation by using `CliEphSecKey` and `SrvEphPubKey`, retrieving a shared secret (`SrvShrSec`).
+3. Client builds a transcript by applying `SHA256` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
+4. Client verifies server identity using `Ed25529` with `VPK`, applying it to `Trans` and `TransAuth`.
+5. Client computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
+6. Client decrypts the server initial data, verifying `Sess` correctness.
 
 > In case of an authentication or initial data decryption failure, client should terminate connection silently.
 
@@ -519,39 +521,65 @@ Client handshake packet decryption consists of the following steps:
 
 After the server initiates the internal state for the user and waits for an appropriate time, it encrypts the client response using the following steps:
 
-1. Server comes up with initial data (might be just a random byte string).
-2. Server generates a random 32-byte nonce `SrvNnc` (it's required for replay protection).
-3. Server generates ephemeral `X25519` keypair, retrieving a public key (`SrvEphPubKey`) and a secret key (`SrvEphSecKey`).
-4. Server performs encapsulation by using `SrvEphSecKey` and `CliEphPubKey`, retrieving a shared secret (`SrvShrSec`).
-5. Server obfuscates `SrvEphPubKey` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `SrvNnc`), producing `SrvEphPubKeyObf`.
-6. Server builds a transcript by applying `BLAKE3` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
-7. Server authenticates `Trans` using `Ed25529` with `VSK`, producing `TransAuth`.
-8. Server computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
-9. Server encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm.
-10. Server encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with `Sess` as a key.
-11. Server constructs the handshake encrypted tailor by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and the encrypted tailor itself.
-12. The payload is sent to the client inside of a handshake packet.
+0. Server comes up with initial data (might be just a random byte string).
+1. Server generates a random 32-byte nonce `SrvNnc` (it's required for replay protection).
+2. Server generates ephemeral `X25519` keypair, retrieving a public key (`SrvEphPubKey`) and a secret key (`SrvEphSecKey`).
+3. Server performs encapsulation by using `SrvEphSecKey` and `CliEphPubKey`, retrieving a shared secret (`SrvShrSec`).
+4. Server obfuscates `SrvEphPubKey` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `SrvNnc`), producing `SrvEphPubKeyObf`.
+5. Server builds a transcript by applying `BLAKE3` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
+6. Server authenticates `Trans` using `Ed25529` with `VSK`, producing `TransAuth`.
+7. Server computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
+8. Server encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm.
+9. Server encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with `Sess` as a key.
+10. Server constructs the handshake encrypted tailor by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and the encrypted tailor itself.
+11. The payload is sent to the client inside of a handshake packet.
 
 ### Tailor encryption
 
 Tailor encryption differs significantly depending on cryptographic mode chosen.
-Since tailor is appended to every single TYPHOON packet, that is where performance becomes really critical.
+Since tailor is appended to every single TYPHOON packet, the encryption performance requirements here are high.
 
-So in case of the `fast` mode (which should be used if large amounts of data are expected to be transferred), tailor is encrypted using [marshalling encryption](#marshalling-encryption) algorithm with `OBFS` used for key.
+The requirements for tailor encryption on client and server are fundamentally different.
+Since server expects packets from multiple clients, it has to decrypt all the tailors with a single algorithm.
+At the same time, client expects packets from one server only and can use private session secrets for decryption.
+
+#### Tailor encryption in `fast` mode
+
+In case of the `fast` mode (which should be used if large amounts of data are expected to be transferred), tailor is encrypted using [marshalling encryption](#marshalling-encryption) algorithm with `OBFS` used for key.
 Additionally, after encryption, the ciphertext is also authenticated with `BLAKE3` using the session key; that helps to make sure that tailor was not modified, even if it was decrypted.
 Again, please note that `OBFS` is a public symmetric key, which means that obfuscation stops making sense immediately after a single certificate leaks (but not authentication).
 
-In case of the `full` mode (which should be used if obfuscation should be able to resist certificate leaking), tailor is encrypted using the following steps (same for client and server):
+> Please note, that this approach is not only faster, but also more extensible.
+> The packets going in both direction have uniform structure in this case and can be decrypted (but not authenticated) by any protocol-aware middleware.
+> That could allow extending protocol with [multi-hop or remote proxy](#future-work) capabilities.
 
-1. Come up with the raw tailor `Tailor`.
-2. Generates a random 32-byte nonce `Nnc` (it's required for replay protection).
-3. Generate ephemeral `X25519` keypair, retrieving a public key (`MyEphPubKey`) and a secret key (`MyEphSecKey`).
-4. Perform encapsulation by using `MyEphSecKey` and `OPK`, retrieving a shared secret (`ShrSec`).
-5. Obfuscate the `MyEphPubKey` with Elligator2, producing `MyEphPubKeyObf`.
-6. Encrypt the `Tailor` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on concatenation of `ShrSec`, `MyEphPubKeyObf`, `OPK` and `Nnc` as key, producing `TailorEnc`.
-7. Construct the encrypted tail by concatenating `MyEphPubKeyObf` with `TailorEnc`.
+#### Tailor encryption in `full` mode
 
-The other party uses `OSK` and deobfuscated `MyEphPubKeyObf` in order to decrypt `TailorEnc`.
+In case of the `full` mode (which should be used if obfuscation should be able to resist certificate leaking), tailor encryption differs depending on the packet flow direction.
+
+For the packets going from server to client, tailors are simply encrypted with [marshalling encryption](#marshalling-encryption) algorithm, that provides maximal privacy and efficiency.
+That does not allow anyone without client session key to decrypt the tailor contents, which is fine in case no one else is intended to read it anyway.
+
+For the packets going from client to server, tailors are is encrypted using the following steps:
+
+0. Client comes up with the raw tailor `Tailor`.
+1. Client generates a random 32-byte nonce `Nnc` (it's required for replay protection).
+2. Client generates ephemeral `X25519` keypair, retrieving a public key (`EphPubKey`) and a secret key (`EphSecKey`).
+3. Client performs encapsulation by using `EphSecKey` and `OPK`, retrieving a shared secret (`ShrSec`).
+4. Client obfuscates the `EphPubKey` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OPK` and `Nnc`), producing `EphPubKeyObf`.
+5. Client encrypts the `Tailor` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `TailorEnc`.
+6. Client constructs the encrypted tail by concatenating `Nnc`, `EphPubKeyObf` and `TailorEnc`.
+
+The tailors are is decrypted using the following steps:
+
+0. Server extracts `Nnc`, `EphPubKeyObf` and `TailorEnc` from the client message.
+1. Server deobfuscates the `EphPubKeyObf` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OPK` and `Nnc`), producing `EphPubKey`.
+2. Server performs encapsulation by using `EphPubKey` and `OSK`, retrieving a shared secret (`ShrSec`).
+3. Server decrypts the `TailorEnc` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `Tailor`.
+
+That approach allows safe encryption guarantees for all tailors.
+For the packets going from client to server, transmitted tailor structure can still be deobfuscated if certificate leaks, that unfortunately can not be avoided.
+Still, even if it is deobfuscated, the tailor contents remain encrypted and will not leak.
 
 ### Marshalling encryption
 
@@ -592,7 +620,7 @@ It is suggested that a flow manager would hold an UDP port, while session manage
 
 On client side there is only one session manager that is tightly coupled with all the flow managers (normally they only have different ports, but similar IP addresses).
 On server side, they can be more loosely coupled: flow manager can be connected to multiple clients at the same time, they perform traffic demultiplexing (will be described below) and deliver the packets to virtual session managers (a manager is unique per user).
-Theoretically, different server flow managers can occupy different IP addresses, but in case they reside in separate processes (or on separate machines) - their communication is out of scope of TYPHOON protocol.
+Theoretically, different server flow managers can occupy different IP addresses, but in case they [reside in separate processes](#future-work) (or on separate machines) - their communication is out of scope of TYPHOON protocol.
 
 TYPHOON listener is a logical structure that keeps track of all the flow managers (they are constant), spawns and recycles session managers for users.
 The listener should also be capable of producing client certificates, that are guaranteed to be valid while the listener is alive (or restarted but with similar flow manager configuration).
@@ -769,7 +797,7 @@ The following helper functions are used in the specification:
 - `random_gauss(mean, sigma)`: Gaussian random with mean and std dev sigma.
 - `exponential_variance(rate)`: Exponential random with rate (mean = 1/rate).
 - Classic McEliece, X25519, Ed25519, XChaCha20, XChaCha20-Poly1305, AES-CTR-256, AES-GCM-256, Elligator according to the official specifications.
-- BLAKE3, UUID as per standard crypto libs.
+- BLAKE3, UUID, XOR as per standard crypto libs.
 
 > Remember to always use secure random sources!
 
@@ -778,5 +806,9 @@ The following helper functions are used in the specification:
 TODO!
 
 ## Development
+
+TODO!
+
+## Future work
 
 TODO!

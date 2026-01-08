@@ -1,12 +1,19 @@
-use blake3::{KEY_LEN, Hasher, keyed_hash};
-use constant_time_eq::constant_time_eq;
-use simple_error::{bail, ensure_with};
+use cfg_if::cfg_if;
+use simple_error::bail;
 
 use crate::bytes::ByteBuffer;
 use crate::random::get_rng;
 use crate::generic::DynResult;
 
-cfg_if::cfg_if! {
+cfg_if! {
+    if #[cfg(feature = "fast")] {
+        use blake3::{KEY_LEN, Hasher, keyed_hash};
+        use constant_time_eq::constant_time_eq;
+        use simple_error::ensure_with;
+    }
+}
+
+cfg_if! {
     if #[cfg(feature = "software")] {
         use chacha20::XChaCha20;
         use chacha20::cipher::{KeyIvInit, StreamCipher};
@@ -92,6 +99,7 @@ impl Symmetric {
         }
     }
 
+    #[cfg(feature = "fast")]
     pub fn encrypt_auth_twice<'a>(&mut self, plaintext: ByteBuffer<'a>, additional_data: Option<&ByteBuffer>, second_hash_key: &ByteBuffer) -> DynResult<ByteBuffer<'a>> {
         match self.encrypt_internal(plaintext, additional_data) {
             Ok((ciphertext, auth)) => {
@@ -132,6 +140,7 @@ impl Symmetric {
         }
     }
 
+    #[cfg(feature = "fast")]
     pub fn decrypt_auth_twice<'a>(&mut self, ciphertext_authenticated_twice: ByteBuffer<'a>, additional_data: Option<&ByteBuffer>) -> DynResult<(ByteBuffer<'a>, ByteBuffer<'a>, ByteBuffer<'a>)> {
         let (ciphertext_authenticated, second_authentication) = ciphertext_authenticated_twice.split_buf(ciphertext_authenticated_twice.len() - SYMMETRIC_SECOND_AUTH_LEN);
         let (ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated_twice.len() - SYMMETRIC_FIRST_AUTH_LEN);
@@ -141,6 +150,7 @@ impl Symmetric {
         }
     }
 
+    #[cfg(feature = "fast")]
     pub fn verify_second_auth(&mut self, ciphertext_with_nonce: &ByteBuffer, additional_data: Option<&ByteBuffer>, second_hash_key: &ByteBuffer, second_authentication: &ByteBuffer) -> DynResult<()> {
         let second_hash_key_bytes = <[u8; KEY_LEN]>::try_from(&second_hash_key.slice()[..])?;
         let hash = if let Some(additional) = additional_data {

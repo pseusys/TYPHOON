@@ -4,6 +4,9 @@ use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey};
 
 use crate::bytes::ByteBuffer;
 
+#[cfg(feature = "full")]
+use x25519_dalek::StaticSecret;
+
 pub trait ObfuscationBufferContainer<'a> {
     fn obfuscation_buffer(&'a self) -> ByteBuffer<'a>;
 }
@@ -15,7 +18,7 @@ pub struct ServerSecret<'a> {
     pub(super) esk: SecretKey<'a>,
     pub(super) vsk: SigningKey,
     pub(super) opk: X25519PublicKey,
-    pub(super) osk: SecretKey<'a>,
+    pub(super) osk: StaticSecret,
 }
 
 #[cfg(feature = "fast")]
