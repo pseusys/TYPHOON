@@ -3,52 +3,52 @@
 > Transfer Your Packets Hidden Over Observed Networks
 
 There are lots of data transferring protocols out there.
-Developers have made big progress in protecting user data with various cryptography algorithms, making breaking encryption a hard assignment.
-Still, it's possible to try, and some progress is also being made e.g. on breaking asymmetrical ciphers.
+Developers have made significant progress in protecting user data with various cryptographic algorithms, making encryption difficult to break.
+Still, it's possible to try, and some progress is also being made, e.g., in breaking asymmetric ciphers.
 
 This project tries to make another step in encryption: making a protocol so obfuscated that it's hard to identify and verify it in the first place.
-Indeed, if an attacker doesn't know _what_ to decrypt the protocol, it makes breaking it significantly harder.
+Indeed, if an attacker doesn't know _what_ protocol they're looking at, it makes breaking it significantly harder.
 
 ## Assumptions and limitations
 
 There is one important assumption, required for proceeding with this protocol.
-Making any message exchange undetectable requires continuous effort, meaning that literally all the patterns must be eliminated.
-The patterns in question not only include any cleartext fields, but also encrypted fields with a well-known structure (i.e. that can be fingerprinted), messages being sent with a regular time interval, messages of the same length, etc.
+Making any message exchange undetectable requires continuous effort, meaning that all identifiable patterns must be eliminated.
+The patterns in question include not only cleartext fields, but also encrypted fields with a well-known structure (i.e., fields that can be fingerprinted), messages sent at regular time intervals, messages of the same length, etc.
 
-That is why it was decided to base the protocol on UDP, since it operates raw network packets and does not require any packet size control.
+That is why it was decided to base the protocol on UDP, since it operates on raw network packets and does not require any packet size control.
 Also, no certificate exchange handshake is proposed, because it would be impossible to encrypt completely, so a certificate should be pre-shared with all the users in advance via any third channels.
 
-The protocol tries to mimic _generic protocol behavior_, that is common for most of the open-source protocols.
+The protocol tries to mimic _generic protocol behavior_, which is common across most open-source protocols.
 It does not target any specific protocol, because it could be too hard to imitate it statistically precisely.
 If imitating a specific protocol is required, encrypted data should be embedded right into the protocol body (which is very possible for QUIC, DNS queries, etc.).
 
-Finally, any flow control or reliable data delivery are not goals of the proposed protocol - they should be implemented by user applications using it.
+Finally, flow control and reliable data delivery are not goals of this protocol — they should be implemented by user applications.
 Still, the protocol partly facilitates this goal by providing a health checking mechanism, so that a connection won't go down silently.
 
 ## Architecture
 
 Every TYPHOON server or client consists of two separate parts: a session manager and a flow manager.
-The session manager is responsible for maintaining the protocol status, encryption and health checks - but it doesn’t own any physical resources.
-The flow manager is responsible for packet datagram flow obfuscation - one flow manager owns one UDP port.
+The session manager is responsible for maintaining the protocol state, encryption, and health checks — but it does not own any physical resources.
+The flow manager is responsible for packet datagram flow obfuscation — one flow manager owns one UDP port.
 
-In the simplest case (1 client - 1 server), the flow manager is tightly coupled with the session manager both on client and server side.
-In a more complex scenario, a server can use several "proxy" flow managers, each of them having a separate port, IP address or even be deployed to a separate device.
-In that case a client can select any number of these "proxies" to use - and create a separate flow manager to contact each of them.
-While it is technically possible for these flow managers to operate using different IP addresses as well - using that in the real world remains questionable.
+In the simplest case (one client, one server), the flow manager is tightly coupled with the session manager on both client and server sides.
+In a more complex scenario, a server can use several "proxy" flow managers, each having a separate port or IP address, or even being deployed on a separate device.
+In that case, a client can select any number of these "proxies" to use and create a separate flow manager to contact each of them.
+While it is technically possible for client flow managers to operate using different IP addresses as well, the practicality of this in the real world remains questionable.
 
 ## Packet structure
 
-There are two types of packets in TYPHOON protocol: real packets and decoy packets.
-Real packets contain a real payload and a header, they are either processed or generated (in case of health checking packets) by the session manager.
+There are two types of packets in the TYPHOON protocol: real packets and decoy packets.
+Real packets contain a payload and a header; they are either processed or generated (in the case of health check packets) by the session manager.
 The payload is encrypted with [marshalling encryption](#marshalling-encryption) using a session key.
-The header is appended _after_ the payload, so hereinafter it will be called "tailor" instead.
-Its structure will be explained [below](#tailor-structure), and it is encrypted with [tailor encryption](#tailor-encryption) specified by the certificate, it is static **per server instance** (i.e. per server session manager).
+The header is appended _after_ the payload, so hereinafter it will be called the "tailor" instead.
+Its structure will be explained [below](#tailor-structure), and it is encrypted with [tailor encryption](#tailor-encryption) specified by the certificate; the tailor encryption key is static **per server instance** (i.e., per server session manager).
 The decoy packets, in turn, are just random bytes.
 
 After a real packet body is constructed, it is passed to the flow manager.
 Decoy packets are generated by the flow manager itself and are inserted right away.
 The flow manager treats all the packets similarly: it prepends them with a [fake header](#fake-header) structure and a [fake body](#fake-body).
-Both of these parameters are specified by certificate and are static **per server address** (i.e. per server flow manager).
+Both of these parameters are specified by the certificate and are static **per server address** (i.e., per server flow manager).
 See more about this in [proposed implementation](#insertion-and-processing) chapter.
 
 Fake header and fake body structures are selected either randomly upon flow manager initialization (default) or manually.
@@ -144,14 +144,14 @@ Just like it has already been described in [packet structure](#packet-structure)
 
 ### Handshake packets
 
-The TYPHOON protocol relies on a two-way handshake that closely resembles one of OBFS4 and NTORv3 protocols.
-There is no reason to wait for the third packet from client (TCP-style) as it is not possible to overload server with partially-initialized sessions, because [only one active connection is allowed per certificate](#sockets-and-listeners).
+The TYPHOON protocol relies on a two-way handshake that closely resembles those of the OBFS4 and NTORv3 protocols.
+There is no reason to wait for a third packet from the client (TCP-style), as it is not possible to overload the server with partially-initialized sessions because [only one active connection is allowed per certificate](#sockets-and-listeners).
 Moreover, that means that if the client sends a handshake packet on an existing connection, its internal state gets silently reset (see [health check packet description](#health-check-packets) for more information on connection internal state).
 See [handshake encryption specification](#handshake-encryption) for cryptographic details of the handshake.
 
 An important requirement for the handshake is that it is indistinguishable from any other subsequent packet flow.
 The packets destinations, lengths and contents should be similar to data and decoy packets.
-That's why, technically it is not even necessary that the first packet of the session is handshake (instead, some decoy packets can go first).
+That's why technically it is not even necessary that the first packet of the session is a handshake (instead, some decoy packets can go first).
 Still, data packets can only go after the client receives the second handshake message.
 
 > NB! Even though client is allowed to start sending decoy packets whenever it likes, server should not answer to any decoy packets before handshake is complete.
@@ -162,7 +162,7 @@ Also, just like the health check packets, handshake packets are retransmitted.
 
 ### Health check packets
 
-Health check packets are used for stale connections tracking.
+Health check packets are used for tracking stale connections.
 In case client and server fail to perform health check exchange with each other for a few times in a row, the connection terminates with an error on both sides.
 That is why the health check packets, just like [it was mentioned earlier](#assumptions-and-limitations) and unlike the [data packets](#data-packets), are transmitted _reliably_.
 
@@ -178,15 +178,15 @@ The _current incremental packet number_ variable starts from 0.
 
 Client initiates the exchange (the first health check exchange is embedded into handshake), setting higher `4` bytes of **PN** field to the current unix timestamp (in seconds), [lower `4` bytes](#sockets-and-listeners) of **PN** to _current incremental packet number_ and **TM** to a [random next in delay](#next-in-computation).
 The **PN** field value is remembered and used as the _current health check packet number_.
-After that client sleeps for server response for **TM** seconds plus [timeout value](#timeout-computation).
+After that, the client waits for a server response for **TM** milliseconds plus the [timeout value](#timeout-computation).
 If it receives a health check message from the server with unexpected packet number (either during waiting or sleeping), it will be silently discarded.
 
 Server receives the health check packet and updates its remembered _current health check packet number_.
-It waits for **TM** seconds (maybe [not exactly](#packet-shadowriding)) before responding - and then constructs a response health check message with remembered health check packet number as **PN** and **TM** set to a [random next in delay](#next-in-computation).
-After that server sleeps for client response for **TM** seconds plus [timeout value](#timeout-computation).
+It waits for **TM** milliseconds (maybe [not exactly](#packet-shadowriding)) before responding, and then constructs a response health check message with the remembered health check packet number as **PN** and **TM** set to a [random next in delay](#next-in-computation).
+After that, the server waits for a client response for **TM** milliseconds plus the [timeout value](#timeout-computation).
 Whenever it receives a new health check message from client (either during waiting or sleeping), it restarts all over unconditionally.
 
-Client receives the server response, waits for **TM** seconds (maybe [not exactly](#packet-shadowriding)) and starts the health checking over.
+Client receives the server response, waits for **TM** milliseconds (maybe [not exactly](#packet-shadowriding)), and starts the health checking over.
 
 If client receives a valid response while sleeping or if a server receives any response while sleeping, they wake up (at some point) and restart their part of decay.
 If they do not, they increase an internal counter until `TYPHOON_MAX_RETRIES` is reached, which means that one of the parties has most likely disappeared.
@@ -222,9 +222,9 @@ By default it is enforced by constants, and this dependency should be kept if th
 #### Timeout computation
 
 Timeout is normally calculated as a derivative from the RTT of a handshake packet between client and server.
-However, in case no RTT is available yet (i.e. for the handshake and first health check packets) it takes `TYPHOON_TIMEOUT_DEFAULT` value.
+However, if no RTT is available yet (i.e., for the handshake and first health check packets), it takes the `TYPHOON_TIMEOUT_DEFAULT` value.
 Whenever RTT is initialized, the timeout will be calculated as `(smooth_RTT + RTT_variance) * TYPHOON_TIMEOUT_RTT_FACTOR` (the latter is a constant).
-In every case, timeout value should be clamped between `TYPHOON_TIMEOUT_MIN` and `TYPHOON_TIMEOUT_MAX`.
+In all cases, the timeout value should be clamped between `TYPHOON_TIMEOUT_MIN` and `TYPHOON_TIMEOUT_MAX`.
 
 #### RTT computation
 
@@ -235,7 +235,7 @@ Only health check packets are used for RTT calculation, since data packets do no
 > It should be calculated like this: `packet_RTT = new_packet_receive_time - last_packet_send_time - last_packet_next_in`.
 
 If RTT is not initialized yet, the `TYPHOON_RTT_DEFAULT` should be used instead.
-In every case, RTT value should be clamped between `TYPHOON_RTT_MIN` and `TYPHOON_RTT_MAX`.
+In all cases, the RTT value should be clamped between `TYPHOON_RTT_MIN` and `TYPHOON_RTT_MAX`.
 
 RTT is updated upon every health check response packet arrival as follows:
 
@@ -303,14 +303,14 @@ It defines the following equations for decoy packet delay:
 
 - `base_rate = TYPHOON_DECOY_HEAVY_BASE_RATE * random_uniform(1 - TYPHOON_DECOY_BASE_RATE_RND, 1 + TYPHOON_DECOY_BASE_RATE_RND)`, where `TYPHOON_DECOY_BASE_RATE_RND` is a constant.
 - `rate = base_rate * (quietness_index ^ TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR) * exp(-packet_rate / reference_rate)`.
-- `decoy_delay = exponential_variance(rate)`, clamped between `TYPHOON_DECOY_HEAVY_DELAY_MIN` and `TYPHOON_DECOY_HEAVY_DELAY_MAX` constants, or `TYPHOON_DECOY_HEAVY_DELAY_DEFAULT` if `rate` for some reason is negative.
+- `decoy_delay = exponential_variance(rate)`, clamped between `TYPHOON_DECOY_HEAVY_DELAY_MIN` and `TYPHOON_DECOY_HEAVY_DELAY_MAX`, or `TYPHOON_DECOY_HEAVY_DELAY_DEFAULT` if `rate` is non-positive.
 
 And the following equations for decoy packet length:
 
 - `base_length = packet_length_cap * (TYPHOON_DECOY_HEAVY_BASE_LENGTH + TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH * quietness_index)`.
 - `decoy_length = random_uniform(TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR * base_length, base_length)`, clamped between `packet_length_cap / 2` and `packet_length_cap`.
 
-> The `exponential_variance` and `random_uniform` functions are defined in [supporting math](#supporting-math) chapter.
+> The `exponential_variance` and `random_uniform` functions are defined in the [supporting math](#supporting-math) chapter.
 
 ##### Noisy mode
 
@@ -321,14 +321,14 @@ It defines the following equations for decoy packet delay:
 
 - `base_rate = TYPHOON_DECOY_NOISY_BASE_RATE * random_uniform(1 - TYPHOON_DECOY_BASE_RATE_RND, 1 + TYPHOON_DECOY_BASE_RATE_RND)`, where `TYPHOON_DECOY_BASE_RATE_RND` is a constant.
 - `rate = base_rate * quietness_index * exp(-packet_rate / reference_rate)`.
-- `decoy_delay = exponential_variance(1 / (1 / rate) * (1 + (packet_rate / reference_rate)))`, clamped between `TYPHOON_DECOY_NOISY_DELAY_MIN` and `TYPHOON_DECOY_NOISY_DELAY_MAX` constants, or `TYPHOON_DECOY_NOISY_DELAY_DEFAULT` if `rate` for some reason is negative.
+- `decoy_delay = exponential_variance(rate * (1 + packet_rate / reference_rate))`, clamped between `TYPHOON_DECOY_NOISY_DELAY_MIN` and `TYPHOON_DECOY_NOISY_DELAY_MAX` constants, or `TYPHOON_DECOY_NOISY_DELAY_DEFAULT` if `rate` is non-positive.
 
 And the following equations for decoy packet length:
 
 - `mean_length = TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN + quietness_index * exp(-packet_rate / reference_rate) * (packet_length_cap - TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN)`.
-- `decoy_length = random_gauss(mean_length, TYPHOON_DECOY_NOISY_DECOY_LENGTH_FACTOR * mean_length)`, clamped between `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` and `packet_length_cap` constants.
+- `decoy_length = random_gauss(mean_length, TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER * mean_length)`, clamped between `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` and `packet_length_cap`.
 
-> The `exponential_variance`, `random_uniform` and `random_gauss` functions are defined [supporting math](#supporting-math) chapter.
+> The `exponential_variance`, `random_uniform`, and `random_gauss` functions are defined in the [supporting math](#supporting-math) chapter.
 
 ##### Sparse mode
 
@@ -339,36 +339,36 @@ It defines the following equations for decoy packet delay:
 
 - `base_rate = TYPHOON_DECOY_SPARSE_BASE_RATE * random_uniform(1 - TYPHOON_DECOY_BASE_RATE_RND, 1 + TYPHOON_DECOY_BASE_RATE_RND)`, where `TYPHOON_DECOY_BASE_RATE_RND` is a constant.
 - `rate = base_rate * quietness_index * exp(-TYPHOON_DECOY_SPARSE_RATE_FACTOR * packet_rate / reference_rate)`.
-- `decoy_delay = random_uniform(1 - TYPHOON_DECOY_SPARSE_JITTER, 1 + TYPHOON_DECOY_SPARSE_JITTER) * (1 + TYPHOON_DECOY_SPARSE_DELAY_FACTOR * (packet_rate / reference_rate)) / rate`, clamped between `TYPHOON_DECOY_SPARSE_DELAY_MIN` and `TYPHOON_DECOY_SPARSE_DELAY_MAX` constants, or `TYPHOON_DECOY_SPARSE_DELAY_DEFAULT` if `rate` for some reason is negative.
+- `decoy_delay = random_uniform(1 - TYPHOON_DECOY_SPARSE_JITTER, 1 + TYPHOON_DECOY_SPARSE_JITTER) * (1 + TYPHOON_DECOY_SPARSE_DELAY_FACTOR * (packet_rate / reference_rate)) / rate`, clamped between `TYPHOON_DECOY_SPARSE_DELAY_MIN` and `TYPHOON_DECOY_SPARSE_DELAY_MAX`, or `TYPHOON_DECOY_SPARSE_DELAY_DEFAULT` if `rate` is non-positive.
 
 And the following equations for decoy packet length:
 
-- `decoy_length = random_gauss(TYPHOON_DECOY_SPARSE_LENGTH_FACTOR * exp(-packet_rate / reference_rate), TYPHOON_DECOY_SPARSE_LENGTH_SIGMA)`, clamped between `TYPHOON_DECOY_SPARSE_LENGTH_MIN` and `TYPHOON_DECOY_SPARSE_LENGTH_MAX` constants.
+- `decoy_length = random_gauss(TYPHOON_DECOY_SPARSE_LENGTH_FACTOR * exp(-packet_rate / reference_rate), TYPHOON_DECOY_SPARSE_LENGTH_SIGMA)`, clamped between `TYPHOON_DECOY_SPARSE_LENGTH_MIN` and `TYPHOON_DECOY_SPARSE_LENGTH_MAX`.
 
-> The `random_uniform` and `random_gauss` functions are defined in [supporting math](#supporting-math) chapter.
+> The `random_uniform` and `random_gauss` functions are defined in the [supporting math](#supporting-math) chapter.
 
 ##### Smooth mode
 
 Smooth mode implements sending few average decoy packets during quiet periods.
-It just fills gaps in between of data packets and doesn't let the connection to go silent.
+It fills gaps between data packets and prevents the connection from going silent.
 
 It defines the following equations for decoy packet delay:
 
 - `base_rate = TYPHOON_DECOY_SMOOTH_BASE_RATE * random_uniform(1 - TYPHOON_DECOY_BASE_RATE_RND, 1 + TYPHOON_DECOY_BASE_RATE_RND)`, where `TYPHOON_DECOY_BASE_RATE_RND` is a constant.
 - `rate = base_rate * (quietness_index ^ TYPHOON_DECOY_SMOOTH_QUIETNESS_FACTOR) * exp(-TYPHOON_DECOY_SMOOTH_RATE_FACTOR * packet_rate / reference_rate)`.
-- `decoy_delay = random_uniform(1 - TYPHOON_DECOY_SMOOTH_JITTER, 1 + TYPHOON_DECOY_SMOOTH_JITTER) * (1 + TYPHOON_DECOY_SMOOTH_DELAY_FACTOR * (packet_rate / reference_rate)) / rate`, clamped between `TYPHOON_DECOY_SMOOTH_DELAY_MIN` and `TYPHOON_DECOY_SMOOTH_DELAY_MAX` constants, or `TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT` if `rate` for some reason is negative.
+- `decoy_delay = random_uniform(1 - TYPHOON_DECOY_SMOOTH_JITTER, 1 + TYPHOON_DECOY_SMOOTH_JITTER) * (1 + TYPHOON_DECOY_SMOOTH_DELAY_FACTOR * (packet_rate / reference_rate)) / rate`, clamped between `TYPHOON_DECOY_SMOOTH_DELAY_MIN` and `TYPHOON_DECOY_SMOOTH_DELAY_MAX`, or `TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT` if `rate` is non-positive.
 
 And the following equations for decoy packet length:
 
 - `mean_length = TYPHOON_DECOY_SMOOTH_LENGTH_MIN + quietness_index * exp(-packet_rate / reference_rate) * (TYPHOON_DECOY_SMOOTH_LENGTH_MAX - TYPHOON_DECOY_SMOOTH_LENGTH_MIN)`.
-- `decoy_length = random_uniform(TYPHOON_DECOY_SMOOTH_LENGTH_MIN, mean_length)`, clamped between `TYPHOON_DECOY_SMOOTH_LENGTH_MIN` and `TYPHOON_DECOY_SMOOTH_LENGTH_MAX` constants.
+- `decoy_length = random_uniform(TYPHOON_DECOY_SMOOTH_LENGTH_MIN, mean_length)`, clamped between `TYPHOON_DECOY_SMOOTH_LENGTH_MIN` and `TYPHOON_DECOY_SMOOTH_LENGTH_MAX`.
 
-> The `random_uniform` function is defined in [supporting math](#supporting-math) chapter.
+> The `random_uniform` function is defined in the [supporting math](#supporting-math) chapter.
 
 #### Maintenance mode
 
-Maintenance mode defines the way how decoy maintenance packets are sent.
-The maintenance packets do not follow the rules of the average decoy packets, instead they mimic any kind of maintenance packets (health check, keep alive, verification, etc.) that can be required by a protocol.
+Maintenance mode defines how decoy maintenance packets are sent.
+The maintenance packets do not follow the rules of regular decoy packets; instead, they mimic maintenance packets (health check, keep alive, verification, etc.) that a protocol may require.
 They are also usually shorter than the other decoy packets.
 
 The packet length lies within `TYPHOON_DECOY_MAINTENANCE_LENGTH_MIN` and `TYPHOON_DECOY_MAINTENANCE_LENGTH_MAX` constants, the time between them varies within `TYPHOON_DECOY_MAINTENANCE_DELAY_MIN` and `TYPHOON_DECOY_MAINTENANCE_DELAY_MAX` constants.
@@ -384,10 +384,10 @@ By default, maintenance mode is chosen with equal probability for every option e
 
 #### Replication mode
 
-Replication mode defines the way how decoy packets are replicated.
+Replication mode defines how decoy packets are replicated.
 Resending packets with the same contents mimics data retransmission in reliable protocols.
 Even though replication is only applied to the decoy packets, it does not result in any observable patterns, since all of them look similar from outside.
-Also note, that only the decoy packet "bodies" are replicated, while [fake headers](#fake-header) and [fake bodies](#fake-body) are generated anew, that represents lower-level protocol headers.
+Also note that only the decoy packet "bodies" are replicated, while [fake headers](#fake-header) and [fake bodies](#fake-body) are generated anew; this represents lower-level protocol headers.
 
 Packet duplicates are sent with a probability within `TYPHOON_DECOY_REPLICATION_PROBABILITY_MIN` and `TYPHOON_DECOY_REPLICATION_PROBABILITY_MAX`, selected upon a flow manager initialization.
 After the first duplication, the subsequent duplication probability is multiplied by `TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE`, becoming effectively lower.
@@ -403,7 +403,7 @@ By default, maintenance mode is chosen with equal probability for every option e
 
 #### Subheader pattern
 
-Subheader mode defines the way how an additional [fake header](#fake-header) structure is added to some of the decoy packets.
+Subheader mode defines how an additional [fake header](#fake-header) structure is added to some decoy packets.
 That simulates some of the packets having an internal protocol layer in addition to the regular fake header.
 Again, even though it is only applied to the decoy packets, it looks just like _some of the packets_ outside.
 
@@ -427,7 +427,7 @@ The following requirements are taken into account for TYPHOON protocol cryptogra
 3. Client can rely on a certificate of almost any size, since there is no runtime certificate exchange defined.
 4. Protocol should be efficient, transferring big amounts of data should not cause big delays.
 
-Unfortunately, right now all these requirements can not be achieved at once, because there is no known way to hide the internal structure of any of the post-quantum ciphers.
+Unfortunately, right now all these requirements cannot be achieved at once, because there is no known way to hide the internal structure of any of the post-quantum ciphers.
 But there is an important consideration that should also be taken into account: if the certificate of any of the TYPHOON server clients leaks, **there is no reason to care about obfuscation anymore**, only encryption.
 Indeed, if an external observer knows that a certain IP address and port number pair belong to a TYPHOON server, all the traffic incoming to and outgoing from that port can and will be assumed to belong to TYPHOON, so there is no more reason to hide that.
 Taking this consideration into account, two different cryptographic modes are proposed:
@@ -458,7 +458,7 @@ For `full` mode:
 - For `VSK` and `VPK` Ed25519 algorithm is used.
 - For `OSK` and `OPK` [X25519](https://cr.yp.to/ecdh.html) algorithm is used.
 
-Choice of Classic McEliece might be unusual, but apparently of all the post-quantum algorithms it fits the requirements the best.
+Choice of Classic McEliece might be unusual, but apparently of all the post-quantum algorithms, it fits the requirements best.
 All the other post-quantum algorithms would produce the ciphertext that long, so the handshake message containing it would be easily identifiable among the rest of the traffic.
 The length of the public key (as it was already mentioned above) does not really matter in this case, since shorter X25519 is used for ephemeral key exchange.
 
@@ -489,7 +489,7 @@ Client handshake packet encryption consists of the following steps:
 0. Client comes up with initial data.
 1. Client generates a random 32-byte nonce `CliNnc` (it's required for replay protection).
 2. Client generates ephemeral `X25519` keypair, retrieving a public key (`CliEphPubKey`) and a secret key (`CliEphSecKey`).
-3. Client performs encapsulation using `CliEphSecKey` and `EPK`, retrieving a ciphertext (`Ciph`) and a shared secret (`CliShrSec`).
+3. Client performs KEM encapsulation using `EPK`, retrieving a ciphertext (`Ciph`) and a shared secret (`CliShrSec`).
 4. Client obfuscates `CliEphPubKey` and `Ciph` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `CliNnc`), producing `CliEphPubKeyObf` and `CiphObf`.
 5. Client encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with key derived by `BLAKE3` from concatenation of `CliShrSec`, `CliEphPubKeyObf` and `CliNnc`.
 6. Client encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm (NB! Here initial data encryption key is used for additional data instead of session key).
@@ -500,9 +500,9 @@ After the client receives the encrypted handshake message from the server, it de
 
 0. Client extracts `SrvEphPubKeyObf`, `TransAuth` and `SrvNnc` from the server handshake message.
 1. Client deobfuscates `SrvEphPubKeyObf` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `SrvNnc`), producing `SrvEphPubKey`.
-2. Client performs encapsulation by using `CliEphSecKey` and `SrvEphPubKey`, retrieving a shared secret (`SrvShrSec`).
-3. Client builds a transcript by applying `SHA256` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
-4. Client verifies server identity using `Ed25529` with `VPK`, applying it to `Trans` and `TransAuth`.
+2. Client performs X25519 key exchange using `CliEphSecKey` and `SrvEphPubKey`, deriving a shared secret (`SrvShrSec`).
+3. Client builds a transcript by applying `BLAKE3` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
+4. Client verifies server identity using `Ed25519` with `VPK`, applying it to `Trans` and `TransAuth`.
 5. Client computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
 6. Client decrypts the server initial data, verifying `Sess` correctness.
 
@@ -524,10 +524,10 @@ After the server initiates the internal state for the user and waits for an appr
 0. Server comes up with initial data (might be just a random byte string).
 1. Server generates a random 32-byte nonce `SrvNnc` (it's required for replay protection).
 2. Server generates ephemeral `X25519` keypair, retrieving a public key (`SrvEphPubKey`) and a secret key (`SrvEphSecKey`).
-3. Server performs encapsulation by using `SrvEphSecKey` and `CliEphPubKey`, retrieving a shared secret (`SrvShrSec`).
+3. Server performs X25519 key exchange using `SrvEphSecKey` and `CliEphPubKey`, deriving a shared secret (`SrvShrSec`).
 4. Server obfuscates `SrvEphPubKey` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `SrvNnc`), producing `SrvEphPubKeyObf`.
 5. Server builds a transcript by applying `BLAKE3` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
-6. Server authenticates `Trans` using `Ed25529` with `VSK`, producing `TransAuth`.
+6. Server authenticates `Trans` using `Ed25519` with `VSK`, producing `TransAuth`.
 7. Server computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
 8. Server encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm.
 9. Server encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with `Sess` as a key.
@@ -565,20 +565,20 @@ For the packets going from client to server, tailors are is encrypted using the 
 0. Client comes up with the raw tailor `Tailor`.
 1. Client generates a random 32-byte nonce `Nnc` (it's required for replay protection).
 2. Client generates ephemeral `X25519` keypair, retrieving a public key (`EphPubKey`) and a secret key (`EphSecKey`).
-3. Client performs encapsulation by using `EphSecKey` and `OPK`, retrieving a shared secret (`ShrSec`).
+3. Client performs X25519 key exchange using `EphSecKey` and `OPK`, deriving a shared secret (`ShrSec`).
 4. Client obfuscates the `EphPubKey` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OPK` and `Nnc`), producing `EphPubKeyObf`.
 5. Client encrypts the `Tailor` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `TailorEnc`.
 6. Client constructs the encrypted tail by concatenating `Nnc`, `EphPubKeyObf` and `TailorEnc`.
 
-The tailors are is decrypted using the following steps:
+The tailors are decrypted using the following steps:
 
 0. Server extracts `Nnc`, `EphPubKeyObf` and `TailorEnc` from the client message.
 1. Server deobfuscates the `EphPubKeyObf` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OPK` and `Nnc`), producing `EphPubKey`.
-2. Server performs encapsulation by using `EphPubKey` and `OSK`, retrieving a shared secret (`ShrSec`).
+2. Server performs X25519 key exchange using `EphPubKey` and `OSK`, deriving a shared secret (`ShrSec`).
 3. Server decrypts the `TailorEnc` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `Tailor`.
 
 That approach allows safe encryption guarantees for all tailors.
-For the packets going from client to server, transmitted tailor structure can still be deobfuscated if certificate leaks, that unfortunately can not be avoided.
+For the packets going from client to server, the transmitted tailor structure can still be deobfuscated if the certificate leaks; this unfortunately cannot be avoided.
 Still, even if it is deobfuscated, the tailor contents remain encrypted and will not leak.
 
 ### Marshalling encryption
@@ -608,42 +608,42 @@ TODO!
 
 ## Proposed implementation
 
-Below a few tips on protocol implementation are given.
-These details are not specified by the protocol itself and can vary from one implementation to another depending on usage domain.
-However, below some safe and reasonable defaults (that can be used at least for reference purposes) are given:
+Below, a few tips on protocol implementation are given.
+These details are not specified by the protocol itself and can vary from one implementation to another depending on the usage domain.
+However, some safe and reasonable defaults (that can be used at least for reference purposes) are provided:
 
 ### Sockets and listeners
 
-As it was mentioned in [architecture](#architecture) chapter, it is suggested that both TYPHOON client and servers consist of two parts: a session manager and one or more flow managers.
-Session manager keeps track of the session health, encryption and data transferring, while flow managers send decoy packets, obfuscate traffic and can only decrypt packet tailors.
-It is suggested that a flow manager would hold an UDP port, while session manager would be purely virtual.
+As mentioned in the [architecture](#architecture) chapter, it is suggested that both TYPHOON clients and servers consist of two parts: a session manager and one or more flow managers.
+The session manager keeps track of session health, encryption, and data transfer, while flow managers send decoy packets, obfuscate traffic, and can only decrypt packet tailors.
+It is suggested that a flow manager would hold a UDP port, while the session manager would be purely virtual.
 
-On client side there is only one session manager that is tightly coupled with all the flow managers (normally they only have different ports, but similar IP addresses).
-On server side, they can be more loosely coupled: flow manager can be connected to multiple clients at the same time, they perform traffic demultiplexing (will be described below) and deliver the packets to virtual session managers (a manager is unique per user).
-Theoretically, different server flow managers can occupy different IP addresses, but in case they [reside in separate processes](#future-work) (or on separate machines) - their communication is out of scope of TYPHOON protocol.
+On the client side, there is only one session manager that is tightly coupled with all the flow managers (normally they only have different ports but similar IP addresses).
+On the server side, they can be more loosely coupled: a flow manager can be connected to multiple clients at the same time, performing traffic demultiplexing (described below) and delivering packets to virtual session managers (one manager per user).
+Theoretically, different server flow managers can occupy different IP addresses, but if they [reside in separate processes](#future-work) (or on separate machines), their communication is out of scope of the TYPHOON protocol.
 
-TYPHOON listener is a logical structure that keeps track of all the flow managers (they are constant), spawns and recycles session managers for users.
-The listener should also be capable of producing client certificates, that are guaranteed to be valid while the listener is alive (or restarted but with similar flow manager configuration).
+The TYPHOON listener is a logical structure that keeps track of all flow managers (which are constant), spawns session managers for users, and recycles them when done.
+The listener should also be capable of producing client certificates that are guaranteed to be valid while the listener is alive (or restarted with a similar flow manager configuration).
 
 #### Insertion and processing
 
 It is suggested that every "manager" is divided into two parts:
 
-- Controller: accepts packets, processes them and sends further.
-- Provider: is attached to a controller, keeps track of all the traffic coming through it, is capable of generating packets and injecting them to controller.
+- Controller: accepts packets, processes them, and forwards them.
+- Provider: attaches to a controller, keeps track of all traffic coming through it, and is capable of generating packets and injecting them into the controller.
 
 In short, these are the main TYPHOON implementation parts:
 
 - Listener (one per server): keeps track of global server variables, all the users, metadata and state, can generate certificates.
-- Session controller (one per session): accepts data, encrypts it with a session key, appends encrypted header, selects an appropriate flow and delivers data to it.
+- Session controller (one per session): accepts data, encrypts it with the session key, appends an encrypted header, selects an appropriate flow, and delivers data to it.
 - Health check provider (one per session): attached to session controller, keeps internal protocol state, manages handshake message timers and injects handshake messages themselves if necessary.
 - Flow controller (one per flow): accepts data, prepends a mock header to it and sends it to the flow partner using a UDP socket.
 - Decoy provider (one per flow): attached to flow controller, observes flow packet stream and injects decoy packets whenever necessary.
 
 #### Identification and rebinding
 
-As it is obvious from the [tailor structure](#tailor-structure), tailor carries a constant number of bytes number for client authentication.
-These bytes are used for packets demultiplexing: all the TYPHOON packets arrive to the same UDP socket of a flow manager, but are delivered to different logical session managers based on the **ID** tailor field.
+As is evident from the [tailor structure](#tailor-structure), the tailor carries a constant number of bytes for client authentication.
+These bytes are used for packet demultiplexing: all TYPHOON packets arrive at the same UDP socket of a flow manager but are delivered to different logical session managers based on the **ID** tailor field.
 Another important challenge is client address binding, since client addresses can change randomly mid-session according to the [UDP specification](https://datatracker.ietf.org/doc/html/rfc768).
 
 In general, the client-to-identification mapping should be safe (considering unique client identification is long enough) thanks to:
@@ -651,27 +651,27 @@ In general, the client-to-identification mapping should be safe (considering uni
 - Session key authentication that is used for [tailor encryption](#tailor-encryption).
 - Incremental packet number [in tailor](#tailor-structure), stored in lower `4` bytes of **PN** field (it's always filled, even in data and decoy packets).
 
-By default, the **ID** field is `16` bytes ([UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier)) long, which should be sufficient for most of the cases (but may be changed using `TYPHOON_ID_LENGTH` constant).
+By default, the **ID** field is `16` bytes ([UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier)) long, which should be sufficient for most cases (but may be changed using the `TYPHOON_ID_LENGTH` constant).
 The UDP source address rebinding happens only if a correctly-authenticated packet with incremental number higher than before arrives from a new source address.
-That approach allows verifying packet tailor identity, safe attribution and rebinding.
+This approach allows verifying packet tailor identity, safe attribution, and rebinding.
 
 #### Global user structures
 
 In order to maintain all the user sessions and decoy flows, it is proposed to maintain a global table in the listener, mapping user **ID**s to user information (including session manager, session key, connected flow managers, etc.).
 In addition to that, every flow manager keeps a table of all the connected user **ID**s mapped to the connected source address.
 
-Rebinding happens on flow manager only, without session manager or any other listener parts being involved.
-The only thing that is required for that is packet validation, that is [made using user session key](#tailor-encryption) - that indeed is pulled from the global user table.
+Rebinding happens on the flow manager only, without the session manager or any other listener parts being involved.
+The only requirement for this is packet validation, which is [performed using the user session key](#tailor-encryption) — this key is pulled from the global user table.
 
 ### Error handling
 
-The error handling rule is simple: it is safe to never reply to any of the invalid packages.
-The protocol is fully-functional without any error handling at all.
+The error handling rule is simple: it is safe to never reply to any invalid packets.
+The protocol is fully functional without any error handling at all.
 
 However, in order to speed things up and improve logging, a few things are highly advisable:
 
-- If a handshake message contains an error, server should send a handshake response with appropriate **CD** field set.
-- If a fatal error happens during connection (socket being closed) or one of the parties is about to shut down the connection, they should send a termination packet, also with **CD** field set.
+- If a handshake message contains an error, the server should send a handshake response with the appropriate **CD** field set.
+- If a fatal error occurs during connection (socket being closed) or one of the parties is about to shut down the connection, they should send a termination packet, also with the **CD** field set.
 
 The sample valid **CD** values are given below:
 
@@ -732,12 +732,12 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_DECOY_HEAVY_BASE_LENGTH` | The size of a heavy decoy mode packet (as a fraction of MTU) | `0.7` |
 | `TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH` | The size of a heavy decoy mode packet (multiplied by quietness index) | `0.3` |
 | `TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR` | Random heavy decoy mode packet length jitter | `0.8` |
-| `TYPHOON_DECOY_NOISY_BASE_RATE` | Base rate of the heavy decoy mode | `3` |
-| `TYPHOON_DECOY_NOISY_DELAY_MIN` | Minimum delay for heavy decoy mode (in milliseconds) | `10` |
-| `TYPHOON_DECOY_NOISY_DELAY_MAX` | Maximum delay for heavy decoy mode (in milliseconds) | `1000` |
-| `TYPHOON_DECOY_NOISY_DELAY_DEFAULT` | Default delay for heavy decoy mode (in milliseconds) | `500` |
-| `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` | Minimum packet size for heavy decoy mode (in bytes) | `128` |
-| `TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER` | Random heavy decoy mode packet length jitter multiplier | `0.3` |
+| `TYPHOON_DECOY_NOISY_BASE_RATE` | Base rate of the noisy decoy mode | `3` |
+| `TYPHOON_DECOY_NOISY_DELAY_MIN` | Minimum delay for noisy decoy mode (in milliseconds) | `10` |
+| `TYPHOON_DECOY_NOISY_DELAY_MAX` | Maximum delay for noisy decoy mode (in milliseconds) | `1000` |
+| `TYPHOON_DECOY_NOISY_DELAY_DEFAULT` | Default delay for noisy decoy mode (in milliseconds) | `500` |
+| `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` | Minimum packet size for noisy decoy mode (in bytes) | `128` |
+| `TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER` | Random noisy decoy mode packet length jitter multiplier | `0.3` |
 | `TYPHOON_DECOY_SPARSE_BASE_RATE` | Base rate of the sparse decoy mode | `20` |
 | `TYPHOON_DECOY_SPARSE_RATE_FACTOR` | Exponential reference rate of the sparse decoy mode multiplier | `3` |
 | `TYPHOON_DECOY_SPARSE_JITTER` | Delay jitter for sparse decoy mode | `0.15` |
