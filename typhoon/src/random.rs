@@ -5,8 +5,6 @@ use rand::Rng;
 #[cfg(not(test))]
 use rand::rngs::OsRng;
 
-pub const DEFAULT_KEY_LENGTH: usize = 32;
-
 pub trait SupportRng {
     fn random_byte_array<T: ArrayLength>(&mut self) -> GenericArray<u8, T>;
 }

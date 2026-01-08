@@ -464,6 +464,12 @@ Theoretically, `VSK` and `VPK` can be omitted at all, as knowledge of `ESK` alre
 However, `VPK` can still be used for public server verification, meaning that it can be provided by an external certificate authority.
 In that case it can be safely omitted from the TYPHOON certificate (otherwise it still should be embedded).
 
+Symmetric encryption in TYPHOON protocol also comes in two modes.
+Since it is used for the majority of all data transferred, the requirements for its performance are the most critical.
+
+1. `software` mode is suitable for most systems with no or unknown cipher acceleration hardware installed, it uses [XChaCha20-Poly1305](https://en.wikipedia.org/wiki/ChaCha20-Poly1305#XChaCha20-Poly1305_%E2%80%93_extended_nonce_variant) cipher.
+2. `hardware` mode is only suitable for the systems with AES hardware acceleration hardware installed, it uses [AES-GCM-256](https://en.wikipedia.org/wiki/Galois/Counter_Mode) cipher.
+
 > All the cryptography primitives mentioned here are referenced once again in the [supporting math](#supporting-math) chapter.
 
 ### Handshake encryption
@@ -482,7 +488,7 @@ Client handshake packet encryption consists of the following steps:
 1. Client generates a random 32-byte nonce `CliNnc` (it's required for replay protection).
 2. Client generates ephemeral `X25519` keypair, retrieving a public key (`CliEphPubKey`) and a secret key (`CliEphSecKey`).
 3. Client performs encapsulation using `CliEphSecKey` and `EPK`, retrieving a ciphertext (`Ciph`) and a shared secret (`CliShrSec`).
-4. Client obfuscates `CliEphPubKey` and `Ciph` using _anonymous_ [marshalling encryption](#marshalling-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `CliNnc`), producing `CliEphPubKeyObf` and `CiphObf`.
+4. Client obfuscates `CliEphPubKey` and `Ciph` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `CliNnc`), producing `CliEphPubKeyObf` and `CiphObf`.
 5. Client encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with key derived by `BLAKE3` from concatenation of `CliShrSec`, `CliEphPubKeyObf` and `CliNnc`.
 6. Client encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm (NB! Here initial data encryption key is used for additional data instead of session key).
 7. Client constructs the handshake encrypted tailor by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and the encrypted tailor itself, encrypted initial data is passed in the handshake message body.
@@ -491,7 +497,7 @@ Client handshake packet encryption consists of the following steps:
 After the client receives the encrypted handshake message from the server, it decrypts it using the following steps:
 
 1. Client extracts `SrvEphPubKeyObf`, `TransAuth` and `SrvNnc` from the server handshake message.
-2. Client deobfuscates `SrvEphPubKeyObf` using _anonymous_ [marshalling encryption](#marshalling-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `SrvNnc`), producing `SrvEphPubKey`.
+2. Client deobfuscates `SrvEphPubKeyObf` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `SrvNnc`), producing `SrvEphPubKey`.
 3. Client performs encapsulation by using `CliEphSecKey` and `SrvEphPubKey`, retrieving a shared secret (`SrvShrSec`).
 4. Client builds a transcript by applying `SHA256` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
 5. Client verifies server identity using `Ed25529` with `VPK`, applying it to `Trans` and `TransAuth`.
@@ -505,9 +511,9 @@ After the client receives the encrypted handshake message from the server, it de
 Client handshake packet decryption consists of the following steps:
 
 0. Server extracts `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and `InitEnc` from the client handshake message.
-1. Server deobfuscates `CliEphPubKeyObf` and `CiphObf` using _anonymous_ [marshalling encryption](#marshalling-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `CliNnc`), producing `CliEphPubKey` and `Ciph`.
+1. Server deobfuscates `CliEphPubKeyObf` and `CiphObf` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `CliNnc`), producing `CliEphPubKey` and `Ciph`.
 2. Server performs decapsulation using `ESK` and `Ciph`, receiving a shared secret (`CliShrSec`).
-3. Server decrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with key derived by `BLAKE3` from concatenation of `Nnc`, `ShrSec`, `CliEphPubKey` and `EPK` and processes it.
+3. Server decrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with key derived by `BLAKE3` from concatenation of `CliShrSec`, `CliEphPubKeyObf` and `CliNnc` and processes it.
 
 > In case of a decryption failure, server should terminate connection silently.
 
@@ -517,10 +523,10 @@ After the server initiates the internal state for the user and waits for an appr
 2. Server generates a random 32-byte nonce `SrvNnc` (it's required for replay protection).
 3. Server generates ephemeral `X25519` keypair, retrieving a public key (`SrvEphPubKey`) and a secret key (`SrvEphSecKey`).
 4. Server performs encapsulation by using `SrvEphSecKey` and `CliEphPubKey`, retrieving a shared secret (`SrvShrSec`).
-5. Server obfuscates `SrvEphPubKey` using _anonymous_ [marshalling encryption](#marshalling-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `SrvNnc`), producing `SrvEphPubKeyObf`.
+5. Server obfuscates `SrvEphPubKey` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `SrvNnc`), producing `SrvEphPubKeyObf`.
 6. Server builds a transcript by applying `BLAKE3` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
 7. Server authenticates `Trans` using `Ed25529` with `VSK`, producing `TransAuth`.
-8. Server computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans` as salt.
+8. Server computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
 9. Server encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm.
 10. Server encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with `Sess` as a key.
 11. Server constructs the handshake encrypted tailor by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and the encrypted tailor itself.
@@ -549,20 +555,22 @@ The other party uses `OSK` and deobfuscated `MyEphPubKeyObf` in order to decrypt
 
 ### Marshalling encryption
 
-Marshalling encryption defines the encryption algorithm used for packet payloads.
-Since it is used for the majority of all data transferred, the requirements for its performance are the most critical.
-
-Just like with [cryptographic modes](#cryptography), two different options are supported by TYPHOON protocol.
-By default, [XChaCha20-Poly1305](https://en.wikipedia.org/wiki/ChaCha20-Poly1305#XChaCha20-Poly1305_%E2%80%93_extended_nonce_variant) should be used (_software_ marshalling encryption mode), while in certain cases [AES-GCM-256](https://en.wikipedia.org/wiki/Galois/Counter_Mode) can be used instead (_hardware_ marshalling encryption mode).
-Normally, the latter should be used in case the server has limited resources and also has `AES-GCM` hardware acceleration enabled.
+Marshalling encryption defines the symmetric encryption algorithm used for packet payloads.
+The ciphers used in this mode provide fast and authenticated encryption and decryption.
 
 Please note, that this cipher selection is also dictated by server and embedded in all the certificates.
 
-A special case of marshalling encryption is _anonymous_ encryption, which does not include ciphertext authentication.
-It should only be used for obfuscation, not real encryption.
-For _software_ mode, plain [XChaCha20](https://en.wikipedia.org/wiki/Salsa20#ChaCha20_adoption) cipher is used.
-For _hardware_ mode, [AES-256-CTR](https://en.wikipedia.org/wiki/Block_cipher_mode_of_operation#Counter_(CTR)) cipher is used.
-Use of _anonymous_ marshalling encryption mode is always marked specifically.
+> All the cryptography primitives mentioned here are referenced once again in the [supporting math](#supporting-math) chapter.
+
+### Anonymous encryption
+
+A special case of symmetric encryption is `anonymous` encryption, which does not include ciphertext authentication.
+It should only be used for obfuscation, not real encryption:
+
+- In `software` mode, plain [XChaCha20](https://en.wikipedia.org/wiki/Salsa20#ChaCha20_adoption) cipher is used.
+- In `hardware` mode, [AES-256-CTR](https://en.wikipedia.org/wiki/Block_cipher_mode_of_operation#Counter_(CTR)) cipher is used.
+
+Use of `anonymous` marshalling encryption mode is always marked specifically.
 
 > All the cryptography primitives mentioned here are referenced once again in the [supporting math](#supporting-math) chapter.
 

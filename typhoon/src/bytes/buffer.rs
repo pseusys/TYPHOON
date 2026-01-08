@@ -213,7 +213,12 @@ impl<'a> ByteBuffer<'a> {
         if size > self.len() {
             self.expand_end(size - self.len())
         } else {
-            self.clone()
+            ByteBuffer {
+                data: self.data.clone(),
+                length: self.length,
+                start: self.start,
+                end: self.start + size,
+            }
         }
     }
 }
