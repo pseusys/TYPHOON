@@ -1,17 +1,17 @@
 use blake3::Hasher;
 use blake3::hazmat::hash_derive_key_context;
 use cfg_if::cfg_if;
-use classic_mceliece_rust::{CRYPTO_BYTES, CRYPTO_CIPHERTEXTBYTES, Ciphertext, encapsulate, decapsulate};
+use classic_mceliece_rust::{CRYPTO_BYTES, CRYPTO_CIPHERTEXTBYTES, Ciphertext, decapsulate, encapsulate};
 use ed25519_dalek::Signature;
 use rand::RngCore;
 use simple_error::try_with;
-use x25519_dalek::{PublicKey, EphemeralSecret};
+use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::bytes::ByteBuffer;
 use crate::crypto::certificate::ObfuscationBufferContainer;
-use crate::crypto::symmetric::{Symmetric, encrypt_anonymously, decrypt_anonymously};
-use crate::random::get_rng;
+use crate::crypto::symmetric::{Symmetric, decrypt_anonymously, encrypt_anonymously};
 use crate::generic::DynResult;
+use crate::random::get_rng;
 
 cfg_if! {
     if #[cfg(feature = "server")] {
@@ -43,7 +43,7 @@ const MARSHALLING_ENCRYPTION_KEY: &str = "marshalling encryption key";
 
 #[cfg(feature = "client")]
 impl<'a> Certificate<'a> {
-    pub fn encapsulate_handshake_client<'b>(&'a self, buffer: ByteBuffer<'b>) -> DynResult<(ClientData<'_>, ByteBuffer<'b>, Symmetric)> {
+    pub fn encapsulate_handshake_client<'b>(&'a self, buffer: ByteBuffer) -> DynResult<(ClientData, ByteBuffer, Symmetric)> {
         let nonce = buffer.ensure_size(NONCE_LENGTH);
         get_rng().fill_bytes(&mut nonce.slice_mut());
 
@@ -73,7 +73,7 @@ impl<'a> Certificate<'a> {
         Ok((client_data, handshake_secret, initial_encryption_symmetric))
     }
 
-    pub fn decapsulate_handshake_client<'b>(&'a self, data: ClientData, handshake_secret: ByteBuffer<'b>) -> DynResult<Symmetric> {
+    pub fn decapsulate_handshake_client<'b>(&'a self, data: ClientData, handshake_secret: ByteBuffer) -> DynResult<Symmetric> {
         let (mut ephemeral_public_obfuscated, rest) = handshake_secret.split_buf(X25519_KEY_LENGTH);
         let (transcript_signed, rest) = rest.split_buf(Signature::BYTE_SIZE);
         let nonce = rest.rebuffer_end(NONCE_LENGTH);
@@ -98,7 +98,7 @@ impl<'a> Certificate<'a> {
     }
 
     #[cfg(feature = "full")]
-    pub fn encrypt_obfuscate<'b>(&'a self, plaintext: ByteBuffer<'b>) -> DynResult<ByteBuffer<'b>> {
+    pub fn encrypt_obfuscate<'b>(&'a self, plaintext: ByteBuffer) -> DynResult<ByteBuffer> {
         let nonce = ByteBuffer::from(&get_rng().random_byte_array::<U32>()[..]);
 
         let ephemeral_secret = StaticSecret::random_from_rng(get_rng());
@@ -116,12 +116,11 @@ impl<'a> Certificate<'a> {
         let payload = ciphertext.prepend_buf(&ephemeral_public_obfuscated).prepend_buf(&nonce);
         Ok(payload)
     }
-
 }
 
 #[cfg(feature = "server")]
 impl<'a> ServerSecret<'a> {
-    fn decapsulate_handshake_server(&'a self, handshake_secret: ByteBuffer) -> DynResult<(ServerData<'_>, Symmetric)> {
+    fn decapsulate_handshake_server(&'a self, handshake_secret: ByteBuffer) -> DynResult<(ServerData, Symmetric)> {
         let (mut ephemeral_public_obfuscated, rest) = handshake_secret.split_buf(X25519_KEY_LENGTH);
         let (mut ciphertext_obfuscated, rest) = rest.split_buf(Signature::BYTE_SIZE);
         let nonce = rest.rebuffer_end(NONCE_LENGTH);
@@ -147,13 +146,13 @@ impl<'a> ServerSecret<'a> {
         let server_data = ServerData {
             ephemeral_key: ephemeral_public,
             shared_secret: shared_buffer,
-            nonce: ByteBuffer::from(&nonce.slice()[..])
+            nonce: ByteBuffer::from(&nonce.slice()[..]),
         };
         let initial_encryption_symmetric = Symmetric::new(&initial_encryption_key)?;
         Ok((server_data, initial_encryption_symmetric))
     }
 
-    fn encapsulate_handshake_server<'b>(&'a mut self, data: ServerData, buffer: ByteBuffer<'b>) -> DynResult<(ByteBuffer<'b>, Symmetric)> {
+    fn encapsulate_handshake_server<'b>(&'a mut self, data: ServerData, buffer: ByteBuffer) -> DynResult<(ByteBuffer, Symmetric)> {
         let nonce = buffer.ensure_size(NONCE_LENGTH);
         get_rng().fill_bytes(&mut nonce.slice_mut());
 
@@ -177,7 +176,7 @@ impl<'a> ServerSecret<'a> {
     }
 
     #[cfg(feature = "full")]
-    pub fn decrypt_deobfuscate<'b>(&'a self, ciphertext: ByteBuffer<'b>) -> DynResult<ByteBuffer<'b>> {
+    pub fn decrypt_deobfuscate<'b>(&'a self, ciphertext: ByteBuffer) -> DynResult<ByteBuffer> {
         let (nonce, rest) = ciphertext.split_buf(NONCE_LENGTH);
         let (mut ephemeral_public_obfuscated, ciphertext) = rest.split_buf(Signature::BYTE_SIZE);
 

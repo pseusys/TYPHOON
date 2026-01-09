@@ -7,8 +7,8 @@ use crate::bytes::ByteBuffer;
 #[cfg(feature = "full")]
 use x25519_dalek::StaticSecret;
 
-pub trait ObfuscationBufferContainer<'a> {
-    fn obfuscation_buffer(&'a self) -> ByteBuffer<'a>;
+pub trait ObfuscationBufferContainer {
+    fn obfuscation_buffer(&self) -> ByteBuffer;
 }
 
 // Server secret is a server certificate, should be kept by server:
@@ -25,19 +25,19 @@ pub struct ServerSecret<'a> {
 pub struct ServerSecret<'a> {
     pub(super) esk: SecretKey<'a>,
     pub(super) vsk: SigningKey,
-    pub(super) obfs: ByteBuffer<'a>,
+    pub(super) obfs: ByteBuffer,
 }
 
-impl<'a> ObfuscationBufferContainer<'a> for ServerSecret<'a> {
+impl<'a> ObfuscationBufferContainer for ServerSecret<'a> {
     #[inline]
     #[cfg(feature = "full")]
-    fn obfuscation_buffer(&self) -> ByteBuffer<'a> {
+    fn obfuscation_buffer(&self) -> ByteBuffer {
         ByteBuffer::from(&self.opk.as_bytes()[..])
     }
 
     #[inline]
     #[cfg(feature = "fast")]
-    fn obfuscation_buffer(&self) -> ByteBuffer<'a> {
+    fn obfuscation_buffer(&self) -> ByteBuffer {
         self.obfs.clone()
     }
 }
@@ -55,33 +55,33 @@ pub struct Certificate<'a> {
 pub struct Certificate<'a> {
     pub(super) epk: McEliecePublicKey<'a>,
     pub(super) vpk: VerifyingKey,
-    pub(super) obfs: ByteBuffer<'a>,
+    pub(super) obfs: ByteBuffer,
 }
 
-impl<'a> ObfuscationBufferContainer<'a> for Certificate<'a> {
+impl<'a> ObfuscationBufferContainer for Certificate<'a> {
     #[inline]
     #[cfg(feature = "full")]
-    fn obfuscation_buffer(&self) -> ByteBuffer<'a> {
+    fn obfuscation_buffer(&self) -> ByteBuffer {
         ByteBuffer::from(&self.opk.as_bytes()[..])
     }
 
     #[inline]
     #[cfg(feature = "fast")]
-    fn obfuscation_buffer(&self) -> ByteBuffer<'a> {
+    fn obfuscation_buffer(&self) -> ByteBuffer {
         self.obfs.clone()
     }
 }
 
 // This data should be preserved by client or server during handshake:
 
-pub struct ClientData<'a> {
+pub struct ClientData {
     pub(super) ephemeral_key: EphemeralSecret,
-    pub(super) shared_secret: ByteBuffer<'a>,
-    pub(super) nonce: ByteBuffer<'a>,
+    pub(super) shared_secret: ByteBuffer,
+    pub(super) nonce: ByteBuffer,
 }
 
-pub struct ServerData<'a> {
+pub struct ServerData {
     pub(super) ephemeral_key: X25519PublicKey,
-    pub(super) shared_secret: ByteBuffer<'a>,
-    pub(super) nonce: ByteBuffer<'a>,
+    pub(super) shared_secret: ByteBuffer,
+    pub(super) nonce: ByteBuffer,
 }

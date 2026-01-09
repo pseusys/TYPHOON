@@ -1,6 +1,5 @@
 use generic_array::{ArrayLength, GenericArray};
-use rand::CryptoRng;
-use rand::Rng;
+use rand::{CryptoRng, Error, Rng, RngCore};
 
 #[cfg(not(test))]
 use rand::rngs::OsRng;
@@ -22,7 +21,7 @@ impl SupportRng for OsRng {
 struct MockRng;
 
 #[cfg(test)]
-impl rand::RngCore for MockRng {
+impl RngCore for MockRng {
     fn next_u32(&mut self) -> u32 {
         0u32
     }
@@ -34,8 +33,8 @@ impl rand::RngCore for MockRng {
     fn fill_bytes(&mut self, dest: &mut [u8]) {
         dest.fill(0u8)
     }
-    
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
         Ok(self.fill_bytes(dest))
     }
 }

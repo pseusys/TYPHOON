@@ -2,8 +2,8 @@ use cfg_if::cfg_if;
 use simple_error::bail;
 
 use crate::bytes::ByteBuffer;
-use crate::random::get_rng;
 use crate::generic::DynResult;
+use crate::random::get_rng;
 
 cfg_if! {
     if #[cfg(feature = "fast")] {
@@ -52,14 +52,14 @@ pub const NONCE_LEN: usize = 24;
 #[cfg(feature = "hardware")]
 pub const NONCE_LEN: usize = 16;
 
-pub fn encrypt_anonymously<'a>(key: &ByteBuffer, plaintext: &mut ByteBuffer<'a>) -> DynResult<ByteBuffer<'a>> {
+pub fn encrypt_anonymously<'a>(key: &ByteBuffer, plaintext: &mut ByteBuffer) -> DynResult<ByteBuffer> {
     let key_bytes = <[u8; SYMMETRIC_KEY_LENGTH]>::try_from(&key.slice()[..])?;
     let nonce = AnonymousCypher::generate_iv(get_rng());
     AnonymousCypher::new(&key_bytes.into(), &nonce.into()).apply_keystream(&mut plaintext.slice_mut());
     Ok(plaintext.append(&nonce))
 }
 
-pub fn decrypt_anonymously<'a>(key: &ByteBuffer, ciphertext_with_nonce: &mut ByteBuffer<'a>) -> DynResult<ByteBuffer<'a>> {
+pub fn decrypt_anonymously<'a>(key: &ByteBuffer, ciphertext_with_nonce: &mut ByteBuffer) -> DynResult<ByteBuffer> {
     let (nonce_bytes, ciphertext) = ciphertext_with_nonce.split_buf(NONCE_LEN);
     let key_bytes = <[u8; SYMMETRIC_KEY_LENGTH]>::try_from(&key.slice()[..])?;
     let nonce = <[u8; NONCE_LEN]>::try_from(&nonce_bytes.slice()[..])?;
@@ -80,7 +80,7 @@ impl Symmetric {
     }
 
     #[inline]
-    fn encrypt_internal<'a, 'b>(&mut self, plaintext: ByteBuffer<'a>, additional_data: Option<&ByteBuffer>) -> DynResult<(ByteBuffer<'a>, GenericArray<u8, U16>)> {
+    fn encrypt_internal<'a, 'b>(&mut self, plaintext: ByteBuffer, additional_data: Option<&ByteBuffer>) -> DynResult<(ByteBuffer, GenericArray<u8, U16>)> {
         let nonce = Cipher::generate_nonce(get_rng());
         let result = match additional_data {
             Some(res) => self.cipher.encrypt_in_place_detached(&nonce, &res.slice(), &mut plaintext.slice_mut()),
@@ -92,7 +92,7 @@ impl Symmetric {
         }
     }
 
-    pub fn encrypt_auth<'a>(&mut self, plaintext: ByteBuffer<'a>, additional_data: Option<&ByteBuffer>) -> DynResult<ByteBuffer<'a>> {
+    pub fn encrypt_auth<'a>(&mut self, plaintext: ByteBuffer, additional_data: Option<&ByteBuffer>) -> DynResult<ByteBuffer> {
         match self.encrypt_internal(plaintext, additional_data) {
             Ok((ciphertext, auth)) => Ok(ciphertext.append(&auth)),
             Err(err) => Err(err),
@@ -100,23 +100,19 @@ impl Symmetric {
     }
 
     #[cfg(feature = "fast")]
-    pub fn encrypt_auth_twice<'a>(&mut self, plaintext: ByteBuffer<'a>, additional_data: Option<&ByteBuffer>, second_hash_key: &ByteBuffer) -> DynResult<ByteBuffer<'a>> {
+    pub fn encrypt_auth_twice<'a>(&mut self, plaintext: ByteBuffer, additional_data: Option<&ByteBuffer>, second_hash_key: &ByteBuffer) -> DynResult<ByteBuffer> {
         match self.encrypt_internal(plaintext, additional_data) {
             Ok((ciphertext, auth)) => {
                 let second_hash_key_bytes = <[u8; KEY_LEN]>::try_from(&second_hash_key.slice()[..])?;
-                let hash = if let Some(additional) = additional_data {
-                    Hasher::new_keyed(&second_hash_key_bytes).update(&ciphertext.slice()).update(&additional.slice()).finalize()
-                } else {
-                    keyed_hash(&second_hash_key_bytes, &ciphertext.slice())
-                };
+                let hash = if let Some(additional) = additional_data { Hasher::new_keyed(&second_hash_key_bytes).update(&ciphertext.slice()).update(&additional.slice()).finalize() } else { keyed_hash(&second_hash_key_bytes, &ciphertext.slice()) };
                 Ok(ciphertext.append(&auth).append(hash.as_bytes()))
-            },
+            }
             Err(err) => Err(err),
         }
     }
 
     #[inline]
-    pub fn decrypt_internal<'a>(&mut self, ciphertext_with_nonce: ByteBuffer<'a>, tag_buffer: &ByteBuffer, additional_data: Option<&ByteBuffer>) -> DynResult<ByteBuffer<'a>> {
+    pub fn decrypt_internal<'a>(&mut self, ciphertext_with_nonce: ByteBuffer, tag_buffer: &ByteBuffer, additional_data: Option<&ByteBuffer>) -> DynResult<ByteBuffer> {
         let (nonce_bytes, ciphertext) = ciphertext_with_nonce.split_buf(NONCE_LEN);
         let nonce_slice = nonce_bytes.slice();
         let nonce = CipherNonce::from_slice(&nonce_slice);
@@ -132,7 +128,7 @@ impl Symmetric {
         }
     }
 
-    pub fn decrypt_auth<'a>(&mut self, ciphertext_authenticated: ByteBuffer<'a>, additional_data: Option<&ByteBuffer>) -> DynResult<ByteBuffer<'a>> {
+    pub fn decrypt_auth<'a>(&mut self, ciphertext_authenticated: ByteBuffer, additional_data: Option<&ByteBuffer>) -> DynResult<ByteBuffer> {
         let (ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_FIRST_AUTH_LEN);
         match self.decrypt_internal(ciphertext_with_nonce, &authentication, additional_data) {
             Ok(plaintext) => Ok(plaintext),
@@ -141,7 +137,7 @@ impl Symmetric {
     }
 
     #[cfg(feature = "fast")]
-    pub fn decrypt_auth_twice<'a>(&mut self, ciphertext_authenticated_twice: ByteBuffer<'a>, additional_data: Option<&ByteBuffer>) -> DynResult<(ByteBuffer<'a>, ByteBuffer<'a>, ByteBuffer<'a>)> {
+    pub fn decrypt_auth_twice<'a>(&mut self, ciphertext_authenticated_twice: ByteBuffer, additional_data: Option<&ByteBuffer>) -> DynResult<(ByteBuffer, ByteBuffer, ByteBuffer)> {
         let (ciphertext_authenticated, second_authentication) = ciphertext_authenticated_twice.split_buf(ciphertext_authenticated_twice.len() - SYMMETRIC_SECOND_AUTH_LEN);
         let (ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated_twice.len() - SYMMETRIC_FIRST_AUTH_LEN);
         match self.decrypt_internal(ciphertext_with_nonce.clone(), &authentication, additional_data) {
@@ -153,11 +149,7 @@ impl Symmetric {
     #[cfg(feature = "fast")]
     pub fn verify_second_auth(&mut self, ciphertext_with_nonce: &ByteBuffer, additional_data: Option<&ByteBuffer>, second_hash_key: &ByteBuffer, second_authentication: &ByteBuffer) -> DynResult<()> {
         let second_hash_key_bytes = <[u8; KEY_LEN]>::try_from(&second_hash_key.slice()[..])?;
-        let hash = if let Some(additional) = additional_data {
-            Hasher::new_keyed(&second_hash_key_bytes).update(&ciphertext_with_nonce.slice()).update(&additional.slice()).finalize()
-        } else {
-            keyed_hash(&second_hash_key_bytes, &ciphertext_with_nonce.slice())
-        };
+        let hash = if let Some(additional) = additional_data { Hasher::new_keyed(&second_hash_key_bytes).update(&ciphertext_with_nonce.slice()).update(&additional.slice()).finalize() } else { keyed_hash(&second_hash_key_bytes, &ciphertext_with_nonce.slice()) };
         ensure_with!(constant_time_eq(hash.as_bytes(), &second_authentication.slice()), "second authentication verification failed");
         Ok(())
     }

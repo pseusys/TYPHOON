@@ -803,6 +803,22 @@ The following helper functions are used in the specification:
 
 ## Code and tests
 
+The repository contains [example TYPHOON protocol implementation](./typhoon/) in `rust`.
+It is designed to be fast, modern and efficient.
+
+### Buffer Pool
+
+The `BytePool` provides reusable byte buffers to reduce allocation overhead in high-throughput scenarios.
+Buffers are automatically returned to the pool when dropped.
+The pool has a maximum size limit - excess buffers are freed instead of pooled, preventing unbounded memory growth during traffic spikes.
+
+Key features:
+
+- Thread-safe allocation and deallocation
+- Configurable header/trailer space for protocol framing
+- LIFO reuse for better cache locality
+- Bounded pool size with automatic overflow handling
+
 TODO!
 
 ## Development
