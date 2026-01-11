@@ -5,10 +5,8 @@ permissions:
 
 on:
   push:
-    branches:
-      - "**"
     paths:
-      - "typhoon/"
+      - 'typhoon/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
