@@ -17,16 +17,6 @@ impl BufferHolder {
             return_tx,
         }
     }
-
-    /// Create a deep copy of the buffer data.
-    #[inline]
-    pub(crate) fn copy(&self) -> Self {
-        Self {
-            data: copy_ptr(self.data, self.capacity),
-            capacity: self.capacity,
-            return_tx: self.return_tx.clone(),
-        }
-    }
 }
 
 // SAFETY: Data pointer is exclusively owned by this holder.

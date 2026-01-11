@@ -88,6 +88,6 @@ impl BytePool {
         };
 
         let data = self.storage.try_take().unwrap_or_else(|| allocate_ptr(self.storage.capacity));
-        ByteBuffer::precise(self.before_cap, remaining_size, remaining_after_cap, data, self.storage.capacity, Some(Arc::clone(&self.storage)))
+        ByteBuffer::new(data, self.storage.capacity, self.before_cap, remaining_size, remaining_after_cap, Some(Arc::clone(&self.storage)))
     }
 }

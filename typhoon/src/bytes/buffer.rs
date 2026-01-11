@@ -2,15 +2,16 @@
 #[path = "../../tests/bytes/buffer.rs"]
 mod tests;
 
+use std::array::TryFromSliceError;
 use std::cell::UnsafeCell;
+use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::ptr::copy_nonoverlapping;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::Arc;
 
 use crate::bytes::holder::BufferHolder;
 use crate::bytes::pool::PoolReturn;
-crate::bytes::utils::{allocate_ptr, preserve_vector};
+use crate::bytes::utils::{allocate_ptr, copy_slice};
 
 /// A byte buffer with Arc-based reference counting.
 /// Send but not Sync - can be moved between threads but not shared.
@@ -34,27 +35,40 @@ impl ByteBuffer {
         }
     }
 
-    #[inline]
-    pub(crate) fn precise(before_cap: usize, size: usize, after_cap: usize, data: *mut u8, capacity: usize, return_tx: Option<PoolReturn>) -> Self {
-        Self::new(data, capacity, before_cap, size, after_cap, return_tx)
-    }
-
     /// Create a non-pooled buffer of given `size` bytes.
     #[inline]
     pub fn empty(size: usize) -> Self {
-        Self::new(allocate_ptr(size), size, 0, size, 0, None)
+        Self::empty_with_capacity(size, 0, 0)
     }
 
-    /// Create a deep copy of the buffer data. Returns a new independent buffer.
+    /// Create a non-pooled buffer of given `size` bytes with extra capacity for prepend/append.
+    #[inline]
+    pub fn empty_with_capacity(size: usize, before_cap: usize, after_cap: usize) -> Self {
+        let total_len = before_cap + size + after_cap;
+        Self::new(allocate_ptr(total_len), total_len, before_cap, size, after_cap, None)
+    }
+
+    /// Create a non-pooled buffer from slice with extra capacity for prepend/append.
+    #[inline]
+    pub fn from_slice_with_capacity(data: &[u8], before_cap: usize, after_cap: usize) -> Self {
+        let buff = Self::empty_with_capacity(data.len(), before_cap, after_cap);
+        if data.len() > 0 {
+            copy_slice(unsafe { buff.data_ptr().add(before_cap) }, data);
+        }
+        buff
+    }
+
+    /// Create a non-pooled buffer from a fixed-size array with extra capacity.
+    #[inline]
+    pub fn from_array_with_capacity<const N: usize>(arr: &[u8; N], before_cap: usize, after_cap: usize) -> Self {
+        Self::from_slice_with_capacity(arr.as_slice(), before_cap, after_cap)
+    }
+
+    /// Create a deep copy of the current view only.
+    /// Returns a new independent buffer containing only the data between start and end, without extra capacity.
     #[inline]
     pub fn copy(&self) -> Self {
-        ByteBuffer {
-            holder: Arc::new(self.holder.copy()),
-            length: self.length,
-            start: self.start,
-            end: self.end,
-            _not_sync: PhantomData,
-        }
+        Self::from_slice_with_capacity(self.slice(), 0, 0)
     }
 
     #[inline]
@@ -259,12 +273,9 @@ impl ByteBuffer {
 
     /// Append `other` slice to end. Returns expanded view.
     pub fn append(&self, other: &[u8]) -> Self {
-        let other_length = other.len();
-        let new_end = self.end + other_length;
+        let new_end = self.end + other.len();
         assert!(new_end <= self.length, "ByteBuffer backward capacity insufficient ({new_end} > {})!", self.length);
-        unsafe {
-            copy_nonoverlapping(other.as_ptr(), self.data_ptr().add(self.end), other_length);
-        }
+        copy_slice(unsafe { self.data_ptr().add(self.end) }, other);
         ByteBuffer {
             holder: Arc::clone(&self.holder),
             length: self.length,
@@ -284,9 +295,7 @@ impl ByteBuffer {
         let other_length = other.len();
         assert!(other_length <= self.start, "ByteBuffer forward capacity insufficient ({other_length} > {})!", self.start);
         let new_start = self.start - other_length;
-        unsafe {
-            copy_nonoverlapping(other.as_ptr(), self.data_ptr().add(new_start), other_length);
-        }
+        copy_slice(unsafe { self.data_ptr().add(new_start) }, other);
         ByteBuffer {
             holder: Arc::clone(&self.holder),
             length: self.length,
@@ -333,16 +342,19 @@ impl AsRef<[u8]> for ByteBuffer {
 
 impl From<Vec<u8>> for ByteBuffer {
     fn from(value: Vec<u8>) -> Self {
-        let length = value.len();
-        let capacity = value.capacity();
-        Self::new(preserve_vector(value), capacity, 0, length, capacity - length, None)
+        Self::from_slice_with_capacity(value.as_slice(), 0, 0)
     }
 }
 
 impl From<&[u8]> for ByteBuffer {
     fn from(value: &[u8]) -> Self {
-        let vector = value.to_vec();
-        vector.into()
+        Self::from_slice_with_capacity(value, 0, 0)
+    }
+}
+
+impl<const N: usize> From<&[u8; N]> for ByteBuffer {
+    fn from(value: &[u8; N]) -> Self {
+        Self::from_array_with_capacity(value, 0, 0)
     }
 }
 
@@ -350,6 +362,26 @@ impl Into<Vec<u8>> for ByteBuffer {
     #[inline]
     fn into(self) -> Vec<u8> {
         self.slice().to_vec()
+    }
+}
+
+impl<const N: usize> TryInto<[u8; N]> for &ByteBuffer {
+    type Error = TryFromSliceError;
+
+    fn try_into(self) -> Result<[u8; N], Self::Error> {
+        <[u8; N]>::try_from(&self.slice()[..])
+    }
+}
+
+impl PartialEq for ByteBuffer {
+    fn eq(&self, other: &Self) -> bool {
+        self.slice() == other.slice()
+    }
+}
+
+impl Debug for ByteBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ByteBuffer").field("length", &self.length).field("start", &self.start).field("end", &self.end).field("length", &self.len()).field("data", &self.slice()).finish()
     }
 }
 

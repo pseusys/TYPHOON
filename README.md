@@ -430,7 +430,7 @@ The following requirements are taken into account for TYPHOON protocol cryptogra
 Unfortunately, right now all these requirements cannot be achieved at once, because there is no known way to hide the internal structure of any of the post-quantum ciphers.
 But there is an important consideration that should also be taken into account: if the certificate of any of the TYPHOON server clients leaks, **there is no reason to care about obfuscation anymore**, only encryption.
 Indeed, if an external observer knows that a certain IP address and port number pair belong to a TYPHOON server, all the traffic incoming to and outgoing from that port can and will be assumed to belong to TYPHOON, so there is no more reason to hide that.
-Taking this consideration into account, two different cryptographic modes are proposed:
+Taking this consideration into account, two different asymmetric cryptographic modes are proposed:
 
 1. `fast` mode relies on global public static symmetrical encryption cipher keys used for obfuscation embedded in certificates, naturally whoever owns the certificate can access normally obfuscated packet values.
 2. `full` mode relies on global public static asymmetrical encryption cipher keys used for obfuscation embedded in certificates, providing no way to break obfuscation if a certificate leaks for _significant_ runtime encryption cost (also post-quantum cryptography is not available in this mode).
@@ -806,6 +806,17 @@ The following helper functions are used in the specification:
 The repository contains [example TYPHOON protocol implementation](./typhoon/) in `rust`.
 It is designed to be fast, modern and efficient.
 
+The crate defines the following features:
+
+- `hardware`: use `hardware` [symmetric cryptographic mode](#cryptography).
+- `software`: use `software` [symmetric cryptographic mode](#cryptography).
+- `fast`: use `fast` [asymmetric cryptographic mode](#cryptography).
+- `full`: use `full` [asymmetric cryptographic mode](#cryptography).
+- `server`: include TYPHOON server implementation.
+- `client`: include TYPHOON client implementation.
+
+The default features are: `software`, `fast`, `server`, `client`.
+
 ### Buffer Pool
 
 The `BytePool` provides reusable byte buffers to reduce allocation overhead in high-throughput scenarios.
@@ -819,11 +830,44 @@ Key features:
 - LIFO reuse for better cache locality
 - Bounded pool size with automatic overflow handling
 
+### Crypto Module
+
+The `crypto` module implements the cryptographic primitives for TYPHOON protocol as specified in the [Cryptography](#cryptography) section.
+
+Key components:
+
+- **symmetric.rs**: Authenticated encryption (XChaCha20-Poly1305 or AES-GCM-256) and anonymous stream cipher for obfuscation
+- **asymmetric.rs**: Handshake encryption using Classic McEliece KEM, X25519 key exchange, and Ed25519 signatures
+- **certificate.rs**: Data structures for client certificates (`Certificate`) and server secrets (`ServerSecret`)
+
+Cipher modes:
+
+- `software` feature: XChaCha20-Poly1305 (24-byte nonce) for systems without hardware acceleration
+- `hardware` feature: AES-GCM-256 (16-byte nonce) for systems with AES-NI support
+- `fast` feature: Symmetric key obfuscation with dual authentication (AEAD + BLAKE3)
+- `full` feature: Asymmetric key obfuscation using X25519 ephemeral exchange
+
 TODO!
 
 ## Development
 
-TODO!
+Build rust crate with this command (in `./typhoon` directory):
+
+```shell
+cargo build
+```
+
+Test rust code with this command (in `./typhoon` directory):
+
+```shell
+cargo test -- --nocapture
+```
+
+Format rust code with this command (in `./typhoon` directory):
+
+```shell
+cargo fmt
+```
 
 ## Future work
 

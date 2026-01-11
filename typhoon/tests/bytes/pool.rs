@@ -1,5 +1,6 @@
 use crate::bytes::pool::BytePool;
 
+// Test: pool allocates buffer with default size.
 #[test]
 fn test_pool_allocate() {
     let pool = BytePool::new(10, 100, 10, 0, 10);
@@ -7,6 +8,7 @@ fn test_pool_allocate() {
     assert_eq!(buf.len(), 100);
 }
 
+// Test: pool allocates buffer with custom size.
 #[test]
 fn test_pool_allocate_with_size() {
     let pool = BytePool::new(10, 100, 10, 0, 10);
@@ -14,6 +16,7 @@ fn test_pool_allocate_with_size() {
     assert_eq!(buf.len(), 50);
 }
 
+// Test: allocating larger than pool size panics.
 #[test]
 #[should_panic(expected = "Requested size greater than initial size")]
 fn test_pool_allocate_size_too_large() {
@@ -21,6 +24,7 @@ fn test_pool_allocate_size_too_large() {
     let _ = pool.allocate(Some(200));
 }
 
+// Test: dropped buffer is reused from pool.
 #[test]
 fn test_pool_reuse() {
     let pool = BytePool::new(0, 100, 0, 0, 10);
@@ -35,6 +39,7 @@ fn test_pool_reuse() {
     assert_eq!(ptr1, ptr2, "Buffer should be reused from pool");
 }
 
+// Test: pool preallocates specified number of buffers.
 #[test]
 fn test_pool_preallocated() {
     let pool = BytePool::new(0, 100, 0, 5, 10);
@@ -56,6 +61,7 @@ fn test_pool_preallocated() {
     assert_eq!(ptrs.len(), 5);
 }
 
+// Test: pool respects max pooled limit.
 #[test]
 fn test_pool_max_size() {
     let pool = BytePool::new(0, 100, 0, 0, 2);
@@ -83,6 +89,7 @@ fn test_pool_max_size() {
     assert!(new_ptr != ptr1 && new_ptr != ptr2 && new_ptr != ptr3 || reused_ptrs.len() == 2);
 }
 
+// Test: buffer has header space for expand_start.
 #[test]
 fn test_pool_header_space() {
     let pool = BytePool::new(20, 100, 0, 0, 10);
@@ -93,6 +100,7 @@ fn test_pool_header_space() {
     assert_eq!(expanded.len(), 110);
 }
 
+// Test: buffer has trailer space for expand_end.
 #[test]
 fn test_pool_trailer_space() {
     let pool = BytePool::new(0, 100, 20, 0, 10);
@@ -103,6 +111,7 @@ fn test_pool_trailer_space() {
     assert_eq!(expanded.len(), 110);
 }
 
+// Test: append and prepend work with pooled buffers.
 #[test]
 fn test_pool_append_prepend() {
     let pool = BytePool::new(10, 100, 10, 0, 10);
@@ -117,6 +126,7 @@ fn test_pool_append_prepend() {
     assert_eq!(prepended.slice(), &[0, 1, 2, 3, 4, 5, 6, 7, 8]);
 }
 
+// Test: pool is thread-safe for concurrent allocation.
 #[test]
 fn test_pool_thread_safety() {
     use std::sync::Arc;
@@ -141,6 +151,7 @@ fn test_pool_thread_safety() {
     }
 }
 
+// Test: buffer can be sent between threads (Send trait).
 #[test]
 fn test_buffer_send_between_threads() {
     use std::thread;

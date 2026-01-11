@@ -20,6 +20,12 @@ pub fn copy_ptr(ptr: *mut u8, length: usize) -> *mut u8 {
     new_ptr
 }
 
+pub fn copy_slice(ptr: *mut u8, slice: &[u8]) {
+    unsafe {
+        copy_nonoverlapping(slice.as_ptr(), ptr, slice.len());
+    }
+}
+
 pub fn free_ptr(ptr: *mut u8, length: usize) {
     let vector = unsafe { Vec::<u8>::from_raw_parts(ptr, length, length) };
     drop(vector);
