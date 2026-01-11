@@ -1,0 +1,53 @@
+name: RUST
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "typhoon/"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  typhoon-crate-build:
+    name: Build and Test TYPHOON Rust Crate
+    runs-on: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            image: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - arch: amd64
+            image: windows-2025
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            image: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v4
+
+      - name: Setup Rust 🦀
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.89.0"
+          target: ${{ matrix.target }}
+          rust-src-dir: typhoon
+          override: true
+
+      - name: Build TYPHOON Crate 🏗️
+        working-directory: typhoon
+        run: cargo build
+
+      - name: Test TYPHOON Crate 🧪
+        working-directory: typhoon
+        run: cargo test
