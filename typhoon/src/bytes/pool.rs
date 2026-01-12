@@ -2,41 +2,37 @@
 #[path = "../../tests/bytes/pool.rs"]
 mod tests;
 
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use crossbeam::queue::ArrayQueue;
 
 use crate::bytes::buffer::ByteBuffer;
 use crate::bytes::utils::{allocate_ptr, free_ptr};
 
 /// Shared storage for pooled buffers.
 pub(crate) struct PoolStorage {
-    buffers: Mutex<VecDeque<*mut u8>>,
+    buffers: ArrayQueue<*mut u8>,
     capacity: usize,
-    max_pooled: usize,
 }
 
-// SAFETY: Mutex protects all access to the VecDeque.
+// SAFETY: ArrayQueue allows atomic operations.
 unsafe impl Send for PoolStorage {}
 unsafe impl Sync for PoolStorage {}
 
 impl PoolStorage {
     /// Return buffer to pool, or free if at capacity.
     pub(crate) fn try_return(&self, ptr: *mut u8) {
-        let mut buffers = self.buffers.lock().expect("mutex poisoned");
-        if buffers.len() < self.max_pooled {
-            buffers.push_front(ptr);
-        } else {
-            drop(buffers);
+        if let Err(_) = self.buffers.push(ptr) {
             free_ptr(ptr, self.capacity);
         }
     }
 
     fn try_take(&self) -> Option<*mut u8> {
-        self.buffers.lock().expect("mutex poisoned").pop_front()
+        self.buffers.pop()
     }
 }
 
-pub type PoolReturn = Arc<PoolStorage>;
+pub(crate) type PoolReturn = Arc<PoolStorage>;
 
 /// Thread-safe pool of reusable byte buffers.
 pub struct BytePool {
@@ -57,15 +53,14 @@ impl BytePool {
         let capacity = before_cap + size + after_cap;
         let actual_max = max_pooled.max(initial);
 
-        let mut buffers = VecDeque::with_capacity(actual_max);
+        let buffers = ArrayQueue::new(actual_max);
         for _ in 0..initial {
-            buffers.push_back(allocate_ptr(capacity));
+            buffers.push(allocate_ptr(capacity)).expect("Should never happen actually.");
         }
 
         let storage = Arc::new(PoolStorage {
-            buffers: Mutex::new(buffers),
+            buffers,
             capacity,
-            max_pooled: actual_max,
         });
         BytePool {
             before_cap,
