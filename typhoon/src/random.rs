@@ -15,6 +15,6 @@ impl SupportRng for OsRng {
 }
 
 #[inline]
-pub(crate) fn get_rng() -> impl Rng + CryptoRng + SupportRng {
+pub fn get_rng() -> impl Rng + CryptoRng + SupportRng {
     OsRng
 }

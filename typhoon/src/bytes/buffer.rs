@@ -24,7 +24,7 @@ pub struct ByteBuffer {
 }
 
 impl ByteBuffer {
-    pub(crate) fn new(data: *mut u8, capacity: usize, before_cap: usize, size: usize, after_cap: usize, return_tx: Option<PoolReturn>) -> Self {
+    pub(super) fn new(data: *mut u8, capacity: usize, before_cap: usize, size: usize, after_cap: usize, return_tx: Option<PoolReturn>) -> Self {
         let buffer_end = before_cap + size;
         ByteBuffer {
             holder: Arc::new(BufferHolder::new(data, capacity, return_tx)),

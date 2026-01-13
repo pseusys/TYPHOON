@@ -10,7 +10,7 @@ use crate::bytes::buffer::ByteBuffer;
 use crate::bytes::utils::{allocate_ptr, free_ptr};
 
 /// Shared storage for pooled buffers.
-pub(crate) struct PoolStorage {
+pub(super) struct PoolStorage {
     buffers: ArrayQueue<*mut u8>,
     capacity: usize,
 }
@@ -21,7 +21,7 @@ unsafe impl Sync for PoolStorage {}
 
 impl PoolStorage {
     /// Return buffer to pool, or free if at capacity.
-    pub(crate) fn try_return(&self, ptr: *mut u8) {
+    pub(super) fn try_return(&self, ptr: *mut u8) {
         if let Err(_) = self.buffers.push(ptr) {
             free_ptr(ptr, self.capacity);
         }
@@ -32,7 +32,7 @@ impl PoolStorage {
     }
 }
 
-pub(crate) type PoolReturn = Arc<PoolStorage>;
+pub(super) type PoolReturn = Arc<PoolStorage>;
 
 /// Thread-safe pool of reusable byte buffers.
 pub struct BytePool {
