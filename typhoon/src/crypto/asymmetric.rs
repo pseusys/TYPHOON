@@ -37,7 +37,11 @@ const INITIAL_DATA_KEY: &str = "handshake client obfuscation key";
 const CLIENT_HANDSHAKE_OBFUSCATION_KEY: &str = "handshake client obfuscation key";
 const SERVER_HANDSHAKE_OBFUSCATION_KEY: &str = "handshake server obfuscation key";
 const SESSION_KEY: &str = "session key";
+
+#[cfg(feature = "full")]
 const MARSHALLING_OBFUSCATION_KEY: &str = "marshalling obfuscation key";
+
+#[cfg(feature = "full")]
 const MARSHALLING_ENCRYPTION_KEY: &str = "marshalling encryption key";
 
 #[cfg(feature = "client")]

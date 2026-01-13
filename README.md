@@ -258,7 +258,7 @@ There are some exceptions, in general the decoy packets are more likely to appea
 Decoy packet exchange behavior is configured for every flow manager and selected upon initialization, either randomly (by default) or manually.
 The configuration includes:
 
-- Communication mode: defines general decoy packet sending behavior, possible values are: `heavy`, `noisy`, `sparse`, `smooth`.
+- Communication mode: defines general decoy packet sending behavior, possible values are: `heavy`, `noisy`, `sparse`, `smooth` (and also [probably some others](#extensibility)).
 - Maintenance mode: defines the way how maintenance packets would look like, possible values are: `none`, `random`, `timed`, `sized`, `both`.
 - Replication mode: defines what packets will be duplicated, possible values are: `none`, `maintenance`, `all`.
 - Subheader pattern: defines whether the maintenance packets should have their own fake header, boolean.
@@ -329,6 +329,13 @@ And the following equations for decoy packet length:
 - `decoy_length = random_gauss(mean_length, TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER * mean_length)`, clamped between `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` and `packet_length_cap`.
 
 > The `exponential_variance`, `random_uniform`, and `random_gauss` functions are defined in the [supporting math](#supporting-math) chapter.
+
+##### Extensibility
+
+The modes defined above are not excessive.
+They focus on maintaining minimal state and use small predictable computations.
+Ideally, a TYPHOON implementation should provide an "interface" for supplying additional overridden decoy modes.
+The only limitation is that any decoy mode should not interfere with data packets, and they should always be delivered on best-effort basis.
 
 ##### Sparse mode
 
