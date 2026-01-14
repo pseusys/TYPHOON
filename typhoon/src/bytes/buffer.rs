@@ -9,6 +9,8 @@ use std::marker::PhantomData;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::Arc;
 
+use thiserror::Error;
+
 use crate::bytes::holder::BufferHolder;
 use crate::bytes::pool::PoolReturn;
 use crate::bytes::utils::{allocate_ptr, copy_slice};
@@ -326,6 +328,14 @@ impl ByteBuffer {
     }
 }
 
+#[derive(Error, Debug)]
+#[error("error converting a ByteBuffer to an array [u8; {expected}], actual buffer length {actual}: {}", source.to_string())]
+pub struct ByteBufferConversionError {
+    actual: usize,
+    expected: usize,
+    source: TryFromSliceError,
+}
+
 impl AsMut<[u8]> for ByteBuffer {
     #[inline]
     fn as_mut(&mut self) -> &mut [u8] {
@@ -366,10 +376,13 @@ impl Into<Vec<u8>> for ByteBuffer {
 }
 
 impl<const N: usize> TryInto<[u8; N]> for &ByteBuffer {
-    type Error = TryFromSliceError;
+    type Error = ByteBufferConversionError;
 
     fn try_into(self) -> Result<[u8; N], Self::Error> {
-        <[u8; N]>::try_from(&self.slice()[..])
+        match <[u8; N]>::try_from(&self.slice()[..]) {
+            Ok(res) => Ok(res),
+            Err(err) => Err(ByteBufferConversionError { actual: self.len(), expected: N, source: err }),
+        }
     }
 }
 

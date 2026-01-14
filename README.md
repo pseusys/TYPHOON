@@ -780,7 +780,7 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_DECOY_SUBHEADER_LENGTH_MIN` | Minimum decoy packets subheader length | `4` |
 | `TYPHOON_DECOY_SUBHEADER_LENGTH_MAX` | Maximum decoy packets subheader length | `16` |
 
-A protocol implementation should allow overriding these values at runtime as well as embedding them into certificate.
+A protocol implementation should allow overriding these values at runtime.
 Still keep in mind that it might be dangerous because some of these constants affect both client and server behavior at the same time.
 As a final attempt, an implementation should attempt to read these constants from environment during initialization.
 

@@ -58,15 +58,14 @@ impl BytePool {
             buffers.push(allocate_ptr(capacity)).expect("Should never happen actually.");
         }
 
-        let storage = Arc::new(PoolStorage {
-            buffers,
-            capacity,
-        });
         BytePool {
             before_cap,
             size,
             after_cap,
-            storage,
+            storage: Arc::new(PoolStorage {
+                buffers,
+                capacity,
+            }),
         }
     }
 
