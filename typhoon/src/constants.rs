@@ -325,7 +325,7 @@ fn environment_values_map(mut default_values_map: DefaultMap) -> DefaultMap {
                     Err(_) => {
                         warn!("Environment variable '{key}' set to value '{res}' that can not be parsed as 64bit signed integer, skipping...");
                         *value
-                    },
+                    }
                 },
                 Err(_) => *value,
             },
@@ -335,7 +335,7 @@ fn environment_values_map(mut default_values_map: DefaultMap) -> DefaultMap {
                     Err(_) => {
                         warn!("Environment variable '{key}' set to value '{res}' that can not be parsed as 64bit unsigned integer, skipping...");
                         *value
-                    },
+                    }
                 },
                 Err(_) => *value,
             },
@@ -345,7 +345,7 @@ fn environment_values_map(mut default_values_map: DefaultMap) -> DefaultMap {
                     Err(_) => {
                         warn!("Environment variable '{key}' set to value '{res}' that can not be parsed as 64bit floating point number, skipping...");
                         *value
-                    },
+                    }
                 },
                 Err(_) => *value,
             },
@@ -355,7 +355,7 @@ fn environment_values_map(mut default_values_map: DefaultMap) -> DefaultMap {
 }
 
 pub struct SettingsBuilder {
-    map: DefaultMap
+    map: DefaultMap,
 }
 
 impl SettingsBuilder {
@@ -379,7 +379,7 @@ impl SettingsBuilder {
         self.map.insert(keys::PN_OFFSET, SettingValue::Unsigned(values::PN_OFFSET));
         self.map.insert(keys::PL_OFFSET, SettingValue::Unsigned(values::PL_OFFSET));
         self.map.insert(keys::ID_OFFSET, SettingValue::Unsigned(values::ID_OFFSET));
-        Settings { 
+        Settings {
             map: self.map,
         }
     }
@@ -388,14 +388,14 @@ impl SettingsBuilder {
 impl Default for SettingsBuilder {
     #[inline]
     fn default() -> Self {
-        Self { 
+        Self {
             map: environment_values_map(default_values_map()),
         }
     }
 }
 
 pub struct Settings {
-    pub(crate) map: DefaultMap
+    pub(crate) map: DefaultMap,
 }
 
 impl Index<&str> for Settings {

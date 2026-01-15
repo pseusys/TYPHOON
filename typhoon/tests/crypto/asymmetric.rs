@@ -101,7 +101,11 @@ fn create_test_certificate() -> Certificate<'static> {
     let (epk, _) = get_mceliece_keypair();
     let (_, vpk) = get_ed25519_keypair();
     let (_, opk) = get_x25519_keypair();
-    Certificate { epk, vpk, opk }
+    Certificate {
+        epk,
+        vpk,
+        opk,
+    }
 }
 
 #[cfg(all(feature = "server", feature = "full"))]

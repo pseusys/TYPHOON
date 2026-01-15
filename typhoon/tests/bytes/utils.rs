@@ -1,4 +1,4 @@
-use crate::bytes::utils::*;
+use crate::bytes::utils::{allocate_ptr, copy_ptr, free_ptr, preserve_vector};
 
 // Test: allocate_ptr returns zeroed memory.
 #[test]

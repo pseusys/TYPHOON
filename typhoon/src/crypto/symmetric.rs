@@ -103,7 +103,9 @@ impl Symmetric {
             Err(err) => return Err(array_extraction_error("cipher key", err)),
         };
         let cipher = Cipher::new(CipherKey::from_slice(&private_bytes));
-        Ok(Self { cipher })
+        Ok(Self {
+            cipher,
+        })
     }
 
     /// Internal: encrypt with AEAD, return ciphertext with prepended nonce and detached tag.
@@ -137,7 +139,11 @@ impl Symmetric {
                     Ok(res) => res,
                     Err(err) => return Err(array_extraction_error("second hash key (encryption)", err)),
                 };
-                let hash = if let Some(additional) = additional_data { Hasher::new_keyed(&second_hash_key_bytes).update(&ciphertext.slice()).update(&additional.slice()).finalize() } else { keyed_hash(&second_hash_key_bytes, &ciphertext.slice()) };
+                let hash = if let Some(additional) = additional_data {
+                    Hasher::new_keyed(&second_hash_key_bytes).update(&ciphertext.slice()).update(&additional.slice()).finalize()
+                } else {
+                    keyed_hash(&second_hash_key_bytes, &ciphertext.slice())
+                };
                 Ok(ciphertext.append(&auth).append(hash.as_bytes()))
             }
             Err(err) => Err(err),
@@ -188,10 +194,14 @@ impl Symmetric {
             Ok(res) => res,
             Err(err) => return Err(array_extraction_error("second hash key (decryption)", err)),
         };
-        let hash = if let Some(additional) = additional_data { Hasher::new_keyed(&second_hash_key_bytes).update(&ciphertext_with_nonce.slice()).update(&additional.slice()).finalize() } else { keyed_hash(&second_hash_key_bytes, &ciphertext_with_nonce.slice()) };
+        let hash = if let Some(additional) = additional_data {
+            Hasher::new_keyed(&second_hash_key_bytes).update(&ciphertext_with_nonce.slice()).update(&additional.slice()).finalize()
+        } else {
+            keyed_hash(&second_hash_key_bytes, &ciphertext_with_nonce.slice())
+        };
         if !constant_time_eq(hash.as_bytes(), &second_authentication.slice()) {
-            return Err(authentication_error("second authentication error (hashes not equal)"))
+            return Err(authentication_error("second authentication error (hashes not equal)"));
         }
-        return Ok(())
+        return Ok(());
     }
 }

@@ -381,7 +381,11 @@ impl<const N: usize> TryInto<[u8; N]> for &ByteBuffer {
     fn try_into(self) -> Result<[u8; N], Self::Error> {
         match <[u8; N]>::try_from(&self.slice()[..]) {
             Ok(res) => Ok(res),
-            Err(err) => Err(ByteBufferConversionError { actual: self.len(), expected: N, source: err }),
+            Err(err) => Err(ByteBufferConversionError {
+                actual: self.len(),
+                expected: N,
+                source: err,
+            }),
         }
     }
 }

@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::bytes::buffer::ByteBufferConversionError;
+use crate::bytes::ByteBufferConversionError;
 
 #[cfg(feature = "fast")]
 use chacha20poly1305::aead::Error as AeadError;
@@ -47,14 +47,14 @@ pub enum HandshakeError {
 pub(super) fn array_extraction_error(location: &str, source: ByteBufferConversionError) -> CryptoError {
     CryptoError::ArrayExtractionError {
         location: location.to_string(),
-        source
+        source,
     }
 }
 
 pub(super) fn encryption_error(specification: &str, source: AeadError) -> CryptoError {
     CryptoError::EncryptionError {
         specification: specification.to_string(),
-        source
+        source,
     }
 }
 
@@ -65,14 +65,14 @@ pub(super) fn authentication_error(cause: &str) -> CryptoError {
 pub(super) fn handshake_crypto_error(cause: &str, source: CryptoError) -> HandshakeError {
     HandshakeError::CryptoError {
         cause: cause.to_string(),
-        source
+        source,
     }
 }
 
 pub(super) fn handshake_array_extraction_error(location: &str, source: ByteBufferConversionError) -> HandshakeError {
     HandshakeError::ArrayExtractionError {
         location: location.to_string(),
-        source
+        source,
     }
 }
 
