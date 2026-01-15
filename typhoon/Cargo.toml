@@ -10,7 +10,7 @@ authors = [
 
 [features]
 default = ["software", "fast", "server", "client"]
-# default = ["hardware", "full", "server", "client"]
+# default = ["hardware", "full", "server", "client"]  # TODO: remove!
 hardware = ["aes", "aes-gcm", "ctr"]
 software = ["chacha20", "chacha20poly1305"]
 fast = []
@@ -22,6 +22,7 @@ client = []
 [dependencies]
 aes = { version = "^0.8.4", optional = true }
 aes-gcm = { version = "^0.10.3", features = ["std"], optional = true }
+bitflags = "^2.10.0"
 blake3 = "^1.8.3"
 cfg-if = "^1.0.4"
 crossbeam = "^0.8.4"

@@ -94,14 +94,6 @@ pub mod keys {
 
     pub const TYPHOON_DECOY_SUBHEADER_LENGTH_MIN: &str = "TYPHOON_DECOY_SUBHEADER_LENGTH_MIN";
     pub const TYPHOON_DECOY_SUBHEADER_LENGTH_MAX: &str = "TYPHOON_DECOY_SUBHEADER_LENGTH_MAX";
-
-    pub const TAILOR_LENGTH: &str = "TAILOR_LENGTH";
-    pub const FG_OFFSET: &str = "FG_OFFSET";
-    pub const CD_OFFSET: &str = "CD_OFFSET";
-    pub const TM_OFFSET: &str = "TM_OFFSET";
-    pub const PN_OFFSET: &str = "PN_OFFSET";
-    pub const PL_OFFSET: &str = "PL_OFFSET";
-    pub const ID_OFFSET: &str = "ID_OFFSET";
 }
 
 mod values {
@@ -194,14 +186,17 @@ mod values {
 
     pub const TYPHOON_DECOY_SUBHEADER_LENGTH_MIN: u64 = 4;
     pub const TYPHOON_DECOY_SUBHEADER_LENGTH_MAX: u64 = 16;
+}
 
-    pub const TAILOR_LENGTH: u64 = 16;
-    pub const FG_OFFSET: u64 = 0;
-    pub const CD_OFFSET: u64 = 1;
-    pub const TM_OFFSET: u64 = 2;
-    pub const PN_OFFSET: u64 = 6;
-    pub const PL_OFFSET: u64 = 14;
-    pub const ID_OFFSET: u64 = 16;
+pub mod consts {
+    pub const DEFAULT_TYPHOON_ID_LENGTH: usize = 16;
+    pub const TAILOR_LENGTH: usize = 16;
+    pub const FG_OFFSET: usize = 0;
+    pub const CD_OFFSET: usize = 1;
+    pub const TM_OFFSET: usize = 2;
+    pub const PN_OFFSET: usize = 6;
+    pub const PL_OFFSET: usize = 14;
+    pub const ID_OFFSET: usize = 16;
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -371,14 +366,7 @@ impl SettingsBuilder {
         self
     }
 
-    fn finalize(mut self) -> Settings {
-        self.map.insert(keys::TAILOR_LENGTH, SettingValue::Unsigned(values::TAILOR_LENGTH) + self.map[keys::TYPHOON_ID_LENGTH]);
-        self.map.insert(keys::FG_OFFSET, SettingValue::Unsigned(values::FG_OFFSET));
-        self.map.insert(keys::CD_OFFSET, SettingValue::Unsigned(values::CD_OFFSET));
-        self.map.insert(keys::TM_OFFSET, SettingValue::Unsigned(values::TM_OFFSET));
-        self.map.insert(keys::PN_OFFSET, SettingValue::Unsigned(values::PN_OFFSET));
-        self.map.insert(keys::PL_OFFSET, SettingValue::Unsigned(values::PL_OFFSET));
-        self.map.insert(keys::ID_OFFSET, SettingValue::Unsigned(values::ID_OFFSET));
+    fn finalize(self) -> Settings {
         Settings {
             map: self.map,
         }

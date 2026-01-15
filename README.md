@@ -653,12 +653,12 @@ As is evident from the [tailor structure](#tailor-structure), the tailor carries
 These bytes are used for packet demultiplexing: all TYPHOON packets arrive at the same UDP socket of a flow manager but are delivered to different logical session managers based on the **ID** tailor field.
 Another important challenge is client address binding, since client addresses can change randomly mid-session according to the [UDP specification](https://datatracker.ietf.org/doc/html/rfc768).
 
-In general, the client-to-identification mapping should be safe (considering unique client identification is long enough) thanks to:
+In general, the client-to-identification mapping should be safe (considering client identification is unique) thanks to:
 
 - Session key authentication that is used for [tailor encryption](#tailor-encryption).
 - Incremental packet number [in tailor](#tailor-structure), stored in lower `4` bytes of **PN** field (it's always filled, even in data and decoy packets).
 
-By default, the **ID** field is `16` bytes ([UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier)) long, which should be sufficient for most cases (but may be changed using the `TYPHOON_ID_LENGTH` constant).
+By default, the **ID** field is `16` bytes ([UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier)) long, which should be sufficient for random user **ID** assignment (but it may be changed using the `TYPHOON_ID_LENGTH` constant).
 The UDP source address rebinding happens only if a correctly-authenticated packet with incremental number higher than before arrives from a new source address.
 This approach allows verifying packet tailor identity, safe attribution, and rebinding.
 
