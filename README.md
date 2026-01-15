@@ -803,8 +803,8 @@ The following helper functions are used in the specification:
 - `random_uniform(min, max)`: Returns uniform random float between min and max.
 - `random_gauss(mean, sigma)`: Gaussian random with mean and std dev sigma.
 - `exponential_variance(rate)`: Exponential random with rate (mean = 1/rate).
-- Classic McEliece, X25519, Ed25519, XChaCha20, XChaCha20-Poly1305, AES-CTR-256, AES-GCM-256, Elligator according to the official specifications.
-- BLAKE3, UUID, XOR as per standard crypto libs.
+- Classic McEliece, X25519, Ed25519, XChaCha20, XChaCha20-Poly1305, AES-CTR-256, AES-GCM-256 according to the official specifications.
+- BLAKE3, UUID as per standard crypto libs.
 
 > Remember to always use secure random sources!
 
