@@ -5,13 +5,14 @@ mod tests;
 use cfg_if::cfg_if;
 
 use crate::bytes::ByteBuffer;
-use crate::crypto::error::CryptoError;
+use crate::crypto::error::{CryptoError, array_extraction_error, encryption_error};
 use crate::random::get_rng;
 
 cfg_if! {
     if #[cfg(feature = "fast")] {
         use blake3::{KEY_LEN, Hasher, keyed_hash};
         use constant_time_eq::constant_time_eq;
+        use crate::crypto::error::authentication_error;
     }
 }
 
@@ -65,7 +66,7 @@ pub const ANONYMOUS_NONCE_LEN: usize = 16;
 pub fn encrypt_anonymously(key: &ByteBuffer, plaintext: &mut ByteBuffer) -> Result<ByteBuffer, CryptoError> {
     let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = match key.try_into() {
         Ok(res) => res,
-        Err(err) => return Err(CryptoError::ArrayExtractionError(err)),
+        Err(err) => return Err(array_extraction_error("anonymous encryption key", err)),
     };
     let nonce = AnonymousCypher::generate_iv(get_rng());
     AnonymousCypher::new(&key_bytes.into(), &nonce.into()).apply_keystream(&mut plaintext.slice_mut());
@@ -78,11 +79,11 @@ pub fn decrypt_anonymously(key: &ByteBuffer, ciphertext_with_nonce: &mut ByteBuf
     let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf(ciphertext_with_nonce.len() - ANONYMOUS_NONCE_LEN);
     let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = match key.try_into() {
         Ok(res) => res,
-        Err(err) => return Err(CryptoError::ArrayExtractionError(err)),
+        Err(err) => return Err(array_extraction_error("anonymous decryption key", err)),
     };
     let nonce: [u8; ANONYMOUS_NONCE_LEN] = match (&nonce_bytes).try_into() {
         Ok(res) => res,
-        Err(err) => return Err(CryptoError::ArrayExtractionError(err)),
+        Err(err) => return Err(array_extraction_error("anonymous decryption nonce", err)),
     };
     AnonymousCypher::new(&key_bytes.into(), &nonce.into()).apply_keystream(&mut ciphertext.slice_mut());
     Ok(ciphertext)
@@ -99,7 +100,7 @@ impl Symmetric {
     pub fn new(key: &ByteBuffer) -> Result<Self, CryptoError> {
         let private_bytes: [u8; SYMMETRIC_KEY_LENGTH] = match key.try_into() {
             Ok(res) => res,
-            Err(err) => return Err(CryptoError::ArrayExtractionError(err)),
+            Err(err) => return Err(array_extraction_error("cipher key", err)),
         };
         let cipher = Cipher::new(CipherKey::from_slice(&private_bytes));
         Ok(Self { cipher })
@@ -115,7 +116,7 @@ impl Symmetric {
         };
         match result {
             Ok(res) => Ok((plaintext.prepend(&nonce), res)),
-            Err(err) => Err(CryptoError::EncryptionError(err)),
+            Err(err) => Err(encryption_error("symmetric encryption", err)),
         }
     }
 
@@ -134,7 +135,7 @@ impl Symmetric {
             Ok((ciphertext, auth)) => {
                 let second_hash_key_bytes: [u8; KEY_LEN] = match second_hash_key.try_into() {
                     Ok(res) => res,
-                    Err(err) => return Err(CryptoError::ArrayExtractionError(err)),
+                    Err(err) => return Err(array_extraction_error("second hash key (encryption)", err)),
                 };
                 let hash = if let Some(additional) = additional_data { Hasher::new_keyed(&second_hash_key_bytes).update(&ciphertext.slice()).update(&additional.slice()).finalize() } else { keyed_hash(&second_hash_key_bytes, &ciphertext.slice()) };
                 Ok(ciphertext.append(&auth).append(hash.as_bytes()))
@@ -157,7 +158,7 @@ impl Symmetric {
         };
         match result {
             Ok(_) => Ok(ciphertext),
-            Err(err) => Err(CryptoError::EncryptionError(err)),
+            Err(err) => Err(encryption_error("symmetric decryption", err)),
         }
     }
 
@@ -185,11 +186,11 @@ impl Symmetric {
     pub fn verify_second_auth(&mut self, ciphertext_with_nonce: &ByteBuffer, additional_data: Option<&ByteBuffer>, second_hash_key: &ByteBuffer, second_authentication: &ByteBuffer) -> Result<(), CryptoError> {
         let second_hash_key_bytes: [u8; KEY_LEN] = match second_hash_key.try_into() {
             Ok(res) => res,
-            Err(err) => return Err(CryptoError::ArrayExtractionError(err)),
+            Err(err) => return Err(array_extraction_error("second hash key (decryption)", err)),
         };
         let hash = if let Some(additional) = additional_data { Hasher::new_keyed(&second_hash_key_bytes).update(&ciphertext_with_nonce.slice()).update(&additional.slice()).finalize() } else { keyed_hash(&second_hash_key_bytes, &ciphertext_with_nonce.slice()) };
         if !constant_time_eq(hash.as_bytes(), &second_authentication.slice()) {
-            return Err(CryptoError::AuthenticationError("second authentication error".to_string()))
+            return Err(authentication_error("second authentication error (hashes not equal)"))
         }
         return Ok(())
     }
