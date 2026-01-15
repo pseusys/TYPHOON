@@ -351,18 +351,21 @@ impl AsRef<[u8]> for ByteBuffer {
 }
 
 impl From<Vec<u8>> for ByteBuffer {
+    #[inline]
     fn from(value: Vec<u8>) -> Self {
         Self::from_slice_with_capacity(value.as_slice(), 0, 0)
     }
 }
 
 impl From<&[u8]> for ByteBuffer {
+    #[inline]
     fn from(value: &[u8]) -> Self {
         Self::from_slice_with_capacity(value, 0, 0)
     }
 }
 
 impl<const N: usize> From<&[u8; N]> for ByteBuffer {
+    #[inline]
     fn from(value: &[u8; N]) -> Self {
         Self::from_array_with_capacity(value, 0, 0)
     }
@@ -378,6 +381,7 @@ impl Into<Vec<u8>> for ByteBuffer {
 impl<const N: usize> TryInto<[u8; N]> for &ByteBuffer {
     type Error = ByteBufferConversionError;
 
+    #[inline]
     fn try_into(self) -> Result<[u8; N], Self::Error> {
         match <[u8; N]>::try_from(&self.slice()[..]) {
             Ok(res) => Ok(res),
@@ -391,12 +395,14 @@ impl<const N: usize> TryInto<[u8; N]> for &ByteBuffer {
 }
 
 impl PartialEq for ByteBuffer {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.slice() == other.slice()
     }
 }
 
 impl Debug for ByteBuffer {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ByteBuffer").field("length", &self.length).field("start", &self.start).field("end", &self.end).field("length", &self.len()).field("data", &self.slice()).finish()
     }

@@ -140,12 +140,14 @@ That is why the server flow managers should maintain client number to client add
 
 The simplest pattern affects data packets: they are sent directly and completely, without any delays, jitter, splitting or combination - as soon as possible, providing maximum efficiency.
 
+> NB! This behavior _might_ be changed using custom [decoy communication mode](#communication-mode): some [decoy providers](#insertion-and-processing) are allowed to intercept and "hold" data packets for some time, but that is highly discouraged in performance-critical scenarios.
+
 Just like it has already been described in [packet structure](#packet-structure) section, every data packet is encrypted, prefixed with a [fake header](#fake-header) and postfixed with an [encrypted tailor](#tailor-structure).
 
 ### Handshake packets
 
 The TYPHOON protocol relies on a two-way handshake that closely resembles those of the OBFS4 and NTORv3 protocols.
-There is no reason to wait for a third packet from the client (TCP-style), as it is not possible to overload the server with partially-initialized sessions because [only one active connection is allowed per certificate](#sockets-and-listeners).
+There is no reason to wait for a third packet from the client (TCP-style), as it is not possible to overload the server with partially-initialized sessions if [initial handshake data is used correctly](#initial-data-handling).
 Moreover, that means that if the client sends a handshake packet on an existing connection, its internal state gets silently reset (see [health check packet description](#health-check-packets) for more information on connection internal state).
 See [handshake encryption specification](#handshake-encryption) for cryptographic details of the handshake.
 
@@ -258,7 +260,7 @@ There are some exceptions, in general the decoy packets are more likely to appea
 Decoy packet exchange behavior is configured for every flow manager and selected upon initialization, either randomly (by default) or manually.
 The configuration includes:
 
-- Communication mode: defines general decoy packet sending behavior, possible values are: `heavy`, `noisy`, `sparse`, `smooth` (and also [probably some others](#extensibility)).
+- Communication mode: defines general decoy packet sending behavior, possible values are: `heavy`, `noisy`, `sparse`, `smooth` (and also any other defined by user).
 - Maintenance mode: defines the way how maintenance packets would look like, possible values are: `none`, `random`, `timed`, `sized`, `both`.
 - Replication mode: defines what packets will be duplicated, possible values are: `none`, `maintenance`, `all`.
 - Subheader pattern: defines whether the maintenance packets should have their own fake header, boolean.
@@ -294,83 +296,12 @@ Some other values used in computation are defined once during initialization or 
 Every mode defines its own equations for calculation of decoy packet length (`decoy_length`, in bytes), delay before the next decoy packet (`decoy_delay`) and decoy packet skipping probability (`decoy_skip_probability`).
 By default, communication mode is chosen with equal probability for every option.
 
-##### Heavy mode
+A TYPHOON implementation should provide an "interface" for supplying custom decoy modes.
+The [proposed implementation](#communication-modes) defines a few general purpose communication mode set, that is meant to be expandable by users.
 
-Heavy mode implements sending big decoy packets occasionally.
-It resembles file transferring or bulk update delivery.
-
-It defines the following equations for decoy packet delay:
-
-- `base_rate = TYPHOON_DECOY_HEAVY_BASE_RATE * random_uniform(1 - TYPHOON_DECOY_BASE_RATE_RND, 1 + TYPHOON_DECOY_BASE_RATE_RND)`, where `TYPHOON_DECOY_BASE_RATE_RND` is a constant.
-- `rate = base_rate * (quietness_index ^ TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR) * exp(-packet_rate / reference_rate)`.
-- `decoy_delay = exponential_variance(rate)`, clamped between `TYPHOON_DECOY_HEAVY_DELAY_MIN` and `TYPHOON_DECOY_HEAVY_DELAY_MAX`, or `TYPHOON_DECOY_HEAVY_DELAY_DEFAULT` if `rate` is non-positive.
-
-And the following equations for decoy packet length:
-
-- `base_length = packet_length_cap * (TYPHOON_DECOY_HEAVY_BASE_LENGTH + TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH * quietness_index)`.
-- `decoy_length = random_uniform(TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR * base_length, base_length)`, clamped between `packet_length_cap / 2` and `packet_length_cap`.
-
-> The `exponential_variance` and `random_uniform` functions are defined in the [supporting math](#supporting-math) chapter.
-
-##### Noisy mode
-
-Noisy mode implements sending smaller decoy packets in bursts often.
-It resembles usual web or socket traffic.
-
-It defines the following equations for decoy packet delay:
-
-- `base_rate = TYPHOON_DECOY_NOISY_BASE_RATE * random_uniform(1 - TYPHOON_DECOY_BASE_RATE_RND, 1 + TYPHOON_DECOY_BASE_RATE_RND)`, where `TYPHOON_DECOY_BASE_RATE_RND` is a constant.
-- `rate = base_rate * quietness_index * exp(-packet_rate / reference_rate)`.
-- `decoy_delay = exponential_variance(rate * (1 + packet_rate / reference_rate))`, clamped between `TYPHOON_DECOY_NOISY_DELAY_MIN` and `TYPHOON_DECOY_NOISY_DELAY_MAX` constants, or `TYPHOON_DECOY_NOISY_DELAY_DEFAULT` if `rate` is non-positive.
-
-And the following equations for decoy packet length:
-
-- `mean_length = TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN + quietness_index * exp(-packet_rate / reference_rate) * (packet_length_cap - TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN)`.
-- `decoy_length = random_gauss(mean_length, TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER * mean_length)`, clamped between `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` and `packet_length_cap`.
-
-> The `exponential_variance`, `random_uniform`, and `random_gauss` functions are defined in the [supporting math](#supporting-math) chapter.
-
-##### Extensibility
-
-The modes defined above are not excessive.
-They focus on maintaining minimal state and use small predictable computations.
-Ideally, a TYPHOON implementation should provide an "interface" for supplying additional overridden decoy modes.
-The only limitation is that any decoy mode should not interfere with data packets, and they should always be delivered on best-effort basis.
-
-##### Sparse mode
-
-Sparse mode implements sending average decoy packets sparsely distributed in time.
-It resembles VoIP traffic or downloading.
-
-It defines the following equations for decoy packet delay:
-
-- `base_rate = TYPHOON_DECOY_SPARSE_BASE_RATE * random_uniform(1 - TYPHOON_DECOY_BASE_RATE_RND, 1 + TYPHOON_DECOY_BASE_RATE_RND)`, where `TYPHOON_DECOY_BASE_RATE_RND` is a constant.
-- `rate = base_rate * quietness_index * exp(-TYPHOON_DECOY_SPARSE_RATE_FACTOR * packet_rate / reference_rate)`.
-- `decoy_delay = random_uniform(1 - TYPHOON_DECOY_SPARSE_JITTER, 1 + TYPHOON_DECOY_SPARSE_JITTER) * (1 + TYPHOON_DECOY_SPARSE_DELAY_FACTOR * (packet_rate / reference_rate)) / rate`, clamped between `TYPHOON_DECOY_SPARSE_DELAY_MIN` and `TYPHOON_DECOY_SPARSE_DELAY_MAX`, or `TYPHOON_DECOY_SPARSE_DELAY_DEFAULT` if `rate` is non-positive.
-
-And the following equations for decoy packet length:
-
-- `decoy_length = random_gauss(TYPHOON_DECOY_SPARSE_LENGTH_FACTOR * exp(-packet_rate / reference_rate), TYPHOON_DECOY_SPARSE_LENGTH_SIGMA)`, clamped between `TYPHOON_DECOY_SPARSE_LENGTH_MIN` and `TYPHOON_DECOY_SPARSE_LENGTH_MAX`.
-
-> The `random_uniform` and `random_gauss` functions are defined in the [supporting math](#supporting-math) chapter.
-
-##### Smooth mode
-
-Smooth mode implements sending few average decoy packets during quiet periods.
-It fills gaps between data packets and prevents the connection from going silent.
-
-It defines the following equations for decoy packet delay:
-
-- `base_rate = TYPHOON_DECOY_SMOOTH_BASE_RATE * random_uniform(1 - TYPHOON_DECOY_BASE_RATE_RND, 1 + TYPHOON_DECOY_BASE_RATE_RND)`, where `TYPHOON_DECOY_BASE_RATE_RND` is a constant.
-- `rate = base_rate * (quietness_index ^ TYPHOON_DECOY_SMOOTH_QUIETNESS_FACTOR) * exp(-TYPHOON_DECOY_SMOOTH_RATE_FACTOR * packet_rate / reference_rate)`.
-- `decoy_delay = random_uniform(1 - TYPHOON_DECOY_SMOOTH_JITTER, 1 + TYPHOON_DECOY_SMOOTH_JITTER) * (1 + TYPHOON_DECOY_SMOOTH_DELAY_FACTOR * (packet_rate / reference_rate)) / rate`, clamped between `TYPHOON_DECOY_SMOOTH_DELAY_MIN` and `TYPHOON_DECOY_SMOOTH_DELAY_MAX`, or `TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT` if `rate` is non-positive.
-
-And the following equations for decoy packet length:
-
-- `mean_length = TYPHOON_DECOY_SMOOTH_LENGTH_MIN + quietness_index * exp(-packet_rate / reference_rate) * (TYPHOON_DECOY_SMOOTH_LENGTH_MAX - TYPHOON_DECOY_SMOOTH_LENGTH_MIN)`.
-- `decoy_length = random_uniform(TYPHOON_DECOY_SMOOTH_LENGTH_MIN, mean_length)`, clamped between `TYPHOON_DECOY_SMOOTH_LENGTH_MIN` and `TYPHOON_DECOY_SMOOTH_LENGTH_MAX`.
-
-> The `random_uniform` function is defined in the [supporting math](#supporting-math) chapter.
+> It is _preferred_ that communication mode implementation [has read-ony access to data packets](#data-packets).
+> That ensures best-effort delivery of real data that meant to be transferred by the protocol.
+> However, that is not required and custom communication modes are allowed to cancel data packet sending - and re-inject them later.
 
 #### Maintenance mode
 
@@ -493,7 +424,7 @@ There are only two packets that have to be encrypted and decrypted: client hands
 The handshake in TYPHOON resembles [OBFS4](https://gitweb.torproject.org/pluggable-transports/obfs4.git) and [NTORv3](https://gitweb.torproject.org/torspec.git/tree/ntor-handshake.txt) from cryptographic point of view.
 Client handshake packet encryption consists of the following steps:
 
-0. Client comes up with initial data.
+0. Client comes up with [initial data](#initial-data-handling).
 1. Client generates a random 32-byte nonce `CliNnc` (it's required for replay protection).
 2. Client generates ephemeral `X25519` keypair, retrieving a public key (`CliEphPubKey`) and a secret key (`CliEphSecKey`).
 3. Client performs KEM encapsulation using `EPK`, retrieving a ciphertext (`Ciph`) and a shared secret (`CliShrSec`).
@@ -528,7 +459,7 @@ Client handshake packet decryption consists of the following steps:
 
 After the server initiates the internal state for the user and waits for an appropriate time, it encrypts the client response using the following steps:
 
-0. Server comes up with initial data (might be just a random byte string).
+0. Server comes up with [initial data](#initial-data-handling).
 1. Server generates a random 32-byte nonce `SrvNnc` (it's required for replay protection).
 2. Server generates ephemeral `X25519` keypair, retrieving a public key (`SrvEphPubKey`) and a secret key (`SrvEphSecKey`).
 3. Server performs X25519 key exchange using `SrvEphSecKey` and `CliEphPubKey`, deriving a shared secret (`SrvShrSec`).
@@ -645,7 +576,7 @@ In short, these are the main TYPHOON implementation parts:
 - Session controller (one per session): accepts data, encrypts it with the session key, appends an encrypted header, selects an appropriate flow, and delivers data to it.
 - Health check provider (one per session): attached to session controller, keeps internal protocol state, manages handshake message timers and injects handshake messages themselves if necessary.
 - Flow controller (one per flow): accepts data, prepends a mock header to it and sends it to the flow partner using a UDP socket.
-- Decoy provider (one per flow): attached to flow controller, observes flow packet stream and injects decoy packets whenever necessary.
+- Decoy provider (one per flow): attached to flow controller, observes (and probably mutates) flow packet stream and injects decoy packets whenever necessary.
 
 #### Identification and rebinding
 
@@ -658,7 +589,11 @@ In general, the client-to-identification mapping should be safe (considering cli
 - Session key authentication that is used for [tailor encryption](#tailor-encryption).
 - Incremental packet number [in tailor](#tailor-structure), stored in lower `4` bytes of **PN** field (it's always filled, even in data and decoy packets).
 
-By default, the **ID** field is `16` bytes ([UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier)) long, which should be sufficient for random user **ID** assignment (but it may be changed using the `TYPHOON_ID_LENGTH` constant).
+By default, the **ID** field is `16` bytes ([UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier)) long, which should be sufficient for random user **ID** assignment.
+
+Alternatively, if there exists another way of identifying users (e.g. each of them gets unique access to a resource, like a server process or socket), the required **ID** field length can be different (it may be changed using the `TYPHOON_ID_LENGTH` constant).
+A scenario when an attacker impersonates a user, forging a fake packet on their behalf, should not be a concern, since [tailor structure is authenticated with user session key anyway](#tailor-encryption).
+
 The UDP source address rebinding happens only if a correctly-authenticated packet with incremental number higher than before arrives from a new source address.
 This approach allows verifying packet tailor identity, safe attribution, and rebinding.
 
@@ -669,6 +604,104 @@ In addition to that, every flow manager keeps a table of all the connected user 
 
 Rebinding happens on the flow manager only, without the session manager or any other listener parts being involved.
 The only requirement for this is packet validation, which is [performed using the user session key](#tailor-encryption) — this key is pulled from the global user table.
+
+#### Initial data handling
+
+Initial data plays crucial role in user identification.
+It is passed from client to server and from client to server during handshake, and it plays different role in these cases.
+
+When it is passed from client to server, in general it should contain required information for user **ID** generation.
+Its main purpose is controlling how many connections can a user have, and also making sure that if a user restarts a connection, its [internal state is reset](#handshake-packets) and no dangling connection is left.
+For instance, one of the following approaches might be used:
+
+- Initial data is empty: any user with a certificate can create as many connections as they want, **ID** is generated randomly, a new connection is created every time a user sends handshake packet (WARNING: this can lead to overflowing server with hanging connections).
+- Initial data is random data chosen by user: any user with a certificate can still create as many connections as they want, but the **ID** is generated from user initial data in a predictable manner, so a user can reset their connection if they use the same initial data (WARNING: this can still lead to overflowing server with hanging connections).
+- Initial data is random data encrypted by the server private symmetrical key and included into user certificate: a user can create only one connection (since any initial data that fails decryption and authentication by server private symmetric key will be discarded, leading to connection abort), the **ID** is generated from user initial data in a predictable manner (WARNING: that requires a separate certificate per every connection).
+- Initial data is random data encrypted by the server private symmetrical key and included into user certificate with an attached random data attached by user (the _preferred_ option): a user can create different connections by choosing different additional data, but all of them will be attributed with a single certificate (by decrypting and authenticating the provided part), the server controls maximum allowed number of connections from a single certificate according by the internal rate limiting rules.
+
+What is passed from server to client can provide additional information about the established connections and in most of the cases can be empty.
+As an example of how it can be used, the following setup can be proposed:
+
+According to [TYPHOON architecture](#architecture), server flow managers can have IP addresses that differ from the server itself.
+Even though [suggested listener design](#sockets-and-listeners) outlines that their parameters should be static, so that they can be embedded into certificate and delivered to users, sometimes this constraint is impossible to fulfil (especially when it comes to volatile distributed setups where it is necessary to add or remove server flow managers dynamically).
+In that special case it might be inevitable to only embed the server address itself into certificates - and pass "proxy" addresses dynamically, after the handshake is established, in initial data.
+WARNING: this design comes with a significant limitation - since client does not know any "proxy" addresses initially, every new handshake will inevitably go to the server address, which will create a clear pattern for an external observer.
+
+### Communication modes
+
+The following communication modes are proposed.
+They are designed to be general-purpose, suitable for most of the network environments and not resource-demanding (only using basic maths and lightweight persistent states).
+
+#### Heavy mode
+
+Heavy mode implements sending big decoy packets occasionally.
+It resembles file transferring or bulk update delivery.
+
+It defines the following equations for decoy packet delay:
+
+- `base_rate = TYPHOON_DECOY_HEAVY_BASE_RATE * random_uniform(1 - TYPHOON_DECOY_BASE_RATE_RND, 1 + TYPHOON_DECOY_BASE_RATE_RND)`, where `TYPHOON_DECOY_BASE_RATE_RND` is a constant.
+- `rate = base_rate * (quietness_index ^ TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR) * exp(-packet_rate / reference_rate)`.
+- `decoy_delay = exponential_variance(rate)`, clamped between `TYPHOON_DECOY_HEAVY_DELAY_MIN` and `TYPHOON_DECOY_HEAVY_DELAY_MAX`, or `TYPHOON_DECOY_HEAVY_DELAY_DEFAULT` if `rate` is non-positive.
+
+And the following equations for decoy packet length:
+
+- `base_length = packet_length_cap * (TYPHOON_DECOY_HEAVY_BASE_LENGTH + TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH * quietness_index)`.
+- `decoy_length = random_uniform(TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR * base_length, base_length)`, clamped between `packet_length_cap / 2` and `packet_length_cap`.
+
+> The `exponential_variance` and `random_uniform` functions are defined in the [supporting math](#supporting-math) chapter.
+
+#### Noisy mode
+
+Noisy mode implements sending smaller decoy packets in bursts often.
+It resembles usual web or socket traffic.
+
+It defines the following equations for decoy packet delay:
+
+- `base_rate = TYPHOON_DECOY_NOISY_BASE_RATE * random_uniform(1 - TYPHOON_DECOY_BASE_RATE_RND, 1 + TYPHOON_DECOY_BASE_RATE_RND)`, where `TYPHOON_DECOY_BASE_RATE_RND` is a constant.
+- `rate = base_rate * quietness_index * exp(-packet_rate / reference_rate)`.
+- `decoy_delay = exponential_variance(rate * (1 + packet_rate / reference_rate))`, clamped between `TYPHOON_DECOY_NOISY_DELAY_MIN` and `TYPHOON_DECOY_NOISY_DELAY_MAX` constants, or `TYPHOON_DECOY_NOISY_DELAY_DEFAULT` if `rate` is non-positive.
+
+And the following equations for decoy packet length:
+
+- `mean_length = TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN + quietness_index * exp(-packet_rate / reference_rate) * (packet_length_cap - TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN)`.
+- `decoy_length = random_gauss(mean_length, TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER * mean_length)`, clamped between `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` and `packet_length_cap`.
+
+> The `exponential_variance`, `random_uniform`, and `random_gauss` functions are defined in the [supporting math](#supporting-math) chapter.
+
+#### Sparse mode
+
+Sparse mode implements sending average decoy packets sparsely distributed in time.
+It resembles VoIP traffic or downloading.
+
+It defines the following equations for decoy packet delay:
+
+- `base_rate = TYPHOON_DECOY_SPARSE_BASE_RATE * random_uniform(1 - TYPHOON_DECOY_BASE_RATE_RND, 1 + TYPHOON_DECOY_BASE_RATE_RND)`, where `TYPHOON_DECOY_BASE_RATE_RND` is a constant.
+- `rate = base_rate * quietness_index * exp(-TYPHOON_DECOY_SPARSE_RATE_FACTOR * packet_rate / reference_rate)`.
+- `decoy_delay = random_uniform(1 - TYPHOON_DECOY_SPARSE_JITTER, 1 + TYPHOON_DECOY_SPARSE_JITTER) * (1 + TYPHOON_DECOY_SPARSE_DELAY_FACTOR * (packet_rate / reference_rate)) / rate`, clamped between `TYPHOON_DECOY_SPARSE_DELAY_MIN` and `TYPHOON_DECOY_SPARSE_DELAY_MAX`, or `TYPHOON_DECOY_SPARSE_DELAY_DEFAULT` if `rate` is non-positive.
+
+And the following equations for decoy packet length:
+
+- `decoy_length = random_gauss(TYPHOON_DECOY_SPARSE_LENGTH_FACTOR * exp(-packet_rate / reference_rate), TYPHOON_DECOY_SPARSE_LENGTH_SIGMA)`, clamped between `TYPHOON_DECOY_SPARSE_LENGTH_MIN` and `TYPHOON_DECOY_SPARSE_LENGTH_MAX`.
+
+> The `random_uniform` and `random_gauss` functions are defined in the [supporting math](#supporting-math) chapter.
+
+#### Smooth mode
+
+Smooth mode implements sending few average decoy packets during quiet periods.
+It fills gaps between data packets and prevents the connection from going silent.
+
+It defines the following equations for decoy packet delay:
+
+- `base_rate = TYPHOON_DECOY_SMOOTH_BASE_RATE * random_uniform(1 - TYPHOON_DECOY_BASE_RATE_RND, 1 + TYPHOON_DECOY_BASE_RATE_RND)`, where `TYPHOON_DECOY_BASE_RATE_RND` is a constant.
+- `rate = base_rate * (quietness_index ^ TYPHOON_DECOY_SMOOTH_QUIETNESS_FACTOR) * exp(-TYPHOON_DECOY_SMOOTH_RATE_FACTOR * packet_rate / reference_rate)`.
+- `decoy_delay = random_uniform(1 - TYPHOON_DECOY_SMOOTH_JITTER, 1 + TYPHOON_DECOY_SMOOTH_JITTER) * (1 + TYPHOON_DECOY_SMOOTH_DELAY_FACTOR * (packet_rate / reference_rate)) / rate`, clamped between `TYPHOON_DECOY_SMOOTH_DELAY_MIN` and `TYPHOON_DECOY_SMOOTH_DELAY_MAX`, or `TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT` if `rate` is non-positive.
+
+And the following equations for decoy packet length:
+
+- `mean_length = TYPHOON_DECOY_SMOOTH_LENGTH_MIN + quietness_index * exp(-packet_rate / reference_rate) * (TYPHOON_DECOY_SMOOTH_LENGTH_MAX - TYPHOON_DECOY_SMOOTH_LENGTH_MIN)`.
+- `decoy_length = random_uniform(TYPHOON_DECOY_SMOOTH_LENGTH_MIN, mean_length)`, clamped between `TYPHOON_DECOY_SMOOTH_LENGTH_MIN` and `TYPHOON_DECOY_SMOOTH_LENGTH_MAX`.
+
+> The `random_uniform` function is defined in the [supporting math](#supporting-math) chapter.
 
 ### Error handling
 
