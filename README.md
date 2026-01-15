@@ -61,7 +61,7 @@ The tailor structure consists of the following fields:
 | Field code | Field name | Byte length | Production meaning | Debug meaning |
 | --- | --- | --- | --- | --- |
 | **FG** | flags | `1` | Flags defining packet contents | - |
-| **CD** | code | `1` | Client type in client handshake, handshake result in server handshake | - |
+| **CD** | code | `1` | Client type in client handshake, handshake result in server handshake | Packet unique reference number |
 | **TM** | time | `4` | Delay before the next health check packet (milliseconds), unused for other packets | Packet sending timestamp |
 | **PN** | packet number | `8` | Combined packet number | - |
 | **PL** | payload length | `2` | Length of encrypted packet payload | - |
