@@ -5,14 +5,13 @@ mod tests;
 use cfg_if::cfg_if;
 
 use crate::bytes::ByteBuffer;
-use crate::crypto::error::{CryptoError, array_extraction_error, encryption_error};
-use crate::random::get_rng;
+use crate::crypto::error::CryptoError;
+use crate::utils::random::get_rng;
 
 cfg_if! {
     if #[cfg(feature = "fast")] {
         use blake3::{KEY_LEN, Hasher, keyed_hash};
         use constant_time_eq::constant_time_eq;
-        use crate::crypto::error::authentication_error;
     }
 }
 
@@ -63,30 +62,23 @@ pub const ANONYMOUS_NONCE_LEN: usize = 16;
 
 /// Encrypt plaintext using unauthenticated stream cipher. Appends nonce to output.
 /// Args: key (32-byte), plaintext (modified in-place). Returns: ciphertext with nonce.
-pub fn encrypt_anonymously(key: &ByteBuffer, plaintext: &mut ByteBuffer) -> Result<ByteBuffer, CryptoError> {
-    let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = match key.try_into() {
-        Ok(res) => res,
-        Err(err) => return Err(array_extraction_error("anonymous encryption key", err)),
-    };
+#[inline]
+pub fn encrypt_anonymously(key: &ByteBuffer, plaintext: &mut ByteBuffer) -> ByteBuffer {
+    let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = key.into();
     let nonce = AnonymousCypher::generate_iv(get_rng());
     AnonymousCypher::new(&key_bytes.into(), &nonce.into()).apply_keystream(&mut plaintext.slice_mut());
-    Ok(plaintext.append(&nonce))
+    plaintext.append(&nonce)
 }
 
 /// Decrypt ciphertext using unauthenticated stream cipher. Extracts nonce from end.
 /// Args: key (32-byte), ciphertext_with_nonce. Returns: plaintext.
-pub fn decrypt_anonymously(key: &ByteBuffer, ciphertext_with_nonce: &mut ByteBuffer) -> Result<ByteBuffer, CryptoError> {
+#[inline]
+pub fn decrypt_anonymously(key: &ByteBuffer, ciphertext_with_nonce: &mut ByteBuffer) -> ByteBuffer {
     let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf(ciphertext_with_nonce.len() - ANONYMOUS_NONCE_LEN);
-    let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = match key.try_into() {
-        Ok(res) => res,
-        Err(err) => return Err(array_extraction_error("anonymous decryption key", err)),
-    };
-    let nonce: [u8; ANONYMOUS_NONCE_LEN] = match (&nonce_bytes).try_into() {
-        Ok(res) => res,
-        Err(err) => return Err(array_extraction_error("anonymous decryption nonce", err)),
-    };
+    let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = key.into();
+    let nonce: [u8; ANONYMOUS_NONCE_LEN] = (&nonce_bytes).into();
     AnonymousCypher::new(&key_bytes.into(), &nonce.into()).apply_keystream(&mut ciphertext.slice_mut());
-    Ok(ciphertext)
+    ciphertext
 }
 
 /// Authenticated symmetric cipher for marshalling encryption (XChaCha20-Poly1305 or AES-GCM).
@@ -97,15 +89,12 @@ pub struct Symmetric {
 
 impl Symmetric {
     /// Create cipher from 32-byte key. Returns: Symmetric instance.
-    pub fn new(key: &ByteBuffer) -> Result<Self, CryptoError> {
-        let private_bytes: [u8; SYMMETRIC_KEY_LENGTH] = match key.try_into() {
-            Ok(res) => res,
-            Err(err) => return Err(array_extraction_error("cipher key", err)),
-        };
+    pub fn new(key: &ByteBuffer) -> Self {
+        let private_bytes: [u8; SYMMETRIC_KEY_LENGTH] = key.into();
         let cipher = Cipher::new(CipherKey::from_slice(&private_bytes));
-        Ok(Self {
+        Self {
             cipher,
-        })
+        }
     }
 
     /// Internal: encrypt with AEAD, return ciphertext with prepended nonce and detached tag.
@@ -118,7 +107,7 @@ impl Symmetric {
         };
         match result {
             Ok(res) => Ok((plaintext.prepend(&nonce), res)),
-            Err(err) => Err(encryption_error("symmetric encryption", err)),
+            Err(err) => Err(CryptoError::encryption_error("symmetric encryption", err)),
         }
     }
 
@@ -135,10 +124,7 @@ impl Symmetric {
     pub fn encrypt_auth_twice(&mut self, plaintext: ByteBuffer, additional_data: Option<&ByteBuffer>, second_hash_key: &ByteBuffer) -> Result<ByteBuffer, CryptoError> {
         match self.encrypt_internal(plaintext, additional_data) {
             Ok((ciphertext, auth)) => {
-                let second_hash_key_bytes: [u8; KEY_LEN] = match second_hash_key.try_into() {
-                    Ok(res) => res,
-                    Err(err) => return Err(array_extraction_error("second hash key (encryption)", err)),
-                };
+                let second_hash_key_bytes: [u8; KEY_LEN] = second_hash_key.into();
                 let hash = if let Some(additional) = additional_data {
                     Hasher::new_keyed(&second_hash_key_bytes).update(&ciphertext.slice()).update(&additional.slice()).finalize()
                 } else {
@@ -164,7 +150,7 @@ impl Symmetric {
         };
         match result {
             Ok(_) => Ok(ciphertext),
-            Err(err) => Err(encryption_error("symmetric decryption", err)),
+            Err(err) => Err(CryptoError::encryption_error("symmetric decryption", err)),
         }
     }
 
@@ -190,17 +176,14 @@ impl Symmetric {
 
     #[cfg(feature = "fast")]
     pub fn verify_second_auth(&mut self, ciphertext_with_nonce: &ByteBuffer, additional_data: Option<&ByteBuffer>, second_hash_key: &ByteBuffer, second_authentication: &ByteBuffer) -> Result<(), CryptoError> {
-        let second_hash_key_bytes: [u8; KEY_LEN] = match second_hash_key.try_into() {
-            Ok(res) => res,
-            Err(err) => return Err(array_extraction_error("second hash key (decryption)", err)),
-        };
+        let second_hash_key_bytes: [u8; KEY_LEN] = second_hash_key.into();
         let hash = if let Some(additional) = additional_data {
             Hasher::new_keyed(&second_hash_key_bytes).update(&ciphertext_with_nonce.slice()).update(&additional.slice()).finalize()
         } else {
             keyed_hash(&second_hash_key_bytes, &ciphertext_with_nonce.slice())
         };
         if !constant_time_eq(hash.as_bytes(), &second_authentication.slice()) {
-            return Err(authentication_error("second authentication error (hashes not equal)"));
+            return Err(CryptoError::authentication_error("second authentication error (hashes not equal)"));
         }
         return Ok(());
     }

@@ -19,7 +19,7 @@ use crate::crypto::certificate::Certificate;
 #[cfg(feature = "server")]
 use crate::crypto::certificate::ServerSecret;
 
-use crate::random::get_rng;
+use crate::utils::random::get_rng;
 
 const X25519_KEY_LENGTH: usize = 32;
 const NONCE_LENGTH: usize = 32;
@@ -132,10 +132,10 @@ fn test_handshake_cycle() {
     let initial_data_data = b"Secret initial data message";
     let initial_data = ByteBuffer::from_slice_with_capacity(initial_data_data, NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN);
 
-    let (client_data, client_handshake, mut client_initial_cipher) = certificate.encapsulate_handshake_client().expect("client handshake encapsulation failed");
+    let (client_data, client_handshake, mut client_initial_cipher) = certificate.encapsulate_handshake_client();
     let initial_data_encrypted = client_initial_cipher.encrypt_auth(initial_data, None).expect("initial data encryption failed");
 
-    let (server_data, mut server_initial_cipher) = server_secret.decapsulate_handshake_server(client_handshake).expect("server handshake decapsulation failed");
+    let (server_data, mut server_initial_cipher) = server_secret.decapsulate_handshake_server(client_handshake);
     let initial_data_decrypted = server_initial_cipher.decrypt_auth(initial_data_encrypted, None).expect("initial data decryption failed");
 
     assert_eq!(client_data.shared_secret, server_data.shared_secret, "client and server should derive the same shared secret");
@@ -144,7 +144,7 @@ fn test_handshake_cycle() {
     let session_data_data = b"Secret session data message";
     let session_data = ByteBuffer::from_slice_with_capacity(session_data_data, NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN);
 
-    let (server_handshake, mut server_session_cipher) = server_secret.encapsulate_handshake_server(server_data).expect("server handshake encapsulation failed");
+    let (server_handshake, mut server_session_cipher) = server_secret.encapsulate_handshake_server(server_data);
     let session_data_encrypted = server_session_cipher.encrypt_auth(session_data, None).expect("session data encryption failed");
 
     let mut client_session_key = certificate.decapsulate_handshake_client(client_data, server_handshake).expect("client handshake decapsulation failed");

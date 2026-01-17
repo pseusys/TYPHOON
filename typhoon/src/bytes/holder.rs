@@ -2,15 +2,15 @@ use crate::bytes::pool::PoolReturn;
 use crate::bytes::utils::free_ptr;
 
 /// Owns buffer memory and manages its lifecycle.
-pub(super) struct BufferHolder {
-    pub(super) data: *mut u8,
-    pub(super) capacity: usize,
+pub struct BufferHolder {
+    pub data: *mut u8,
+    pub capacity: usize,
     return_tx: Option<PoolReturn>,
 }
 
 impl BufferHolder {
     #[inline]
-    pub(super) fn new(data: *mut u8, capacity: usize, return_tx: Option<PoolReturn>) -> Self {
+    pub fn new(data: *mut u8, capacity: usize, return_tx: Option<PoolReturn>) -> Self {
         Self {
             data,
             capacity,

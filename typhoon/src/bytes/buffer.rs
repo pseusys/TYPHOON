@@ -2,14 +2,11 @@
 #[path = "../../tests/bytes/buffer.rs"]
 mod tests;
 
-use std::array::TryFromSliceError;
 use std::cell::UnsafeCell;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::Arc;
-
-use thiserror::Error;
 
 use crate::bytes::holder::BufferHolder;
 use crate::bytes::pool::PoolReturn;
@@ -26,7 +23,7 @@ pub struct ByteBuffer {
 }
 
 impl ByteBuffer {
-    pub(super) fn new(data: *mut u8, capacity: usize, before_cap: usize, size: usize, after_cap: usize, return_tx: Option<PoolReturn>) -> Self {
+    pub fn new(data: *mut u8, capacity: usize, before_cap: usize, size: usize, after_cap: usize, return_tx: Option<PoolReturn>) -> Self {
         let buffer_end = before_cap + size;
         ByteBuffer {
             holder: Arc::new(BufferHolder::new(data, capacity, return_tx)),
@@ -328,14 +325,6 @@ impl ByteBuffer {
     }
 }
 
-#[derive(Error, Debug)]
-#[error("error converting a ByteBuffer to an array [u8; {expected}], actual buffer length {actual}: {}", source.to_string())]
-pub struct ByteBufferConversionError {
-    actual: usize,
-    expected: usize,
-    source: TryFromSliceError,
-}
-
 impl AsMut<[u8]> for ByteBuffer {
     #[inline]
     fn as_mut(&mut self) -> &mut [u8] {
@@ -378,18 +367,12 @@ impl Into<Vec<u8>> for ByteBuffer {
     }
 }
 
-impl<const N: usize> TryInto<[u8; N]> for &ByteBuffer {
-    type Error = ByteBufferConversionError;
-
+impl<const N: usize> Into<[u8; N]> for &ByteBuffer {
     #[inline]
-    fn try_into(self) -> Result<[u8; N], Self::Error> {
+    fn into(self) -> [u8; N] {
         match <[u8; N]>::try_from(&self.slice()[..]) {
-            Ok(res) => Ok(res),
-            Err(err) => Err(ByteBufferConversionError {
-                actual: self.len(),
-                expected: N,
-                source: err,
-            }),
+            Ok(res) => res,
+            Err(err) => panic!("error converting a ByteBuffer to an array [u8; {N}], actual buffer length {}: {}", self.len(), err.to_string()),
         }
     }
 }

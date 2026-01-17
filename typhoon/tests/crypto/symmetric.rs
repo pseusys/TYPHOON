@@ -23,8 +23,8 @@ fn test_anonymous_encrypt_decrypt_cycle() {
     let plaintext_data = b"Anonymous encryption test";
     let mut plaintext = ByteBuffer::from_slice_with_capacity(plaintext_data, 0, ANONYMOUS_NONCE_LEN);
 
-    let mut ciphertext = encrypt_anonymously(&key, &mut plaintext).expect("encryption failed");
-    let decrypted = decrypt_anonymously(&key, &mut ciphertext).expect("decryption failed");
+    let mut ciphertext = encrypt_anonymously(&key, &mut plaintext);
+    let decrypted = decrypt_anonymously(&key, &mut ciphertext);
 
     assert_eq!(decrypted.slice(), plaintext_data, "decrypted text should match original");
 }
@@ -33,7 +33,7 @@ fn test_anonymous_encrypt_decrypt_cycle() {
 #[test]
 fn test_symmetric_encrypt_decrypt_cycle() {
     let key = make_key();
-    let mut cipher = Symmetric::new(&key).expect("cipher creation failed");
+    let mut cipher = Symmetric::new(&key);
 
     let plaintext_data = b"Authenticated encryption test";
     let plaintext = ByteBuffer::from_slice_with_capacity(plaintext_data, NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN);
@@ -50,7 +50,7 @@ fn test_symmetric_encrypt_decrypt_cycle() {
 fn test_symmetric_encrypt_decrypt_twice_cycle() {
     let key = make_key();
     let second_key = make_different_key();
-    let mut cipher = Symmetric::new(&key).expect("cipher creation failed");
+    let mut cipher = Symmetric::new(&key);
 
     let plaintext_data = b"Double authenticated message";
     let plaintext = ByteBuffer::from_slice_with_capacity(plaintext_data, NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN + SYMMETRIC_SECOND_AUTH_LEN);

@@ -5,7 +5,7 @@ mod tests;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::bytes::ByteBuffer;
-use crate::constants::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILOR_LENGTH, FG_OFFSET, CD_OFFSET, TM_OFFSET, PN_OFFSET, PL_OFFSET, ID_OFFSET};
+use crate::constants::consts::{TAILOR_LENGTH, FG_OFFSET, CD_OFFSET, TM_OFFSET, PN_OFFSET, PL_OFFSET, ID_OFFSET};
 use crate::tailor::flags::{PacketFlags, ReturnCode};
 
 /// Tailor structure (16 + TYPHOON_ID_LENGTH bytes total).
@@ -19,8 +19,8 @@ use crate::tailor::flags::{PacketFlags, ReturnCode};
 /// - PN (packet number): 8 bytes - timestamp (4) + incremental (4)
 /// - PL (payload length): 2 bytes - length of encrypted payload
 /// - ID (identity): TYPHOON_ID_LENGTH bytes - client UUID
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Tailor<const TYPHOON_ID_LENGTH: usize> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tailor {
     /// Packet flags defining packet contents.
     pub flags: PacketFlags,
     /// Code: client type in client handshake, return code otherwise.
@@ -32,12 +32,12 @@ pub struct Tailor<const TYPHOON_ID_LENGTH: usize> {
     /// Payload length in bytes.
     pub payload_length: u16,
     /// Client identity (UUID).
-    pub identity: [u8; TYPHOON_ID_LENGTH],
+    pub identity: ByteBuffer,
 }
 
-impl<const TYPHOON_ID_LENGTH: usize> Tailor<{ TYPHOON_ID_LENGTH }> {
+impl Tailor {
     /// Create a data packet tailor.
-    pub fn data(identity: [u8; TYPHOON_ID_LENGTH], payload_length: u16, packet_number: u64) -> Self {
+    pub fn data(identity: ByteBuffer, payload_length: u16, packet_number: u64) -> Self {
         Self {
             flags: PacketFlags::DATA,
             code: 0,
@@ -49,7 +49,7 @@ impl<const TYPHOON_ID_LENGTH: usize> Tailor<{ TYPHOON_ID_LENGTH }> {
     }
 
     /// Create a health check packet tailor.
-    pub fn health_check(identity: [u8; TYPHOON_ID_LENGTH], next_in: u32, packet_number: u64) -> Self {
+    pub fn health_check(identity: ByteBuffer, next_in: u32, packet_number: u64) -> Self {
         Self {
             flags: PacketFlags::HEALTH_CHECK,
             code: 0,
@@ -61,7 +61,7 @@ impl<const TYPHOON_ID_LENGTH: usize> Tailor<{ TYPHOON_ID_LENGTH }> {
     }
 
     /// Create a shadowride packet tailor (data + health check).
-    pub fn shadowride(identity: [u8; TYPHOON_ID_LENGTH], payload_length: u16, next_in: u32, packet_number: u64) -> Self {
+    pub fn shadowride(identity: ByteBuffer, payload_length: u16, next_in: u32, packet_number: u64) -> Self {
         Self {
             flags: PacketFlags::DATA | PacketFlags::HEALTH_CHECK,
             code: 0,
@@ -73,7 +73,7 @@ impl<const TYPHOON_ID_LENGTH: usize> Tailor<{ TYPHOON_ID_LENGTH }> {
     }
 
     /// Create a handshake packet tailor.
-    pub fn handshake(identity: [u8; TYPHOON_ID_LENGTH], code: u8, next_in: u32, packet_number: u64) -> Self {
+    pub fn handshake(identity: ByteBuffer, code: u8, next_in: u32, packet_number: u64) -> Self {
         Self {
             flags: PacketFlags::HANDSHAKE,
             code,
@@ -85,7 +85,7 @@ impl<const TYPHOON_ID_LENGTH: usize> Tailor<{ TYPHOON_ID_LENGTH }> {
     }
 
     /// Create a decoy packet tailor.
-    pub fn decoy(identity: [u8; TYPHOON_ID_LENGTH], packet_number: u64) -> Self {
+    pub fn decoy(identity: ByteBuffer, packet_number: u64) -> Self {
         Self {
             flags: PacketFlags::DECOY,
             code: 0,
@@ -97,7 +97,7 @@ impl<const TYPHOON_ID_LENGTH: usize> Tailor<{ TYPHOON_ID_LENGTH }> {
     }
 
     /// Create a termination packet tailor.
-    pub fn termination(identity: [u8; TYPHOON_ID_LENGTH], code: ReturnCode, packet_number: u64) -> Self {
+    pub fn termination(identity: ByteBuffer, code: ReturnCode, packet_number: u64) -> Self {
         Self {
             flags: PacketFlags::TERMINATION,
             code: code.into(),
@@ -140,18 +140,15 @@ impl<const TYPHOON_ID_LENGTH: usize> Tailor<{ TYPHOON_ID_LENGTH }> {
 
     /// Deserialize tailor from buffer.
     /// Buffer must be exactly TAILOR_LENGTH bytes.
-    pub fn from_buffer(buffer: &ByteBuffer) -> Self {
-        let correct_buffer = buffer.ensure_size(TYPHOON_ID_LENGTH + TAILOR_LENGTH);
+    pub fn from_buffer(buffer: &ByteBuffer, identity_len: usize) -> Self {
+        let correct_buffer = buffer.ensure_size(identity_len + TAILOR_LENGTH);
         let slice = correct_buffer.slice();
         let flags = PacketFlags::from_bits_truncate(slice[FG_OFFSET]);
         let code = slice[CD_OFFSET];
         let time = u32::from_be_bytes([slice[TM_OFFSET], slice[TM_OFFSET + 1], slice[TM_OFFSET + 2], slice[TM_OFFSET + 3]]);
         let packet_number = u64::from_be_bytes([slice[PN_OFFSET], slice[PN_OFFSET + 1], slice[PN_OFFSET + 2], slice[PN_OFFSET + 3], slice[PN_OFFSET + 4], slice[PN_OFFSET + 5], slice[PN_OFFSET + 6], slice[PN_OFFSET + 7]]);
         let payload_length = u16::from_be_bytes([slice[PL_OFFSET], slice[PL_OFFSET + 1]]);
-
-        let mut identity = [0u8; TYPHOON_ID_LENGTH];
-        identity.copy_from_slice(&slice[ID_OFFSET..ID_OFFSET + TYPHOON_ID_LENGTH]);
-
+        let identity = correct_buffer.rebuffer_both(ID_OFFSET, ID_OFFSET + identity_len);
         Self {
             flags,
             code,
@@ -164,7 +161,7 @@ impl<const TYPHOON_ID_LENGTH: usize> Tailor<{ TYPHOON_ID_LENGTH }> {
 
     /// Serialize tailor to a buffer.
     pub fn to_buffer(&self, buffer: ByteBuffer) -> ByteBuffer {
-        let correct_buffer = buffer.ensure_size(TYPHOON_ID_LENGTH + TAILOR_LENGTH);
+        let correct_buffer = buffer.ensure_size(self.identity.len() + TAILOR_LENGTH);
         let correct_slice = correct_buffer.slice_mut();
 
         correct_slice[FG_OFFSET] = self.flags.bits();
@@ -172,10 +169,8 @@ impl<const TYPHOON_ID_LENGTH: usize> Tailor<{ TYPHOON_ID_LENGTH }> {
         correct_slice[TM_OFFSET..TM_OFFSET + 4].copy_from_slice(&self.time.to_be_bytes());
         correct_slice[PN_OFFSET..PN_OFFSET + 8].copy_from_slice(&self.packet_number.to_be_bytes());
         correct_slice[PL_OFFSET..PL_OFFSET + 2].copy_from_slice(&self.payload_length.to_be_bytes());
-        correct_slice[ID_OFFSET..ID_OFFSET + TYPHOON_ID_LENGTH].copy_from_slice(&self.identity);
+        correct_slice[ID_OFFSET..ID_OFFSET + self.identity.len()].copy_from_slice(self.identity.slice());
 
         correct_buffer
     }
 }
-
-type DefaultTailor = Tailor<DEFAULT_TYPHOON_ID_LENGTH>;

@@ -5,8 +5,6 @@ use std::ops::{Add, Index};
 use log::warn;
 
 pub mod keys {
-    pub const TYPHOON_ID_LENGTH: &str = "TYPHOON_ID_LENGTH";
-
     pub const TYPHOON_RTT_ALPHA: &str = "TYPHOON_RTT_ALPHA";
     pub const TYPHOON_RTT_BETA: &str = "TYPHOON_RTT_BETA";
     pub const TYPHOON_RTT_DEFAULT: &str = "TYPHOON_RTT_DEFAULT";
@@ -97,8 +95,6 @@ pub mod keys {
 }
 
 mod values {
-    pub const TYPHOON_ID_LENGTH: u64 = 16;
-
     pub const TYPHOON_RTT_ALPHA: f64 = 0.125;
     pub const TYPHOON_RTT_BETA: f64 = 0.25;
     pub const TYPHOON_RTT_DEFAULT: u64 = 5000;
@@ -189,6 +185,7 @@ mod values {
 }
 
 pub mod consts {
+    pub const DEFAULT_TYPHOON_MTU_LENGTH: usize = 1500;
     pub const DEFAULT_TYPHOON_ID_LENGTH: usize = 16;
     pub const TAILOR_LENGTH: usize = 16;
     pub const FG_OFFSET: usize = 0;
@@ -228,7 +225,6 @@ type DefaultMap = HashMap<&'static str, SettingValue>;
 #[inline]
 fn default_values_map() -> DefaultMap {
     let mut map = HashMap::new();
-    map.insert(keys::TYPHOON_ID_LENGTH, SettingValue::Unsigned(values::TYPHOON_ID_LENGTH));
     map.insert(keys::TYPHOON_RTT_ALPHA, SettingValue::Float(values::TYPHOON_RTT_ALPHA));
     map.insert(keys::TYPHOON_RTT_BETA, SettingValue::Float(values::TYPHOON_RTT_BETA));
     map.insert(keys::TYPHOON_RTT_DEFAULT, SettingValue::Unsigned(values::TYPHOON_RTT_DEFAULT));
@@ -383,7 +379,7 @@ impl Default for SettingsBuilder {
 }
 
 pub struct Settings {
-    pub(crate) map: DefaultMap,
+    pub map: DefaultMap,
 }
 
 impl Index<&str> for Settings {

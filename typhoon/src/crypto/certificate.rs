@@ -16,18 +16,18 @@ pub trait ObfuscationBufferContainer {
 /// Server secret: McEliece secret key + Ed25519 signing key (+ X25519 in full mode).
 #[cfg(feature = "full")]
 pub struct ServerSecret<'a> {
-    pub(super) esk: SecretKey<'a>,
-    pub(super) vsk: SigningKey,
-    pub(super) opk: X25519PublicKey,
-    pub(super) osk: StaticSecret,
+    pub esk: SecretKey<'a>,
+    pub vsk: SigningKey,
+    pub opk: X25519PublicKey,
+    pub osk: StaticSecret,
 }
 
 /// Server secret: McEliece secret key + Ed25519 signing key + obfuscation key.
 #[cfg(feature = "fast")]
 pub struct ServerSecret<'a> {
-    pub(super) esk: SecretKey<'a>,
-    pub(super) vsk: SigningKey,
-    pub(super) obfs: ByteBuffer,
+    pub esk: SecretKey<'a>,
+    pub vsk: SigningKey,
+    pub obfs: ByteBuffer,
 }
 
 impl<'a> ObfuscationBufferContainer for ServerSecret<'a> {
@@ -47,17 +47,17 @@ impl<'a> ObfuscationBufferContainer for ServerSecret<'a> {
 /// Client certificate: McEliece public key + Ed25519 verifying key (+ X25519 in full mode).
 #[cfg(feature = "full")]
 pub struct Certificate<'a> {
-    pub(super) epk: McEliecePublicKey<'a>,
-    pub(super) vpk: VerifyingKey,
-    pub(super) opk: X25519PublicKey,
+    pub epk: McEliecePublicKey<'a>,
+    pub vpk: VerifyingKey,
+    pub opk: X25519PublicKey,
 }
 
 /// Client certificate: McEliece public key + Ed25519 verifying key + obfuscation key.
 #[cfg(feature = "fast")]
 pub struct Certificate<'a> {
-    pub(super) epk: McEliecePublicKey<'a>,
-    pub(super) vpk: VerifyingKey,
-    pub(super) obfs: ByteBuffer,
+    pub epk: McEliecePublicKey<'a>,
+    pub vpk: VerifyingKey,
+    pub obfs: ByteBuffer,
 }
 
 impl<'a> ObfuscationBufferContainer for Certificate<'a> {
@@ -76,14 +76,14 @@ impl<'a> ObfuscationBufferContainer for Certificate<'a> {
 
 /// Ephemeral client handshake state: X25519 secret, McEliece shared secret, nonce.
 pub struct ClientData {
-    pub(super) ephemeral_key: EphemeralSecret,
-    pub(super) shared_secret: ByteBuffer,
-    pub(super) nonce: ByteBuffer,
+    pub ephemeral_key: EphemeralSecret,
+    pub shared_secret: ByteBuffer,
+    pub nonce: ByteBuffer,
 }
 
 /// Ephemeral server handshake state: client X25519 public key, McEliece shared secret, nonce.
 pub struct ServerData {
-    pub(super) ephemeral_key: X25519PublicKey,
-    pub(super) shared_secret: ByteBuffer,
-    pub(super) nonce: ByteBuffer,
+    pub ephemeral_key: X25519PublicKey,
+    pub shared_secret: ByteBuffer,
+    pub nonce: ByteBuffer,
 }

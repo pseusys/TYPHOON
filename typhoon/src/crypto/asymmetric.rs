@@ -12,9 +12,9 @@ use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::bytes::ByteBuffer;
 use crate::crypto::certificate::ObfuscationBufferContainer;
-use crate::crypto::error::{HandshakeError, handshake_array_extraction_error, handshake_authentication_error, handshake_crypto_error};
+use crate::crypto::error::HandshakeError;
 use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, Symmetric, decrypt_anonymously, encrypt_anonymously};
-use crate::random::{SupportRng, get_rng};
+use crate::utils::random::{SupportRng, get_rng};
 
 cfg_if! {
     if #[cfg(feature = "server")] {
@@ -47,7 +47,7 @@ const MARSHALLING_ENCRYPTION_KEY: &str = "marshalling encryption key";
 impl<'a> Certificate<'a> {
     /// Client handshake: generate ephemeral keys, encapsulate with McEliece, obfuscate.
     /// Args: buffer for nonce. Returns: (ClientData, handshake_secret, initial_cipher).
-    pub fn encapsulate_handshake_client(&self) -> Result<(ClientData, ByteBuffer, Symmetric), HandshakeError> {
+    pub fn encapsulate_handshake_client(&self) -> (ClientData, ByteBuffer, Symmetric) {
         let nonce = ByteBuffer::from(get_rng().random_byte_array::<U32>().as_slice());
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
@@ -61,14 +61,8 @@ impl<'a> Certificate<'a> {
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(CLIENT_HANDSHAKE_OBFUSCATION_KEY)).update(&self.obfuscation_buffer().slice()).update(&nonce.slice()).finalize();
         let masking_key = ByteBuffer::from(masking_key_hash.as_bytes());
 
-        let ephemeral_public_obfuscated = match encrypt_anonymously(&masking_key, &mut ephemeral_public) {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_crypto_error("obfuscating ephemeral public key", err)),
-        };
-        let ciphertext_obfuscated = match encrypt_anonymously(&masking_key, &mut ciphertext_buffer) {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_crypto_error("obfuscating ciphertext", err)),
-        };
+        let ephemeral_public_obfuscated = encrypt_anonymously(&masking_key, &mut ephemeral_public);
+        let ciphertext_obfuscated = encrypt_anonymously(&masking_key, &mut ciphertext_buffer);
 
         let initial_encryption_key_hash = Hasher::new_keyed(&hash_derive_key_context(INITIAL_DATA_KEY)).update(&shared_buffer.slice()).update(&ephemeral_public_obfuscated.slice()).update(&nonce.slice()).finalize();
         let initial_encryption_key = ByteBuffer::from(initial_encryption_key_hash.as_bytes());
@@ -78,14 +72,11 @@ impl<'a> Certificate<'a> {
             shared_secret: shared_buffer,
             nonce: nonce.copy(),
         };
+
         let handshake_buffer = ByteBuffer::empty_with_capacity(0, 0, X25519_KEY_LENGTH + CRYPTO_CIPHERTEXTBYTES + ANONYMOUS_NONCE_LEN * 2 + NONCE_LENGTH);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append_buf(&ciphertext_obfuscated).append_buf(&nonce);
-        let initial_encryption_symmetric = match Symmetric::new(&initial_encryption_key) {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_crypto_error("generating initial data encryption key", err)),
-        };
-
-        Ok((client_data, handshake_secret, initial_encryption_symmetric))
+        let initial_encryption_symmetric = Symmetric::new(&initial_encryption_key);
+        (client_data, handshake_secret, initial_encryption_symmetric)
     }
 
     /// Process server handshake response: deobfuscate, verify signature, derive session key.
@@ -96,34 +87,22 @@ impl<'a> Certificate<'a> {
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(SERVER_HANDSHAKE_OBFUSCATION_KEY)).update(&self.obfuscation_buffer().slice()).update(&nonce.slice()).finalize();
         let masking_key = ByteBuffer::from(masking_key_hash.as_bytes());
-        let ephemeral_public_deobfuscated = match decrypt_anonymously(&masking_key, &mut ephemeral_public_obfuscated) {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_crypto_error("deobfuscating ephemeral public key", err)),
-        };
+        let ephemeral_public_deobfuscated = decrypt_anonymously(&masking_key, &mut ephemeral_public_obfuscated);
 
-        let ephemeral_public_bytes: [u8; X25519_KEY_LENGTH] = match (&ephemeral_public_deobfuscated).try_into() {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_array_extraction_error("ephemeral public key", err)),
-        };
+        let ephemeral_public_bytes: [u8; X25519_KEY_LENGTH] = (&ephemeral_public_deobfuscated).into();
         let ephemeral_public = PublicKey::from(ephemeral_public_bytes);
         let shared_secret = data.ephemeral_key.diffie_hellman(&ephemeral_public);
 
-        let transcript_signed_bytes: [u8; Signature::BYTE_SIZE] = match (&transcript_signed).try_into() {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_array_extraction_error("authentication transcript bytes", err)),
-        };
+        let transcript_signed_bytes: [u8; Signature::BYTE_SIZE] = (&transcript_signed).into();
         let transcript_signed = Signature::from_bytes(&transcript_signed_bytes);
         let transcript = Hasher::new().update(&data.shared_secret.slice()).update(shared_secret.as_bytes()).update(&data.nonce.slice()).update(&nonce.slice()).finalize();
         if let Err(err) = self.vpk.verify_strict(transcript.as_bytes(), &transcript_signed) {
-            return Err(handshake_authentication_error(&format!("server identity verification error: {}", err.to_string())));
+            return Err(HandshakeError::handshake_authentication_error(&format!("server identity verification error: {}", err.to_string())));
         };
 
         let session_key_hash = Hasher::new_keyed(&hash_derive_key_context(SESSION_KEY)).update(&data.shared_secret.slice()).update(shared_secret.as_bytes()).update(transcript.as_bytes()).finalize();
         let session_key = ByteBuffer::from(session_key_hash.as_bytes());
-        let session_symmetric = match Symmetric::new(&session_key) {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_crypto_error("generating session key", err)),
-        };
+        let session_symmetric = Symmetric::new(&session_key);
 
         Ok(session_symmetric)
     }
@@ -140,20 +119,14 @@ impl<'a> Certificate<'a> {
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(MARSHALLING_OBFUSCATION_KEY)).update(self.opk.as_bytes()).update(&nonce.slice()).finalize();
         let masking_key = ByteBuffer::from(masking_key_hash.as_bytes());
-        let ephemeral_public_obfuscated = match encrypt_anonymously(&masking_key, &mut ephemeral_public) {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_crypto_error("obfuscating ephemeral public key", err)),
-        };
+        let ephemeral_public_obfuscated = encrypt_anonymously(&masking_key, &mut ephemeral_public);
 
         let encryption_key_hash = Hasher::new_keyed(&hash_derive_key_context(MARSHALLING_ENCRYPTION_KEY)).update(shared_secret.as_bytes()).finalize();
         let encryption_key = ByteBuffer::from(encryption_key_hash.as_bytes());
 
-        let ciphertext = match Symmetric::new(&encryption_key) {
-            Ok(mut symm) => match symm.encrypt_auth(plaintext, Some(&nonce)) {
-                Ok(res) => res,
-                Err(err) => return Err(handshake_crypto_error("encrypting plaintext", err)),
-            },
-            Err(err) => return Err(handshake_crypto_error("generating encryption key", err)),
+        let ciphertext = match Symmetric::new(&encryption_key).encrypt_auth(plaintext, Some(&nonce)) {
+            Ok(res) => res,
+            Err(err) => return Err(HandshakeError::handshake_crypto_error("encrypting plaintext", err)),
         };
         let payload = ciphertext.prepend_buf(&ephemeral_public_obfuscated).prepend_buf(&nonce);
         Ok(payload)
@@ -164,21 +137,15 @@ impl<'a> Certificate<'a> {
 impl<'a> ServerSecret<'a> {
     /// Server decapsulate client handshake: deobfuscate, decapsulate McEliece, derive cipher.
     /// Args: client handshake_secret. Returns: (ServerData, initial_cipher).
-    fn decapsulate_handshake_server(&self, handshake_secret: ByteBuffer) -> Result<(ServerData, Symmetric), HandshakeError> {
+    fn decapsulate_handshake_server(&self, handshake_secret: ByteBuffer) -> (ServerData, Symmetric) {
         let (mut ephemeral_public_obfuscated, rest) = handshake_secret.split_buf(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN);
         let (mut ciphertext_obfuscated, nonce) = rest.split_buf(CRYPTO_CIPHERTEXTBYTES + ANONYMOUS_NONCE_LEN);
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(CLIENT_HANDSHAKE_OBFUSCATION_KEY)).update(&self.obfuscation_buffer().slice()).update(&nonce.slice()).finalize();
         let masking_key = ByteBuffer::from(masking_key_hash.as_bytes());
 
-        let ciphertext_buffer = match decrypt_anonymously(&masking_key, &mut ciphertext_obfuscated) {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_crypto_error("deobfuscating ciphertext", err)),
-        };
-        let ciphertext_bytes: [u8; CRYPTO_CIPHERTEXTBYTES] = match (&ciphertext_buffer).try_into() {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_array_extraction_error("ciphertext bytes", err)),
-        };
+        let ciphertext_buffer = decrypt_anonymously(&masking_key, &mut ciphertext_obfuscated);
+        let ciphertext_bytes: [u8; CRYPTO_CIPHERTEXTBYTES] = (&ciphertext_buffer).into();
         let ciphertext = Ciphertext::from(ciphertext_bytes);
 
         let mut shared_secret_buffer = [0u8; CRYPTO_BYTES];
@@ -188,14 +155,8 @@ impl<'a> ServerSecret<'a> {
         let initial_encryption_key_hash = Hasher::new_keyed(&hash_derive_key_context(INITIAL_DATA_KEY)).update(shared_secret.as_array()).update(&ephemeral_public_obfuscated.slice()).update(&nonce.slice()).finalize();
         let initial_encryption_key = ByteBuffer::from(initial_encryption_key_hash.as_bytes());
 
-        let ephemeral_public_deobfuscated = match decrypt_anonymously(&masking_key, &mut ephemeral_public_obfuscated) {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_crypto_error("deobfuscating ephemeral public key", err)),
-        };
-        let ephemeral_public_bytes: [u8; X25519_KEY_LENGTH] = match (&ephemeral_public_deobfuscated).try_into() {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_array_extraction_error("ephemeral public key", err)),
-        };
+        let ephemeral_public_deobfuscated = decrypt_anonymously(&masking_key, &mut ephemeral_public_obfuscated);
+        let ephemeral_public_bytes: [u8; X25519_KEY_LENGTH] = (&ephemeral_public_deobfuscated).into();
         let ephemeral_public = PublicKey::from(ephemeral_public_bytes);
 
         let server_data = ServerData {
@@ -203,17 +164,14 @@ impl<'a> ServerSecret<'a> {
             shared_secret: shared_buffer,
             nonce: nonce.copy(),
         };
-        let initial_encryption_symmetric = match Symmetric::new(&initial_encryption_key) {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_crypto_error("generating initial data encryption key", err)),
-        };
 
-        Ok((server_data, initial_encryption_symmetric))
+        let initial_encryption_symmetric = Symmetric::new(&initial_encryption_key);
+        (server_data, initial_encryption_symmetric)
     }
 
     /// Server handshake response: generate ephemeral X25519, sign transcript, derive session key.
     /// Args: server data, buffer. Returns: (handshake_secret, session_cipher).
-    fn encapsulate_handshake_server(&mut self, data: ServerData) -> Result<(ByteBuffer, Symmetric), HandshakeError> {
+    fn encapsulate_handshake_server(&mut self, data: ServerData) -> (ByteBuffer, Symmetric) {
         let nonce = ByteBuffer::from(get_rng().random_byte_array::<U32>().as_slice());
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
@@ -225,22 +183,16 @@ impl<'a> ServerSecret<'a> {
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(SERVER_HANDSHAKE_OBFUSCATION_KEY)).update(&self.obfuscation_buffer().slice()).update(&nonce.slice()).finalize();
         let masking_key = ByteBuffer::from(masking_key_hash.as_bytes());
-        let ephemeral_public_obfuscated = match encrypt_anonymously(&masking_key, &mut ephemeral_public) {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_crypto_error("obfuscating ephemeral public key", err)),
-        };
+        let ephemeral_public_obfuscated = encrypt_anonymously(&masking_key, &mut ephemeral_public);
 
         let session_key_hash = Hasher::new_keyed(&hash_derive_key_context(SESSION_KEY)).update(&data.shared_secret.slice()).update(shared_secret.as_bytes()).update(transcript.as_bytes()).finalize();
         let session_key = ByteBuffer::from(session_key_hash.as_bytes());
 
         let handshake_buffer = ByteBuffer::empty_with_capacity(0, 0, X25519_KEY_LENGTH + Signature::BYTE_SIZE + ANONYMOUS_NONCE_LEN + NONCE_LENGTH);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append(&transcript_signed.to_bytes()).append_buf(&nonce);
-        let session_symmetric = match Symmetric::new(&session_key) {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_crypto_error("generating session key", err)),
-        };
+        let session_symmetric = Symmetric::new(&session_key);
 
-        Ok((handshake_secret, session_symmetric))
+        (handshake_secret, session_symmetric)
     }
 
     /// Full mode: deobfuscate and decrypt ciphertext using server's X25519 secret.
@@ -252,28 +204,20 @@ impl<'a> ServerSecret<'a> {
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(MARSHALLING_OBFUSCATION_KEY)).update(self.opk.as_bytes()).update(&nonce.slice()).finalize();
         let masking_key = ByteBuffer::from(masking_key_hash.as_bytes());
-        let ephemeral_public_deobfuscated = match decrypt_anonymously(&masking_key, &mut ephemeral_public_obfuscated) {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_crypto_error("deobfuscating ephemeral public key", err)),
-        };
+        let ephemeral_public_deobfuscated = decrypt_anonymously(&masking_key, &mut ephemeral_public_obfuscated);
 
-        let ephemeral_public_bytes: [u8; X25519_KEY_LENGTH] = match (&ephemeral_public_deobfuscated).try_into() {
-            Ok(res) => res,
-            Err(err) => return Err(handshake_array_extraction_error("ephemeral public key", err)),
-        };
+        let ephemeral_public_bytes: [u8; X25519_KEY_LENGTH] = (&ephemeral_public_deobfuscated).into();
         let ephemeral_public = PublicKey::from(ephemeral_public_bytes);
         let shared_secret = self.osk.diffie_hellman(&ephemeral_public);
 
         let encryption_key_hash = Hasher::new_keyed(&hash_derive_key_context(MARSHALLING_ENCRYPTION_KEY)).update(shared_secret.as_bytes()).finalize();
         let encryption_key = ByteBuffer::from(encryption_key_hash.as_bytes());
 
-        let plaintext = match Symmetric::new(&encryption_key) {
-            Ok(mut symm) => match symm.decrypt_auth(ciphertext, Some(&nonce)) {
-                Ok(res) => res,
-                Err(err) => return Err(handshake_crypto_error("decrypting plaintext", err)),
-            },
-            Err(err) => return Err(handshake_crypto_error("generating decryption key", err)),
+        let plaintext = match Symmetric::new(&encryption_key).decrypt_auth(ciphertext, Some(&nonce)) {
+            Ok(res) => res,
+            Err(err) => return Err(HandshakeError::handshake_crypto_error("decrypting plaintext", err)),
         };
+
         Ok(plaintext)
     }
 }
