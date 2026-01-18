@@ -8,6 +8,8 @@ use std::marker::PhantomData;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::Arc;
 
+use rand::Fill;
+
 use crate::bytes::holder::BufferHolder;
 use crate::bytes::pool::PoolReturn;
 use crate::bytes::utils::{allocate_ptr, copy_slice};
@@ -381,6 +383,12 @@ impl PartialEq for ByteBuffer {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.slice() == other.slice()
+    }
+}
+
+impl Fill for ByteBuffer {
+    fn try_fill<R: rand::Rng + ?Sized>(&mut self, rng: &mut R) -> Result<(), rand::Error> {
+        rng.try_fill_bytes(self.slice_mut())
     }
 }
 

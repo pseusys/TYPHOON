@@ -36,7 +36,7 @@ fn test_symmetric_encrypt_decrypt_cycle() {
     let mut cipher = Symmetric::new(&key);
 
     let plaintext_data = b"Authenticated encryption test";
-    let plaintext = ByteBuffer::from_slice_with_capacity(plaintext_data, NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN);
+    let plaintext = ByteBuffer::from_slice_with_capacity(plaintext_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
 
     let ciphertext = cipher.encrypt_auth(plaintext, None).expect("encryption failed");
     let decrypted = cipher.decrypt_auth(ciphertext, None).expect("decryption failed");

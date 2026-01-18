@@ -130,7 +130,7 @@ fn test_handshake_cycle() {
     let mut server_secret = create_test_server_secret();
 
     let initial_data_data = b"Secret initial data message";
-    let initial_data = ByteBuffer::from_slice_with_capacity(initial_data_data, NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN);
+    let initial_data = ByteBuffer::from_slice_with_capacity(initial_data_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
 
     let (client_data, client_handshake, mut client_initial_cipher) = certificate.encapsulate_handshake_client();
     let initial_data_encrypted = client_initial_cipher.encrypt_auth(initial_data, None).expect("initial data encryption failed");
@@ -142,7 +142,7 @@ fn test_handshake_cycle() {
     assert_eq!(initial_data_data, initial_data_decrypted.slice(), "client and server should get the same initial data");
 
     let session_data_data = b"Secret session data message";
-    let session_data = ByteBuffer::from_slice_with_capacity(session_data_data, NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN);
+    let session_data = ByteBuffer::from_slice_with_capacity(session_data_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
 
     let (server_handshake, mut server_session_cipher) = server_secret.encapsulate_handshake_server(server_data);
     let session_data_encrypted = server_session_cipher.encrypt_auth(session_data, None).expect("session data encryption failed");
@@ -161,7 +161,7 @@ fn test_obfuscate_cycle() {
     let server_secret = create_test_server_secret();
 
     let plaintext_data = ByteBuffer::from(b"Secret initial data message");
-    let plaintext = ByteBuffer::from_slice_with_capacity(plaintext_data.slice(), ENCRYPT_OBFUSCATE_HEADER, SYMMETRIC_FIRST_AUTH_LEN);
+    let plaintext = ByteBuffer::from_slice_with_capacity(plaintext_data.slice(), 0, ENCRYPT_OBFUSCATE_HEADER + SYMMETRIC_FIRST_AUTH_LEN);
 
     let ciphertext = certificate.encrypt_obfuscate(plaintext).expect("encryption failed");
     let decrypted = server_secret.decrypt_deobfuscate(ciphertext).expect("decryption failed");

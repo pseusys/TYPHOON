@@ -97,7 +97,7 @@ impl Symmetric {
         }
     }
 
-    /// Internal: encrypt with AEAD, return ciphertext with prepended nonce and detached tag.
+    /// Internal: encrypt with AEAD, return ciphertext with appended nonce and detached tag.
     #[inline]
     fn encrypt_internal(&mut self, plaintext: ByteBuffer, additional_data: Option<&ByteBuffer>) -> Result<(ByteBuffer, GenericArray<u8, U16>), CryptoError> {
         let nonce = Cipher::generate_nonce(get_rng());
@@ -106,7 +106,7 @@ impl Symmetric {
             None => self.cipher.encrypt_in_place_detached(&nonce, &[], &mut plaintext.slice_mut()),
         };
         match result {
-            Ok(res) => Ok((plaintext.prepend(&nonce), res)),
+            Ok(res) => Ok((plaintext.append(&nonce), res)),
             Err(err) => Err(CryptoError::encryption_error("symmetric encryption", err)),
         }
     }
@@ -139,7 +139,7 @@ impl Symmetric {
     /// Internal: decrypt with AEAD using detached tag.
     #[inline]
     fn decrypt_internal(&mut self, ciphertext_with_nonce: ByteBuffer, tag_buffer: &ByteBuffer, additional_data: Option<&ByteBuffer>) -> Result<ByteBuffer, CryptoError> {
-        let (nonce_bytes, ciphertext) = ciphertext_with_nonce.split_buf(NONCE_LEN);
+        let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf(ciphertext_with_nonce.len() - NONCE_LEN);
         let nonce_slice = nonce_bytes.slice();
         let nonce = CipherNonce::from_slice(&nonce_slice);
         let tag_slice = tag_buffer.slice();

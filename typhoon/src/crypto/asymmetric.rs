@@ -18,7 +18,7 @@ use crate::utils::random::{SupportRng, get_rng};
 
 cfg_if! {
     if #[cfg(feature = "server")] {
-        use ed25519_dalek::ed25519::signature::SignerMut;
+        use ed25519_dalek::ed25519::signature::Signer;
         use crate::crypto::certificate::{ServerData, ServerSecret};
     }
 }
@@ -108,7 +108,7 @@ impl<'a> Certificate<'a> {
     }
 
     /// Full mode: encrypt and obfuscate plaintext with X25519 ephemeral exchange.
-    /// Args: plaintext. Returns: nonce || obfuscated_key || ciphertext.
+    /// Args: plaintext. Returns: ciphertext || obfuscated_key || nonce.
     #[cfg(feature = "full")]
     pub fn encrypt_obfuscate(&self, plaintext: ByteBuffer) -> Result<ByteBuffer, HandshakeError> {
         let nonce = ByteBuffer::from(get_rng().random_byte_array::<U32>().as_slice());
@@ -128,7 +128,7 @@ impl<'a> Certificate<'a> {
             Ok(res) => res,
             Err(err) => return Err(HandshakeError::handshake_crypto_error("encrypting plaintext", err)),
         };
-        let payload = ciphertext.prepend_buf(&ephemeral_public_obfuscated).prepend_buf(&nonce);
+        let payload = ciphertext.append_buf(&ephemeral_public_obfuscated).append_buf(&nonce);
         Ok(payload)
     }
 }
@@ -171,7 +171,7 @@ impl<'a> ServerSecret<'a> {
 
     /// Server handshake response: generate ephemeral X25519, sign transcript, derive session key.
     /// Args: server data, buffer. Returns: (handshake_secret, session_cipher).
-    fn encapsulate_handshake_server(&mut self, data: ServerData) -> (ByteBuffer, Symmetric) {
+    fn encapsulate_handshake_server(&self, data: ServerData) -> (ByteBuffer, Symmetric) {
         let nonce = ByteBuffer::from(get_rng().random_byte_array::<U32>().as_slice());
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
@@ -196,11 +196,11 @@ impl<'a> ServerSecret<'a> {
     }
 
     /// Full mode: deobfuscate and decrypt ciphertext using server's X25519 secret.
-    /// Args: nonce || obfuscated_key || ciphertext. Returns: plaintext.
+    /// Args: ciphertext || obfuscated_key || nonce. Returns: plaintext.
     #[cfg(feature = "full")]
     pub fn decrypt_deobfuscate(&self, ciphertext: ByteBuffer) -> Result<ByteBuffer, HandshakeError> {
-        let (nonce, rest) = ciphertext.split_buf(NONCE_LENGTH);
-        let (mut ephemeral_public_obfuscated, ciphertext) = rest.split_buf(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN);
+        let (ciphertext, rest) = ciphertext.split_buf(ciphertext.len() - X25519_KEY_LENGTH - ANONYMOUS_NONCE_LEN - NONCE_LENGTH);
+        let (mut ephemeral_public_obfuscated, nonce) = rest.split_buf(rest.len() - NONCE_LENGTH);
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(MARSHALLING_OBFUSCATION_KEY)).update(self.opk.as_bytes()).update(&nonce.slice()).finalize();
         let masking_key = ByteBuffer::from(masking_key_hash.as_bytes());
