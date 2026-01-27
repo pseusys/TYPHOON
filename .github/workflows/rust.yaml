@@ -20,6 +20,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        symmetric-crypto:
+          - hardware
+          - software
+        asymmetric-crypto:
+          - fast
+          - full
+        protocol-part:
+          - server
+          - client
+          - server,client
+        asynchronous-lib:
+          - async-std
+          - tokio
         include:
           - image: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
@@ -44,8 +57,8 @@ jobs:
 
       - name: Build TYPHOON Crate 🏗️
         working-directory: typhoon
-        run: cargo build
+        run: cargo build --no-default-features --features ${{ matrix.symmetric-crypto }},${{ matrix.asymmetric-crypto }},${{ matrix.protocol-part }},${{ matrix.asynchronous-lib }}
 
       - name: Test TYPHOON Crate 🧪
         working-directory: typhoon
-        run: cargo test
+        run: cargo test --no-default-features --features ${{ matrix.symmetric-crypto }},${{ matrix.asymmetric-crypto }},${{ matrix.protocol-part }},${{ matrix.asynchronous-lib }}
