@@ -16,7 +16,7 @@ concurrency:
 jobs:
   typhoon-crate-build:
     name: Build and Test TYPHOON Rust Crate
-    runs-on: ${{ matrix.image }}
+    runs-on: ${{ matrix.architecture.image }}
     strategy:
       fail-fast: false
       matrix:
@@ -33,7 +33,7 @@ jobs:
         asynchronous-lib:
           - async-std
           - tokio
-        include:
+        architecture:
           - image: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - image: windows-2025
@@ -51,7 +51,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: "1.89.0"
-          target: ${{ matrix.target }}
+          target: ${{ matrix.architecture.target }}
           rust-src-dir: typhoon
           override: true
 
