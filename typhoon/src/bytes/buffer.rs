@@ -16,6 +16,7 @@ use crate::bytes::utils::{allocate_ptr, copy_slice};
 
 /// A byte buffer with Arc-based reference counting.
 /// Send but not Sync - can be moved between threads but not shared.
+/// Change once this is implemented: https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html
 pub struct ByteBuffer {
     holder: Arc<BufferHolder>,
     length: usize,
