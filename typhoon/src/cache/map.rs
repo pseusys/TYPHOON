@@ -36,10 +36,13 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
 
     pub async fn insert(&mut self, key: K, value: V) {
         self.local.insert(key.clone(), value.clone());
-        self.state.write().await.insert(key.clone(), Versioned {
-            value: value.clone(),
-            version: get_rng().next_u64(),
-        });
+        self.state.write().await.insert(
+            key.clone(),
+            Versioned {
+                value: value.clone(),
+                version: get_rng().next_u64(),
+            },
+        );
     }
 
     pub async fn remove(&mut self, key: &K) {
@@ -154,7 +157,7 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMap<K, V> {
         })
     }
 
-    pub fn create_sibling_with<F: Fn(&V, Option<&V>) -> V + Send + 'static>(&self, mapper: F) -> Result<CachedMap<K, V>, CacheError>{
+    pub fn create_sibling_with<F: Fn(&V, Option<&V>) -> V + Send + 'static>(&self, mapper: F) -> Result<CachedMap<K, V>, CacheError> {
         if self.source.strong_count() == 0 {
             return Err(CacheError::SourceDropped);
         }

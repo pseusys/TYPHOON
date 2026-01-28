@@ -170,4 +170,9 @@ impl Tailor {
 
         correct_buffer
     }
+
+    pub fn get_payload_length(buffer: &ByteBuffer) -> u16 {
+        let correct_buffer = buffer.ensure_size(TAILOR_LENGTH);
+        u16::from_be_bytes((&correct_buffer.rebuffer_both(PL_OFFSET, PL_OFFSET + PL_LENGTH)).into())
+    }
 }

@@ -16,6 +16,9 @@ pub enum CryptoError {
 
     #[error("error authentication: {}", .0)]
     AuthenticationError(String),
+
+    #[error("unknown cryptography error")]
+    UnknownError,
 }
 
 #[derive(Error, Debug)]
