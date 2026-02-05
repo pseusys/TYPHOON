@@ -9,7 +9,7 @@ use crate::utils::random::get_rng;
 use crate::utils::sync::RwLock;
 
 pub(crate) type SharedState<T> = RwLock<Versioned<T>>;
-pub(crate) type ValueMapper<T> = Arc<dyn Fn(&T, Option<&T>) -> T + Send>;
+pub(crate) type ValueMapper<T> = Arc<dyn Fn(&T, Option<&T>) -> T + Send + Sync>;
 
 /// Change once this is implemented: https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html
 pub struct SharedValue<T: Clone + Send> {
@@ -51,7 +51,7 @@ impl<T: Clone + Send> SharedValue<T> {
         self.create_cache_with(|source, _| source.clone()).await
     }
 
-    pub async fn create_cache_with<F: Fn(&T, Option<&T>) -> T + Send + 'static>(&self, mapper: F) -> CachedValue<T> {
+    pub async fn create_cache_with<F: Fn(&T, Option<&T>) -> T + Send + Sync + 'static>(&self, mapper: F) -> CachedValue<T> {
         let guard = self.state.read().await;
         let value = mapper(&guard.value, None);
         let version = guard.version;
@@ -64,6 +64,10 @@ impl<T: Clone + Send> SharedValue<T> {
             mapper: Some(Arc::new(mapper)),
             _not_sync: PhantomData,
         }
+    }
+
+    pub async fn extract(self) -> T {
+        todo!()
     }
 }
 
@@ -84,28 +88,43 @@ impl<T: Clone + Send> CachedValue<T> {
         }
     }
 
-    pub async fn get(&mut self) -> Result<&T, CacheError> {
-        let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
-        let guard = source.read().await;
-
-        if guard.version != self.version {
-            self.local = self.map_value(&guard.value, Some(&self.local));
-            self.version = guard.version;
-        }
-
-        Ok(&self.local)
+    /// Check if the source is still alive.
+    pub fn is_source_alive(&self) -> bool {
+        self.source.upgrade().is_some()
     }
 
-    pub async fn get_mut(&mut self) -> Result<&mut T, CacheError> {
-        let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
-        let guard = source.read().await;
-
-        if guard.version != self.version {
-            self.local = self.map_value(&guard.value, Some(&self.local));
-            self.version = guard.version;
+    /// Get a reference to the cached value.
+    ///
+    /// If the source is still alive, synchronizes with it first.
+    /// If the source has been dropped, returns the last known local value.
+    /// This allows continued operation even after the source is gone.
+    pub async fn get(&mut self) -> &T {
+        if let Some(source) = self.source.upgrade() {
+            let guard = source.read().await;
+            if guard.version != self.version {
+                self.local = self.map_value(&guard.value, Some(&self.local));
+                self.version = guard.version;
+            }
         }
+        // If source is dropped, just return the last known local value
+        &self.local
+    }
 
-        Ok(&mut self.local)
+    /// Get a mutable reference to the cached value.
+    ///
+    /// If the source is still alive, synchronizes with it first.
+    /// If the source has been dropped, returns the last known local value.
+    /// Note: Mutations won't propagate back to a dropped source.
+    pub async fn get_mut(&mut self) -> &mut T {
+        if let Some(source) = self.source.upgrade() {
+            let guard = source.read().await;
+            if guard.version != self.version {
+                self.local = self.map_value(&guard.value, Some(&self.local));
+                self.version = guard.version;
+            }
+        }
+        // If source is dropped, just return the last known local value
+        &mut self.local
     }
 
     pub async fn create_sibling(&self) -> Result<CachedValue<T>, CacheError> {
@@ -124,7 +143,7 @@ impl<T: Clone + Send> CachedValue<T> {
         })
     }
 
-    pub async fn create_sibling_with<F: Fn(&T, Option<&T>) -> T + Send + 'static>(&self, mapper: F) -> Result<CachedValue<T>, CacheError> {
+    pub async fn create_sibling_with<F: Fn(&T, Option<&T>) -> T + Send + Sync + 'static>(&self, mapper: F) -> Result<CachedValue<T>, CacheError> {
         let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
         let guard = source.read().await;
         let value = mapper(&guard.value, None);

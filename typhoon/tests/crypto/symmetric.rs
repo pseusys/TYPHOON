@@ -53,7 +53,7 @@ fn test_symmetric_encrypt_decrypt_twice_cycle() {
     let mut cipher = Symmetric::new(&key);
 
     let plaintext_data = b"Double authenticated message";
-    let plaintext = ByteBuffer::from_slice_with_capacity(plaintext_data, NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN + SYMMETRIC_SECOND_AUTH_LEN);
+    let plaintext = ByteBuffer::from_slice_with_capacity(plaintext_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN + SYMMETRIC_SECOND_AUTH_LEN);
 
     let ciphertext = cipher.encrypt_auth_twice(plaintext, None, &second_key).expect("encryption failed");
     let (decrypted, ciphertext_with_nonce, second_auth) = cipher.decrypt_auth_twice(ciphertext, None).expect("decryption failed");

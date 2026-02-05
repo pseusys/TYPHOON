@@ -185,10 +185,17 @@ impl FakeHeaderConfig {
 }
 
 /// Configuration for a flow.
+///
+/// TODO(config): Add constructor and builder pattern for FlowConfig:
+/// - `FlowConfig::new()` with sensible defaults
+/// - `FlowConfig::builder()` for customization
+///
+/// TODO(config): Add flow selection strategy for multi-flow sessions:
+/// - Round-robin, random, latency-based, load-based selection
 #[derive(Debug, Clone)]
 pub struct FlowConfig {
-    /// Whether to use fake bodies.
+    /// Fake body generation mode for padding packets.
     pub(super) fake_body_mode: FakeBodyMode,
-    /// Whether to use fake headers.
+    /// Fake header generation mode for obfuscation.
     pub(super) fake_header_mode: FakeHeaderConfig,
 }

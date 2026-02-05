@@ -19,4 +19,7 @@ pub enum FlowControllerError {
 
     #[error("error encrypting packet tailor: {}", .0.to_string())]
     TailorEncryption(#[source] CryptoError),
+
+    #[error("flow controller channel closed")]
+    ChannelClosed,
 }

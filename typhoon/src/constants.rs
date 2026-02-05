@@ -1,187 +1,200 @@
 use std::collections::HashMap;
 use std::env::var;
-use std::ops::{Add, Index};
+use std::ops::Add;
 
 use log::warn;
 
-pub mod keys {
-    pub const TYPHOON_RTT_ALPHA: &str = "TYPHOON_RTT_ALPHA";
-    pub const TYPHOON_RTT_BETA: &str = "TYPHOON_RTT_BETA";
-    pub const TYPHOON_RTT_DEFAULT: &str = "TYPHOON_RTT_DEFAULT";
-    pub const TYPHOON_RTT_MIN: &str = "TYPHOON_RTT_MIN";
-    pub const TYPHOON_RTT_MAX: &str = "TYPHOON_RTT_MAX";
-    pub const TYPHOON_TIMEOUT_DEFAULT: &str = "TYPHOON_TIMEOUT_DEFAULT";
-    pub const TYPHOON_TIMEOUT_MIN: &str = "TYPHOON_TIMEOUT_MIN";
-    pub const TYPHOON_TIMEOUT_MAX: &str = "TYPHOON_TIMEOUT_MAX";
-    pub const TYPHOON_TIMEOUT_RTT_FACTOR: &str = "TYPHOON_TIMEOUT_RTT_FACTOR";
-    pub const TYPHOON_HEALTH_CHECK_NEXT_IN_MIN: &str = "TYPHOON_HEALTH_CHECK_NEXT_IN_MIN";
-    pub const TYPHOON_HEALTH_CHECK_NEXT_IN_MAX: &str = "TYPHOON_HEALTH_CHECK_NEXT_IN_MAX";
-    pub const TYPHOON_HANDSHAKE_NEXT_IN_FACTOR: &str = "TYPHOON_HANDSHAKE_NEXT_IN_FACTOR";
-    pub const TYPHOON_MAX_RETRIES: &str = "TYPHOON_MAX_RETRIES";
-
-    pub const TYPHOON_FAKE_BODY_LENGTH_MIN: &str = "TYPHOON_FAKE_BODY_LENGTH_MIN";
-    pub const TYPHOON_FAKE_BODY_LENGTH_MAX: &str = "TYPHOON_FAKE_BODY_LENGTH_MAX";
-    pub const TYPHOON_FAKE_BODY_SERVICE_PROBABILITY: &str = "TYPHOON_FAKE_BODY_SERVICE_PROBABILITY";
-    pub const TYPHOON_FAKE_HEADER_LENGTH_MIN: &str = "TYPHOON_FAKE_HEADER_LENGTH_MIN";
-    pub const TYPHOON_FAKE_HEADER_LENGTH_MAX: &str = "TYPHOON_FAKE_HEADER_LENGTH_MAX";
-    pub const TYPHOON_FAKE_HEADER_PROBABILITY: &str = "TYPHOON_FAKE_HEADER_PROBABILITY";
-
-    pub const TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT: &str = "TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT";
-    pub const TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT: &str = "TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT";
-    pub const TYPHOON_DECOY_CURRENT_BYTE_RATE_DEFAULT: &str = "TYPHOON_DECOY_CURRENT_BYTE_RATE_DEFAULT";
-    pub const TYPHOON_DECOY_BYTE_RATE_CAP: &str = "TYPHOON_DECOY_BYTE_RATE_CAP";
-    pub const TYPHOON_DECOY_BYTE_RATE_FACTOR: &str = "TYPHOON_DECOY_BYTE_RATE_FACTOR";
-    pub const TYPHOON_DECOY_CURRENT_ALPHA: &str = "TYPHOON_DECOY_CURRENT_ALPHA";
-    pub const TYPHOON_DECOY_REFERENCE_ALPHA: &str = "TYPHOON_DECOY_REFERENCE_ALPHA";
-    pub const TYPHOON_DECOY_LENGTH_MAX: &str = "TYPHOON_DECOY_LENGTH_MAX";
-    pub const TYPHOON_DECOY_LENGTH_MIN: &str = "TYPHOON_DECOY_LENGTH_MIN";
-    pub const TYPHOON_DECOY_REFERENCE_BURST_FACTOR: &str = "TYPHOON_DECOY_REFERENCE_BURST_FACTOR";
-    pub const TYPHOON_DECOY_BASE_RATE_RND: &str = "TYPHOON_DECOY_BASE_RATE_RND";
-
-    pub const TYPHOON_DECOY_HEAVY_BASE_RATE: &str = "TYPHOON_DECOY_HEAVY_BASE_RATE";
-    pub const TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR: &str = "TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR";
-    pub const TYPHOON_DECOY_HEAVY_DELAY_MIN: &str = "TYPHOON_DECOY_HEAVY_DELAY_MIN";
-    pub const TYPHOON_DECOY_HEAVY_DELAY_MAX: &str = "TYPHOON_DECOY_HEAVY_DELAY_MAX";
-    pub const TYPHOON_DECOY_HEAVY_DELAY_DEFAULT: &str = "TYPHOON_DECOY_HEAVY_DELAY_DEFAULT";
-    pub const TYPHOON_DECOY_HEAVY_BASE_LENGTH: &str = "TYPHOON_DECOY_HEAVY_BASE_LENGTH";
-    pub const TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH: &str = "TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH";
-    pub const TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR: &str = "TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR";
-
-    pub const TYPHOON_DECOY_NOISY_BASE_RATE: &str = "TYPHOON_DECOY_NOISY_BASE_RATE";
-    pub const TYPHOON_DECOY_NOISY_DELAY_MIN: &str = "TYPHOON_DECOY_NOISY_DELAY_MIN";
-    pub const TYPHOON_DECOY_NOISY_DELAY_MAX: &str = "TYPHOON_DECOY_NOISY_DELAY_MAX";
-    pub const TYPHOON_DECOY_NOISY_DELAY_DEFAULT: &str = "TYPHOON_DECOY_NOISY_DELAY_DEFAULT";
-    pub const TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN: &str = "TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN";
-    pub const TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER: &str = "TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER";
-
-    pub const TYPHOON_DECOY_SPARSE_BASE_RATE: &str = "TYPHOON_DECOY_SPARSE_BASE_RATE";
-    pub const TYPHOON_DECOY_SPARSE_RATE_FACTOR: &str = "TYPHOON_DECOY_SPARSE_RATE_FACTOR";
-    pub const TYPHOON_DECOY_SPARSE_JITTER: &str = "TYPHOON_DECOY_SPARSE_JITTER";
-    pub const TYPHOON_DECOY_SPARSE_DELAY_FACTOR: &str = "TYPHOON_DECOY_SPARSE_DELAY_FACTOR";
-    pub const TYPHOON_DECOY_SPARSE_DELAY_MIN: &str = "TYPHOON_DECOY_SPARSE_DELAY_MIN";
-    pub const TYPHOON_DECOY_SPARSE_DELAY_MAX: &str = "TYPHOON_DECOY_SPARSE_DELAY_MAX";
-    pub const TYPHOON_DECOY_SPARSE_DELAY_DEFAULT: &str = "TYPHOON_DECOY_SPARSE_DELAY_DEFAULT";
-    pub const TYPHOON_DECOY_SPARSE_LENGTH_FACTOR: &str = "TYPHOON_DECOY_SPARSE_LENGTH_FACTOR";
-    pub const TYPHOON_DECOY_SPARSE_LENGTH_SIGMA: &str = "TYPHOON_DECOY_SPARSE_LENGTH_SIGMA";
-    pub const TYPHOON_DECOY_SPARSE_LENGTH_MIN: &str = "TYPHOON_DECOY_SPARSE_LENGTH_MIN";
-    pub const TYPHOON_DECOY_SPARSE_LENGTH_MAX: &str = "TYPHOON_DECOY_SPARSE_LENGTH_MAX";
-
-    pub const TYPHOON_DECOY_SMOOTH_BASE_RATE: &str = "TYPHOON_DECOY_SMOOTH_BASE_RATE";
-    pub const TYPHOON_DECOY_SMOOTH_QUIETNESS_FACTOR: &str = "TYPHOON_DECOY_SMOOTH_QUIETNESS_FACTOR";
-    pub const TYPHOON_DECOY_SMOOTH_RATE_FACTOR: &str = "TYPHOON_DECOY_SMOOTH_RATE_FACTOR";
-    pub const TYPHOON_DECOY_SMOOTH_JITTER: &str = "TYPHOON_DECOY_SMOOTH_JITTER";
-    pub const TYPHOON_DECOY_SMOOTH_DELAY_FACTOR: &str = "TYPHOON_DECOY_SMOOTH_DELAY_FACTOR";
-    pub const TYPHOON_DECOY_SMOOTH_DELAY_MIN: &str = "TYPHOON_DECOY_SMOOTH_DELAY_MIN";
-    pub const TYPHOON_DECOY_SMOOTH_DELAY_MAX: &str = "TYPHOON_DECOY_SMOOTH_DELAY_MAX";
-    pub const TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT: &str = "TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT";
-    pub const TYPHOON_DECOY_SMOOTH_LENGTH_MIN: &str = "TYPHOON_DECOY_SMOOTH_LENGTH_MIN";
-    pub const TYPHOON_DECOY_SMOOTH_LENGTH_MAX: &str = "TYPHOON_DECOY_SMOOTH_LENGTH_MAX";
-
-    pub const TYPHOON_DECOY_MAINTENANCE_LENGTH_MIN: &str = "TYPHOON_DECOY_MAINTENANCE_LENGTH_MIN";
-    pub const TYPHOON_DECOY_MAINTENANCE_LENGTH_MAX: &str = "TYPHOON_DECOY_MAINTENANCE_LENGTH_MAX";
-    pub const TYPHOON_DECOY_MAINTENANCE_DELAY_MIN: &str = "TYPHOON_DECOY_MAINTENANCE_DELAY_MIN";
-    pub const TYPHOON_DECOY_MAINTENANCE_DELAY_MAX: &str = "TYPHOON_DECOY_MAINTENANCE_DELAY_MAX";
-    pub const TYPHOON_DECOY_MAINTENANCE_MODE_NONE_PROBABILITY: &str = "TYPHOON_DECOY_MAINTENANCE_MODE_NONE_PROBABILITY";
-
-    pub const TYPHOON_DECOY_REPLICATION_PROBABILITY_MIN: &str = "TYPHOON_DECOY_REPLICATION_PROBABILITY_MIN";
-    pub const TYPHOON_DECOY_REPLICATION_PROBABILITY_MAX: &str = "TYPHOON_DECOY_REPLICATION_PROBABILITY_MAX";
-    pub const TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE: &str = "TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE";
-    pub const TYPHOON_DECOY_REPLICATION_DELAY_MIN: &str = "TYPHOON_DECOY_REPLICATION_DELAY_MIN";
-    pub const TYPHOON_DECOY_REPLICATION_DELAY_MAX: &str = "TYPHOON_DECOY_REPLICATION_DELAY_MAX";
-    pub const TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY: &str = "TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY";
-
-    pub const TYPHOON_DECOY_SUBHEADER_LENGTH_MIN: &str = "TYPHOON_DECOY_SUBHEADER_LENGTH_MIN";
-    pub const TYPHOON_DECOY_SUBHEADER_LENGTH_MAX: &str = "TYPHOON_DECOY_SUBHEADER_LENGTH_MAX";
+/// A typed setting key that carries its value type at compile time.
+/// This ensures type-safe access to settings - you can only get/set
+/// values of the correct type for each key.
+///
+/// Custom keys can be defined anywhere, not just in this module:
+/// ```
+/// const MY_CUSTOM_KEY: Key<u64> = Key::new("MY_APP_CUSTOM_SETTING", 42);
+/// ```
+pub struct Key<T> {
+    pub name: &'static str,
+    pub default: T,
 }
 
-mod values {
-    pub const TYPHOON_RTT_ALPHA: f64 = 0.125;
-    pub const TYPHOON_RTT_BETA: f64 = 0.25;
-    pub const TYPHOON_RTT_DEFAULT: u64 = 5000;
-    pub const TYPHOON_RTT_MIN: u64 = 1000;
-    pub const TYPHOON_RTT_MAX: u64 = 8000;
-    pub const TYPHOON_TIMEOUT_DEFAULT: u64 = 30000;
-    pub const TYPHOON_TIMEOUT_MIN: u64 = 4000;
-    pub const TYPHOON_TIMEOUT_MAX: u64 = 32000;
-    pub const TYPHOON_TIMEOUT_RTT_FACTOR: f64 = 5.0;
-    pub const TYPHOON_HEALTH_CHECK_NEXT_IN_MIN: u64 = 64000;
-    pub const TYPHOON_HEALTH_CHECK_NEXT_IN_MAX: u64 = 256000;
-    pub const TYPHOON_HANDSHAKE_NEXT_IN_FACTOR: f64 = 0.02;
-    pub const TYPHOON_MAX_RETRIES: u64 = 12;
+impl<T> Key<T> {
+    pub const fn new(name: &'static str, default: T) -> Self {
+        Self { name, default }
+    }
+}
 
-    pub const TYPHOON_FAKE_BODY_LENGTH_MIN: u64 = 0;
-    pub const TYPHOON_FAKE_BODY_LENGTH_MAX: u64 = 256;
-    pub const TYPHOON_FAKE_BODY_SERVICE_PROBABILITY: f64 = 5.0;
-    pub const TYPHOON_FAKE_HEADER_LENGTH_MIN: u64 = 4;
-    pub const TYPHOON_FAKE_HEADER_LENGTH_MAX: u64 = 32;
-    pub const TYPHOON_FAKE_HEADER_PROBABILITY: f64 = 0.35;
+/// Trait for types that can be stored in Settings.
+/// Provides conversion to/from the internal SettingValue representation.
+pub trait SettingType: Copy {
+    fn from_value(v: SettingValue) -> Self;
+    fn to_value(self) -> SettingValue;
+    fn try_parse(s: &str) -> Option<Self>;
+}
 
-    pub const TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT: f64 = 200.0;
-    pub const TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT: f64 = 200.0;
-    pub const TYPHOON_DECOY_CURRENT_BYTE_RATE_DEFAULT: f64 = 5000.0;
-    pub const TYPHOON_DECOY_BYTE_RATE_CAP: f64 = 1000000.0;
-    pub const TYPHOON_DECOY_BYTE_RATE_FACTOR: f64 = 3.0;
-    pub const TYPHOON_DECOY_CURRENT_ALPHA: f64 = 0.05;
-    pub const TYPHOON_DECOY_REFERENCE_ALPHA: f64 = 0.001;
-    pub const TYPHOON_DECOY_LENGTH_MAX: u64 = 1024;
-    pub const TYPHOON_DECOY_LENGTH_MIN: u64 = 16;
-    pub const TYPHOON_DECOY_REFERENCE_BURST_FACTOR: f64 = 3.0;
-    pub const TYPHOON_DECOY_BASE_RATE_RND: f64 = 0.25;
+impl SettingType for i64 {
+    #[inline]
+    fn from_value(v: SettingValue) -> Self {
+        match v {
+            SettingValue::Signed(x) => x,
+            _ => unreachable!("expected signed setting"),
+        }
+    }
 
-    pub const TYPHOON_DECOY_HEAVY_BASE_RATE: f64 = 0.05;
-    pub const TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR: f64 = 3.0;
-    pub const TYPHOON_DECOY_HEAVY_DELAY_MIN: u64 = 5000;
-    pub const TYPHOON_DECOY_HEAVY_DELAY_MAX: u64 = 120000;
-    pub const TYPHOON_DECOY_HEAVY_DELAY_DEFAULT: u64 = 64000;
-    pub const TYPHOON_DECOY_HEAVY_BASE_LENGTH: f64 = 0.7;
-    pub const TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH: f64 = 0.3;
-    pub const TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR: f64 = 0.8;
+    #[inline]
+    fn to_value(self) -> SettingValue {
+        SettingValue::Signed(self)
+    }
 
-    pub const TYPHOON_DECOY_NOISY_BASE_RATE: f64 = 3.0;
-    pub const TYPHOON_DECOY_NOISY_DELAY_MIN: u64 = 10;
-    pub const TYPHOON_DECOY_NOISY_DELAY_MAX: u64 = 1000;
-    pub const TYPHOON_DECOY_NOISY_DELAY_DEFAULT: u64 = 500;
-    pub const TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN: u64 = 128;
-    pub const TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER: f64 = 0.3;
+    #[inline]
+    fn try_parse(s: &str) -> Option<Self> {
+        s.parse().ok()
+    }
+}
 
-    pub const TYPHOON_DECOY_SPARSE_BASE_RATE: f64 = 20.0;
-    pub const TYPHOON_DECOY_SPARSE_RATE_FACTOR: f64 = 3.0;
-    pub const TYPHOON_DECOY_SPARSE_JITTER: f64 = 0.15;
-    pub const TYPHOON_DECOY_SPARSE_DELAY_FACTOR: f64 = 3.0;
-    pub const TYPHOON_DECOY_SPARSE_DELAY_MIN: u64 = 20;
-    pub const TYPHOON_DECOY_SPARSE_DELAY_MAX: u64 = 150;
-    pub const TYPHOON_DECOY_SPARSE_DELAY_DEFAULT: u64 = 100;
-    pub const TYPHOON_DECOY_SPARSE_LENGTH_FACTOR: f64 = 120.0;
-    pub const TYPHOON_DECOY_SPARSE_LENGTH_SIGMA: f64 = 20.0;
-    pub const TYPHOON_DECOY_SPARSE_LENGTH_MIN: u64 = 75;
-    pub const TYPHOON_DECOY_SPARSE_LENGTH_MAX: u64 = 250;
+impl SettingType for u64 {
+    #[inline]
+    fn from_value(v: SettingValue) -> Self {
+        match v {
+            SettingValue::Unsigned(x) => x,
+            _ => unreachable!("expected unsigned setting"),
+        }
+    }
 
-    pub const TYPHOON_DECOY_SMOOTH_BASE_RATE: f64 = 0.3;
-    pub const TYPHOON_DECOY_SMOOTH_QUIETNESS_FACTOR: f64 = 2.0;
-    pub const TYPHOON_DECOY_SMOOTH_RATE_FACTOR: f64 = 3.0;
-    pub const TYPHOON_DECOY_SMOOTH_JITTER: f64 = 0.2;
-    pub const TYPHOON_DECOY_SMOOTH_DELAY_FACTOR: f64 = 2.0;
-    pub const TYPHOON_DECOY_SMOOTH_DELAY_MIN: u64 = 300;
-    pub const TYPHOON_DECOY_SMOOTH_DELAY_MAX: u64 = 10000;
-    pub const TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT: u64 = 5000;
-    pub const TYPHOON_DECOY_SMOOTH_LENGTH_MIN: u64 = 48;
-    pub const TYPHOON_DECOY_SMOOTH_LENGTH_MAX: u64 = 512;
+    #[inline]
+    fn to_value(self) -> SettingValue {
+        SettingValue::Unsigned(self)
+    }
 
-    pub const TYPHOON_DECOY_MAINTENANCE_LENGTH_MIN: u64 = 8;
-    pub const TYPHOON_DECOY_MAINTENANCE_LENGTH_MAX: u64 = 256;
-    pub const TYPHOON_DECOY_MAINTENANCE_DELAY_MIN: u64 = 3000;
-    pub const TYPHOON_DECOY_MAINTENANCE_DELAY_MAX: u64 = 720000;
-    pub const TYPHOON_DECOY_MAINTENANCE_MODE_NONE_PROBABILITY: f64 = 3.0;
+    #[inline]
+    fn try_parse(s: &str) -> Option<Self> {
+        s.parse().ok()
+    }
+}
 
-    pub const TYPHOON_DECOY_REPLICATION_PROBABILITY_MIN: f64 = 0.01;
-    pub const TYPHOON_DECOY_REPLICATION_PROBABILITY_MAX: f64 = 0.1;
-    pub const TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE: f64 = 3.0;
-    pub const TYPHOON_DECOY_REPLICATION_DELAY_MIN: u64 = 2500;
-    pub const TYPHOON_DECOY_REPLICATION_DELAY_MAX: u64 = 10000;
-    pub const TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY: f64 = 3.0;
+impl SettingType for f64 {
+    #[inline]
+    fn from_value(v: SettingValue) -> Self {
+        match v {
+            SettingValue::Float(x) => x,
+            _ => unreachable!("expected float setting"),
+        }
+    }
 
-    pub const TYPHOON_DECOY_SUBHEADER_LENGTH_MIN: u64 = 4;
-    pub const TYPHOON_DECOY_SUBHEADER_LENGTH_MAX: u64 = 16;
+    #[inline]
+    fn to_value(self) -> SettingValue {
+        SettingValue::Float(self)
+    }
+
+    #[inline]
+    fn try_parse(s: &str) -> Option<Self> {
+        s.parse().ok()
+    }
+}
+
+pub mod keys {
+    use super::Key;
+
+    // RTT settings
+    pub const RTT_ALPHA: Key<f64> = Key::new("TYPHOON_RTT_ALPHA", 0.125);
+    pub const RTT_BETA: Key<f64> = Key::new("TYPHOON_RTT_BETA", 0.25);
+    pub const RTT_DEFAULT: Key<u64> = Key::new("TYPHOON_RTT_DEFAULT", 5000);
+    pub const RTT_MIN: Key<u64> = Key::new("TYPHOON_RTT_MIN", 1000);
+    pub const RTT_MAX: Key<u64> = Key::new("TYPHOON_RTT_MAX", 8000);
+
+    // Timeout settings
+    pub const TIMEOUT_DEFAULT: Key<u64> = Key::new("TYPHOON_TIMEOUT_DEFAULT", 30000);
+    pub const TIMEOUT_MIN: Key<u64> = Key::new("TYPHOON_TIMEOUT_MIN", 4000);
+    pub const TIMEOUT_MAX: Key<u64> = Key::new("TYPHOON_TIMEOUT_MAX", 32000);
+    pub const TIMEOUT_RTT_FACTOR: Key<f64> = Key::new("TYPHOON_TIMEOUT_RTT_FACTOR", 5.0);
+
+    // Health check settings
+    pub const HEALTH_CHECK_NEXT_IN_MIN: Key<u64> = Key::new("TYPHOON_HEALTH_CHECK_NEXT_IN_MIN", 64000);
+    pub const HEALTH_CHECK_NEXT_IN_MAX: Key<u64> = Key::new("TYPHOON_HEALTH_CHECK_NEXT_IN_MAX", 256000);
+    pub const HANDSHAKE_NEXT_IN_FACTOR: Key<f64> = Key::new("TYPHOON_HANDSHAKE_NEXT_IN_FACTOR", 0.02);
+    pub const MAX_RETRIES: Key<u64> = Key::new("TYPHOON_MAX_RETRIES", 12);
+
+    // Fake body/header settings
+    pub const FAKE_BODY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_BODY_LENGTH_MIN", 0);
+    pub const FAKE_BODY_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_FAKE_BODY_LENGTH_MAX", 256);
+    pub const FAKE_BODY_SERVICE_PROBABILITY: Key<f64> = Key::new("TYPHOON_FAKE_BODY_SERVICE_PROBABILITY", 5.0);
+    pub const FAKE_HEADER_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_LENGTH_MIN", 4);
+    pub const FAKE_HEADER_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_LENGTH_MAX", 32);
+    pub const FAKE_HEADER_PROBABILITY: Key<f64> = Key::new("TYPHOON_FAKE_HEADER_PROBABILITY", 0.35);
+
+    // Decoy general settings
+    pub const DECOY_REFERENCE_PACKET_RATE_DEFAULT: Key<f64> = Key::new("TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT", 200.0);
+    pub const DECOY_CURRENT_PACKET_RATE_DEFAULT: Key<f64> = Key::new("TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT", 200.0);
+    pub const DECOY_CURRENT_BYTE_RATE_DEFAULT: Key<f64> = Key::new("TYPHOON_DECOY_CURRENT_BYTE_RATE_DEFAULT", 5000.0);
+    pub const DECOY_BYTE_RATE_CAP: Key<f64> = Key::new("TYPHOON_DECOY_BYTE_RATE_CAP", 1000000.0);
+    pub const DECOY_BYTE_RATE_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_BYTE_RATE_FACTOR", 3.0);
+    pub const DECOY_CURRENT_ALPHA: Key<f64> = Key::new("TYPHOON_DECOY_CURRENT_ALPHA", 0.05);
+    pub const DECOY_REFERENCE_ALPHA: Key<f64> = Key::new("TYPHOON_DECOY_REFERENCE_ALPHA", 0.001);
+    pub const DECOY_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_LENGTH_MAX", 1024);
+    pub const DECOY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_LENGTH_MIN", 16);
+    pub const DECOY_REFERENCE_BURST_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_REFERENCE_BURST_FACTOR", 3.0);
+    pub const DECOY_BASE_RATE_RND: Key<f64> = Key::new("TYPHOON_DECOY_BASE_RATE_RND", 0.25);
+
+    // Decoy heavy settings
+    pub const DECOY_HEAVY_BASE_RATE: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_BASE_RATE", 0.05);
+    pub const DECOY_HEAVY_QUIETNESS_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR", 3.0);
+    pub const DECOY_HEAVY_DELAY_MIN: Key<u64> = Key::new("TYPHOON_DECOY_HEAVY_DELAY_MIN", 5000);
+    pub const DECOY_HEAVY_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_HEAVY_DELAY_MAX", 120000);
+    pub const DECOY_HEAVY_DELAY_DEFAULT: Key<u64> = Key::new("TYPHOON_DECOY_HEAVY_DELAY_DEFAULT", 64000);
+    pub const DECOY_HEAVY_BASE_LENGTH: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_BASE_LENGTH", 0.7);
+    pub const DECOY_HEAVY_QUIETNESS_LENGTH: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH", 0.3);
+    pub const DECOY_HEAVY_DECOY_LENGTH_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR", 0.8);
+
+    // Decoy noisy settings
+    pub const DECOY_NOISY_BASE_RATE: Key<f64> = Key::new("TYPHOON_DECOY_NOISY_BASE_RATE", 3.0);
+    pub const DECOY_NOISY_DELAY_MIN: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_DELAY_MIN", 10);
+    pub const DECOY_NOISY_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_DELAY_MAX", 1000);
+    pub const DECOY_NOISY_DELAY_DEFAULT: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_DELAY_DEFAULT", 500);
+    pub const DECOY_NOISY_DECOY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN", 128);
+    pub const DECOY_NOISY_DECOY_LENGTH_JITTER: Key<f64> = Key::new("TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER", 0.3);
+
+    // Decoy sparse settings
+    pub const DECOY_SPARSE_BASE_RATE: Key<f64> = Key::new("TYPHOON_DECOY_SPARSE_BASE_RATE", 20.0);
+    pub const DECOY_SPARSE_RATE_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_SPARSE_RATE_FACTOR", 3.0);
+    pub const DECOY_SPARSE_JITTER: Key<f64> = Key::new("TYPHOON_DECOY_SPARSE_JITTER", 0.15);
+    pub const DECOY_SPARSE_DELAY_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_SPARSE_DELAY_FACTOR", 3.0);
+    pub const DECOY_SPARSE_DELAY_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SPARSE_DELAY_MIN", 20);
+    pub const DECOY_SPARSE_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SPARSE_DELAY_MAX", 150);
+    pub const DECOY_SPARSE_DELAY_DEFAULT: Key<u64> = Key::new("TYPHOON_DECOY_SPARSE_DELAY_DEFAULT", 100);
+    pub const DECOY_SPARSE_LENGTH_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_SPARSE_LENGTH_FACTOR", 120.0);
+    pub const DECOY_SPARSE_LENGTH_SIGMA: Key<f64> = Key::new("TYPHOON_DECOY_SPARSE_LENGTH_SIGMA", 20.0);
+    pub const DECOY_SPARSE_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SPARSE_LENGTH_MIN", 75);
+    pub const DECOY_SPARSE_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SPARSE_LENGTH_MAX", 250);
+
+    // Decoy smooth settings
+    pub const DECOY_SMOOTH_BASE_RATE: Key<f64> = Key::new("TYPHOON_DECOY_SMOOTH_BASE_RATE", 0.3);
+    pub const DECOY_SMOOTH_QUIETNESS_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_SMOOTH_QUIETNESS_FACTOR", 2.0);
+    pub const DECOY_SMOOTH_RATE_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_SMOOTH_RATE_FACTOR", 3.0);
+    pub const DECOY_SMOOTH_JITTER: Key<f64> = Key::new("TYPHOON_DECOY_SMOOTH_JITTER", 0.2);
+    pub const DECOY_SMOOTH_DELAY_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_SMOOTH_DELAY_FACTOR", 2.0);
+    pub const DECOY_SMOOTH_DELAY_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_DELAY_MIN", 300);
+    pub const DECOY_SMOOTH_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_DELAY_MAX", 10000);
+    pub const DECOY_SMOOTH_DELAY_DEFAULT: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT", 5000);
+    pub const DECOY_SMOOTH_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_LENGTH_MIN", 48);
+    pub const DECOY_SMOOTH_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_LENGTH_MAX", 512);
+
+    // Decoy maintenance settings
+    pub const DECOY_MAINTENANCE_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_LENGTH_MIN", 8);
+    pub const DECOY_MAINTENANCE_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_LENGTH_MAX", 256);
+    pub const DECOY_MAINTENANCE_DELAY_MIN: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_DELAY_MIN", 3000);
+    pub const DECOY_MAINTENANCE_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_DELAY_MAX", 720000);
+    pub const DECOY_MAINTENANCE_MODE_NONE_PROBABILITY: Key<f64> = Key::new("TYPHOON_DECOY_MAINTENANCE_MODE_NONE_PROBABILITY", 3.0);
+
+    // Decoy replication settings
+    pub const DECOY_REPLICATION_PROBABILITY_MIN: Key<f64> = Key::new("TYPHOON_DECOY_REPLICATION_PROBABILITY_MIN", 0.01);
+    pub const DECOY_REPLICATION_PROBABILITY_MAX: Key<f64> = Key::new("TYPHOON_DECOY_REPLICATION_PROBABILITY_MAX", 0.1);
+    pub const DECOY_REPLICATION_PROBABILITY_REDUCE: Key<f64> = Key::new("TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE", 3.0);
+    pub const DECOY_REPLICATION_DELAY_MIN: Key<u64> = Key::new("TYPHOON_DECOY_REPLICATION_DELAY_MIN", 2500);
+    pub const DECOY_REPLICATION_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_REPLICATION_DELAY_MAX", 10000);
+    pub const DECOY_REPLICATION_MODE_NONE_PROBABILITY: Key<f64> = Key::new("TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY", 3.0);
+
+    // Decoy subheader settings
+    pub const DECOY_SUBHEADER_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SUBHEADER_LENGTH_MIN", 4);
+    pub const DECOY_SUBHEADER_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SUBHEADER_LENGTH_MAX", 16);
 }
 
 pub mod consts {
@@ -220,179 +233,97 @@ impl Add for SettingValue {
     }
 }
 
-type DefaultMap = HashMap<&'static str, SettingValue>;
+type OverrideMap = HashMap<&'static str, SettingValue>;
 
-#[inline]
-fn default_values_map() -> DefaultMap {
-    let mut map = HashMap::new();
-    map.insert(keys::TYPHOON_RTT_ALPHA, SettingValue::Float(values::TYPHOON_RTT_ALPHA));
-    map.insert(keys::TYPHOON_RTT_BETA, SettingValue::Float(values::TYPHOON_RTT_BETA));
-    map.insert(keys::TYPHOON_RTT_DEFAULT, SettingValue::Unsigned(values::TYPHOON_RTT_DEFAULT));
-    map.insert(keys::TYPHOON_RTT_MIN, SettingValue::Unsigned(values::TYPHOON_RTT_MIN));
-    map.insert(keys::TYPHOON_RTT_MAX, SettingValue::Unsigned(values::TYPHOON_RTT_MAX));
-    map.insert(keys::TYPHOON_TIMEOUT_DEFAULT, SettingValue::Unsigned(values::TYPHOON_TIMEOUT_DEFAULT));
-    map.insert(keys::TYPHOON_TIMEOUT_MIN, SettingValue::Unsigned(values::TYPHOON_TIMEOUT_MIN));
-    map.insert(keys::TYPHOON_TIMEOUT_MAX, SettingValue::Unsigned(values::TYPHOON_TIMEOUT_MAX));
-    map.insert(keys::TYPHOON_TIMEOUT_RTT_FACTOR, SettingValue::Float(values::TYPHOON_TIMEOUT_RTT_FACTOR));
-    map.insert(keys::TYPHOON_HEALTH_CHECK_NEXT_IN_MIN, SettingValue::Unsigned(values::TYPHOON_HEALTH_CHECK_NEXT_IN_MIN));
-    map.insert(keys::TYPHOON_HEALTH_CHECK_NEXT_IN_MAX, SettingValue::Unsigned(values::TYPHOON_HEALTH_CHECK_NEXT_IN_MAX));
-    map.insert(keys::TYPHOON_HANDSHAKE_NEXT_IN_FACTOR, SettingValue::Float(values::TYPHOON_HANDSHAKE_NEXT_IN_FACTOR));
-    map.insert(keys::TYPHOON_MAX_RETRIES, SettingValue::Unsigned(values::TYPHOON_MAX_RETRIES));
-    map.insert(keys::TYPHOON_FAKE_BODY_LENGTH_MIN, SettingValue::Unsigned(values::TYPHOON_FAKE_BODY_LENGTH_MIN));
-    map.insert(keys::TYPHOON_FAKE_BODY_LENGTH_MAX, SettingValue::Unsigned(values::TYPHOON_FAKE_BODY_LENGTH_MAX));
-    map.insert(keys::TYPHOON_FAKE_BODY_SERVICE_PROBABILITY, SettingValue::Float(values::TYPHOON_FAKE_BODY_SERVICE_PROBABILITY));
-    map.insert(keys::TYPHOON_FAKE_HEADER_LENGTH_MIN, SettingValue::Unsigned(values::TYPHOON_FAKE_HEADER_LENGTH_MIN));
-    map.insert(keys::TYPHOON_FAKE_HEADER_LENGTH_MAX, SettingValue::Unsigned(values::TYPHOON_FAKE_HEADER_LENGTH_MAX));
-    map.insert(keys::TYPHOON_FAKE_HEADER_PROBABILITY, SettingValue::Float(values::TYPHOON_FAKE_HEADER_PROBABILITY));
-    map.insert(keys::TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT, SettingValue::Float(values::TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT));
-    map.insert(keys::TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT, SettingValue::Float(values::TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT));
-    map.insert(keys::TYPHOON_DECOY_CURRENT_BYTE_RATE_DEFAULT, SettingValue::Float(values::TYPHOON_DECOY_CURRENT_BYTE_RATE_DEFAULT));
-    map.insert(keys::TYPHOON_DECOY_BYTE_RATE_CAP, SettingValue::Float(values::TYPHOON_DECOY_BYTE_RATE_CAP));
-    map.insert(keys::TYPHOON_DECOY_BYTE_RATE_FACTOR, SettingValue::Float(values::TYPHOON_DECOY_BYTE_RATE_FACTOR));
-    map.insert(keys::TYPHOON_DECOY_CURRENT_ALPHA, SettingValue::Float(values::TYPHOON_DECOY_CURRENT_ALPHA));
-    map.insert(keys::TYPHOON_DECOY_REFERENCE_ALPHA, SettingValue::Float(values::TYPHOON_DECOY_REFERENCE_ALPHA));
-    map.insert(keys::TYPHOON_DECOY_LENGTH_MAX, SettingValue::Unsigned(values::TYPHOON_DECOY_LENGTH_MAX));
-    map.insert(keys::TYPHOON_DECOY_LENGTH_MIN, SettingValue::Unsigned(values::TYPHOON_DECOY_LENGTH_MIN));
-    map.insert(keys::TYPHOON_DECOY_REFERENCE_BURST_FACTOR, SettingValue::Float(values::TYPHOON_DECOY_REFERENCE_BURST_FACTOR));
-    map.insert(keys::TYPHOON_DECOY_BASE_RATE_RND, SettingValue::Float(values::TYPHOON_DECOY_BASE_RATE_RND));
-    map.insert(keys::TYPHOON_DECOY_HEAVY_BASE_RATE, SettingValue::Float(values::TYPHOON_DECOY_HEAVY_BASE_RATE));
-    map.insert(keys::TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR, SettingValue::Float(values::TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR));
-    map.insert(keys::TYPHOON_DECOY_HEAVY_DELAY_MIN, SettingValue::Unsigned(values::TYPHOON_DECOY_HEAVY_DELAY_MIN));
-    map.insert(keys::TYPHOON_DECOY_HEAVY_DELAY_MAX, SettingValue::Unsigned(values::TYPHOON_DECOY_HEAVY_DELAY_MAX));
-    map.insert(keys::TYPHOON_DECOY_HEAVY_DELAY_DEFAULT, SettingValue::Unsigned(values::TYPHOON_DECOY_HEAVY_DELAY_DEFAULT));
-    map.insert(keys::TYPHOON_DECOY_HEAVY_BASE_LENGTH, SettingValue::Float(values::TYPHOON_DECOY_HEAVY_BASE_LENGTH));
-    map.insert(keys::TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH, SettingValue::Float(values::TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH));
-    map.insert(keys::TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR, SettingValue::Float(values::TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR));
-    map.insert(keys::TYPHOON_DECOY_NOISY_BASE_RATE, SettingValue::Float(values::TYPHOON_DECOY_NOISY_BASE_RATE));
-    map.insert(keys::TYPHOON_DECOY_NOISY_DELAY_MIN, SettingValue::Unsigned(values::TYPHOON_DECOY_NOISY_DELAY_MIN));
-    map.insert(keys::TYPHOON_DECOY_NOISY_DELAY_MAX, SettingValue::Unsigned(values::TYPHOON_DECOY_NOISY_DELAY_MAX));
-    map.insert(keys::TYPHOON_DECOY_NOISY_DELAY_DEFAULT, SettingValue::Unsigned(values::TYPHOON_DECOY_NOISY_DELAY_DEFAULT));
-    map.insert(keys::TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN, SettingValue::Unsigned(values::TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN));
-    map.insert(keys::TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER, SettingValue::Float(values::TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER));
-    map.insert(keys::TYPHOON_DECOY_SPARSE_BASE_RATE, SettingValue::Float(values::TYPHOON_DECOY_SPARSE_BASE_RATE));
-    map.insert(keys::TYPHOON_DECOY_SPARSE_RATE_FACTOR, SettingValue::Float(values::TYPHOON_DECOY_SPARSE_RATE_FACTOR));
-    map.insert(keys::TYPHOON_DECOY_SPARSE_JITTER, SettingValue::Float(values::TYPHOON_DECOY_SPARSE_JITTER));
-    map.insert(keys::TYPHOON_DECOY_SPARSE_DELAY_FACTOR, SettingValue::Float(values::TYPHOON_DECOY_SPARSE_DELAY_FACTOR));
-    map.insert(keys::TYPHOON_DECOY_SPARSE_DELAY_MIN, SettingValue::Unsigned(values::TYPHOON_DECOY_SPARSE_DELAY_MIN));
-    map.insert(keys::TYPHOON_DECOY_SPARSE_DELAY_MAX, SettingValue::Unsigned(values::TYPHOON_DECOY_SPARSE_DELAY_MAX));
-    map.insert(keys::TYPHOON_DECOY_SPARSE_DELAY_DEFAULT, SettingValue::Unsigned(values::TYPHOON_DECOY_SPARSE_DELAY_DEFAULT));
-    map.insert(keys::TYPHOON_DECOY_SPARSE_LENGTH_FACTOR, SettingValue::Float(values::TYPHOON_DECOY_SPARSE_LENGTH_FACTOR));
-    map.insert(keys::TYPHOON_DECOY_SPARSE_LENGTH_SIGMA, SettingValue::Float(values::TYPHOON_DECOY_SPARSE_LENGTH_SIGMA));
-    map.insert(keys::TYPHOON_DECOY_SPARSE_LENGTH_MIN, SettingValue::Unsigned(values::TYPHOON_DECOY_SPARSE_LENGTH_MIN));
-    map.insert(keys::TYPHOON_DECOY_SPARSE_LENGTH_MAX, SettingValue::Unsigned(values::TYPHOON_DECOY_SPARSE_LENGTH_MAX));
-    map.insert(keys::TYPHOON_DECOY_SMOOTH_BASE_RATE, SettingValue::Float(values::TYPHOON_DECOY_SMOOTH_BASE_RATE));
-    map.insert(keys::TYPHOON_DECOY_SMOOTH_QUIETNESS_FACTOR, SettingValue::Float(values::TYPHOON_DECOY_SMOOTH_QUIETNESS_FACTOR));
-    map.insert(keys::TYPHOON_DECOY_SMOOTH_RATE_FACTOR, SettingValue::Float(values::TYPHOON_DECOY_SMOOTH_RATE_FACTOR));
-    map.insert(keys::TYPHOON_DECOY_SMOOTH_JITTER, SettingValue::Float(values::TYPHOON_DECOY_SMOOTH_JITTER));
-    map.insert(keys::TYPHOON_DECOY_SMOOTH_DELAY_FACTOR, SettingValue::Float(values::TYPHOON_DECOY_SMOOTH_DELAY_FACTOR));
-    map.insert(keys::TYPHOON_DECOY_SMOOTH_DELAY_MIN, SettingValue::Unsigned(values::TYPHOON_DECOY_SMOOTH_DELAY_MIN));
-    map.insert(keys::TYPHOON_DECOY_SMOOTH_DELAY_MAX, SettingValue::Unsigned(values::TYPHOON_DECOY_SMOOTH_DELAY_MAX));
-    map.insert(keys::TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT, SettingValue::Unsigned(values::TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT));
-    map.insert(keys::TYPHOON_DECOY_SMOOTH_LENGTH_MIN, SettingValue::Unsigned(values::TYPHOON_DECOY_SMOOTH_LENGTH_MIN));
-    map.insert(keys::TYPHOON_DECOY_SMOOTH_LENGTH_MAX, SettingValue::Unsigned(values::TYPHOON_DECOY_SMOOTH_LENGTH_MAX));
-    map.insert(keys::TYPHOON_DECOY_MAINTENANCE_LENGTH_MIN, SettingValue::Unsigned(values::TYPHOON_DECOY_MAINTENANCE_LENGTH_MIN));
-    map.insert(keys::TYPHOON_DECOY_MAINTENANCE_LENGTH_MAX, SettingValue::Unsigned(values::TYPHOON_DECOY_MAINTENANCE_LENGTH_MAX));
-    map.insert(keys::TYPHOON_DECOY_MAINTENANCE_DELAY_MIN, SettingValue::Unsigned(values::TYPHOON_DECOY_MAINTENANCE_DELAY_MIN));
-    map.insert(keys::TYPHOON_DECOY_MAINTENANCE_DELAY_MAX, SettingValue::Unsigned(values::TYPHOON_DECOY_MAINTENANCE_DELAY_MAX));
-    map.insert(keys::TYPHOON_DECOY_MAINTENANCE_MODE_NONE_PROBABILITY, SettingValue::Float(values::TYPHOON_DECOY_MAINTENANCE_MODE_NONE_PROBABILITY));
-    map.insert(keys::TYPHOON_DECOY_REPLICATION_PROBABILITY_MIN, SettingValue::Float(values::TYPHOON_DECOY_REPLICATION_PROBABILITY_MIN));
-    map.insert(keys::TYPHOON_DECOY_REPLICATION_PROBABILITY_MAX, SettingValue::Float(values::TYPHOON_DECOY_REPLICATION_PROBABILITY_MAX));
-    map.insert(keys::TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE, SettingValue::Float(values::TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE));
-    map.insert(keys::TYPHOON_DECOY_REPLICATION_DELAY_MIN, SettingValue::Unsigned(values::TYPHOON_DECOY_REPLICATION_DELAY_MIN));
-    map.insert(keys::TYPHOON_DECOY_REPLICATION_DELAY_MAX, SettingValue::Unsigned(values::TYPHOON_DECOY_REPLICATION_DELAY_MAX));
-    map.insert(keys::TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY, SettingValue::Float(values::TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY));
-    map.insert(keys::TYPHOON_DECOY_SUBHEADER_LENGTH_MIN, SettingValue::Unsigned(values::TYPHOON_DECOY_SUBHEADER_LENGTH_MIN));
-    map.insert(keys::TYPHOON_DECOY_SUBHEADER_LENGTH_MAX, SettingValue::Unsigned(values::TYPHOON_DECOY_SUBHEADER_LENGTH_MAX));
-    map
+/// Try to read an environment variable and parse it as type T.
+/// Returns None if the variable is not set or cannot be parsed.
+fn try_env_override<T: SettingType>(key: &Key<T>) -> Option<T> {
+    let env_str = var(key.name).ok()?;
+    T::try_parse(&env_str).or_else(|| {
+        warn!(
+            "Environment variable '{}' set to '{}' cannot be parsed, using default",
+            key.name, env_str
+        );
+        None
+    })
 }
 
-#[inline]
-fn environment_values_map(mut default_values_map: DefaultMap) -> DefaultMap {
-    for (key, value) in default_values_map.iter_mut() {
-        *value = match value {
-            SettingValue::Signed(_) => match var(*key) {
-                Ok(res) => match res.parse::<i64>() {
-                    Ok(res) => SettingValue::Signed(res),
-                    Err(_) => {
-                        warn!("Environment variable '{key}' set to value '{res}' that can not be parsed as 64bit signed integer, skipping...");
-                        *value
-                    }
-                },
-                Err(_) => *value,
-            },
-            SettingValue::Unsigned(_) => match var(*key) {
-                Ok(res) => match res.parse::<u64>() {
-                    Ok(res) => SettingValue::Unsigned(res),
-                    Err(_) => {
-                        warn!("Environment variable '{key}' set to value '{res}' that can not be parsed as 64bit unsigned integer, skipping...");
-                        *value
-                    }
-                },
-                Err(_) => *value,
-            },
-            SettingValue::Float(_) => match var(*key) {
-                Ok(res) => match res.parse::<f64>() {
-                    Ok(res) => SettingValue::Float(res),
-                    Err(_) => {
-                        warn!("Environment variable '{key}' set to value '{res}' that can not be parsed as 64bit floating point number, skipping...");
-                        *value
-                    }
-                },
-                Err(_) => *value,
-            },
-        };
-    }
-    default_values_map
-}
-
+/// Builder for creating Settings instances with custom overrides.
+#[derive(Default)]
 pub struct SettingsBuilder {
-    map: DefaultMap,
+    overrides: OverrideMap,
+    skip_env: bool,
 }
 
 impl SettingsBuilder {
-    #[inline]
-    pub fn update(mut self, key: &'static str, value: &SettingValue) -> Self {
-        self.map.insert(key, *value);
-        self
+    /// Create a new builder that will read environment variables.
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    #[inline]
-    pub fn extend(mut self, update: DefaultMap) -> Self {
-        self.map.extend(update);
-        self
-    }
-
-    fn finalize(self) -> Settings {
-        Settings {
-            map: self.map,
-        }
-    }
-}
-
-impl Default for SettingsBuilder {
-    #[inline]
-    fn default() -> Self {
+    /// Create a builder that ignores environment variables.
+    pub fn without_env() -> Self {
         Self {
-            map: environment_values_map(default_values_map()),
+            overrides: OverrideMap::new(),
+            skip_env: true,
+        }
+    }
+
+    /// Set a typed value for a key.
+    #[inline]
+    pub fn set<T: SettingType>(mut self, key: &Key<T>, value: T) -> Self {
+        self.overrides.insert(key.name, value.to_value());
+        self
+    }
+
+    /// Build the Settings instance.
+    pub fn build(self) -> Settings {
+        Settings {
+            overrides: self.overrides,
         }
     }
 }
 
+/// Configuration settings with type-safe access.
+///
+/// Values are resolved in this order:
+/// 1. Explicit overrides set via SettingsBuilder
+/// 2. Environment variables (if not disabled)
+/// 3. Default value from the Key definition
 pub struct Settings {
-    pub map: DefaultMap,
+    overrides: OverrideMap,
 }
 
-impl Index<&str> for Settings {
-    type Output = SettingValue;
+impl Settings {
+    /// Get a setting value with compile-time type safety.
+    ///
+    /// Resolution order: override -> environment -> default
+    #[inline]
+    pub fn get<T: SettingType + Copy>(&self, key: &Key<T>) -> T {
+        // Check overrides first
+        if let Some(value) = self.overrides.get(key.name) {
+            return T::from_value(*value);
+        }
 
-    fn index(&self, index: &str) -> &Self::Output {
-        &self.map[index]
+        // Check environment variable
+        if let Some(value) = try_env_override(key) {
+            return value;
+        }
+
+        // Return default
+        key.default
+    }
+
+    /// Set a setting value with compile-time type safety.
+    #[inline]
+    pub fn set<T: SettingType>(&mut self, key: &Key<T>, value: T) {
+        self.overrides.insert(key.name, value.to_value());
     }
 }
 
 impl Default for Settings {
     #[inline]
     fn default() -> Self {
-        SettingsBuilder::default().finalize()
+        SettingsBuilder::new().build()
     }
 }

@@ -69,8 +69,8 @@ impl<'a> Certificate<'a> {
 
         let client_data = ClientData {
             ephemeral_key: ephemeral_secret,
-            shared_secret: shared_buffer,
-            nonce: nonce.copy(),
+            shared_secret: (&shared_buffer).into(),
+            nonce: (&nonce).into(),
         };
 
         let handshake_buffer = ByteBuffer::empty_with_capacity(0, 0, X25519_KEY_LENGTH + CRYPTO_CIPHERTEXTBYTES + ANONYMOUS_NONCE_LEN * 2 + NONCE_LENGTH);
@@ -80,8 +80,8 @@ impl<'a> Certificate<'a> {
     }
 
     /// Process server handshake response: deobfuscate, verify signature, derive session key.
-    /// Args: client ephemeral data, server handshake. Returns: session cipher.
-    pub fn decapsulate_handshake_client(&self, data: ClientData, handshake_secret: ByteBuffer) -> Result<Symmetric, HandshakeError> {
+    /// Args: client ephemeral data, server handshake. Returns: session key bytes.
+    pub fn decapsulate_handshake_client(&self, data: ClientData, handshake_secret: ByteBuffer) -> Result<ByteBuffer, HandshakeError> {
         let (mut ephemeral_public_obfuscated, rest) = handshake_secret.split_buf(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN);
         let (transcript_signed, nonce) = rest.split_buf(Signature::BYTE_SIZE);
 
@@ -95,16 +95,15 @@ impl<'a> Certificate<'a> {
 
         let transcript_signed_bytes: [u8; Signature::BYTE_SIZE] = (&transcript_signed).into();
         let transcript_signed = Signature::from_bytes(&transcript_signed_bytes);
-        let transcript = Hasher::new().update(&data.shared_secret.slice()).update(shared_secret.as_bytes()).update(&data.nonce.slice()).update(&nonce.slice()).finalize();
+        let transcript = Hasher::new().update(data.shared_secret.as_slice()).update(shared_secret.as_bytes()).update(data.nonce.as_slice()).update(&nonce.slice()).finalize();
         if let Err(err) = self.vpk.verify_strict(transcript.as_bytes(), &transcript_signed) {
             return Err(HandshakeError::handshake_authentication_error(&format!("server identity verification error: {}", err.to_string())));
         };
 
-        let session_key_hash = Hasher::new_keyed(&hash_derive_key_context(SESSION_KEY)).update(&data.shared_secret.slice()).update(shared_secret.as_bytes()).update(transcript.as_bytes()).finalize();
+        let session_key_hash = Hasher::new_keyed(&hash_derive_key_context(SESSION_KEY)).update(data.shared_secret.as_slice()).update(shared_secret.as_bytes()).update(transcript.as_bytes()).finalize();
         let session_key = ByteBuffer::from(session_key_hash.as_bytes());
-        let session_symmetric = Symmetric::new(&session_key);
 
-        Ok(session_symmetric)
+        Ok(session_key)
     }
 
     /// Full mode: encrypt and obfuscate plaintext with X25519 ephemeral exchange.
@@ -137,7 +136,7 @@ impl<'a> Certificate<'a> {
 impl<'a> ServerSecret<'a> {
     /// Server decapsulate client handshake: deobfuscate, decapsulate McEliece, derive cipher.
     /// Args: client handshake_secret. Returns: (ServerData, initial_cipher).
-    fn decapsulate_handshake_server(&self, handshake_secret: ByteBuffer) -> (ServerData, Symmetric) {
+    pub fn decapsulate_handshake_server(&self, handshake_secret: ByteBuffer) -> (ServerData, Symmetric) {
         let (mut ephemeral_public_obfuscated, rest) = handshake_secret.split_buf(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN);
         let (mut ciphertext_obfuscated, nonce) = rest.split_buf(CRYPTO_CIPHERTEXTBYTES + ANONYMOUS_NONCE_LEN);
 
@@ -161,8 +160,8 @@ impl<'a> ServerSecret<'a> {
 
         let server_data = ServerData {
             ephemeral_key: ephemeral_public,
-            shared_secret: shared_buffer,
-            nonce: nonce.copy(),
+            shared_secret: (&shared_buffer).into(),
+            nonce: (&nonce).into(),
         };
 
         let initial_encryption_symmetric = Symmetric::new(&initial_encryption_key);
@@ -171,21 +170,21 @@ impl<'a> ServerSecret<'a> {
 
     /// Server handshake response: generate ephemeral X25519, sign transcript, derive session key.
     /// Args: server data, buffer. Returns: (handshake_secret, session_cipher).
-    fn encapsulate_handshake_server(&self, data: ServerData) -> (ByteBuffer, Symmetric) {
+    pub fn encapsulate_handshake_server(&self, data: ServerData) -> (ByteBuffer, Symmetric) {
         let nonce = ByteBuffer::from(get_rng().random_byte_array::<U32>().as_slice());
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
         let mut ephemeral_public = ByteBuffer::from_array_with_capacity(&PublicKey::from(&ephemeral_secret).to_bytes(), 0, ANONYMOUS_NONCE_LEN);
         let shared_secret = ephemeral_secret.diffie_hellman(&data.ephemeral_key);
 
-        let transcript = Hasher::new().update(&data.shared_secret.slice()).update(shared_secret.as_bytes()).update(&data.nonce.slice()).update(&nonce.slice()).finalize();
+        let transcript = Hasher::new().update(data.shared_secret.as_slice()).update(shared_secret.as_bytes()).update(data.nonce.as_slice()).update(&nonce.slice()).finalize();
         let transcript_signed = self.vsk.sign(transcript.as_bytes());
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(SERVER_HANDSHAKE_OBFUSCATION_KEY)).update(&self.obfuscation_buffer().slice()).update(&nonce.slice()).finalize();
         let masking_key = ByteBuffer::from(masking_key_hash.as_bytes());
         let ephemeral_public_obfuscated = encrypt_anonymously(&masking_key, &mut ephemeral_public);
 
-        let session_key_hash = Hasher::new_keyed(&hash_derive_key_context(SESSION_KEY)).update(&data.shared_secret.slice()).update(shared_secret.as_bytes()).update(transcript.as_bytes()).finalize();
+        let session_key_hash = Hasher::new_keyed(&hash_derive_key_context(SESSION_KEY)).update(data.shared_secret.as_slice()).update(shared_secret.as_bytes()).update(transcript.as_bytes()).finalize();
         let session_key = ByteBuffer::from(session_key_hash.as_bytes());
 
         let handshake_buffer = ByteBuffer::empty_with_capacity(0, 0, X25519_KEY_LENGTH + Signature::BYTE_SIZE + ANONYMOUS_NONCE_LEN + NONCE_LENGTH);

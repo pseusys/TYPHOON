@@ -1,9 +1,3 @@
-#[cfg(all(feature = "tokio", feature = "async-std"))]
-compile_error!("feature 'tokio' and feature 'async-std' cannot be enabled at the same time");
-
-#[cfg(not(any(feature = "tokio", feature = "async-std")))]
-compile_error!("one of the features 'tokio' and 'async-std' should be selected");
-
 #[cfg(all(feature = "fast", feature = "full"))]
 compile_error!("feature 'fast' and feature 'full' cannot be enabled at the same time");
 
