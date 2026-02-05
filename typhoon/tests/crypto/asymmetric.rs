@@ -73,13 +73,13 @@ fn get_x25519_keypair() -> (StaticSecret, X25519PublicKey) {
 
 #[cfg(all(feature = "client", feature = "fast"))]
 #[inline]
-fn create_test_certificate() -> Certificate<'static> {
+fn create_test_certificate<'a>() -> Certificate<'a> {
     let (epk, _) = get_mceliece_keypair();
     let (_, vpk) = get_ed25519_keypair();
     Certificate {
-        epk,
+        epk: &epk,
         vpk,
-        obfs: get_obfuscation_key(),
+        obfs: (&get_obfuscation_key()).into(),
     }
 }
 
@@ -91,7 +91,7 @@ fn create_test_server_secret() -> ServerSecret<'static> {
     ServerSecret {
         esk,
         vsk,
-        obfs: get_obfuscation_key(),
+        obfs: (&get_obfuscation_key()).into(),
     }
 }
 

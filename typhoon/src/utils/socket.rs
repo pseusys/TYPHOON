@@ -86,7 +86,7 @@ impl Socket {
     /// Send to socket
 
     #[cfg(feature = "tokio")]
-    pub async fn send(&mut self, data: &ByteBuffer) -> Result<usize, SocketError> {
+    pub async fn send(&self, data: ByteBuffer) -> Result<usize, SocketError> {
         match self.sock.send(data.slice()).await {
             Ok(res) => Ok(res),
             Err(err) => Err(SocketError::new_socket_error(err)),
@@ -94,7 +94,7 @@ impl Socket {
     }
 
     #[cfg(feature = "async-std")]
-    pub async fn send(&mut self, data: &ByteBuffer) -> Result<usize, SocketError> {
+    pub async fn send(&self, data: ByteBuffer) -> Result<usize, SocketError> {
         match self.sock.send(data.slice()).await {
             Ok(res) => Ok(res),
             Err(err) => Err(SocketError::new_socket_error(err)),
@@ -104,7 +104,7 @@ impl Socket {
     /// Receive from socket
 
     #[cfg(feature = "tokio")]
-    pub async fn recv(&mut self, buf: &ByteBuffer) -> Result<ByteBuffer, SocketError> {
+    pub async fn recv(&self, buf: ByteBuffer) -> Result<ByteBuffer, SocketError> {
         match self.sock.recv(buf.slice_mut()).await {
             Ok(res) => Ok(buf.rebuffer_end(res)),
             Err(err) => Err(SocketError::new_socket_error(err)),
@@ -112,7 +112,7 @@ impl Socket {
     }
 
     #[cfg(feature = "async-std")]
-    pub async fn recv(&mut self, buf: &ByteBuffer) -> Result<ByteBuffer, SocketError> {
+    pub async fn recv(&self, buf: ByteBuffer) -> Result<ByteBuffer, SocketError> {
         match self.sock.recv(buf.slice_mut()).await {
             Ok(res) => Ok(buf.rebuffer_end(res)),
             Err(err) => Err(SocketError::new_socket_error(err)),
@@ -122,7 +122,7 @@ impl Socket {
     /// Attempt best effort synchronous send a final message and close the socket
 
     #[cfg(feature = "tokio")]
-    fn close(self, data: &ByteBuffer) -> Result<usize, SocketError> {
+    fn close(self, data: ByteBuffer) -> Result<usize, SocketError> {
         match self.sock.try_send(data.slice()) {
             Ok(res) => Ok(res),
             Err(err) => Err(SocketError::new_socket_error(err)),
@@ -130,7 +130,7 @@ impl Socket {
     }
 
     #[cfg(feature = "async-std")]
-    fn close(self, data: &ByteBuffer) -> Result<usize, SocketError> {
+    fn close(self, data: ByteBuffer) -> Result<usize, SocketError> {
         match self.sock.into_inner() {
             Ok(inner_sock) => match inner_sock.send(data.slice()) {
                 Ok(res) => Ok(res),

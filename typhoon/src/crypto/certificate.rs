@@ -3,6 +3,7 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey};
 
 use crate::bytes::ByteBuffer;
+use crate::crypto::utils::StandardPassword;
 
 #[cfg(feature = "full")]
 use x25519_dalek::StaticSecret;
@@ -27,7 +28,7 @@ pub struct ServerSecret<'a> {
 pub struct ServerSecret<'a> {
     pub esk: SecretKey<'a>,
     pub vsk: SigningKey,
-    pub obfs: ByteBuffer,
+    pub obfs: StandardPassword,
 }
 
 impl<'a> ObfuscationBufferContainer for ServerSecret<'a> {
@@ -40,14 +41,14 @@ impl<'a> ObfuscationBufferContainer for ServerSecret<'a> {
     #[cfg(feature = "fast")]
     #[inline]
     fn obfuscation_buffer(&self) -> ByteBuffer {
-        self.obfs.clone()
+        ByteBuffer::from(&self.obfs)
     }
 }
 
 /// Client certificate: McEliece public key + Ed25519 verifying key (+ X25519 in full mode).
 #[cfg(feature = "full")]
 pub struct Certificate<'a> {
-    pub epk: McEliecePublicKey<'a>,
+    pub epk: &'a McEliecePublicKey<'a>,
     pub vpk: VerifyingKey,
     pub opk: X25519PublicKey,
 }
@@ -55,9 +56,9 @@ pub struct Certificate<'a> {
 /// Client certificate: McEliece public key + Ed25519 verifying key + obfuscation key.
 #[cfg(feature = "fast")]
 pub struct Certificate<'a> {
-    pub epk: McEliecePublicKey<'a>,
+    pub epk: &'a McEliecePublicKey<'a>,
     pub vpk: VerifyingKey,
-    pub obfs: ByteBuffer,
+    pub obfs: StandardPassword,
 }
 
 impl<'a> ObfuscationBufferContainer for Certificate<'a> {
@@ -70,20 +71,33 @@ impl<'a> ObfuscationBufferContainer for Certificate<'a> {
     #[cfg(feature = "fast")]
     #[inline]
     fn obfuscation_buffer(&self) -> ByteBuffer {
-        self.obfs.clone()
+        ByteBuffer::from(&self.obfs)
+    }
+}
+
+impl Clone for Certificate<'_> {
+    fn clone(&self) -> Self {
+        Self {
+            epk: self.epk,
+            vpk: self.vpk.clone(),
+            #[cfg(feature = "full")]
+            opk: self.opk.clone(),
+            #[cfg(feature = "fast")]
+            obfs: self.obfs.clone(),
+        }
     }
 }
 
 /// Ephemeral client handshake state: X25519 secret, McEliece shared secret, nonce.
 pub struct ClientData {
     pub ephemeral_key: EphemeralSecret,
-    pub shared_secret: ByteBuffer,
-    pub nonce: ByteBuffer,
+    pub shared_secret: StandardPassword,
+    pub nonce: StandardPassword,
 }
 
 /// Ephemeral server handshake state: client X25519 public key, McEliece shared secret, nonce.
 pub struct ServerData {
     pub ephemeral_key: X25519PublicKey,
-    pub shared_secret: ByteBuffer,
-    pub nonce: ByteBuffer,
+    pub shared_secret: StandardPassword,
+    pub nonce: StandardPassword,
 }

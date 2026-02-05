@@ -9,7 +9,8 @@ authors = [
 
 
 [features]
-default = ["software", "fast", "server", "client", "tokio"]
+# default = ["software", "fast", "server", "client", "tokio"]
+default = ["hardware", "full", "server", "client", "async-std"]
 hardware = ["dep:aes", "dep:aes-gcm", "dep:ctr"]
 software = ["dep:chacha20", "dep:chacha20poly1305"]
 fast = []
@@ -41,5 +42,6 @@ lazy_static = "^1.5.0"
 log = "^0.4.29"
 rand = "^0.8.5"
 thiserror = "^2.0.18"
-tokio = { version = "^1.47.1", features = ["net", "sync"], optional = true }
+tokio = { version = "^1.47.1", features = ["net", "sync", "time", "rt"], optional = true }
+rand_distr = "^0.4.3"
 x25519-dalek = { version = "^2.0.1", features = ["static_secrets"] }

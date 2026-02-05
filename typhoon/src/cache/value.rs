@@ -9,7 +9,7 @@ use crate::utils::random::get_rng;
 use crate::utils::sync::RwLock;
 
 pub(crate) type SharedState<T> = RwLock<Versioned<T>>;
-pub(crate) type ValueMapper<T> = Arc<dyn Fn(&T, Option<&T>) -> T + Send>;
+pub(crate) type ValueMapper<T> = Arc<dyn Fn(&T, Option<&T>) -> T + Send + Sync>;
 
 /// Change once this is implemented: https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html
 pub struct SharedValue<T: Clone + Send> {
@@ -51,7 +51,7 @@ impl<T: Clone + Send> SharedValue<T> {
         self.create_cache_with(|source, _| source.clone()).await
     }
 
-    pub async fn create_cache_with<F: Fn(&T, Option<&T>) -> T + Send + 'static>(&self, mapper: F) -> CachedValue<T> {
+    pub async fn create_cache_with<F: Fn(&T, Option<&T>) -> T + Send + Sync + 'static>(&self, mapper: F) -> CachedValue<T> {
         let guard = self.state.read().await;
         let value = mapper(&guard.value, None);
         let version = guard.version;
@@ -124,7 +124,7 @@ impl<T: Clone + Send> CachedValue<T> {
         })
     }
 
-    pub async fn create_sibling_with<F: Fn(&T, Option<&T>) -> T + Send + 'static>(&self, mapper: F) -> Result<CachedValue<T>, CacheError> {
+    pub async fn create_sibling_with<F: Fn(&T, Option<&T>) -> T + Send + Sync + 'static>(&self, mapper: F) -> Result<CachedValue<T>, CacheError> {
         let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
         let guard = source.read().await;
         let value = mapper(&guard.value, None);
