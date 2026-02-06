@@ -8,7 +8,7 @@ use rand::distributions::Standard;
 use rand::{Fill, Rng, RngCore, prelude::Distribution};
 
 use crate::{
-    bytes::ByteBuffer,
+    bytes::{ByteBufferMut, DynamicByteBuffer},
     flow::error::FlowControllerError,
     utils::{random::get_rng, socket::Socket, time::unix_timestamp_ms},
 };
@@ -154,7 +154,7 @@ impl FakeHeaderConfig {
         })
     }
 
-    pub fn fill(&mut self, buffer: ByteBuffer) {
+    pub fn fill(&mut self, buffer: DynamicByteBuffer) {
         self.pattern.iter_mut().fold(0, |a, f| {
             a + match f {
                 FieldTypeHolder::U8(holder) => {

@@ -1,18 +1,18 @@
-use crate::bytes::ByteBuffer;
+use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN, SYMMETRIC_KEY_LENGTH, Symmetric, decrypt_anonymously, encrypt_anonymously};
 
 #[cfg(feature = "fast")]
 use crate::crypto::symmetric::SYMMETRIC_SECOND_AUTH_LEN;
 
 #[inline]
-fn make_key() -> ByteBuffer {
-    ByteBuffer::from(&[0x42u8; SYMMETRIC_KEY_LENGTH])
+fn make_key() -> DynamicByteBuffer {
+    DynamicByteBuffer::from(&[0x42u8; SYMMETRIC_KEY_LENGTH])
 }
 
 #[cfg(feature = "fast")]
 #[inline]
-fn make_different_key() -> ByteBuffer {
-    ByteBuffer::from(&[0x24u8; SYMMETRIC_KEY_LENGTH])
+fn make_different_key() -> DynamicByteBuffer {
+    DynamicByteBuffer::from(&[0x24u8; SYMMETRIC_KEY_LENGTH])
 }
 
 // Test: anonymous encrypt then decrypt produces original plaintext.
@@ -21,7 +21,7 @@ fn test_anonymous_encrypt_decrypt_cycle() {
     let key = make_key();
 
     let plaintext_data = b"Anonymous encryption test";
-    let mut plaintext = ByteBuffer::from_slice_with_capacity(plaintext_data, 0, ANONYMOUS_NONCE_LEN);
+    let mut plaintext = DynamicByteBuffer::from_slice_with_capacity(plaintext_data, 0, ANONYMOUS_NONCE_LEN);
 
     let mut ciphertext = encrypt_anonymously(&key, &mut plaintext);
     let decrypted = decrypt_anonymously(&key, &mut ciphertext);
@@ -36,7 +36,7 @@ fn test_symmetric_encrypt_decrypt_cycle() {
     let mut cipher = Symmetric::new(&key);
 
     let plaintext_data = b"Authenticated encryption test";
-    let plaintext = ByteBuffer::from_slice_with_capacity(plaintext_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
+    let plaintext = DynamicByteBuffer::from_slice_with_capacity(plaintext_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
 
     let ciphertext = cipher.encrypt_auth(plaintext, None).expect("encryption failed");
     let decrypted = cipher.decrypt_auth(ciphertext, None).expect("decryption failed");
@@ -53,7 +53,7 @@ fn test_symmetric_encrypt_decrypt_twice_cycle() {
     let mut cipher = Symmetric::new(&key);
 
     let plaintext_data = b"Double authenticated message";
-    let plaintext = ByteBuffer::from_slice_with_capacity(plaintext_data, NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN + SYMMETRIC_SECOND_AUTH_LEN);
+    let plaintext = DynamicByteBuffer::from_slice_with_capacity(plaintext_data, NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN + SYMMETRIC_SECOND_AUTH_LEN);
 
     let ciphertext = cipher.encrypt_auth_twice(plaintext, None, &second_key).expect("encryption failed");
     let (decrypted, ciphertext_with_nonce, second_auth) = cipher.decrypt_auth_twice(ciphertext, None).expect("decryption failed");

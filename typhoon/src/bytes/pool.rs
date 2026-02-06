@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crossbeam::queue::ArrayQueue;
 
-use crate::bytes::buffer::ByteBuffer;
+use crate::bytes::dynamic::DynamicByteBuffer;
 use crate::bytes::utils::{allocate_ptr, free_ptr};
 
 /// Shared storage for pooled buffers.
@@ -27,8 +27,8 @@ impl PoolStorage {
         }
     }
 
-    fn try_take(&self) -> Option<*mut u8> {
-        self.buffers.pop()
+    pub fn try_take(&self, size: usize) -> *mut u8 {
+        self.buffers.pop().unwrap_or_else(|| allocate_ptr(size))
     }
 }
 
@@ -71,8 +71,8 @@ impl BytePool {
 
     /// Get a buffer from pool or allocate new one.
     /// - `size`: optional size limit (must be <= pool's size), None for full size
-    /// Returns a ByteBuffer that auto-returns to pool on drop.
-    pub fn allocate(&self, size: Option<usize>) -> ByteBuffer {
+    /// Returns a DynamicByteBuffer that auto-returns to pool on drop.
+    pub fn allocate(&self, size: Option<usize>) -> DynamicByteBuffer {
         let (remaining_size, remaining_after_cap) = match size {
             Some(res) => {
                 assert!(res <= self.size, "Requested size greater than initial size ({res} > {})!", self.size);
@@ -81,7 +81,7 @@ impl BytePool {
             None => (self.size, self.after_cap),
         };
 
-        let data = self.storage.try_take().unwrap_or_else(|| allocate_ptr(self.storage.capacity));
-        ByteBuffer::new(data, self.storage.capacity, self.before_cap, remaining_size, remaining_after_cap, Some(Arc::clone(&self.storage)))
+        let data = self.storage.try_take(self.storage.capacity);
+        DynamicByteBuffer::new(data, self.storage.capacity, self.before_cap, remaining_size, remaining_after_cap, Some(Arc::clone(&self.storage)))
     }
 }

@@ -4,7 +4,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use cfg_if::cfg_if;
 use thiserror::Error;
 
-use crate::bytes::ByteBuffer;
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 
 cfg_if! {
     if #[cfg(feature = "tokio")] {
@@ -86,7 +86,7 @@ impl Socket {
     /// Send to socket
 
     #[cfg(feature = "tokio")]
-    pub async fn send(&self, data: ByteBuffer) -> Result<usize, SocketError> {
+    pub async fn send(&self, data: DynamicByteBuffer) -> Result<usize, SocketError> {
         match self.sock.send(data.slice()).await {
             Ok(res) => Ok(res),
             Err(err) => Err(SocketError::new_socket_error(err)),
@@ -94,7 +94,7 @@ impl Socket {
     }
 
     #[cfg(feature = "async-std")]
-    pub async fn send(&self, data: ByteBuffer) -> Result<usize, SocketError> {
+    pub async fn send(&self, data: DynamicByteBuffer) -> Result<usize, SocketError> {
         match self.sock.send(data.slice()).await {
             Ok(res) => Ok(res),
             Err(err) => Err(SocketError::new_socket_error(err)),
@@ -104,7 +104,7 @@ impl Socket {
     /// Receive from socket
 
     #[cfg(feature = "tokio")]
-    pub async fn recv(&self, buf: ByteBuffer) -> Result<ByteBuffer, SocketError> {
+    pub async fn recv(&self, buf: DynamicByteBuffer) -> Result<DynamicByteBuffer, SocketError> {
         match self.sock.recv(buf.slice_mut()).await {
             Ok(res) => Ok(buf.rebuffer_end(res)),
             Err(err) => Err(SocketError::new_socket_error(err)),
@@ -112,7 +112,7 @@ impl Socket {
     }
 
     #[cfg(feature = "async-std")]
-    pub async fn recv(&self, buf: ByteBuffer) -> Result<ByteBuffer, SocketError> {
+    pub async fn recv(&self, buf: DynamicByteBuffer) -> Result<DynamicByteBuffer, SocketError> {
         match self.sock.recv(buf.slice_mut()).await {
             Ok(res) => Ok(buf.rebuffer_end(res)),
             Err(err) => Err(SocketError::new_socket_error(err)),
@@ -122,7 +122,7 @@ impl Socket {
     /// Attempt best effort synchronous send a final message and close the socket
 
     #[cfg(feature = "tokio")]
-    fn close(self, data: ByteBuffer) -> Result<usize, SocketError> {
+    fn close(self, data: DynamicByteBuffer) -> Result<usize, SocketError> {
         match self.sock.try_send(data.slice()) {
             Ok(res) => Ok(res),
             Err(err) => Err(SocketError::new_socket_error(err)),
@@ -130,7 +130,7 @@ impl Socket {
     }
 
     #[cfg(feature = "async-std")]
-    fn close(self, data: ByteBuffer) -> Result<usize, SocketError> {
+    fn close(self, data: DynamicByteBuffer) -> Result<usize, SocketError> {
         match self.sock.into_inner() {
             Ok(inner_sock) => match inner_sock.send(data.slice()) {
                 Ok(res) => Ok(res),

@@ -1,3 +1,4 @@
+use crate::bytes::{ByteBuffer, ByteBufferMut};
 use crate::bytes::pool::BytePool;
 
 // Test: pool allocates buffer with default size.

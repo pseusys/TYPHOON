@@ -3,7 +3,7 @@ use std::sync::Arc;
 use log::{debug, info};
 use rand::Rng;
 
-use crate::bytes::ByteBuffer;
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::CachedValue;
 use crate::constants::Settings;
 use crate::crypto::ClientCryptoTool;
@@ -61,7 +61,7 @@ impl<'a, DP: DecoyCommunicationMode<FlowManagerT = Self>> ClientFlowManager<'a, 
 impl<'a, DP: DecoyCommunicationMode<FlowManagerT = Self>> FlowManager for ClientFlowManager<'a, DP> {
     /// Packet should consist of: encrypted payload || valid plaintext tailor.
     /// NB! DecoyCommunicationMode implementations *should not* send non-decoy packets via this method, but they can, if they want.
-    async fn send_packet(&self, packet: ByteBuffer, generated: bool) -> Result<(), FlowControllerError> {
+    async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {
         let notified_packet = {
             let mut lock = self.decoy_provider.lock().await;
             let notified_packet = lock.feed_output(packet, generated).await;
@@ -97,7 +97,7 @@ impl<'a, DP: DecoyCommunicationMode<FlowManagerT = Self>> FlowManager for Client
         }
     }
 
-    async fn receive_packet(&self, packet: ByteBuffer) -> Result<ByteBuffer, FlowControllerError> {
+    async fn receive_packet(&self, packet: DynamicByteBuffer) -> Result<DynamicByteBuffer, FlowControllerError> {
         loop {
             let packet = match self.sock.recv(packet.clone()).await {
                 Ok(res) => res,

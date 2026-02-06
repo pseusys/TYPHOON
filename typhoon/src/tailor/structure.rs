@@ -4,7 +4,7 @@ mod tests;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::bytes::ByteBuffer;
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::constants::consts::{CD_OFFSET, FG_OFFSET, ID_OFFSET, PL_OFFSET, PN_OFFSET, TAILOR_LENGTH, TM_OFFSET};
 use crate::tailor::flags::{PacketFlags, ReturnCode};
 
@@ -36,12 +36,12 @@ pub struct Tailor {
     /// Payload length in bytes.
     pub payload_length: u16,
     /// Client identity (UUID).
-    pub identity: ByteBuffer,
+    pub identity: DynamicByteBuffer,
 }
 
 impl Tailor {
     /// Create a data packet tailor.
-    pub fn data(identity: ByteBuffer, payload_length: u16, packet_number: u64) -> Self {
+    pub fn data(identity: DynamicByteBuffer, payload_length: u16, packet_number: u64) -> Self {
         Self {
             flags: PacketFlags::DATA,
             code: 0,
@@ -53,7 +53,7 @@ impl Tailor {
     }
 
     /// Create a health check packet tailor.
-    pub fn health_check(identity: ByteBuffer, next_in: u32, packet_number: u64) -> Self {
+    pub fn health_check(identity: DynamicByteBuffer, next_in: u32, packet_number: u64) -> Self {
         Self {
             flags: PacketFlags::HEALTH_CHECK,
             code: 0,
@@ -65,7 +65,7 @@ impl Tailor {
     }
 
     /// Create a shadowride packet tailor (data + health check).
-    pub fn shadowride(identity: ByteBuffer, payload_length: u16, next_in: u32, packet_number: u64) -> Self {
+    pub fn shadowride(identity: DynamicByteBuffer, payload_length: u16, next_in: u32, packet_number: u64) -> Self {
         Self {
             flags: PacketFlags::DATA | PacketFlags::HEALTH_CHECK,
             code: 0,
@@ -77,7 +77,7 @@ impl Tailor {
     }
 
     /// Create a handshake packet tailor.
-    pub fn handshake(identity: ByteBuffer, code: u8, next_in: u32, packet_number: u64) -> Self {
+    pub fn handshake(identity: DynamicByteBuffer, code: u8, next_in: u32, packet_number: u64) -> Self {
         Self {
             flags: PacketFlags::HANDSHAKE,
             code,
@@ -89,7 +89,7 @@ impl Tailor {
     }
 
     /// Create a decoy packet tailor.
-    pub fn decoy(identity: ByteBuffer, packet_number: u64) -> Self {
+    pub fn decoy(identity: DynamicByteBuffer, packet_number: u64) -> Self {
         Self {
             flags: PacketFlags::DECOY,
             code: 0,
@@ -101,7 +101,7 @@ impl Tailor {
     }
 
     /// Create a termination packet tailor.
-    pub fn termination(identity: ByteBuffer, code: ReturnCode, packet_number: u64) -> Self {
+    pub fn termination(identity: DynamicByteBuffer, code: ReturnCode, packet_number: u64) -> Self {
         Self {
             flags: PacketFlags::TERMINATION,
             code: code.into(),
@@ -144,7 +144,7 @@ impl Tailor {
 
     /// Deserialize tailor from buffer.
     /// Buffer must be exactly TAILOR_LENGTH bytes.
-    pub fn from_buffer(buffer: &ByteBuffer, identity_len: usize) -> Self {
+    pub fn from_buffer(buffer: &DynamicByteBuffer, identity_len: usize) -> Self {
         let correct_buffer = buffer.ensure_size(identity_len + TAILOR_LENGTH);
         Self {
             flags: PacketFlags::from_bits_truncate(*correct_buffer.get(FG_OFFSET)),
@@ -157,7 +157,7 @@ impl Tailor {
     }
 
     /// Serialize tailor to a buffer.
-    pub fn to_buffer(&self, buffer: ByteBuffer) -> ByteBuffer {
+    pub fn to_buffer(&self, buffer: DynamicByteBuffer) -> DynamicByteBuffer {
         let correct_buffer = buffer.ensure_size(self.identity.len() + TAILOR_LENGTH);
         let correct_slice = correct_buffer.slice_mut();
 
@@ -171,7 +171,7 @@ impl Tailor {
         correct_buffer
     }
 
-    pub fn get_payload_length(buffer: &ByteBuffer) -> u16 {
+    pub fn get_payload_length(buffer: &DynamicByteBuffer) -> u16 {
         let correct_buffer = buffer.ensure_size(TAILOR_LENGTH);
         u16::from_be_bytes((&correct_buffer.rebuffer_both(PL_OFFSET, PL_OFFSET + PL_LENGTH)).into())
     }

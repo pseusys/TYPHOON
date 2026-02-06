@@ -5,7 +5,7 @@ use log::debug;
 use rand::Rng;
 use rand_distr::{Distribution, Exp, Normal};
 
-use crate::bytes::ByteBuffer;
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::constants::keys::*;
 use crate::constants::{Settings, SettingValue};
 use crate::flow::common::FlowManager;
@@ -25,10 +25,10 @@ pub trait DecoyCommunicationMode: Sized + Send + Sync {
     fn start(&mut self) -> impl Future<Output = ()> + Send;
 
     /// Process a packet through the decoy provider, updating internal rate tracking.
-    fn feed_input(&mut self, packet: ByteBuffer) -> impl Future<Output = Option<ByteBuffer>> + Send;
+    fn feed_input(&mut self, packet: DynamicByteBuffer) -> impl Future<Output = Option<DynamicByteBuffer>> + Send;
 
     /// Process a packet through the decoy provider, updating internal rate tracking.
-    fn feed_output(&mut self, packet: ByteBuffer, generated: bool) -> impl Future<Output = Option<ByteBuffer>> + Send;
+    fn feed_output(&mut self, packet: DynamicByteBuffer, generated: bool) -> impl Future<Output = Option<DynamicByteBuffer>> + Send;
 }
 
 /// Internal state for tracking packet rates and byte budgets.
@@ -150,17 +150,17 @@ impl DecoyState {
     }
 
     /// Create a decoy packet with the given body length.
-    fn create_decoy_packet(&mut self, body_length: usize) -> ByteBuffer {
+    fn create_decoy_packet(&mut self, body_length: usize) -> DynamicByteBuffer {
         let total_length = body_length + self.tailor_size;
-        let packet = ByteBuffer::empty(total_length);
+        let packet = DynamicByteBuffer::empty(total_length);
 
         // Fill the body with random bytes
         get_rng().fill(packet.slice_end_mut(body_length));
 
         // Create and write the tailor
-        let identity_buffer = ByteBuffer::from_slice_with_capacity(&self.identity, 0, 0);
+        let identity_buffer = DynamicByteBuffer::from_slice_with_capacity(&self.identity, 0, 0);
         let tailor = Tailor::decoy(identity_buffer, self.next_packet_number());
-        let tailor_buffer = ByteBuffer::empty(self.tailor_size);
+        let tailor_buffer = DynamicByteBuffer::empty(self.tailor_size);
         let tailor_data = tailor.to_buffer(tailor_buffer);
         packet.slice_start_mut(body_length).copy_from_slice(tailor_data.slice());
 
@@ -352,11 +352,11 @@ impl<FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode for HeavyDe
         debug!("HeavyDecoyProvider: background timer started");
     }
     
-    async fn feed_input(&mut self, packet: ByteBuffer) -> Option<ByteBuffer> {
+    async fn feed_input(&mut self, packet: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         todo!()
     }
-    
-    async fn feed_output(&mut self, packet: ByteBuffer, generated: bool) -> Option<ByteBuffer> {
+
+    async fn feed_output(&mut self, packet: DynamicByteBuffer, generated: bool) -> Option<DynamicByteBuffer> {
         // Update state with incoming packet (for rate tracking)
         if !generated {
             let mut state = self.state.write().await;

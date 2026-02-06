@@ -4,8 +4,8 @@ use lazy_static::lazy_static;
 use std::sync::Mutex;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
-use crate::bytes::ByteBuffer;
-use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN};
+use crate::bytes::{ByteBuffer, DynamicByteBuffer};
+use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN, Symmetric};
 
 #[cfg(feature = "full")]
 use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
@@ -43,19 +43,20 @@ lazy_static! {
         let secret = StaticSecret::random_from_rng(get_rng());
         Mutex::new(secret.to_bytes())
     };
+    static ref MCELIECE_PUBLIC_KEY: McEliecePublicKey<'static> = {
+        McEliecePublicKey::from(Box::new(*MCELIECE_KEYPAIR_BYTES.0))
+    };
 }
 
 #[cfg(feature = "fast")]
 #[inline]
-fn get_obfuscation_key() -> ByteBuffer {
-    ByteBuffer::from(&[0x55u8; SYMMETRIC_KEY_LENGTH])
+fn get_obfuscation_key() -> DynamicByteBuffer {
+    DynamicByteBuffer::from(&[0x55u8; SYMMETRIC_KEY_LENGTH])
 }
 
 #[inline]
-fn get_mceliece_keypair() -> (McEliecePublicKey<'static>, SecretKey<'static>) {
-    let pk = McEliecePublicKey::from(Box::new(*MCELIECE_KEYPAIR_BYTES.0));
-    let sk = SecretKey::from(Box::new(*MCELIECE_KEYPAIR_BYTES.1));
-    (pk, sk)
+fn get_mceliece_secret() -> SecretKey<'static> {
+    SecretKey::from(Box::new(*MCELIECE_KEYPAIR_BYTES.1))
 }
 
 #[inline]
@@ -73,11 +74,10 @@ fn get_x25519_keypair() -> (StaticSecret, X25519PublicKey) {
 
 #[cfg(all(feature = "client", feature = "fast"))]
 #[inline]
-fn create_test_certificate<'a>() -> Certificate<'a> {
-    let (epk, _) = get_mceliece_keypair();
+fn create_test_certificate() -> Certificate<'static> {
     let (_, vpk) = get_ed25519_keypair();
     Certificate {
-        epk: &epk,
+        epk: &MCELIECE_PUBLIC_KEY,
         vpk,
         obfs: (&get_obfuscation_key()).into(),
     }
@@ -86,7 +86,7 @@ fn create_test_certificate<'a>() -> Certificate<'a> {
 #[cfg(all(feature = "server", feature = "fast"))]
 #[inline]
 fn create_test_server_secret() -> ServerSecret<'static> {
-    let (_, esk) = get_mceliece_keypair();
+    let esk = get_mceliece_secret();
     let (vsk, _) = get_ed25519_keypair();
     ServerSecret {
         esk,
@@ -98,11 +98,10 @@ fn create_test_server_secret() -> ServerSecret<'static> {
 #[cfg(all(feature = "client", feature = "full"))]
 #[inline]
 fn create_test_certificate() -> Certificate<'static> {
-    let (epk, _) = get_mceliece_keypair();
     let (_, vpk) = get_ed25519_keypair();
     let (_, opk) = get_x25519_keypair();
     Certificate {
-        epk,
+        epk: &MCELIECE_PUBLIC_KEY,
         vpk,
         opk,
     }
@@ -111,7 +110,7 @@ fn create_test_certificate() -> Certificate<'static> {
 #[cfg(all(feature = "server", feature = "full"))]
 #[inline]
 fn create_test_server_secret() -> ServerSecret<'static> {
-    let (_, esk) = get_mceliece_keypair();
+    let esk = get_mceliece_secret();
     let (vsk, _) = get_ed25519_keypair();
     let (osk, opk) = get_x25519_keypair();
     ServerSecret {
@@ -130,7 +129,7 @@ fn test_handshake_cycle() {
     let mut server_secret = create_test_server_secret();
 
     let initial_data_data = b"Secret initial data message";
-    let initial_data = ByteBuffer::from_slice_with_capacity(initial_data_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
+    let initial_data = DynamicByteBuffer::from_slice_with_capacity(initial_data_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
 
     let (client_data, client_handshake, mut client_initial_cipher) = certificate.encapsulate_handshake_client();
     let initial_data_encrypted = client_initial_cipher.encrypt_auth(initial_data, None).expect("initial data encryption failed");
@@ -142,13 +141,14 @@ fn test_handshake_cycle() {
     assert_eq!(initial_data_data, initial_data_decrypted.slice(), "client and server should get the same initial data");
 
     let session_data_data = b"Secret session data message";
-    let session_data = ByteBuffer::from_slice_with_capacity(session_data_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
+    let session_data = DynamicByteBuffer::from_slice_with_capacity(session_data_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
 
     let (server_handshake, mut server_session_cipher) = server_secret.encapsulate_handshake_server(server_data);
     let session_data_encrypted = server_session_cipher.encrypt_auth(session_data, None).expect("session data encryption failed");
 
-    let mut client_session_key = certificate.decapsulate_handshake_client(client_data, server_handshake).expect("client handshake decapsulation failed");
-    let session_data_decrypted = client_session_key.decrypt_auth(session_data_encrypted, None).expect("session data decryption failed");
+    let client_session_key_bytes = certificate.decapsulate_handshake_client(client_data, server_handshake).expect("client handshake decapsulation failed");
+    let mut client_session_cipher = Symmetric::new(&client_session_key_bytes);
+    let session_data_decrypted = client_session_cipher.decrypt_auth(session_data_encrypted, None).expect("session data decryption failed");
 
     assert_eq!(session_data_data, session_data_decrypted.slice(), "client and server should get the same session data");
 }
@@ -160,8 +160,8 @@ fn test_obfuscate_cycle() {
     let certificate = create_test_certificate();
     let server_secret = create_test_server_secret();
 
-    let plaintext_data = ByteBuffer::from(b"Secret initial data message");
-    let plaintext = ByteBuffer::from_slice_with_capacity(plaintext_data.slice(), 0, ENCRYPT_OBFUSCATE_HEADER + SYMMETRIC_FIRST_AUTH_LEN);
+    let plaintext_data = DynamicByteBuffer::from(b"Secret initial data message".as_slice());
+    let plaintext = DynamicByteBuffer::from_slice_with_capacity(plaintext_data.slice(), 0, ENCRYPT_OBFUSCATE_HEADER + SYMMETRIC_FIRST_AUTH_LEN);
 
     let ciphertext = certificate.encrypt_obfuscate(plaintext).expect("encryption failed");
     let decrypted = server_secret.decrypt_deobfuscate(ciphertext).expect("decryption failed");
