@@ -111,11 +111,11 @@ impl<'a> Certificate<'a> {
     /// Full mode: encrypt and obfuscate plaintext with X25519 ephemeral exchange.
     /// Args: plaintext. Returns: ciphertext || obfuscated_key || nonce.
     #[cfg(feature = "full")]
-    pub fn encrypt_obfuscate(&self, plaintext: DynamicByteBuffer) -> Result<DynamicByteBuffer, HandshakeError> {
+    pub fn encrypt_obfuscate(&self, plaintext: DynamicByteBuffer, pool: &BytePool) -> Result<DynamicByteBuffer, HandshakeError> {
         let nonce = StaticByteBuffer::from(get_rng().random_byte_array::<U32>().as_slice());
 
         let ephemeral_secret = StaticSecret::random_from_rng(get_rng());
-        let mut ephemeral_public = DynamicByteBuffer::from_array_with_capacity(&PublicKey::from(&ephemeral_secret).to_bytes(), 0, ANONYMOUS_NONCE_LEN);
+        let mut ephemeral_public = pool.allocate_precise_from_array_with_capacity(&PublicKey::from(&ephemeral_secret).to_bytes(), 0, ANONYMOUS_NONCE_LEN);
         let shared_secret = ephemeral_secret.diffie_hellman(&self.opk);
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(MARSHALLING_OBFUSCATION_KEY)).update(self.opk.as_bytes()).update(nonce.slice()).finalize();

@@ -5,12 +5,12 @@ use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::CachedValue;
-use crate::settings::Settings;
 use crate::crypto::ClientCryptoTool;
 use crate::flow::common::FlowManager;
 use crate::flow::config::FlowConfig;
 use crate::flow::decoy::DecoyCommunicationMode;
 use crate::flow::error::FlowControllerError;
+use crate::settings::Settings;
 use crate::tailor::{PacketFlags, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::socket::Socket;

@@ -1,6 +1,7 @@
 use std::future::Future;
 
-use crate::{bytes::DynamicByteBuffer, flow::error::FlowControllerError};
+use crate::bytes::DynamicByteBuffer;
+use crate::flow::error::FlowControllerError;
 
 /// Trait for managing packet flow with encryption and decoy traffic.
 /// Methods take `Arc<Self>` to enable spawning background tasks without requiring `Sync`.

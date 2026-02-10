@@ -1,24 +1,20 @@
+use std::sync::Mutex;
+
 use classic_mceliece_rust::{CRYPTO_PUBLICKEYBYTES, CRYPTO_SECRETKEYBYTES, PublicKey as McEliecePublicKey, SecretKey, keypair_boxed};
 use ed25519_dalek::{SecretKey as X25519SecretKey, SigningKey, VerifyingKey};
 use lazy_static::lazy_static;
-use std::sync::Mutex;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::bytes::{ByteBuffer, BytePool, StaticByteBuffer};
-use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN, Symmetric};
-
-#[cfg(feature = "full")]
-use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
-
-#[cfg(feature = "fast")]
-use crate::crypto::symmetric::SYMMETRIC_KEY_LENGTH;
-
 #[cfg(feature = "client")]
 use crate::crypto::certificate::Certificate;
-
 #[cfg(feature = "server")]
 use crate::crypto::certificate::ServerSecret;
-
+#[cfg(feature = "full")]
+use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
+#[cfg(feature = "fast")]
+use crate::crypto::symmetric::SYMMETRIC_KEY_LENGTH;
+use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN, Symmetric};
 use crate::utils::random::get_rng;
 
 const X25519_KEY_LENGTH: usize = 32;
@@ -43,9 +39,7 @@ lazy_static! {
         let secret = StaticSecret::random_from_rng(get_rng());
         Mutex::new(secret.to_bytes())
     };
-    static ref MCELIECE_PUBLIC_KEY: McEliecePublicKey<'static> = {
-        McEliecePublicKey::from(Box::new(*MCELIECE_KEYPAIR_BYTES.0))
-    };
+    static ref MCELIECE_PUBLIC_KEY: McEliecePublicKey<'static> = { McEliecePublicKey::from(Box::new(*MCELIECE_KEYPAIR_BYTES.0)) };
     static ref TEST_POOL: BytePool = BytePool::new(32, 256, 32, 4, 16);
 }
 
@@ -162,15 +156,14 @@ fn test_handshake_cycle() {
 #[cfg(all(feature = "full", feature = "client", feature = "server"))]
 #[test]
 fn test_obfuscate_cycle() {
-    let pool = test_pool();
     let certificate = create_test_certificate();
     let server_secret = create_test_server_secret();
 
     let plaintext_data = b"Secret initial data message";
     let plaintext_static = StaticByteBuffer::from(plaintext_data.as_slice());
-    let plaintext = pool.allocate_precise_from_slice_with_capacity(plaintext_data, 0, ENCRYPT_OBFUSCATE_HEADER + SYMMETRIC_FIRST_AUTH_LEN);
+    let plaintext = TEST_POOL.allocate_precise_from_slice_with_capacity(plaintext_data, 0, ENCRYPT_OBFUSCATE_HEADER + SYMMETRIC_FIRST_AUTH_LEN);
 
-    let ciphertext = certificate.encrypt_obfuscate(plaintext).expect("encryption failed");
+    let ciphertext = certificate.encrypt_obfuscate(plaintext, &TEST_POOL).expect("encryption failed");
     let decrypted = server_secret.decrypt_deobfuscate(ciphertext).expect("decryption failed");
 
     assert_eq!(decrypted.slice(), plaintext_static.slice(), "decrypted message should match original");

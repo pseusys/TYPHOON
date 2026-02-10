@@ -2,15 +2,11 @@
 use crate::bytes::StaticByteBuffer;
 #[cfg(feature = "fast")]
 use crate::bytes::StaticByteBuffer;
-use crate::{
-    bytes::{BytePool, DynamicByteBuffer},
-    crypto::{
-        certificate::{Certificate, ClientData, ObfuscationBufferContainer},
-        error::{CryptoError, HandshakeError},
-        symmetric::{NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN, SYMMETRIC_SECOND_AUTH_LEN, Symmetric},
-        utils::ObfuscationTranscript,
-    },
-};
+use crate::bytes::{BytePool, DynamicByteBuffer};
+use crate::crypto::certificate::{Certificate, ClientData, ObfuscationBufferContainer};
+use crate::crypto::error::{CryptoError, HandshakeError};
+use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN, SYMMETRIC_SECOND_AUTH_LEN, Symmetric};
+use crate::crypto::utils::ObfuscationTranscript;
 
 /// Client-side cryptographic tool for TYPHOON protocol.
 #[derive(Clone)]
@@ -80,29 +76,17 @@ impl<'a> ClientCryptoTool<'a> {
 
     /// Client handshake step 2: process server response, verify signature, derive session key.
     /// Returns the session key bytes.
-    pub fn process_handshake_response(
-        &self,
-        data: ClientData,
-        handshake_secret: DynamicByteBuffer,
-    ) -> Result<StaticByteBuffer, HandshakeError> {
+    pub fn process_handshake_response(&self, data: ClientData, handshake_secret: DynamicByteBuffer) -> Result<StaticByteBuffer, HandshakeError> {
         self.cert.decapsulate_handshake_client(data, handshake_secret)
     }
 
     /// Encrypt payload data with session key.
-    pub fn encrypt_payload(
-        &mut self,
-        plaintext: DynamicByteBuffer,
-        additional_data: Option<&DynamicByteBuffer>,
-    ) -> Result<DynamicByteBuffer, CryptoError> {
+    pub fn encrypt_payload(&mut self, plaintext: DynamicByteBuffer, additional_data: Option<&DynamicByteBuffer>) -> Result<DynamicByteBuffer, CryptoError> {
         self.key.encrypt_auth(plaintext, additional_data)
     }
 
     /// Decrypt payload data with session key.
-    pub fn decrypt_payload(
-        &mut self,
-        ciphertext: DynamicByteBuffer,
-        additional_data: Option<&DynamicByteBuffer>,
-    ) -> Result<DynamicByteBuffer, CryptoError> {
+    pub fn decrypt_payload(&mut self, ciphertext: DynamicByteBuffer, additional_data: Option<&DynamicByteBuffer>) -> Result<DynamicByteBuffer, CryptoError> {
         self.key.decrypt_auth(ciphertext, additional_data)
     }
 
@@ -120,10 +104,7 @@ impl<'a> ClientCryptoTool<'a> {
 
     /// Deobfuscate (decrypt) received tailor bytes.
     #[cfg(feature = "fast")]
-    pub fn deobfuscate_tailor(
-        &mut self,
-        ciphertext: DynamicByteBuffer,
-    ) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+    pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
         match self.obfuscation.decrypt_auth_twice::<StaticByteBuffer>(ciphertext, None) {
             Ok((plaintext, ciphertext_copy, second_auth_transcript)) => Ok((
                 plaintext,
@@ -138,10 +119,7 @@ impl<'a> ClientCryptoTool<'a> {
 
     /// Deobfuscate (decrypt) received tailor bytes.
     #[cfg(feature = "full")]
-    pub fn deobfuscate_tailor(
-        &mut self,
-        ciphertext: DynamicByteBuffer,
-    ) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+    pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
         match self.key.decrypt_auth::<StaticByteBuffer>(ciphertext, None) {
             Ok(res) => Ok((res, ObfuscationTranscript {})),
             Err(err) => Err(err),
@@ -151,12 +129,7 @@ impl<'a> ClientCryptoTool<'a> {
     /// Verify the second authentication (fast mode).
     #[cfg(feature = "fast")]
     pub fn verify_tailor(&mut self, transcript: ObfuscationTranscript) -> Result<(), CryptoError> {
-        self.obfuscation.verify_second_auth::<StaticByteBuffer, StaticByteBuffer, DynamicByteBuffer>(
-            &transcript.ciphertext_copy,
-            None,
-            &self.key_bytes,
-            &transcript.second_auth_transcript,
-        )
+        self.obfuscation.verify_second_auth::<StaticByteBuffer, StaticByteBuffer, DynamicByteBuffer>(&transcript.ciphertext_copy, None, &self.key_bytes, &transcript.second_auth_transcript)
     }
 
     /// Verify tailor (no-op in full mode).

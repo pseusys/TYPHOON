@@ -156,9 +156,6 @@ impl PartialEq for StaticByteBuffer {
 
 impl Debug for StaticByteBuffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StaticByteBuffer")
-            .field("length", &self.len())
-            .field("data", &self.data.as_ref())
-            .finish()
+        f.debug_struct("StaticByteBuffer").field("length", &self.len()).field("data", &self.data.as_ref()).finish()
     }
 }

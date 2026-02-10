@@ -5,5 +5,5 @@ mod error;
 mod symmetric;
 mod utils;
 
-pub use error::CryptoError;
 pub use client::ClientCryptoTool;
+pub use error::CryptoError;

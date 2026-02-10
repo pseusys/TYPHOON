@@ -1,11 +1,11 @@
 mod common;
-mod holder;
 mod dynamic;
-mod r#static;
+mod holder;
 mod pool;
+mod r#static;
 mod utils;
 
 pub use common::{ByteBuffer, ByteBufferMut};
 pub use dynamic::DynamicByteBuffer;
-pub use r#static::StaticByteBuffer;
 pub use pool::BytePool;
+pub use r#static::StaticByteBuffer;

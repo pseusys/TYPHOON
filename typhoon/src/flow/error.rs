@@ -1,6 +1,8 @@
 use thiserror::Error;
 
-use crate::{cache::CacheError, crypto::CryptoError, utils::socket::SocketError};
+use crate::cache::CacheError;
+use crate::crypto::CryptoError;
+use crate::utils::socket::SocketError;
 
 #[derive(Error, Debug)]
 pub enum FlowControllerError {

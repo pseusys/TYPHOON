@@ -16,7 +16,10 @@ pub struct Key<T> {
 
 impl<T> Key<T> {
     pub const fn new(name: &'static str, default: T) -> Self {
-        Self { name, default }
+        Self {
+            name,
+            default,
+        }
     }
 }
 
@@ -239,10 +242,7 @@ type OverrideMap = HashMap<&'static str, SettingValue>;
 fn try_env_override<T: SettingType>(key: &Key<T>) -> Option<T> {
     let env_str = var(key.name).ok()?;
     T::try_parse(&env_str).or_else(|| {
-        warn!(
-            "Environment variable '{}' set to '{}' cannot be parsed, using default",
-            key.name, env_str
-        );
+        warn!("Environment variable '{}' set to '{}' cannot be parsed, using default", key.name, env_str);
         None
     })
 }
@@ -288,8 +288,8 @@ impl SettingsBuilder {
                 None => {
                     let capacity = consts::DEFAULT_TYPHOON_MTU_LENGTH / 2;
                     BytePool::new(capacity, consts::DEFAULT_TYPHOON_MTU_LENGTH, capacity, consts::DEFAULT_POOL_INITIAL_SIZE, consts::DEFAULT_POOL_CAPACITY)
-                },
-            }
+                }
+            },
         }
     }
 }

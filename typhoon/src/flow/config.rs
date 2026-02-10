@@ -1,17 +1,16 @@
-use std::{
-    cmp::{max, min},
-    net::SocketAddr,
-    ops::AddAssign,
-};
+use std::cmp::{max, min};
+use std::net::SocketAddr;
+use std::ops::AddAssign;
 
 use rand::distributions::Standard;
-use rand::{Fill, Rng, RngCore, prelude::Distribution};
+use rand::prelude::Distribution;
+use rand::{Fill, Rng, RngCore};
 
-use crate::{
-    bytes::{ByteBufferMut, DynamicByteBuffer},
-    flow::error::FlowControllerError,
-    utils::{random::get_rng, socket::Socket, time::unix_timestamp_ms},
-};
+use crate::bytes::{ByteBufferMut, DynamicByteBuffer};
+use crate::flow::error::FlowControllerError;
+use crate::utils::random::get_rng;
+use crate::utils::socket::Socket;
+use crate::utils::time::unix_timestamp_ms;
 
 /// Fake body generation mode.
 ///

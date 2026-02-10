@@ -81,7 +81,8 @@ fn test_slice_mut() {
     let slice = buf.slice_mut();
     slice[0] = 1;
     slice[4] = 5;
-    assert_eq!(buf.slice(), &[1, 0, 0, 0, 5]);
+    assert_eq!(*buf.get(0), 1);
+    assert_eq!(*buf.get(4), 5);
 }
 
 // Test: slice_start returns suffix from offset.

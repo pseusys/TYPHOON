@@ -12,8 +12,8 @@ use rand::Fill;
 
 use crate::bytes::common::{ByteBuffer, ByteBufferMut};
 use crate::bytes::holder::BufferHolder;
-use crate::bytes::r#static::StaticByteBuffer;
 use crate::bytes::pool::PoolReturn;
+use crate::bytes::r#static::StaticByteBuffer;
 use crate::bytes::utils::{allocate_ptr, copy_slice};
 
 /// A mutable byte buffer with Arc-based reference counting.
@@ -334,13 +334,7 @@ impl Fill for DynamicByteBuffer {
 impl Debug for DynamicByteBuffer {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DynamicByteBuffer")
-            .field("length", &self.length)
-            .field("start", &self.start)
-            .field("end", &self.end)
-            .field("view_length", &self.len())
-            .field("data", &self.slice())
-            .finish()
+        f.debug_struct("DynamicByteBuffer").field("length", &self.length).field("start", &self.start).field("end", &self.end).field("view_length", &self.len()).field("data", &self.slice()).finish()
     }
 }
 
