@@ -4,7 +4,7 @@ use lazy_static::lazy_static;
 use std::sync::Mutex;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
-use crate::bytes::{ByteBuffer, DynamicByteBuffer};
+use crate::bytes::{ByteBuffer, BytePool, StaticByteBuffer};
 use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN, Symmetric};
 
 #[cfg(feature = "full")]
@@ -46,12 +46,13 @@ lazy_static! {
     static ref MCELIECE_PUBLIC_KEY: McEliecePublicKey<'static> = {
         McEliecePublicKey::from(Box::new(*MCELIECE_KEYPAIR_BYTES.0))
     };
+    static ref TEST_POOL: BytePool = BytePool::new(32, 256, 32, 4, 16);
 }
 
 #[cfg(feature = "fast")]
 #[inline]
-fn get_obfuscation_key() -> DynamicByteBuffer {
-    DynamicByteBuffer::from(&[0x55u8; SYMMETRIC_KEY_LENGTH])
+fn get_obfuscation_key() -> StaticByteBuffer {
+    StaticByteBuffer::from(&[0x55u8; SYMMETRIC_KEY_LENGTH])
 }
 
 #[inline]
@@ -72,6 +73,8 @@ fn get_x25519_keypair() -> (StaticSecret, X25519PublicKey) {
     (secret, public)
 }
 
+// TODO: move to cert creation:
+
 #[cfg(all(feature = "client", feature = "fast"))]
 #[inline]
 fn create_test_certificate() -> Certificate<'static> {
@@ -79,7 +82,7 @@ fn create_test_certificate() -> Certificate<'static> {
     Certificate {
         epk: &MCELIECE_PUBLIC_KEY,
         vpk,
-        obfs: (&get_obfuscation_key()).into(),
+        obfs: get_obfuscation_key(),
     }
 }
 
@@ -91,7 +94,7 @@ fn create_test_server_secret() -> ServerSecret<'static> {
     ServerSecret {
         esk,
         vsk,
-        obfs: (&get_obfuscation_key()).into(),
+        obfs: get_obfuscation_key(),
     }
 }
 
@@ -121,50 +124,54 @@ fn create_test_server_secret() -> ServerSecret<'static> {
     }
 }
 
+// TODO: end.
+
 // Test: handshake produces matching shared secrets and session keys.
 #[cfg(all(feature = "client", feature = "server"))]
 #[test]
 fn test_handshake_cycle() {
     let certificate = create_test_certificate();
-    let mut server_secret = create_test_server_secret();
+    let server_secret = create_test_server_secret();
 
     let initial_data_data = b"Secret initial data message";
-    let initial_data = DynamicByteBuffer::from_slice_with_capacity(initial_data_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
+    let initial_data = TEST_POOL.allocate_precise_from_slice_with_capacity(initial_data_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
 
-    let (client_data, client_handshake, mut client_initial_cipher) = certificate.encapsulate_handshake_client();
-    let initial_data_encrypted = client_initial_cipher.encrypt_auth(initial_data, None).expect("initial data encryption failed");
+    let (client_data, client_handshake, mut client_initial_cipher) = certificate.encapsulate_handshake_client(&TEST_POOL);
+    let initial_data_encrypted = client_initial_cipher.encrypt_auth(initial_data, None::<&StaticByteBuffer>).expect("initial data encryption failed");
 
     let (server_data, mut server_initial_cipher) = server_secret.decapsulate_handshake_server(client_handshake);
-    let initial_data_decrypted = server_initial_cipher.decrypt_auth(initial_data_encrypted, None).expect("initial data decryption failed");
+    let initial_data_decrypted = server_initial_cipher.decrypt_auth(initial_data_encrypted, None::<&StaticByteBuffer>).expect("initial data decryption failed");
 
     assert_eq!(client_data.shared_secret, server_data.shared_secret, "client and server should derive the same shared secret");
-    assert_eq!(initial_data_data, initial_data_decrypted.slice(), "client and server should get the same initial data");
+    assert_eq!(initial_data_data.as_slice(), initial_data_decrypted.slice(), "client and server should get the same initial data");
 
     let session_data_data = b"Secret session data message";
-    let session_data = DynamicByteBuffer::from_slice_with_capacity(session_data_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
+    let session_data = TEST_POOL.allocate_precise_from_slice_with_capacity(session_data_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
 
-    let (server_handshake, mut server_session_cipher) = server_secret.encapsulate_handshake_server(server_data);
-    let session_data_encrypted = server_session_cipher.encrypt_auth(session_data, None).expect("session data encryption failed");
+    let (server_handshake, mut server_session_cipher) = server_secret.encapsulate_handshake_server(server_data, &TEST_POOL);
+    let session_data_encrypted = server_session_cipher.encrypt_auth(session_data, None::<&StaticByteBuffer>).expect("session data encryption failed");
 
     let client_session_key_bytes = certificate.decapsulate_handshake_client(client_data, server_handshake).expect("client handshake decapsulation failed");
     let mut client_session_cipher = Symmetric::new(&client_session_key_bytes);
-    let session_data_decrypted = client_session_cipher.decrypt_auth(session_data_encrypted, None).expect("session data decryption failed");
+    let session_data_decrypted = client_session_cipher.decrypt_auth(session_data_encrypted, None::<&StaticByteBuffer>).expect("session data decryption failed");
 
-    assert_eq!(session_data_data, session_data_decrypted.slice(), "client and server should get the same session data");
+    assert_eq!(session_data_data.as_slice(), session_data_decrypted.slice(), "client and server should get the same session data");
 }
 
 // Test: full mode encrypt/obfuscate then decrypt/deobfuscate cycle succeeds.
 #[cfg(all(feature = "full", feature = "client", feature = "server"))]
 #[test]
 fn test_obfuscate_cycle() {
+    let pool = test_pool();
     let certificate = create_test_certificate();
     let server_secret = create_test_server_secret();
 
-    let plaintext_data = DynamicByteBuffer::from(b"Secret initial data message".as_slice());
-    let plaintext = DynamicByteBuffer::from_slice_with_capacity(plaintext_data.slice(), 0, ENCRYPT_OBFUSCATE_HEADER + SYMMETRIC_FIRST_AUTH_LEN);
+    let plaintext_data = b"Secret initial data message";
+    let plaintext_static = StaticByteBuffer::from(plaintext_data.as_slice());
+    let plaintext = pool.allocate_precise_from_slice_with_capacity(plaintext_data, 0, ENCRYPT_OBFUSCATE_HEADER + SYMMETRIC_FIRST_AUTH_LEN);
 
     let ciphertext = certificate.encrypt_obfuscate(plaintext).expect("encryption failed");
     let decrypted = server_secret.decrypt_deobfuscate(ciphertext).expect("decryption failed");
 
-    assert_eq!(decrypted, plaintext_data, "decrypted message should match original");
+    assert_eq!(decrypted.slice(), plaintext_static.slice(), "decrypted message should match original");
 }

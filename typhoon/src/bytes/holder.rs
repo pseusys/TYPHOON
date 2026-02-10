@@ -20,11 +20,15 @@ impl BufferHolder {
 
     #[inline]
     pub fn copy(&self) -> Self {
+        let new_ptr = match &self.pool_handle {
+            Some(res) => res.try_take(self.capacity),
+            None => allocate_ptr(self.capacity),
+        };
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.data, new_ptr, self.capacity);
+        }
         Self {
-            data: copy_ptr(match &self.pool_handle {
-                Some(res) => res.try_take(self.capacity),
-                None => allocate_ptr(self.capacity),
-            }, self.capacity),
+            data: new_ptr,
             capacity: self.capacity,
             pool_handle: None,
         }

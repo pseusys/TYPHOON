@@ -6,8 +6,8 @@ use rand::Rng;
 use rand_distr::{Distribution, Exp, Normal};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
-use crate::constants::keys::*;
-use crate::constants::{Settings, SettingValue};
+use crate::settings::keys::*;
+use crate::settings::{Settings, SettingValue};
 use crate::flow::common::FlowManager;
 use crate::tailor::Tailor;
 use crate::utils::random::get_rng;
@@ -34,6 +34,7 @@ pub trait DecoyCommunicationMode: Sized + Send + Sync {
 /// Internal state for tracking packet rates and byte budgets.
 /// This state is shared by all communication modes.
 struct DecoyState {
+    settings: Arc<Settings>,
     /// Long-term reference transmission rate in packets (milliseconds between packets).
     reference_rate: f64,
     /// Current transmission rate in packets (milliseconds between packets).
@@ -59,39 +60,19 @@ struct DecoyState {
 }
 
 impl DecoyState {
-    fn new(settings: &Settings, tailor_size: usize) -> Self {
-        let byte_rate_cap = match settings[TYPHOON_DECOY_BYTE_RATE_CAP] {
-            SettingValue::Float(v) => v,
-            _ => 1_000_000.0,
-        };
-        let byte_rate_factor = match settings[TYPHOON_DECOY_BYTE_RATE_FACTOR] {
-            SettingValue::Float(v) => v,
-            _ => 3.0,
-        };
-        let length_max = match settings[TYPHOON_DECOY_LENGTH_MAX] {
-            SettingValue::Unsigned(v) => v as usize,
-            _ => 1024,
-        };
-        let length_min = match settings[TYPHOON_DECOY_LENGTH_MIN] {
-            SettingValue::Unsigned(v) => v as usize,
-            _ => 16,
-        };
+    fn new(settings: Arc<Settings>, tailor_size: usize) -> Self {
+        let byte_rate_cap = settings.get(&DECOY_BYTE_RATE_CAP);
+        let byte_rate_factor = settings.get(&DECOY_BYTE_RATE_FACTOR);
+        let length_max = settings.get(&DECOY_LENGTH_MAX) as usize;
+        let length_min = settings.get(&DECOY_LENGTH_MIN) as usize;
 
         let now = unix_timestamp_ms();
 
         Self {
-            reference_rate: match settings[TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT] {
-                SettingValue::Float(v) => v,
-                _ => 200.0,
-            },
-            packet_rate: match settings[TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT] {
-                SettingValue::Float(v) => v,
-                _ => 200.0,
-            },
-            byte_rate: match settings[TYPHOON_DECOY_CURRENT_BYTE_RATE_DEFAULT] {
-                SettingValue::Float(v) => v,
-                _ => 5000.0,
-            },
+            settings: settings.clone(),
+            reference_rate: settings.get(&DECOY_REFERENCE_PACKET_RATE_DEFAULT),
+            packet_rate: settings.get(&DECOY_CURRENT_PACKET_RATE_DEFAULT),
+            byte_rate: settings.get(&DECOY_CURRENT_BYTE_RATE_DEFAULT),
             byte_budget: byte_rate_cap * byte_rate_factor / 2.0,
             previous_packet_time: None,
             packet_length_cap: length_max.max(length_min),
@@ -110,22 +91,10 @@ impl DecoyState {
         if let Some(prev_time) = self.previous_packet_time {
             let time_delta = (current_time - prev_time) as f64;
 
-            let reference_alpha = match settings[TYPHOON_DECOY_REFERENCE_ALPHA] {
-                SettingValue::Float(v) => v,
-                _ => 0.001,
-            };
-            let current_alpha = match settings[TYPHOON_DECOY_CURRENT_ALPHA] {
-                SettingValue::Float(v) => v,
-                _ => 0.05,
-            };
-            let byte_rate_cap = match settings[TYPHOON_DECOY_BYTE_RATE_CAP] {
-                SettingValue::Float(v) => v,
-                _ => 1_000_000.0,
-            };
-            let byte_rate_factor = match settings[TYPHOON_DECOY_BYTE_RATE_FACTOR] {
-                SettingValue::Float(v) => v,
-                _ => 3.0,
-            };
+            let reference_alpha = settings.get(&DECOY_REFERENCE_ALPHA);
+            let current_alpha = settings.get(&DECOY_CURRENT_ALPHA);
+            let byte_rate_cap = settings.get(&DECOY_BYTE_RATE_CAP);
+            let byte_rate_factor = settings.get(&DECOY_BYTE_RATE_FACTOR);
 
             self.reference_rate = (1.0 - reference_alpha) * self.reference_rate + reference_alpha * time_delta;
             self.packet_rate = (1.0 - current_alpha) * self.packet_rate + current_alpha * time_delta;
@@ -152,15 +121,15 @@ impl DecoyState {
     /// Create a decoy packet with the given body length.
     fn create_decoy_packet(&mut self, body_length: usize) -> DynamicByteBuffer {
         let total_length = body_length + self.tailor_size;
-        let packet = DynamicByteBuffer::empty(total_length);
+        let packet = self.settings.pool().allocate(Some(total_length));
 
         // Fill the body with random bytes
         get_rng().fill(packet.slice_end_mut(body_length));
 
         // Create and write the tailor
-        let identity_buffer = DynamicByteBuffer::from_slice_with_capacity(&self.identity, 0, 0);
+        let identity_buffer = self.settings.pool().allocate_precise_from_slice_with_capacity(&self.identity, 0, 0);
         let tailor = Tailor::decoy(identity_buffer, self.next_packet_number());
-        let tailor_buffer = DynamicByteBuffer::empty(self.tailor_size);
+        let tailor_buffer = self.settings.pool().allocate(Some(self.tailor_size));
         let tailor_data = tailor.to_buffer(tailor_buffer);
         packet.slice_start_mut(body_length).copy_from_slice(tailor_data.slice());
 
@@ -223,30 +192,12 @@ pub struct HeavyDecoyProvider<FM: FlowManager> {
 
 impl<FM: FlowManager> HeavyDecoyProvider<FM> {
     fn calculate_delay(state: &DecoyState, settings: &Settings) -> u64 {
-        let base_rate_rnd = match settings[TYPHOON_DECOY_BASE_RATE_RND] {
-            SettingValue::Float(v) => v,
-            _ => 0.25,
-        };
-        let heavy_base_rate = match settings[TYPHOON_DECOY_HEAVY_BASE_RATE] {
-            SettingValue::Float(v) => v,
-            _ => 0.05,
-        };
-        let quietness_factor = match settings[TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR] {
-            SettingValue::Float(v) => v,
-            _ => 3.0,
-        };
-        let delay_min = match settings[TYPHOON_DECOY_HEAVY_DELAY_MIN] {
-            SettingValue::Unsigned(v) => v,
-            _ => 5000,
-        };
-        let delay_max = match settings[TYPHOON_DECOY_HEAVY_DELAY_MAX] {
-            SettingValue::Unsigned(v) => v,
-            _ => 120000,
-        };
-        let delay_default = match settings[TYPHOON_DECOY_HEAVY_DELAY_DEFAULT] {
-            SettingValue::Unsigned(v) => v,
-            _ => 64000,
-        };
+        let base_rate_rnd = settings.get(&DECOY_BASE_RATE_RND);
+        let heavy_base_rate = settings.get(&DECOY_HEAVY_BASE_RATE);
+        let quietness_factor = settings.get(&DECOY_HEAVY_QUIETNESS_FACTOR);
+        let delay_min = settings.get(&DECOY_HEAVY_DELAY_MIN);
+        let delay_max = settings.get(&DECOY_HEAVY_DELAY_MAX);
+        let delay_default = settings.get(&DECOY_HEAVY_DELAY_DEFAULT);
 
         let base_rate = heavy_base_rate * random_uniform(1.0 - base_rate_rnd, 1.0 + base_rate_rnd);
         let quietness = state.quietness_index();
@@ -262,18 +213,9 @@ impl<FM: FlowManager> HeavyDecoyProvider<FM> {
     }
 
     fn calculate_length(state: &DecoyState, settings: &Settings) -> usize {
-        let base_length_factor = match settings[TYPHOON_DECOY_HEAVY_BASE_LENGTH] {
-            SettingValue::Float(v) => v,
-            _ => 0.7,
-        };
-        let quietness_length = match settings[TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH] {
-            SettingValue::Float(v) => v,
-            _ => 0.3,
-        };
-        let decoy_length_factor = match settings[TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR] {
-            SettingValue::Float(v) => v,
-            _ => 0.8,
-        };
+        let base_length_factor = settings.get(&DECOY_HEAVY_BASE_LENGTH);
+        let quietness_length = settings.get(&DECOY_HEAVY_QUIETNESS_LENGTH);
+        let decoy_length_factor = settings.get(&DECOY_HEAVY_DECOY_LENGTH_FACTOR);
 
         let quietness = state.quietness_index();
         let base_length = (state.packet_length_cap as f64) * (base_length_factor + quietness_length * quietness);
@@ -328,7 +270,7 @@ impl<FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode for HeavyDe
     type FlowManagerT = FM;
 
     fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings>, tailor: usize) -> Self {
-        let state = DecoyState::new(&settings, tailor);
+        let state = DecoyState::new(settings.clone(), tailor);
         let delay = Self::calculate_delay(&state, &settings);
         let length = Self::calculate_length(&state, &settings);
         let mut state = state;
@@ -386,23 +328,23 @@ pub struct NoisyDecoyProvider<FM: FlowManager> {
 
 impl<FM: FlowManager> NoisyDecoyProvider<FM> {
     fn calculate_delay(state: &DecoyState, settings: &Settings) -> u64 {
-        let base_rate_rnd = match settings[TYPHOON_DECOY_BASE_RATE_RND] {
+        let base_rate_rnd = settings.get(&DECOY_BASE_RATE_RND] {
             SettingValue::Float(v) => v,
             _ => 0.25,
         };
-        let noisy_base_rate = match settings[TYPHOON_DECOY_NOISY_BASE_RATE] {
+        let noisy_base_rate = settings.get(&DECOY_NOISY_BASE_RATE] {
             SettingValue::Float(v) => v,
             _ => 3.0,
         };
-        let delay_min = match settings[TYPHOON_DECOY_NOISY_DELAY_MIN] {
+        let delay_min = settings.get(&DECOY_NOISY_DELAY_MIN] {
             SettingValue::Unsigned(v) => v,
             _ => 10,
         };
-        let delay_max = match settings[TYPHOON_DECOY_NOISY_DELAY_MAX] {
+        let delay_max = settings.get(&DECOY_NOISY_DELAY_MAX] {
             SettingValue::Unsigned(v) => v,
             _ => 1000,
         };
-        let delay_default = match settings[TYPHOON_DECOY_NOISY_DELAY_DEFAULT] {
+        let delay_default = settings.get(&DECOY_NOISY_DELAY_DEFAULT] {
             SettingValue::Unsigned(v) => v,
             _ => 500,
         };
@@ -421,11 +363,11 @@ impl<FM: FlowManager> NoisyDecoyProvider<FM> {
     }
 
     fn calculate_length(state: &DecoyState, settings: &Settings) -> usize {
-        let length_min = match settings[TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN] {
+        let length_min = settings.get(&DECOY_NOISY_DECOY_LENGTH_MIN] {
             SettingValue::Unsigned(v) => v as usize,
             _ => 128,
         };
-        let length_jitter = match settings[TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER] {
+        let length_jitter = settings.get(&DECOY_NOISY_DECOY_LENGTH_JITTER] {
             SettingValue::Float(v) => v,
             _ => 0.3,
         };
@@ -497,35 +439,35 @@ pub struct SparseDecoyProvider<FM: FlowManager> {
 
 impl<FM: FlowManager> SparseDecoyProvider<FM> {
     fn calculate_delay(state: &DecoyState, settings: &Settings) -> u64 {
-        let base_rate_rnd = match settings[TYPHOON_DECOY_BASE_RATE_RND] {
+        let base_rate_rnd = settings.get(&DECOY_BASE_RATE_RND] {
             SettingValue::Float(v) => v,
             _ => 0.25,
         };
-        let sparse_base_rate = match settings[TYPHOON_DECOY_SPARSE_BASE_RATE] {
+        let sparse_base_rate = settings.get(&DECOY_SPARSE_BASE_RATE] {
             SettingValue::Float(v) => v,
             _ => 20.0,
         };
-        let rate_factor = match settings[TYPHOON_DECOY_SPARSE_RATE_FACTOR] {
+        let rate_factor = settings.get(&DECOY_SPARSE_RATE_FACTOR] {
             SettingValue::Float(v) => v,
             _ => 3.0,
         };
-        let jitter = match settings[TYPHOON_DECOY_SPARSE_JITTER] {
+        let jitter = settings.get(&DECOY_SPARSE_JITTER] {
             SettingValue::Float(v) => v,
             _ => 0.15,
         };
-        let delay_factor = match settings[TYPHOON_DECOY_SPARSE_DELAY_FACTOR] {
+        let delay_factor = settings.get(&DECOY_SPARSE_DELAY_FACTOR] {
             SettingValue::Float(v) => v,
             _ => 3.0,
         };
-        let delay_min = match settings[TYPHOON_DECOY_SPARSE_DELAY_MIN] {
+        let delay_min = settings.get(&DECOY_SPARSE_DELAY_MIN] {
             SettingValue::Unsigned(v) => v,
             _ => 20,
         };
-        let delay_max = match settings[TYPHOON_DECOY_SPARSE_DELAY_MAX] {
+        let delay_max = settings.get(&DECOY_SPARSE_DELAY_MAX] {
             SettingValue::Unsigned(v) => v,
             _ => 150,
         };
-        let delay_default = match settings[TYPHOON_DECOY_SPARSE_DELAY_DEFAULT] {
+        let delay_default = settings.get(&DECOY_SPARSE_DELAY_DEFAULT] {
             SettingValue::Unsigned(v) => v,
             _ => 100,
         };
@@ -546,19 +488,19 @@ impl<FM: FlowManager> SparseDecoyProvider<FM> {
     }
 
     fn calculate_length(state: &DecoyState, settings: &Settings) -> usize {
-        let length_factor = match settings[TYPHOON_DECOY_SPARSE_LENGTH_FACTOR] {
+        let length_factor = settings.get(&DECOY_SPARSE_LENGTH_FACTOR] {
             SettingValue::Float(v) => v,
             _ => 120.0,
         };
-        let length_sigma = match settings[TYPHOON_DECOY_SPARSE_LENGTH_SIGMA] {
+        let length_sigma = settings.get(&DECOY_SPARSE_LENGTH_SIGMA] {
             SettingValue::Float(v) => v,
             _ => 20.0,
         };
-        let length_min = match settings[TYPHOON_DECOY_SPARSE_LENGTH_MIN] {
+        let length_min = settings.get(&DECOY_SPARSE_LENGTH_MIN] {
             SettingValue::Unsigned(v) => v as usize,
             _ => 75,
         };
-        let length_max = match settings[TYPHOON_DECOY_SPARSE_LENGTH_MAX] {
+        let length_max = settings.get(&DECOY_SPARSE_LENGTH_MAX] {
             SettingValue::Unsigned(v) => v as usize,
             _ => 250,
         };
@@ -628,39 +570,39 @@ pub struct SmoothDecoyProvider<FM: FlowManager> {
 
 impl<FM: FlowManager> SmoothDecoyProvider<FM> {
     fn calculate_delay(state: &DecoyState, settings: &Settings) -> u64 {
-        let base_rate_rnd = match settings[TYPHOON_DECOY_BASE_RATE_RND] {
+        let base_rate_rnd = settings.get(&DECOY_BASE_RATE_RND] {
             SettingValue::Float(v) => v,
             _ => 0.25,
         };
-        let smooth_base_rate = match settings[TYPHOON_DECOY_SMOOTH_BASE_RATE] {
+        let smooth_base_rate = settings.get(&DECOY_SMOOTH_BASE_RATE] {
             SettingValue::Float(v) => v,
             _ => 0.3,
         };
-        let quietness_factor = match settings[TYPHOON_DECOY_SMOOTH_QUIETNESS_FACTOR] {
+        let quietness_factor = settings.get(&DECOY_SMOOTH_QUIETNESS_FACTOR] {
             SettingValue::Float(v) => v,
             _ => 2.0,
         };
-        let rate_factor = match settings[TYPHOON_DECOY_SMOOTH_RATE_FACTOR] {
+        let rate_factor = settings.get(&DECOY_SMOOTH_RATE_FACTOR] {
             SettingValue::Float(v) => v,
             _ => 3.0,
         };
-        let jitter = match settings[TYPHOON_DECOY_SMOOTH_JITTER] {
+        let jitter = settings.get(&DECOY_SMOOTH_JITTER] {
             SettingValue::Float(v) => v,
             _ => 0.2,
         };
-        let delay_factor = match settings[TYPHOON_DECOY_SMOOTH_DELAY_FACTOR] {
+        let delay_factor = settings.get(&DECOY_SMOOTH_DELAY_FACTOR] {
             SettingValue::Float(v) => v,
             _ => 2.0,
         };
-        let delay_min = match settings[TYPHOON_DECOY_SMOOTH_DELAY_MIN] {
+        let delay_min = settings.get(&DECOY_SMOOTH_DELAY_MIN] {
             SettingValue::Unsigned(v) => v,
             _ => 300,
         };
-        let delay_max = match settings[TYPHOON_DECOY_SMOOTH_DELAY_MAX] {
+        let delay_max = settings.get(&DECOY_SMOOTH_DELAY_MAX] {
             SettingValue::Unsigned(v) => v,
             _ => 10000,
         };
-        let delay_default = match settings[TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT] {
+        let delay_default = settings.get(&DECOY_SMOOTH_DELAY_DEFAULT] {
             SettingValue::Unsigned(v) => v,
             _ => 5000,
         };
@@ -682,11 +624,11 @@ impl<FM: FlowManager> SmoothDecoyProvider<FM> {
     }
 
     fn calculate_length(state: &DecoyState, settings: &Settings) -> usize {
-        let length_min = match settings[TYPHOON_DECOY_SMOOTH_LENGTH_MIN] {
+        let length_min = settings.get(&DECOY_SMOOTH_LENGTH_MIN] {
             SettingValue::Unsigned(v) => v as usize,
             _ => 48,
         };
-        let length_max = match settings[TYPHOON_DECOY_SMOOTH_LENGTH_MAX] {
+        let length_max = settings.get(&DECOY_SMOOTH_LENGTH_MAX] {
             SettingValue::Unsigned(v) => v as usize,
             _ => 512,
         };

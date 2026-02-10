@@ -5,7 +5,7 @@ mod tests;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
-use crate::constants::consts::{CD_OFFSET, FG_OFFSET, ID_OFFSET, PL_OFFSET, PN_OFFSET, TAILOR_LENGTH, TM_OFFSET};
+use crate::settings::consts::{CD_OFFSET, FG_OFFSET, ID_OFFSET, PL_OFFSET, PN_OFFSET, TAILOR_LENGTH, TM_OFFSET};
 use crate::tailor::flags::{PacketFlags, ReturnCode};
 
 const TM_LENGTH: usize = 4;

@@ -3,7 +3,7 @@ use crate::bytes::StaticByteBuffer;
 #[cfg(feature = "fast")]
 use crate::bytes::StaticByteBuffer;
 use crate::{
-    bytes::DynamicByteBuffer,
+    bytes::{BytePool, DynamicByteBuffer},
     crypto::{
         certificate::{Certificate, ClientData, ObfuscationBufferContainer},
         error::{CryptoError, HandshakeError},
@@ -74,8 +74,8 @@ impl<'a> ClientCryptoTool<'a> {
 
     /// Client handshake step 1: generate ephemeral keys, encapsulate with McEliece, obfuscate.
     /// Returns (ClientData, handshake_secret, initial_cipher).
-    pub fn create_handshake(&self) -> (ClientData, DynamicByteBuffer, Symmetric) {
-        self.cert.encapsulate_handshake_client()
+    pub fn create_handshake(&self, pool: &BytePool) -> (ClientData, DynamicByteBuffer, Symmetric) {
+        self.cert.encapsulate_handshake_client(pool)
     }
 
     /// Client handshake step 2: process server response, verify signature, derive session key.

@@ -1,9 +1,25 @@
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+use lazy_static::lazy_static;
+
+use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, DynamicByteBuffer};
+
+lazy_static! {
+    static ref TEST_POOL: BytePool = BytePool::new(32, 256, 32, 4, 16);
+}
+
+/// Allocate a buffer from pool and copy data into it.
+fn pool_buf(pool: &BytePool, data: &[u8]) -> DynamicByteBuffer {
+    pool.allocate_precise_from_slice_with_capacity(data, 0, 0)
+}
+
+/// Allocate an empty (zeroed) buffer from pool.
+fn pool_empty(pool: &BytePool, size: usize) -> DynamicByteBuffer {
+    pool.allocate_precise(size, 0, 0)
+}
 
 // Test: empty buffer has correct size and is not empty.
 #[test]
 fn test_empty_buffer() {
-    let buf = DynamicByteBuffer::empty(100);
+    let buf = pool_empty(&TEST_POOL, 100);
     assert_eq!(buf.len(), 100);
     assert!(!buf.is_empty());
 }
@@ -11,34 +27,23 @@ fn test_empty_buffer() {
 // Test: zero-size buffer is empty.
 #[test]
 fn test_empty_zero_size() {
-    let buf = DynamicByteBuffer::empty(0);
+    let buf = pool_empty(&TEST_POOL, 0);
     assert_eq!(buf.len(), 0);
     assert!(buf.is_empty());
 }
 
-// Test: buffer created from Vec has correct data.
+// Test: buffer created from data has correct data.
 #[test]
-fn test_from_vec() {
-    let data = vec![1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.into();
+fn test_from_data() {
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
     assert_eq!(buf.len(), 5);
     assert_eq!(buf.slice(), &[1, 2, 3, 4, 5]);
 }
 
-// Test: buffer created from slice has correct data.
-#[test]
-fn test_from_slice() {
-    let data = [1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.as_slice().into();
-    assert_eq!(buf.len(), 5);
-    assert_eq!(buf.slice(), &[1, 2, 3, 4, 5]);
-}
-
-// Test: buffer converts back to Vec correctly.
+// Test: buffer converts to Vec correctly.
 #[test]
 fn test_into_vec() {
-    let data = vec![1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.into();
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
     let result: Vec<u8> = buf.into();
     assert_eq!(result, vec![1, 2, 3, 4, 5]);
 }
@@ -46,7 +51,7 @@ fn test_into_vec() {
 // Test: get/set byte access works correctly.
 #[test]
 fn test_get_set() {
-    let buf = DynamicByteBuffer::empty(10);
+    let buf = pool_empty(&TEST_POOL, 10);
     buf.set(0, 42);
     buf.set(5, 100);
     assert_eq!(*buf.get(0), 42);
@@ -57,7 +62,7 @@ fn test_get_set() {
 #[test]
 #[should_panic(expected = "index out of bounds")]
 fn test_get_out_of_bounds() {
-    let buf = DynamicByteBuffer::empty(10);
+    let buf = pool_empty(&TEST_POOL, 10);
     let _ = buf.get(10);
 }
 
@@ -65,14 +70,14 @@ fn test_get_out_of_bounds() {
 #[test]
 #[should_panic(expected = "index out of bounds")]
 fn test_set_out_of_bounds() {
-    let buf = DynamicByteBuffer::empty(10);
+    let buf = pool_empty(&TEST_POOL, 10);
     buf.set(10, 42);
 }
 
 // Test: mutable slice allows modification.
 #[test]
 fn test_slice_mut() {
-    let buf = DynamicByteBuffer::empty(5);
+    let buf = pool_empty(&TEST_POOL, 5);
     let slice = buf.slice_mut();
     slice[0] = 1;
     slice[4] = 5;
@@ -82,32 +87,28 @@ fn test_slice_mut() {
 // Test: slice_start returns suffix from offset.
 #[test]
 fn test_slice_start() {
-    let data = vec![1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.into();
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
     assert_eq!(buf.slice_start(2), &[3, 4, 5]);
 }
 
 // Test: slice_end returns prefix up to offset.
 #[test]
 fn test_slice_end() {
-    let data = vec![1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.into();
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
     assert_eq!(buf.slice_end(3), &[1, 2, 3]);
 }
 
 // Test: slice_both returns range [start, end).
 #[test]
 fn test_slice_both() {
-    let data = vec![1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.into();
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
     assert_eq!(buf.slice_both(1, 4), &[2, 3, 4]);
 }
 
 // Test: split returns two immutable slice halves.
 #[test]
 fn test_split() {
-    let data = vec![1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.into();
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
     let (left, right) = buf.split(2);
     assert_eq!(left, &[1, 2]);
     assert_eq!(right, &[3, 4, 5]);
@@ -116,7 +117,7 @@ fn test_split() {
 // Test: split_mut returns two mutable slice halves.
 #[test]
 fn test_split_mut() {
-    let buf = DynamicByteBuffer::empty(5);
+    let buf = pool_empty(&TEST_POOL, 5);
     let (left, right) = buf.split_mut(2);
     left[0] = 1;
     left[1] = 2;
@@ -129,8 +130,7 @@ fn test_split_mut() {
 // Test: copy creates independent buffer (deep copy).
 #[test]
 fn test_copy() {
-    let data = vec![1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.into();
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
     let copy = buf.copy();
 
     assert_eq!(buf.slice(), copy.slice());
@@ -143,8 +143,7 @@ fn test_copy() {
 // Test: clone shares underlying memory (shallow copy).
 #[test]
 fn test_clone_shares_memory() {
-    let data = vec![1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.into();
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
     let clone = buf.clone();
 
     clone.set(0, 99);
@@ -154,8 +153,7 @@ fn test_clone_shares_memory() {
 // Test: rebuffer_start shifts view start forward.
 #[test]
 fn test_rebuffer_start() {
-    let data = vec![1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.into();
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
     let rebuffered = buf.rebuffer_start(2);
     assert_eq!(rebuffered.len(), 3);
     assert_eq!(rebuffered.slice(), &[3, 4, 5]);
@@ -164,8 +162,7 @@ fn test_rebuffer_start() {
 // Test: rebuffer_end sets view end offset.
 #[test]
 fn test_rebuffer_end() {
-    let data = vec![1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.into();
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
     let rebuffered = buf.rebuffer_end(3);
     assert_eq!(rebuffered.len(), 3);
     assert_eq!(rebuffered.slice(), &[1, 2, 3]);
@@ -174,18 +171,16 @@ fn test_rebuffer_end() {
 // Test: rebuffer_both adjusts both start and end.
 #[test]
 fn test_rebuffer_both() {
-    let data = vec![1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.into();
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
     let rebuffered = buf.rebuffer_both(1, 4);
     assert_eq!(rebuffered.len(), 3);
     assert_eq!(rebuffered.slice(), &[2, 3, 4]);
 }
 
-// Test: split_buf returns two ManagedByteBuffer views.
+// Test: split_buf returns two DynamicByteBuffer views.
 #[test]
 fn test_split_buf() {
-    let data = vec![1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.into();
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
     let (left, right) = buf.split_buf(2);
     assert_eq!(left.slice(), &[1, 2]);
     assert_eq!(right.slice(), &[3, 4, 5]);
@@ -194,8 +189,7 @@ fn test_split_buf() {
 // Test: AsRef<[u8]> trait implementation.
 #[test]
 fn test_as_ref() {
-    let data = vec![1u8, 2, 3];
-    let buf: DynamicByteBuffer = data.into();
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3]);
     let slice: &[u8] = buf.as_ref();
     assert_eq!(slice, &[1, 2, 3]);
 }
@@ -203,27 +197,16 @@ fn test_as_ref() {
 // Test: AsMut<[u8]> trait implementation.
 #[test]
 fn test_as_mut() {
-    let data = vec![1u8, 2, 3];
-    let mut buf: DynamicByteBuffer = data.into();
+    let mut buf = pool_buf(&TEST_POOL, &[1u8, 2, 3]);
     let slice: &mut [u8] = buf.as_mut();
     slice[0] = 99;
     assert_eq!(buf.slice(), &[99, 2, 3]);
 }
 
-// Test: from_array creates buffer from fixed-size array.
+// Test: allocate with capacity creates buffer with extra capacity.
 #[test]
-fn test_from_array() {
-    let arr = [1u8, 2, 3, 4, 5];
-    let buf = DynamicByteBuffer::from(&arr);
-    assert_eq!(buf.len(), 5);
-    assert_eq!(buf.slice(), &[1, 2, 3, 4, 5]);
-}
-
-// Test: from_array_with_capacity creates buffer with extra capacity.
-#[test]
-fn test_from_array_with_capacity() {
-    let arr = [1u8, 2, 3];
-    let buf = DynamicByteBuffer::from_array_with_capacity(&arr, 5, 10);
+fn test_allocate_with_capacity() {
+    let buf = TEST_POOL.allocate_precise_from_slice_with_capacity(&[1u8, 2, 3], 5, 10);
     assert_eq!(buf.len(), 3);
     assert_eq!(buf.slice(), &[1, 2, 3]);
 
@@ -234,19 +217,10 @@ fn test_from_array_with_capacity() {
     assert_eq!(appended.slice(), &[0, 0, 1, 2, 3, 4, 5, 6]);
 }
 
-// Test: From<[u8; N]> trait implementation.
-#[test]
-fn test_from_array_trait() {
-    let buf: DynamicByteBuffer = (&[1u8, 2, 3, 4, 5]).into();
-    assert_eq!(buf.len(), 5);
-    assert_eq!(buf.slice(), &[1, 2, 3, 4, 5]);
-}
-
-// Test: to_owned creates an OwnedByteBuffer.
+// Test: to_owned creates a StaticByteBuffer.
 #[test]
 fn test_to_owned() {
-    let data = vec![1u8, 2, 3, 4, 5];
-    let buf: DynamicByteBuffer = data.into();
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
     let owned = buf.to_owned();
 
     assert_eq!(owned.len(), 5);

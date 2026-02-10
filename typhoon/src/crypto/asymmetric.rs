@@ -10,6 +10,8 @@ use ed25519_dalek::Signature;
 use generic_array::typenum::U32;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
+#[cfg(feature = "client")]
+use crate::bytes::BytePool;
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
 use crate::crypto::certificate::ObfuscationBufferContainer;
 use crate::crypto::error::HandshakeError;
@@ -47,15 +49,15 @@ const MARSHALLING_ENCRYPTION_KEY: &str = "marshalling encryption key";
 impl<'a> Certificate<'a> {
     /// Client handshake: generate ephemeral keys, encapsulate with McEliece, obfuscate.
     /// Args: buffer for nonce. Returns: (ClientData, handshake_secret, initial_cipher).
-    pub fn encapsulate_handshake_client(&self) -> (ClientData, DynamicByteBuffer, Symmetric) {
+    pub fn encapsulate_handshake_client(&self, pool: &BytePool) -> (ClientData, DynamicByteBuffer, Symmetric) {
         let nonce = StaticByteBuffer::from(get_rng().random_byte_array::<U32>().as_slice());
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
-        let mut ephemeral_public = DynamicByteBuffer::from_array_with_capacity(&PublicKey::from(&ephemeral_secret).to_bytes(), 0, ANONYMOUS_NONCE_LEN);
+        let mut ephemeral_public = pool.allocate_precise_from_array_with_capacity(&PublicKey::from(&ephemeral_secret).to_bytes(), 0, ANONYMOUS_NONCE_LEN);
 
         let mut shared_secret_buffer = [0u8; CRYPTO_BYTES];
         let (ciphertext, shared_secret) = encapsulate(&self.epk, &mut shared_secret_buffer, &mut get_rng());
-        let mut ciphertext_buffer = DynamicByteBuffer::from_array_with_capacity(ciphertext.as_array(), 0, ANONYMOUS_NONCE_LEN);
+        let mut ciphertext_buffer = pool.allocate_precise_from_array_with_capacity(ciphertext.as_array(), 0, ANONYMOUS_NONCE_LEN);
         let shared_buffer = StaticByteBuffer::from(shared_secret.as_array());
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(CLIENT_HANDSHAKE_OBFUSCATION_KEY)).update(self.obfuscation_buffer().slice()).update(nonce.slice()).finalize();
@@ -73,7 +75,7 @@ impl<'a> Certificate<'a> {
             nonce: nonce.to_owned(),
         };
 
-        let handshake_buffer = DynamicByteBuffer::empty_with_capacity(0, 0, X25519_KEY_LENGTH + CRYPTO_CIPHERTEXTBYTES + ANONYMOUS_NONCE_LEN * 2 + NONCE_LENGTH);
+        let handshake_buffer = pool.allocate_precise(0, 0, X25519_KEY_LENGTH + CRYPTO_CIPHERTEXTBYTES + ANONYMOUS_NONCE_LEN * 2 + NONCE_LENGTH);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append_buf(&ciphertext_obfuscated).append_buf(&nonce);
         let initial_encryption_symmetric = Symmetric::new(&initial_encryption_key);
         (client_data, handshake_secret, initial_encryption_symmetric)
@@ -170,11 +172,11 @@ impl<'a> ServerSecret<'a> {
 
     /// Server handshake response: generate ephemeral X25519, sign transcript, derive session key.
     /// Args: server data, buffer. Returns: (handshake_secret, session_cipher).
-    pub fn encapsulate_handshake_server(&self, data: ServerData) -> (DynamicByteBuffer, Symmetric) {
+    pub fn encapsulate_handshake_server(&self, data: ServerData, pool: &BytePool) -> (DynamicByteBuffer, Symmetric) {
         let nonce = StaticByteBuffer::from(get_rng().random_byte_array::<U32>().as_slice());
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
-        let mut ephemeral_public = DynamicByteBuffer::from_array_with_capacity(&PublicKey::from(&ephemeral_secret).to_bytes(), 0, ANONYMOUS_NONCE_LEN);
+        let mut ephemeral_public = pool.allocate_precise_from_array_with_capacity(&PublicKey::from(&ephemeral_secret).to_bytes(), 0, ANONYMOUS_NONCE_LEN);
         let shared_secret = ephemeral_secret.diffie_hellman(&data.ephemeral_key);
 
         let transcript = Hasher::new().update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(data.nonce.slice()).update(nonce.slice()).finalize();
@@ -187,7 +189,7 @@ impl<'a> ServerSecret<'a> {
         let session_key_hash = Hasher::new_keyed(&hash_derive_key_context(SESSION_KEY)).update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(transcript.as_bytes()).finalize();
         let session_key = StaticByteBuffer::from(session_key_hash.as_bytes());
 
-        let handshake_buffer = DynamicByteBuffer::empty_with_capacity(0, 0, X25519_KEY_LENGTH + Signature::BYTE_SIZE + ANONYMOUS_NONCE_LEN + NONCE_LENGTH);
+        let handshake_buffer = pool.allocate_precise(0, 0, X25519_KEY_LENGTH + Signature::BYTE_SIZE + ANONYMOUS_NONCE_LEN + NONCE_LENGTH);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append(&transcript_signed.to_bytes()).append_buf(&nonce);
         let session_symmetric = Symmetric::new(&session_key);
 

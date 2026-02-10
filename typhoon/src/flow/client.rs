@@ -5,7 +5,7 @@ use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::CachedValue;
-use crate::constants::Settings;
+use crate::settings::Settings;
 use crate::crypto::ClientCryptoTool;
 use crate::flow::common::FlowManager;
 use crate::flow::config::FlowConfig;

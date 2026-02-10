@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crossbeam::queue::ArrayQueue;
 
 use crate::bytes::dynamic::DynamicByteBuffer;
-use crate::bytes::utils::{allocate_ptr, free_ptr};
+use crate::bytes::utils::{allocate_ptr, copy_slice, free_ptr};
 
 /// Shared storage for pooled buffers.
 pub struct PoolStorage {
@@ -72,16 +72,34 @@ impl BytePool {
     /// Get a buffer from pool or allocate new one.
     /// - `size`: optional size limit (must be <= pool's size), None for full size
     /// Returns a DynamicByteBuffer that auto-returns to pool on drop.
+    #[inline]
     pub fn allocate(&self, size: Option<usize>) -> DynamicByteBuffer {
-        let (remaining_size, remaining_after_cap) = match size {
-            Some(res) => {
-                assert!(res <= self.size, "Requested size greater than initial size ({res} > {})!", self.size);
-                (res, self.size + self.after_cap - res)
-            }
-            None => (self.size, self.after_cap),
-        };
+        match size {
+            Some(res) => self.allocate_precise(res, self.before_cap, self.after_cap),
+            None => self.allocate_precise(self.size, self.before_cap, self.after_cap),
+        }
+    }
+
+    pub fn allocate_precise(&self, size: usize, before_cap: usize, after_cap: usize) -> DynamicByteBuffer {
+        let requested_size = before_cap + size + after_cap;
+        assert!(requested_size <= self.storage.capacity, "Requested size greater than pool capacity ({requested_size} > {})!", self.storage.capacity);
+        let actual_after_cap = self.storage.capacity + after_cap - requested_size;
 
         let data = self.storage.try_take(self.storage.capacity);
-        DynamicByteBuffer::new(data, self.storage.capacity, self.before_cap, remaining_size, remaining_after_cap, Some(Arc::clone(&self.storage)))
+        DynamicByteBuffer::new(data, self.storage.capacity, before_cap, size, actual_after_cap, Some(Arc::clone(&self.storage)))
+    }
+
+    #[inline]
+    pub fn allocate_precise_from_slice_with_capacity(&self, data: &[u8], before_cap: usize, after_cap: usize) -> DynamicByteBuffer {
+        let buff = self.allocate_precise(data.len(), before_cap, after_cap);
+        if data.len() > 0 {
+            copy_slice(unsafe { buff.data_ptr().add(before_cap) }, data);
+        }
+        buff
+    }
+
+    #[inline]
+    pub fn allocate_precise_from_array_with_capacity<const N: usize>(&self, arr: &[u8; N], before_cap: usize, after_cap: usize) -> DynamicByteBuffer {
+        self.allocate_precise_from_slice_with_capacity(arr.as_slice(), before_cap, after_cap)
     }
 }

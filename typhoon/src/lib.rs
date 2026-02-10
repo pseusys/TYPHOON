@@ -21,7 +21,7 @@ compile_error!("one of the features 'server' and 'client' should be selected");
 
 mod bytes;
 mod cache;
-mod constants;
+mod settings;
 mod crypto;
 mod flow;
 mod session;

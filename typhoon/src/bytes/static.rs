@@ -1,5 +1,5 @@
 #[cfg(test)]
-#[path = "../../tests/bytes/owned.rs"]
+#[path = "../../tests/bytes/static.rs"]
 mod tests;
 
 use std::fmt::Debug;
@@ -142,7 +142,7 @@ impl<const N: usize> Into<[u8; N]> for &StaticByteBuffer {
     fn into(self) -> [u8; N] {
         match <[u8; N]>::try_from(&self.data[..]) {
             Ok(res) => res,
-            Err(err) => panic!("error converting OwnedByteBuffer to array [u8; {}], actual length {}: {}", N, self.len(), err),
+            Err(err) => panic!("error converting StaticByteBuffer to array [u8; {}], actual length {}: {}", N, self.len(), err),
         }
     }
 }
@@ -156,7 +156,7 @@ impl PartialEq for StaticByteBuffer {
 
 impl Debug for StaticByteBuffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OwnedByteBuffer")
+        f.debug_struct("StaticByteBuffer")
             .field("length", &self.len())
             .field("data", &self.data.as_ref())
             .finish()

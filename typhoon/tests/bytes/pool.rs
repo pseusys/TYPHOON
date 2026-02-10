@@ -19,7 +19,7 @@ fn test_pool_allocate_with_size() {
 
 // Test: allocating larger than pool size panics.
 #[test]
-#[should_panic(expected = "Requested size greater than initial size")]
+#[should_panic(expected = "Requested size greater than pool capacity")]
 fn test_pool_allocate_size_too_large() {
     let pool = BytePool::new(10, 100, 10, 0, 10);
     let _ = pool.allocate(Some(200));

@@ -1,5 +1,5 @@
 #[cfg(test)]
-#[path = "../../tests/bytes/managed.rs"]
+#[path = "../../tests/bytes/dynamic.rs"]
 mod tests;
 
 use std::cell::UnsafeCell;
@@ -28,6 +28,7 @@ pub struct DynamicByteBuffer {
 }
 
 impl DynamicByteBuffer {
+    // TODO: last arg non-optional
     pub fn new(data: *mut u8, capacity: usize, before_cap: usize, size: usize, after_cap: usize, return_tx: Option<PoolReturn>) -> Self {
         let buffer_end = before_cap + size;
         DynamicByteBuffer {
@@ -39,45 +40,12 @@ impl DynamicByteBuffer {
         }
     }
 
-    /// Create a non-pooled buffer of given `size` bytes.
-    /// TODO: remove, replace with pulling from pool.
     #[inline]
-    pub fn empty(size: usize) -> Self {
-        Self::empty_with_capacity(size, 0, 0)
-    }
-
-    /// Create a non-pooled buffer of given `size` bytes with extra capacity for prepend/append.
-    /// TODO: remove, replace with pulling from pool.
-    #[inline]
-    pub fn empty_with_capacity(size: usize, before_cap: usize, after_cap: usize) -> Self {
-        let total_len = before_cap + size + after_cap;
-        Self::new(allocate_ptr(total_len), total_len, before_cap, size, after_cap, None)
-    }
-
-    /// Create a non-pooled buffer from slice with extra capacity for prepend/append.
-    /// TODO: remove, replace with pulling from pool.
-    #[inline]
-    pub fn from_slice_with_capacity(data: &[u8], before_cap: usize, after_cap: usize) -> Self {
-        let buff = Self::empty_with_capacity(data.len(), before_cap, after_cap);
-        if data.len() > 0 {
-            copy_slice(unsafe { buff.data_ptr().add(before_cap) }, data);
-        }
-        buff
-    }
-
-    /// Create a non-pooled buffer from a fixed-size array with extra capacity.
-    /// TODO: remove, replace with pulling from pool.
-    #[inline]
-    pub fn from_array_with_capacity<const N: usize>(arr: &[u8; N], before_cap: usize, after_cap: usize) -> Self {
-        Self::from_slice_with_capacity(arr.as_slice(), before_cap, after_cap)
-    }
-
-    #[inline]
-    fn data_ptr(&self) -> *mut u8 {
+    pub(super) fn data_ptr(&self) -> *mut u8 {
         self.holder.data
     }
 
-    /// Convert to an immutable OwnedByteBuffer (deep copy, capacity trimmed).
+    /// Convert to an immutable StaticByteBuffer (deep copy, capacity trimmed).
     #[inline]
     pub fn copy(&self) -> Self {
         DynamicByteBuffer {
@@ -89,7 +57,7 @@ impl DynamicByteBuffer {
         }
     }
 
-    /// Convert to an immutable OwnedByteBuffer (deep copy, capacity trimmed).
+    /// Convert to an immutable StaticByteBuffer (deep copy, capacity trimmed).
     #[inline]
     pub fn to_owned(&self) -> StaticByteBuffer {
         StaticByteBuffer::from_slice(self.slice())
@@ -196,7 +164,7 @@ impl ByteBufferMut for DynamicByteBuffer {
 
     fn rebuffer_start(&self, start: usize) -> Self {
         let new_start = self.start + start;
-        assert!(new_start <= self.end, "ManagedByteBuffer has negative length ({} > {new_start})!", self.end);
+        assert!(new_start <= self.end, "DynamicByteBuffer has negative length ({} > {new_start})!", self.end);
         DynamicByteBuffer {
             holder: Arc::clone(&self.holder),
             length: self.length,
@@ -208,7 +176,7 @@ impl ByteBufferMut for DynamicByteBuffer {
 
     fn rebuffer_end(&self, end: usize) -> Self {
         let new_end = self.start + end;
-        assert!(new_end <= self.length, "ManagedByteBuffer exceeded its forward capacity ({new_end} > {})!", self.length);
+        assert!(new_end <= self.length, "DynamicByteBuffer exceeded its forward capacity ({new_end} > {})!", self.length);
         DynamicByteBuffer {
             holder: Arc::clone(&self.holder),
             length: self.length,
@@ -221,8 +189,8 @@ impl ByteBufferMut for DynamicByteBuffer {
     fn rebuffer_both(&self, start: usize, end: usize) -> Self {
         let new_start = self.start + start;
         let new_end = self.start + end;
-        assert!(new_start <= new_end, "ManagedByteBuffer has negative length ({new_end} > {new_start})!");
-        assert!(new_end <= self.length, "ManagedByteBuffer exceeded its forward capacity ({new_end} > {})!", self.length);
+        assert!(new_start <= new_end, "DynamicByteBuffer has negative length ({new_end} > {new_start})!");
+        assert!(new_end <= self.length, "DynamicByteBuffer exceeded its forward capacity ({new_end} > {})!", self.length);
         DynamicByteBuffer {
             holder: Arc::clone(&self.holder),
             length: self.length,
@@ -233,7 +201,7 @@ impl ByteBufferMut for DynamicByteBuffer {
     }
 
     fn expand_start(&self, size: usize) -> Self {
-        assert!(size <= self.start, "ManagedByteBuffer has negative length ({size} > {})!", self.start);
+        assert!(size <= self.start, "DynamicByteBuffer has negative length ({size} > {})!", self.start);
         let new_start = self.start - size;
         DynamicByteBuffer {
             holder: Arc::clone(&self.holder),
@@ -246,7 +214,7 @@ impl ByteBufferMut for DynamicByteBuffer {
 
     fn expand_end(&self, size: usize) -> Self {
         let new_end = self.end + size;
-        assert!(new_end <= self.length, "ManagedByteBuffer exceeded its forward capacity ({new_end} > {})!", self.length);
+        assert!(new_end <= self.length, "DynamicByteBuffer exceeded its forward capacity ({new_end} > {})!", self.length);
         DynamicByteBuffer {
             holder: Arc::clone(&self.holder),
             length: self.length,
@@ -258,7 +226,7 @@ impl ByteBufferMut for DynamicByteBuffer {
 
     fn split_buf(&self, divide: usize) -> (Self, Self) {
         let new_divide = self.start + divide;
-        assert!(new_divide <= self.end, "ManagedByteBuffer has negative length ({new_divide} > {})!", self.end);
+        assert!(new_divide <= self.end, "DynamicByteBuffer has negative length ({new_divide} > {})!", self.end);
         (
             DynamicByteBuffer {
                 holder: Arc::clone(&self.holder),
@@ -279,7 +247,7 @@ impl ByteBufferMut for DynamicByteBuffer {
 
     fn append(&self, other: &[u8]) -> Self {
         let new_end = self.end + other.len();
-        assert!(new_end <= self.length, "ManagedByteBuffer backward capacity insufficient ({new_end} > {})!", self.length);
+        assert!(new_end <= self.length, "DynamicByteBuffer backward capacity insufficient ({new_end} > {})!", self.length);
         copy_slice(unsafe { self.data_ptr().add(self.end) }, other);
         DynamicByteBuffer {
             holder: Arc::clone(&self.holder),
@@ -292,7 +260,7 @@ impl ByteBufferMut for DynamicByteBuffer {
 
     fn prepend(&self, other: &[u8]) -> Self {
         let other_length = other.len();
-        assert!(other_length <= self.start, "ManagedByteBuffer forward capacity insufficient ({other_length} > {})!", self.start);
+        assert!(other_length <= self.start, "DynamicByteBuffer forward capacity insufficient ({other_length} > {})!", self.start);
         let new_start = self.start - other_length;
         copy_slice(unsafe { self.data_ptr().add(new_start) }, other);
         DynamicByteBuffer {
@@ -345,7 +313,7 @@ impl<const N: usize> Into<[u8; N]> for &DynamicByteBuffer {
     fn into(self) -> [u8; N] {
         match <[u8; N]>::try_from(&self.slice()[..]) {
             Ok(res) => res,
-            Err(err) => panic!("error converting ManagedByteBuffer to array [u8; {N}], actual buffer length {}: {}", self.len(), err),
+            Err(err) => panic!("error converting DynamicByteBuffer to array [u8; {N}], actual buffer length {}: {}", self.len(), err),
         }
     }
 }
@@ -366,7 +334,7 @@ impl Fill for DynamicByteBuffer {
 impl Debug for DynamicByteBuffer {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ManagedByteBuffer")
+        f.debug_struct("DynamicByteBuffer")
             .field("length", &self.length)
             .field("start", &self.start)
             .field("end", &self.end)
