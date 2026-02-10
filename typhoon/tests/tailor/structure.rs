@@ -1,24 +1,40 @@
-use crate::bytes::ByteBuffer;
-use crate::constants::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILOR_LENGTH};
+use lazy_static::lazy_static;
+
+use crate::bytes::{ByteBuffer, BytePool, DynamicByteBuffer};
+use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILOR_LENGTH};
 use crate::tailor::flags::{PacketFlags, ReturnCode};
 use crate::tailor::structure::Tailor;
 
+lazy_static! {
+    static ref TEST_POOL: BytePool = BytePool::new(32, 256, 32, 4, 16);
+}
+
+/// Allocate a buffer from pool and fill with identity pattern.
+fn pool_identity(pool: &BytePool, pattern: u8) -> DynamicByteBuffer {
+    pool.allocate_precise_from_slice_with_capacity(&[pattern; DEFAULT_TYPHOON_ID_LENGTH], 0, 0)
+}
+
+/// Allocate an empty buffer from pool.
+fn pool_empty(pool: &BytePool, size: usize) -> DynamicByteBuffer {
+    pool.allocate_precise(size, 0, 0)
+}
+
 impl Tailor {
-    fn new(identity_length: usize) -> Self {
+    fn new_test(pool: &BytePool, identity_length: usize) -> Self {
         Self {
             flags: PacketFlags::empty(),
             code: 0,
             time: 0,
             packet_number: 0,
             payload_length: 0,
-            identity: ByteBuffer::empty(identity_length),
+            identity: pool_empty(pool, identity_length),
         }
     }
 }
 
 #[test]
 fn test_tailor_roundtrip() {
-    let identity = ByteBuffer::from(&[0xAB; DEFAULT_TYPHOON_ID_LENGTH]);
+    let identity = TEST_POOL.allocate_precise_from_slice_with_capacity(&[0xAB; DEFAULT_TYPHOON_ID_LENGTH], 0, 0);
     let tailor = Tailor {
         flags: PacketFlags::DATA,
         code: 42,
@@ -28,7 +44,7 @@ fn test_tailor_roundtrip() {
         identity,
     };
 
-    let buffer = ByteBuffer::empty(TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
+    let buffer = pool_empty(&TEST_POOL, TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
     let tailor_buffer = tailor.to_buffer(buffer);
     assert_eq!(tailor_buffer.len(), TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
 
@@ -43,7 +59,7 @@ fn test_tailor_roundtrip() {
 
 #[test]
 fn test_packet_number_components() {
-    let mut tailor = Tailor::new(DEFAULT_TYPHOON_ID_LENGTH);
+    let mut tailor = Tailor::new_test(&TEST_POOL, DEFAULT_TYPHOON_ID_LENGTH);
     tailor.set_packet_number(0x12345678, 0xABCD0001);
 
     assert_eq!(tailor.timestamp(), 0x12345678);
@@ -52,7 +68,7 @@ fn test_packet_number_components() {
 
 #[test]
 fn test_data_tailor() {
-    let identity = ByteBuffer::from(&[1; DEFAULT_TYPHOON_ID_LENGTH]);
+    let identity = pool_identity(&TEST_POOL, 1);
     let tailor = Tailor::data(identity, 512, 12345);
 
     assert!(tailor.flags.has_payload());
@@ -61,7 +77,7 @@ fn test_data_tailor() {
 
 #[test]
 fn test_health_check_tailor() {
-    let identity = ByteBuffer::from(&[2; DEFAULT_TYPHOON_ID_LENGTH]);
+    let identity = pool_identity(&TEST_POOL, 2);
     let tailor = Tailor::health_check(identity, 64000, 12345);
 
     assert!(!tailor.flags.has_payload());
@@ -70,7 +86,7 @@ fn test_health_check_tailor() {
 
 #[test]
 fn test_shadowride_tailor() {
-    let identity = ByteBuffer::from(&[3; DEFAULT_TYPHOON_ID_LENGTH]);
+    let identity = pool_identity(&TEST_POOL, 3);
     let tailor = Tailor::shadowride(identity, 256, 128000, 12345);
 
     assert!(tailor.flags.is_shadowride());
@@ -81,7 +97,7 @@ fn test_shadowride_tailor() {
 
 #[test]
 fn test_decoy_tailor() {
-    let identity = ByteBuffer::from(&[4; DEFAULT_TYPHOON_ID_LENGTH]);
+    let identity = pool_identity(&TEST_POOL, 4);
     let tailor = Tailor::decoy(identity, 12345);
 
     assert!(tailor.flags.is_discardable());
@@ -90,7 +106,7 @@ fn test_decoy_tailor() {
 
 #[test]
 fn test_termination_tailor() {
-    let identity = ByteBuffer::from(&[5; DEFAULT_TYPHOON_ID_LENGTH]);
+    let identity = pool_identity(&TEST_POOL, 5);
     let tailor = Tailor::termination(identity, ReturnCode::Success, 12345);
 
     assert!(tailor.flags.is_termination());

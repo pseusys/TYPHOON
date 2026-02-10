@@ -1,10 +1,8 @@
-use thiserror::Error;
-
-#[cfg(feature = "fast")]
-use chacha20poly1305::aead::Error as AeadError;
-
 #[cfg(feature = "full")]
 use aes_gcm::aead::Error as AeadError;
+#[cfg(feature = "fast")]
+use chacha20poly1305::aead::Error as AeadError;
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum CryptoError {
