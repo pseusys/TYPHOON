@@ -20,3 +20,10 @@ Always compare your implementation to [README.md](./README.md) file, the code sh
 - Implementation should be clean, short, correct and efficient; additional effort should be put into making sure that as few data is copied at runtime as possible.
 - No unnecessary unused functions should be generated, no comments describing generation process should be outputted.
 - Comments should be put in a form of documentation strings, one per function, trait, struct and file.
+
+### Testing
+
+All the tests and builds should be run with two different sets of features:
+
+- `software`, `fast`, `server`, `client`, `tokio` (the default mode)
+- `hardware`, `full`, `server` `client`, `async-std`

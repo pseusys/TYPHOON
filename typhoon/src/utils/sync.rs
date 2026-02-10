@@ -2,7 +2,6 @@ use std::future::Future;
 use std::time::Duration;
 
 use cfg_if::cfg_if;
-use lazy_static::lazy_static;
 
 cfg_if! {
     if #[cfg(feature = "tokio")] {
@@ -11,10 +10,12 @@ cfg_if! {
     } else if #[cfg(feature = "async-std")] {
         pub use async_channel::{Sender, Receiver, WeakSender, bounded as channel};
         pub use async_lock::{RwLock, Mutex};
-        pub use async_executor::Executor;
+        use async_executor::Executor;
+        use lazy_static::lazy_static;
     }
 }
 
+#[cfg(feature = "async-std")]
 lazy_static! {
     static ref EXECUTOR: Executor<'static> = Executor::new();
 }

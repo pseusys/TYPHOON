@@ -1,12 +1,12 @@
-#[cfg(feature = "full")]
-use crate::bytes::StaticByteBuffer;
-#[cfg(feature = "fast")]
 use crate::bytes::StaticByteBuffer;
 use crate::bytes::{BytePool, DynamicByteBuffer};
 use crate::crypto::certificate::{Certificate, ClientData, ObfuscationBufferContainer};
 use crate::crypto::error::{CryptoError, HandshakeError};
-use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN, SYMMETRIC_SECOND_AUTH_LEN, Symmetric};
-use crate::crypto::utils::ObfuscationTranscript;
+use crate::crypto::symmetric::ObfuscationTranscript;
+use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
+
+#[cfg(feature = "fast")]
+use crate::crypto::symmetric::{decrypt_auth, encrypt_auth, verify_auth};
 
 /// Client-side cryptographic tool for TYPHOON protocol.
 #[derive(Clone)]
@@ -65,7 +65,7 @@ impl<'a> ClientCryptoTool<'a> {
     /// Overhead added by tailor encryption (nonce + auth tags).
     #[inline]
     pub fn tailor_overhead() -> usize {
-        SYMMETRIC_FIRST_AUTH_LEN + NONCE_LEN + SYMMETRIC_SECOND_AUTH_LEN
+        SYMMETRIC_BUILT_IN_AUTH_LEN + NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN
     }
 
     /// Client handshake step 1: generate ephemeral keys, encapsulate with McEliece, obfuscate.
@@ -93,7 +93,7 @@ impl<'a> ClientCryptoTool<'a> {
     /// Obfuscate (encrypt) tailor bytes for sending.
     #[cfg(feature = "fast")]
     pub fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer) -> Result<DynamicByteBuffer, CryptoError> {
-        self.obfuscation.encrypt_auth_twice::<StaticByteBuffer>(plaintext, None, &self.key_bytes)
+        Ok(encrypt_auth(&self.key_bytes, plaintext, &self.key_bytes))
     }
 
     /// Obfuscate (encrypt) tailor bytes for sending.
@@ -105,16 +105,7 @@ impl<'a> ClientCryptoTool<'a> {
     /// Deobfuscate (decrypt) received tailor bytes.
     #[cfg(feature = "fast")]
     pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
-        match self.obfuscation.decrypt_auth_twice::<StaticByteBuffer>(ciphertext, None) {
-            Ok((plaintext, ciphertext_copy, second_auth_transcript)) => Ok((
-                plaintext,
-                ObfuscationTranscript {
-                    ciphertext_copy,
-                    second_auth_transcript,
-                },
-            )),
-            Err(err) => Err(err),
-        }
+        Ok(decrypt_auth(&self.key_bytes, ciphertext))
     }
 
     /// Deobfuscate (decrypt) received tailor bytes.
@@ -126,10 +117,10 @@ impl<'a> ClientCryptoTool<'a> {
         }
     }
 
-    /// Verify the second authentication (fast mode).
+    /// Verify the authentication (fast mode).
     #[cfg(feature = "fast")]
     pub fn verify_tailor(&mut self, transcript: ObfuscationTranscript) -> Result<(), CryptoError> {
-        self.obfuscation.verify_second_auth::<StaticByteBuffer, StaticByteBuffer, DynamicByteBuffer>(&transcript.ciphertext_copy, None, &self.key_bytes, &transcript.second_auth_transcript)
+        verify_auth(transcript, &self.key_bytes)
     }
 
     /// Verify tailor (no-op in full mode).

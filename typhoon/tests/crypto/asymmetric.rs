@@ -14,7 +14,7 @@ use crate::crypto::certificate::ServerSecret;
 use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
 #[cfg(feature = "fast")]
 use crate::crypto::symmetric::SYMMETRIC_KEY_LENGTH;
-use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_FIRST_AUTH_LEN, Symmetric};
+use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
 use crate::utils::random::get_rng;
 
 const X25519_KEY_LENGTH: usize = 32;
@@ -128,7 +128,7 @@ fn test_handshake_cycle() {
     let server_secret = create_test_server_secret();
 
     let initial_data_data = b"Secret initial data message";
-    let initial_data = TEST_POOL.allocate_precise_from_slice_with_capacity(initial_data_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
+    let initial_data = TEST_POOL.allocate_precise_from_slice_with_capacity(initial_data_data, 0, NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN);
 
     let (client_data, client_handshake, mut client_initial_cipher) = certificate.encapsulate_handshake_client(&TEST_POOL);
     let initial_data_encrypted = client_initial_cipher.encrypt_auth(initial_data, None::<&StaticByteBuffer>).expect("initial data encryption failed");
@@ -140,7 +140,7 @@ fn test_handshake_cycle() {
     assert_eq!(initial_data_data.as_slice(), initial_data_decrypted.slice(), "client and server should get the same initial data");
 
     let session_data_data = b"Secret session data message";
-    let session_data = TEST_POOL.allocate_precise_from_slice_with_capacity(session_data_data, 0, NONCE_LEN + SYMMETRIC_FIRST_AUTH_LEN);
+    let session_data = TEST_POOL.allocate_precise_from_slice_with_capacity(session_data_data, 0, NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN);
 
     let (server_handshake, mut server_session_cipher) = server_secret.encapsulate_handshake_server(server_data, &TEST_POOL);
     let session_data_encrypted = server_session_cipher.encrypt_auth(session_data, None::<&StaticByteBuffer>).expect("session data encryption failed");
@@ -161,7 +161,7 @@ fn test_obfuscate_cycle() {
 
     let plaintext_data = b"Secret initial data message";
     let plaintext_static = StaticByteBuffer::from(plaintext_data.as_slice());
-    let plaintext = TEST_POOL.allocate_precise_from_slice_with_capacity(plaintext_data, 0, ENCRYPT_OBFUSCATE_HEADER + SYMMETRIC_FIRST_AUTH_LEN);
+    let plaintext = TEST_POOL.allocate_precise_from_slice_with_capacity(plaintext_data, 0, ENCRYPT_OBFUSCATE_HEADER + SYMMETRIC_BUILT_IN_AUTH_LEN);
 
     let ciphertext = certificate.encrypt_obfuscate(plaintext, &TEST_POOL).expect("encryption failed");
     let decrypted = server_secret.decrypt_deobfuscate(ciphertext).expect("decryption failed");

@@ -9,8 +9,8 @@ authors = [
 
 
 [features]
-# default = ["software", "fast", "server", "client", "tokio"]
-default = ["hardware", "full", "server", "client", "async-std"]
+default = ["software", "fast", "server", "client", "tokio"]
+# default = ["hardware", "full", "server", "client", "async-std"]
 hardware = ["dep:aes", "dep:aes-gcm", "dep:ctr"]
 software = ["dep:chacha20", "dep:chacha20poly1305"]
 fast = []
