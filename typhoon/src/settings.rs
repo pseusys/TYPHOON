@@ -250,17 +250,22 @@ fn try_env_override<T: SettingType>(key: &Key<T>) -> Option<T> {
 
 /// Builder for creating Settings instances with custom overrides.
 #[derive(Default)]
-pub struct SettingsBuilder<'a, 'b> {
+pub struct SettingsBuilder<AE: AsyncExecutor> {
     overrides: OverrideMap,
-    executor: Option<AsyncExecutor<'a, 'b>>,
+    executor: Option<AE>,
     pool: Option<BytePool>,
     skip_env: bool,
 }
 
-impl<'a, 'b> SettingsBuilder<'a, 'b> {
+impl<AE: AsyncExecutor> SettingsBuilder<AE> {
     /// Create a new builder that will read environment variables.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            overrides: OverrideMap::default(),
+            executor: None,
+            pool: None,
+            skip_env: false,
+        }
     }
 
     /// Create a builder that ignores environment variables.
@@ -269,7 +274,7 @@ impl<'a, 'b> SettingsBuilder<'a, 'b> {
         self
     }
 
-    pub fn with_executor(mut self, executor: AsyncExecutor<'a, 'b>) -> Self {
+    pub fn with_executor(mut self, executor: AE) -> Self {
         self.executor = Some(executor);
         self
     }
@@ -287,12 +292,12 @@ impl<'a, 'b> SettingsBuilder<'a, 'b> {
     }
 
     /// Build the Settings instance.
-    pub fn build(self) -> Settings<'a, 'b> {
+    pub fn build(self) -> Settings<AE> {
         Settings {
             overrides: self.overrides,
             executor: match self.executor {
                 Some(res) => res,
-                None => AsyncExecutor::default(),
+                None => AE::new(),
             },
             pool: match self.pool {
                 Some(res) => res,
@@ -311,13 +316,13 @@ impl<'a, 'b> SettingsBuilder<'a, 'b> {
 /// 1. Explicit overrides set via SettingsBuilder
 /// 2. Environment variables (if not disabled)
 /// 3. Default value from the Key definition
-pub struct Settings<'a, 'b> {
+pub struct Settings<AE: AsyncExecutor> {
     overrides: OverrideMap,
-    executor: AsyncExecutor<'a, 'b>,
+    executor: AE,
     pool: BytePool,
 }
 
-impl<'a, 'b> Settings<'a, 'b> {
+impl<AE: AsyncExecutor> Settings<AE> {
     /// Get a setting value with compile-time type safety.
     ///
     /// Resolution order: override -> environment -> default
@@ -349,12 +354,12 @@ impl<'a, 'b> Settings<'a, 'b> {
     }
 
     #[inline]
-    pub fn executor(&self) -> &AsyncExecutor<'a, 'b> {
+    pub fn executor(&self) -> &AE {
         &self.executor
     }
 }
 
-impl<'a, 'b> Default for Settings<'a, 'b> {
+impl<AE: AsyncExecutor> Default for Settings<AE> {
     #[inline]
     fn default() -> Self {
         SettingsBuilder::new().build()

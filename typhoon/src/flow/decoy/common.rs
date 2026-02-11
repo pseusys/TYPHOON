@@ -11,14 +11,15 @@ use crate::settings::Settings;
 use crate::settings::keys::*;
 use crate::tailor::{IdentityType, Tailor};
 use crate::utils::random::get_rng;
+use crate::utils::sync::AsyncExecutor;
 use crate::utils::time::unix_timestamp_ms;
 
 /// Trait for implementing decoy traffic communication modes.
-pub trait DecoyCommunicationMode<'a, 'b>: Sized + Send + Sync {
+pub trait DecoyCommunicationMode<AE: AsyncExecutor>: Sized + Send + Sync {
     type FlowManagerT: FlowManager;
 
     /// Create a new decoy provider with the given manager, settings, and tailor size.
-    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings<'a, 'b>>) -> Self;
+    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings<AE>>) -> Self;
 
     /// Start the background decoy generation timer.
     fn start(&mut self) -> impl Future<Output = ()> + Send;
@@ -32,8 +33,8 @@ pub trait DecoyCommunicationMode<'a, 'b>: Sized + Send + Sync {
 
 /// Internal state for tracking packet rates and byte budgets.
 /// This state is shared by all communication modes.
-pub(super) struct DecoyState<'a, 'b, T: IdentityType> {
-    pub(super) settings: Arc<Settings<'a, 'b>>,
+pub(super) struct DecoyState<T: IdentityType, AE: AsyncExecutor> {
+    pub(super) settings: Arc<Settings<AE>>,
     /// Long-term reference transmission rate in packets (milliseconds between packets).
     pub(super) reference_rate: f64,
     /// Current transmission rate in packets (milliseconds between packets).
@@ -57,8 +58,8 @@ pub(super) struct DecoyState<'a, 'b, T: IdentityType> {
     _phantom: PhantomData<T>,
 }
 
-impl<'a, 'b, T: IdentityType> DecoyState<'a, 'b, T> {
-    pub(super) fn new(settings: Arc<Settings<'a, 'b>>) -> Self {
+impl<T: IdentityType, AE: AsyncExecutor> DecoyState<T, AE> {
+    pub(super) fn new(settings: Arc<Settings<AE>>) -> Self {
         let byte_rate_cap = settings.get(&DECOY_BYTE_RATE_CAP);
         let byte_rate_factor = settings.get(&DECOY_BYTE_RATE_FACTOR);
         let length_max = settings.get(&DECOY_LENGTH_MAX) as usize;

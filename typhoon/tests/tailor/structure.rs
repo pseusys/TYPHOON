@@ -2,7 +2,6 @@ use lazy_static::lazy_static;
 
 use crate::bytes::{ByteBuffer, BytePool, DynamicByteBuffer, StaticByteBuffer};
 use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILOR_LENGTH};
-use crate::tailor::IdentityType;
 use crate::tailor::flags::{PacketFlags, ReturnCode};
 use crate::tailor::structure::Tailor;
 
@@ -13,20 +12,6 @@ lazy_static! {
 /// Allocate an empty buffer from pool.
 fn pool_empty(pool: &BytePool, size: usize) -> DynamicByteBuffer {
     pool.allocate_precise(size, 0, 0)
-}
-
-impl IdentityType for StaticByteBuffer {
-    fn from_bytes(bytes: &[u8]) -> Self {
-        Self::from_slice(bytes)
-    }
-
-    fn to_bytes(&self) -> &[u8] {
-        self.slice()
-    }
-
-    fn length() -> usize {
-        DEFAULT_TYPHOON_ID_LENGTH
-    }
 }
 
 impl Tailor<StaticByteBuffer> {

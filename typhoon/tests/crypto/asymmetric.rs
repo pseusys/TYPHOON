@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use classic_mceliece_rust::{CRYPTO_PUBLICKEYBYTES, CRYPTO_SECRETKEYBYTES, PublicKey as McEliecePublicKey, SecretKey, keypair_boxed};
 use ed25519_dalek::{SecretKey as X25519SecretKey, SigningKey, VerifyingKey};
@@ -6,16 +6,20 @@ use lazy_static::lazy_static;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::bytes::{ByteBuffer, BytePool, StaticByteBuffer};
-#[cfg(feature = "client")]
-use crate::crypto::certificate::Certificate;
-#[cfg(feature = "server")]
-use crate::crypto::certificate::ServerSecret;
-#[cfg(feature = "full")]
-use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
-#[cfg(feature = "fast")]
-use crate::crypto::symmetric::SYMMETRIC_KEY_LENGTH;
 use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
 use crate::utils::random::get_rng;
+
+#[cfg(feature = "client")]
+use crate::crypto::certificate::Certificate;
+
+#[cfg(feature = "server")]
+use crate::crypto::certificate::ServerSecret;
+
+#[cfg(feature = "full")]
+use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
+
+#[cfg(feature = "fast")]
+use crate::crypto::symmetric::SYMMETRIC_KEY_LENGTH;
 
 const X25519_KEY_LENGTH: usize = 32;
 const NONCE_LENGTH: usize = 32;
@@ -39,7 +43,6 @@ lazy_static! {
         let secret = StaticSecret::random_from_rng(get_rng());
         Mutex::new(secret.to_bytes())
     };
-    static ref MCELIECE_PUBLIC_KEY: McEliecePublicKey<'static> = { McEliecePublicKey::from(Box::new(*MCELIECE_KEYPAIR_BYTES.0)) };
     static ref TEST_POOL: BytePool = BytePool::new(32, 256, 32, 4, 16);
 }
 
@@ -71,10 +74,10 @@ fn get_x25519_keypair() -> (StaticSecret, X25519PublicKey) {
 
 #[cfg(all(feature = "client", feature = "fast"))]
 #[inline]
-fn create_test_certificate() -> Certificate<'static> {
+fn create_test_certificate() -> Certificate {
     let (_, vpk) = get_ed25519_keypair();
     Certificate {
-        epk: &MCELIECE_PUBLIC_KEY,
+        epk: Arc::new(McEliecePublicKey::from(Box::new(*MCELIECE_KEYPAIR_BYTES.0))),
         vpk,
         obfs: get_obfuscation_key(),
     }
@@ -94,11 +97,11 @@ fn create_test_server_secret() -> ServerSecret<'static> {
 
 #[cfg(all(feature = "client", feature = "full"))]
 #[inline]
-fn create_test_certificate() -> Certificate<'static> {
+fn create_test_certificate() -> Certificate {
     let (_, vpk) = get_ed25519_keypair();
     let (_, opk) = get_x25519_keypair();
     Certificate {
-        epk: &MCELIECE_PUBLIC_KEY,
+        epk: Arc::new(McEliecePublicKey::from(Box::new(*MCELIECE_KEYPAIR_BYTES.0))),
         vpk,
         opk,
     }

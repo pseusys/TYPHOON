@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use classic_mceliece_rust::{PublicKey as McEliecePublicKey, SecretKey};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 #[cfg(feature = "full")]
@@ -45,21 +47,23 @@ impl<'a> ObfuscationBufferContainer for ServerSecret<'a> {
 
 /// Client certificate: McEliece public key + Ed25519 verifying key (+ X25519 in full mode).
 #[cfg(feature = "full")]
-pub struct Certificate<'a> {
-    pub epk: &'a McEliecePublicKey<'a>,
+#[derive(Clone)]
+pub struct Certificate {
+    pub epk: Arc<McEliecePublicKey<'static>>,
     pub vpk: VerifyingKey,
     pub opk: X25519PublicKey,
 }
 
 /// Client certificate: McEliece public key + Ed25519 verifying key + obfuscation key.
 #[cfg(feature = "fast")]
-pub struct Certificate<'a> {
-    pub epk: &'a McEliecePublicKey<'a>,
+#[derive(Clone)]
+pub struct Certificate {
+    pub epk: Arc<McEliecePublicKey<'static>>,
     pub vpk: VerifyingKey,
     pub obfs: StaticByteBuffer,
 }
 
-impl<'a> ObfuscationBufferContainer for Certificate<'a> {
+impl ObfuscationBufferContainer for Certificate {
     #[cfg(feature = "full")]
     #[inline]
     fn obfuscation_buffer(&self) -> StaticByteBuffer {
@@ -70,19 +74,6 @@ impl<'a> ObfuscationBufferContainer for Certificate<'a> {
     #[inline]
     fn obfuscation_buffer(&self) -> StaticByteBuffer {
         self.obfs.clone()
-    }
-}
-
-impl Clone for Certificate<'_> {
-    fn clone(&self) -> Self {
-        Self {
-            epk: self.epk,
-            vpk: self.vpk.clone(),
-            #[cfg(feature = "full")]
-            opk: self.opk.clone(),
-            #[cfg(feature = "fast")]
-            obfs: self.obfs.clone(),
-        }
     }
 }
 

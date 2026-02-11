@@ -12,7 +12,7 @@ use crate::settings::Settings;
 use crate::settings::keys::*;
 use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::random::get_rng;
-use crate::utils::sync::{FuturePool, RwLock, Sender, Receiver, sleep};
+use crate::utils::sync::{AsyncExecutor, FuturePool, RwLock, Sender, Receiver, sleep};
 use crate::utils::time::unix_timestamp_ms;
 
 /// Events produced during the decay cycle.
@@ -22,8 +22,8 @@ enum DecayEvent {
 }
 
 /// Internal state shared between the timer task and feed methods.
-struct HealthState<'a, 'b, T: IdentityType> {
-    settings: Arc<Settings<'a, 'b>>,
+struct HealthState<T: IdentityType, AE: AsyncExecutor> {
+    settings: Arc<Settings<AE>>,
     /// EWMA smoothed RTT in milliseconds.
     smooth_rtt: Option<f64>,
     /// RTT variance in milliseconds.
@@ -45,8 +45,8 @@ struct HealthState<'a, 'b, T: IdentityType> {
     _phantom: PhantomData<T>,
 }
 
-impl<'a, 'b, T: IdentityType> HealthState<'a, 'b, T> {
-    fn new(settings: Arc<Settings<'a, 'b>>, identity: Vec<u8>) -> Self {
+impl<T: IdentityType, AE: AsyncExecutor> HealthState<T, AE> {
+    fn new(settings: Arc<Settings<AE>>, identity: Vec<u8>) -> Self {
         Self {
             settings,
             smooth_rtt: None,
@@ -131,18 +131,18 @@ impl<'a, 'b, T: IdentityType> HealthState<'a, 'b, T> {
 }
 
 /// Health check provider for client-side decay cycle management.
-pub struct HealthProvider<'a, 'b, T: IdentityType + 'b, SM: SessionManager + 'b> {
+pub struct HealthProvider<T: IdentityType + 'static, AE: AsyncExecutor + 'static, SM: SessionManager + 'static> {
     manager: Weak<SM>,
-    state: Arc<RwLock<HealthState<'a, 'b, T>>>,
+    state: Arc<RwLock<HealthState<T, AE>>>,
     response_tx: Sender<(u32, u128)>,
     shadowride_tx: Sender<()>,
 }
 
-impl<'a, 'b, T: IdentityType, SM: SessionManager + Send + Sync> HealthProvider<'a, 'b, T, SM> {
+impl<T: IdentityType, AE: AsyncExecutor, SM: SessionManager + Send + Sync> HealthProvider<T, AE, SM> {
     /// Create a new health provider with pre-created channel senders.
     pub fn new(
         manager: Weak<SM>,
-        settings: Arc<Settings<'a, 'b>>,
+        settings: Arc<Settings<AE>>,
         identity: Vec<u8>,
         response_tx: Sender<(u32, u128)>,
         shadowride_tx: Sender<()>,
@@ -207,7 +207,7 @@ impl<'a, 'b, T: IdentityType, SM: SessionManager + Send + Sync> HealthProvider<'
     /// Background timer task implementing the client-side decay cycle.
     async fn timer_task(
         manager: Weak<SM>,
-        state: Arc<RwLock<HealthState<'a, 'b, T>>>,
+        state: Arc<RwLock<HealthState<T, AE>>>,
         mut response_rx: Receiver<(u32, u128)>,
         mut shadowride_rx: Receiver<()>,
     ) {

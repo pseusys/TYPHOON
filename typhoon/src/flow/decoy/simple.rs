@@ -1,24 +1,23 @@
 /// Simple mode: no-op decoy provider that passes packets through without generating any decoy traffic.
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 
 use crate::bytes::DynamicByteBuffer;
 use crate::flow::common::FlowManager;
 use crate::flow::decoy::common::DecoyCommunicationMode;
 use crate::settings::Settings;
+use crate::utils::sync::AsyncExecutor;
 
 /// Simple mode does not spawn any coroutines and does not send any packets.
-pub struct SimpleDecoyProvider<'a, 'b, FM: FlowManager + 'b> {
+pub struct SimpleDecoyProvider<FM: FlowManager> {
     _manager: Weak<FM>,
-    _settings: std::marker::PhantomData<&'a &'b ()>,
 }
 
-impl<'a, 'b, FM: FlowManager + Send + Sync> DecoyCommunicationMode<'a, 'b> for SimpleDecoyProvider<'a, 'b, FM> {
+impl<AE: AsyncExecutor, FM: FlowManager + Send + Sync> DecoyCommunicationMode<AE> for SimpleDecoyProvider<FM> {
     type FlowManagerT = FM;
 
-    fn new(manager: Weak<Self::FlowManagerT>, _settings: Arc<Settings<'a, 'b>>) -> Self {
+    fn new(manager: Weak<Self::FlowManagerT>, _settings: std::sync::Arc<Settings<AE>>) -> Self {
         Self {
             _manager: manager,
-            _settings: std::marker::PhantomData,
         }
     }
 

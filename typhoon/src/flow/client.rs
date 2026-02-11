@@ -15,29 +15,30 @@ use crate::settings::Settings;
 use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::socket::Socket;
-use crate::utils::sync::Mutex;
+use crate::utils::sync::{AsyncExecutor, Mutex};
 
-struct ClientFlowManagerInternalSend<'a> {
-    provider: CachedValue<ClientCryptoTool<'a>>,
+struct ClientFlowManagerInternalSend {
+    provider: CachedValue<ClientCryptoTool>,
     config: FlowConfig,
 }
 
-struct ClientFlowManagerInternalReceive<'a> {
-    provider: CachedValue<ClientCryptoTool<'a>>,
+struct ClientFlowManagerInternalReceive {
+    provider: CachedValue<ClientCryptoTool>,
 }
 
-pub struct ClientFlowManager<'a, 'b, 'c, T: IdentityType, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> {
+/// Client-side flow manager that handles packet encryption, decoy traffic, and socket I/O.
+pub struct ClientFlowManager<T: IdentityType, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowManagerT = Self>> {
     decoy_provider: Mutex<DP>,
-    send_internal: Mutex<ClientFlowManagerInternalSend<'a>>,
-    receive_internal: Mutex<ClientFlowManagerInternalReceive<'a>>,
+    send_internal: Mutex<ClientFlowManagerInternalSend>,
+    receive_internal: Mutex<ClientFlowManagerInternalReceive>,
     sock: Socket,
     mtu: usize,
-    settings: Arc<Settings<'b, 'c>>,
+    settings: Arc<Settings<AE>>,
     _phantom: PhantomData<T>,
 }
 
-impl<'a, 'b, 'c, T: IdentityType, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> ClientFlowManager<'a, 'b, 'c, T, DP> {
-    async fn new(config: FlowConfig, cipher: CachedValue<ClientCryptoTool<'a>>, settings: Arc<Settings<'b, 'c>>, mtu: usize, sock: Socket) -> Result<Arc<Self>, FlowControllerError> {
+impl<T: IdentityType, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowManagerT = Self>> ClientFlowManager<T, AE, DP> {
+    async fn new(config: FlowConfig, cipher: CachedValue<ClientCryptoTool>, settings: Arc<Settings<AE>>, mtu: usize, sock: Socket) -> Result<Arc<Self>, FlowControllerError> {
         let send_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
         let receive_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
         let value = Arc::new_cyclic(|m| ClientFlowManager {
@@ -59,7 +60,7 @@ impl<'a, 'b, 'c, T: IdentityType, DP: DecoyCommunicationMode<'b, 'c, FlowManager
     }
 }
 
-impl<'a, 'b, 'c, T: IdentityType, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> FlowManager for ClientFlowManager<'a, 'b, 'c, T, DP> {
+impl<T: IdentityType, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowManagerT = Self>> FlowManager for ClientFlowManager<T, AE, DP> {
     /// Packet should consist of: encrypted payload || valid plaintext tailor.
     /// NB! DecoyCommunicationMode implementations *should not* send non-decoy packets via this method, but they can, if they want.
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {

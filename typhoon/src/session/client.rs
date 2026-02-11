@@ -13,15 +13,15 @@ use crate::session::health::HealthProvider;
 use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{IdentityType, PacketFlags, Tailor};
-use crate::utils::sync::{Mutex, channel};
+use crate::utils::sync::{AsyncExecutor, Mutex, channel};
 
-struct ClientSessionManagerInternalSend<'a> {
-    cipher: CachedValue<ClientCryptoTool<'a>>,
+struct ClientSessionManagerInternalSend {
+    cipher: CachedValue<ClientCryptoTool>,
     identity: Vec<u8>,
     incremental_counter: u32,
 }
 
-impl<'a> ClientSessionManagerInternalSend<'a> {
+impl ClientSessionManagerInternalSend {
     fn next_packet_number(&mut self) -> u64 {
         self.incremental_counter += 1;
         let timestamp = (crate::utils::time::unix_timestamp_ms() / 1000) as u32;
@@ -29,26 +29,26 @@ impl<'a> ClientSessionManagerInternalSend<'a> {
     }
 }
 
-struct ClientSessionManagerInternalReceive<'a> {
-    cipher: CachedValue<ClientCryptoTool<'a>>,
+struct ClientSessionManagerInternalReceive {
+    cipher: CachedValue<ClientCryptoTool>,
 }
 
 /// Client-side session manager that encrypts data and manages health checking.
-pub struct ClientSessionManager<'a, 'b, 'c: 'a, T: IdentityType + 'b, FM: FlowManager + Send + Sync + 'b> {
-    health_provider: Mutex<HealthProvider<'a, 'b, T, Self>>,
-    send_internal: Mutex<ClientSessionManagerInternalSend<'c>>,
-    receive_internal: Mutex<ClientSessionManagerInternalReceive<'c>>,
+pub struct ClientSessionManager<T: IdentityType + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + Send + Sync + 'static> {
+    health_provider: Mutex<HealthProvider<T, AE, Self>>,
+    send_internal: Mutex<ClientSessionManagerInternalSend>,
+    receive_internal: Mutex<ClientSessionManagerInternalReceive>,
     flows: Vec<Arc<FM>>,
     tailor_size: usize,
-    settings: Arc<Settings<'a, 'b>>,
+    settings: Arc<Settings<AE>>,
 }
 
-impl<'a, 'b: 'a, 'c: 'a, T: IdentityType, FM: FlowManager + Send + Sync> ClientSessionManager<'a, 'b, 'c, T, FM> {
+impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync> ClientSessionManager<T, AE, FM> {
     /// Create a new client session manager.
     pub async fn new(
-        cipher: CachedValue<ClientCryptoTool<'a>>,
+        cipher: CachedValue<ClientCryptoTool>,
         flows: Vec<Arc<FM>>,
-        settings: Arc<Settings<'b, 'c>>,
+        settings: Arc<Settings<AE>>,
         identity_len: usize,
     ) -> Result<Arc<Self>, SessionControllerError> {
         let mut send_cipher = cipher.create_sibling().await.map_err(SessionControllerError::MissingCache)?;
@@ -98,7 +98,7 @@ impl<'a, 'b: 'a, 'c: 'a, T: IdentityType, FM: FlowManager + Send + Sync> ClientS
     }
 }
 
-impl<'a, 'b: 'a, 'c: 'a, T: IdentityType, FM: FlowManager + Send + Sync> SessionManager for ClientSessionManager<'a, 'b, 'c, T, FM> {
+impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync> SessionManager for ClientSessionManager<T, AE, FM> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), SessionControllerError> {
         let full_packet = if generated {
             // Health provider already assembled (body + tailor), pass through directly.

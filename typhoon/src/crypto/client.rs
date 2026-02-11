@@ -10,8 +10,8 @@ use crate::crypto::symmetric::{decrypt_auth, encrypt_auth, verify_auth};
 
 /// Client-side cryptographic tool for TYPHOON protocol.
 #[derive(Clone)]
-pub struct ClientCryptoTool<'a> {
-    cert: Certificate<'a>,
+pub struct ClientCryptoTool {
+    cert: Certificate,
     identity: Vec<u8>,
     key: Symmetric,
     #[cfg(feature = "fast")]
@@ -20,10 +20,10 @@ pub struct ClientCryptoTool<'a> {
     key_bytes: StaticByteBuffer,
 }
 
-impl<'a> ClientCryptoTool<'a> {
+impl ClientCryptoTool {
     /// Create a new ClientCryptoTool with the given certificate and identity.
     #[cfg(feature = "fast")]
-    pub fn new(cert: Certificate<'a>, identity: DynamicByteBuffer, initial_key: &StaticByteBuffer) -> Self {
+    pub fn new(cert: Certificate, identity: DynamicByteBuffer, initial_key: &StaticByteBuffer) -> Self {
         let obfs_buffer = cert.obfuscation_buffer();
         Self {
             cert,
@@ -36,7 +36,7 @@ impl<'a> ClientCryptoTool<'a> {
 
     /// Create a new ClientCryptoTool with the given certificate and identity.
     #[cfg(feature = "full")]
-    pub fn new(cert: Certificate<'a>, identity: DynamicByteBuffer, initial_key: &StaticByteBuffer) -> Self {
+    pub fn new(cert: Certificate, identity: DynamicByteBuffer, initial_key: &StaticByteBuffer) -> Self {
         Self {
             cert,
             identity: identity.into(),
@@ -46,7 +46,7 @@ impl<'a> ClientCryptoTool<'a> {
 
     /// Get certificate.
     #[inline]
-    pub fn certificate(&self) -> Certificate<'a> {
+    pub fn certificate(&self) -> Certificate {
         self.cert.clone()
     }
 

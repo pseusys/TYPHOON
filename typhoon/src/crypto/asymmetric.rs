@@ -46,7 +46,7 @@ const MARSHALLING_OBFUSCATION_KEY: &str = "marshalling obfuscation key";
 const MARSHALLING_ENCRYPTION_KEY: &str = "marshalling encryption key";
 
 #[cfg(feature = "client")]
-impl<'a> Certificate<'a> {
+impl Certificate {
     /// Client handshake: generate ephemeral keys, encapsulate with McEliece, obfuscate.
     /// Args: buffer for nonce. Returns: (ClientData, handshake_secret, initial_cipher).
     pub fn encapsulate_handshake_client(&self, pool: &BytePool) -> (ClientData, DynamicByteBuffer, Symmetric) {
