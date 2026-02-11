@@ -1,9 +1,10 @@
 use lazy_static::lazy_static;
 
 use crate::bytes::{ByteBuffer, BytePool, StaticByteBuffer};
-#[cfg(feature = "fast")]
-use crate::crypto::symmetric::{SYMMETRIC_ADDITIONAL_AUTH_LEN, decrypt_auth, encrypt_auth, verify_auth};
 use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, SYMMETRIC_KEY_LENGTH, Symmetric, decrypt_anonymously, encrypt_anonymously};
+
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+use crate::crypto::symmetric::{SYMMETRIC_ADDITIONAL_AUTH_LEN};
 
 lazy_static! {
     static ref TEST_POOL: BytePool = BytePool::new(32, 256, 32, 4, 16);
@@ -14,7 +15,7 @@ fn make_key() -> StaticByteBuffer {
     StaticByteBuffer::from(&[0x42u8; SYMMETRIC_KEY_LENGTH])
 }
 
-#[cfg(feature = "fast")]
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 #[inline]
 fn make_different_key() -> StaticByteBuffer {
     StaticByteBuffer::from(&[0x24u8; SYMMETRIC_KEY_LENGTH])
@@ -50,19 +51,23 @@ fn test_symmetric_encrypt_decrypt_cycle() {
 }
 
 // Test: authentication (anonymous cipher + BLAKE3 hash) encrypt/decrypt cycle.
-#[cfg(feature = "fast")]
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 #[test]
 fn test_symmetric_encrypt_decrypt_auth_cycle() {
     let key = make_key();
     let second_key = make_different_key();
+    let mut cipher = Symmetric::new_split(key, second_key);
 
     let plaintext_data = b"Authenticated obfuscation message";
     let plaintext = TEST_POOL.allocate_precise_from_slice_with_capacity(plaintext_data, 0, ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN);
 
-    let ciphertext = encrypt_auth(&key, plaintext, &second_key);
-    let (decrypted, transcript) = decrypt_auth(&key, ciphertext);
+    let ciphertext = cipher.encrypt_auth(plaintext, None::<&StaticByteBuffer>).expect("encryption failed");
 
+    let (decrypted, transcript) = cipher.decrypt_no_verify(ciphertext.clone());
     assert_eq!(decrypted.slice(), plaintext_data.as_slice(), "decrypted should match original");
-    let verify_result = verify_auth(transcript, &second_key);
+    let verify_result = cipher.verify_decrypted(transcript, None::<&StaticByteBuffer>);
     assert!(verify_result.is_ok(), "authentication should verify correctly");
+
+    let decrypted = cipher.decrypt_auth(ciphertext, None::<&StaticByteBuffer>).expect("decryption failed");
+    assert_eq!(decrypted.slice(), plaintext_data.as_slice(), "decrypted should match original");
 }

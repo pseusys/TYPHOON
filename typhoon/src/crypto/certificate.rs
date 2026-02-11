@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use classic_mceliece_rust::{PublicKey as McEliecePublicKey, SecretKey};
 use ed25519_dalek::{SigningKey, VerifyingKey};
-#[cfg(feature = "full")]
-use x25519_dalek::StaticSecret;
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey};
 
 use crate::bytes::{DynamicByteBuffer, StaticByteBuffer};
+
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+use x25519_dalek::StaticSecret;
 
 /// Trait for types containing obfuscation key material.
 pub trait ObfuscationBufferContainer {
@@ -15,7 +16,7 @@ pub trait ObfuscationBufferContainer {
 }
 
 /// Server secret: McEliece secret key + Ed25519 signing key (+ X25519 in full mode).
-#[cfg(feature = "full")]
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
 pub struct ServerSecret<'a> {
     pub esk: SecretKey<'a>,
     pub vsk: SigningKey,
@@ -24,7 +25,7 @@ pub struct ServerSecret<'a> {
 }
 
 /// Server secret: McEliece secret key + Ed25519 signing key + obfuscation key.
-#[cfg(feature = "fast")]
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 pub struct ServerSecret<'a> {
     pub esk: SecretKey<'a>,
     pub vsk: SigningKey,
@@ -32,13 +33,13 @@ pub struct ServerSecret<'a> {
 }
 
 impl<'a> ObfuscationBufferContainer for ServerSecret<'a> {
-    #[cfg(feature = "full")]
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     #[inline]
     fn obfuscation_buffer(&self) -> StaticByteBuffer {
         StaticByteBuffer::from(self.opk.as_bytes())
     }
 
-    #[cfg(feature = "fast")]
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     #[inline]
     fn obfuscation_buffer(&self) -> StaticByteBuffer {
         self.obfs.clone()
@@ -46,7 +47,7 @@ impl<'a> ObfuscationBufferContainer for ServerSecret<'a> {
 }
 
 /// Client certificate: McEliece public key + Ed25519 verifying key (+ X25519 in full mode).
-#[cfg(feature = "full")]
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
 #[derive(Clone)]
 pub struct Certificate {
     pub epk: Arc<McEliecePublicKey<'static>>,
@@ -55,7 +56,7 @@ pub struct Certificate {
 }
 
 /// Client certificate: McEliece public key + Ed25519 verifying key + obfuscation key.
-#[cfg(feature = "fast")]
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 #[derive(Clone)]
 pub struct Certificate {
     pub epk: Arc<McEliecePublicKey<'static>>,
@@ -64,13 +65,13 @@ pub struct Certificate {
 }
 
 impl ObfuscationBufferContainer for Certificate {
-    #[cfg(feature = "full")]
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     #[inline]
     fn obfuscation_buffer(&self) -> StaticByteBuffer {
         StaticByteBuffer::from(self.opk.as_bytes())
     }
 
-    #[cfg(feature = "fast")]
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     #[inline]
     fn obfuscation_buffer(&self) -> StaticByteBuffer {
         self.obfs.clone()

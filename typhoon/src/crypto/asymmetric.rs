@@ -7,10 +7,8 @@ use blake3::hazmat::hash_derive_key_context;
 use cfg_if::cfg_if;
 use classic_mceliece_rust::{CRYPTO_BYTES, CRYPTO_CIPHERTEXTBYTES, Ciphertext, decapsulate, encapsulate};
 use ed25519_dalek::Signature;
-use generic_array::typenum::U32;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
-#[cfg(feature = "client")]
 use crate::bytes::BytePool;
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
 use crate::crypto::certificate::ObfuscationBufferContainer;
@@ -25,7 +23,7 @@ cfg_if! {
     }
 }
 
-#[cfg(feature = "full")]
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use x25519_dalek::StaticSecret;
 
 #[cfg(feature = "client")]
@@ -39,10 +37,10 @@ const CLIENT_HANDSHAKE_OBFUSCATION_KEY: &str = "handshake client obfuscation key
 const SERVER_HANDSHAKE_OBFUSCATION_KEY: &str = "handshake server obfuscation key";
 const SESSION_KEY: &str = "session key";
 
-#[cfg(feature = "full")]
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
 const MARSHALLING_OBFUSCATION_KEY: &str = "marshalling obfuscation key";
 
-#[cfg(feature = "full")]
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
 const MARSHALLING_ENCRYPTION_KEY: &str = "marshalling encryption key";
 
 #[cfg(feature = "client")]
@@ -50,7 +48,7 @@ impl Certificate {
     /// Client handshake: generate ephemeral keys, encapsulate with McEliece, obfuscate.
     /// Args: buffer for nonce. Returns: (ClientData, handshake_secret, initial_cipher).
     pub fn encapsulate_handshake_client(&self, pool: &BytePool) -> (ClientData, DynamicByteBuffer, Symmetric) {
-        let nonce = StaticByteBuffer::from(get_rng().random_byte_array::<U32>().as_slice());
+        let nonce = get_rng().random_byte_buffer::<NONCE_LENGTH>();
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
         let mut ephemeral_public = pool.allocate_precise_from_array_with_capacity(&PublicKey::from(&ephemeral_secret).to_bytes(), 0, ANONYMOUS_NONCE_LEN);
@@ -110,9 +108,9 @@ impl Certificate {
 
     /// Full mode: encrypt and obfuscate plaintext with X25519 ephemeral exchange.
     /// Args: plaintext. Returns: ciphertext || obfuscated_key || nonce.
-    #[cfg(feature = "full")]
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn encrypt_obfuscate(&self, plaintext: DynamicByteBuffer, pool: &BytePool) -> Result<DynamicByteBuffer, HandshakeError> {
-        let nonce = StaticByteBuffer::from(get_rng().random_byte_array::<U32>().as_slice());
+        let nonce = get_rng().random_byte_buffer(NONCE_LENGTH);
 
         let ephemeral_secret = StaticSecret::random_from_rng(get_rng());
         let mut ephemeral_public = pool.allocate_precise_from_array_with_capacity(&PublicKey::from(&ephemeral_secret).to_bytes(), 0, ANONYMOUS_NONCE_LEN);
@@ -173,7 +171,7 @@ impl<'a> ServerSecret<'a> {
     /// Server handshake response: generate ephemeral X25519, sign transcript, derive session key.
     /// Args: server data, buffer. Returns: (handshake_secret, session_cipher).
     pub fn encapsulate_handshake_server(&self, data: ServerData, pool: &BytePool) -> (DynamicByteBuffer, Symmetric) {
-        let nonce = StaticByteBuffer::from(get_rng().random_byte_array::<U32>().as_slice());
+        let nonce = get_rng().random_byte_buffer::<NONCE_LENGTH>();
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
         let mut ephemeral_public = pool.allocate_precise_from_array_with_capacity(&PublicKey::from(&ephemeral_secret).to_bytes(), 0, ANONYMOUS_NONCE_LEN);
@@ -198,7 +196,7 @@ impl<'a> ServerSecret<'a> {
 
     /// Full mode: deobfuscate and decrypt ciphertext using server's X25519 secret.
     /// Args: ciphertext || obfuscated_key || nonce. Returns: plaintext.
-    #[cfg(feature = "full")]
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn decrypt_deobfuscate(&self, ciphertext: DynamicByteBuffer) -> Result<DynamicByteBuffer, HandshakeError> {
         let (ciphertext, rest) = ciphertext.split_buf(ciphertext.len() - X25519_KEY_LENGTH - ANONYMOUS_NONCE_LEN - NONCE_LENGTH);
         let (mut ephemeral_public_obfuscated, nonce) = rest.split_buf(rest.len() - NONCE_LENGTH);

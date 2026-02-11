@@ -25,5 +25,5 @@ Always compare your implementation to [README.md](./README.md) file, the code sh
 
 All the tests and builds should be run with two different sets of features:
 
-- `software`, `fast`, `server`, `client`, `tokio` (the default mode)
-- `hardware`, `full`, `server` `client`, `async-std`
+- `fast_software`, `server`, `client`, `tokio` (the default mode)
+- `full_hardware`, `server` `client`, `async-std`

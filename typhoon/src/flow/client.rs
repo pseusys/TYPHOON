@@ -79,7 +79,7 @@ impl<T: IdentityType, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowMana
         let (packet_data, packet_tailor) = input_packet.split_buf(input_packet.len() - T::length());
         let packet_flags = PacketFlags::from_bits_truncate(packet_tailor.get(0).clone());
         let encrypted_packet = match lock.provider.get_mut().await {
-            Ok(cipher) => match cipher.obfuscate_tailor(packet_tailor) {
+            Ok(cipher) => match cipher.obfuscate_tailor(packet_tailor, self.settings.pool()) {
                 Ok(res) => packet_data.expand_end(res.len()),
                 Err(err) => return Err(FlowControllerError::TailorEncryption(err)),
             },

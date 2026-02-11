@@ -15,16 +15,16 @@ use crate::crypto::certificate::Certificate;
 #[cfg(feature = "server")]
 use crate::crypto::certificate::ServerSecret;
 
-#[cfg(feature = "full")]
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
 
-#[cfg(feature = "fast")]
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 use crate::crypto::symmetric::SYMMETRIC_KEY_LENGTH;
 
 const X25519_KEY_LENGTH: usize = 32;
 const NONCE_LENGTH: usize = 32;
 
-#[cfg(feature = "full")]
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
 const ENCRYPT_OBFUSCATE_HEADER: usize = NONCE_LENGTH + X25519_KEY_LENGTH + 2 * ANONYMOUS_NONCE_LEN;
 
 // Cached keypairs for test performance (McEliece generation is slow).
@@ -46,7 +46,7 @@ lazy_static! {
     static ref TEST_POOL: BytePool = BytePool::new(32, 256, 32, 4, 16);
 }
 
-#[cfg(feature = "fast")]
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 #[inline]
 fn get_obfuscation_key() -> StaticByteBuffer {
     StaticByteBuffer::from(&[0x55u8; SYMMETRIC_KEY_LENGTH])
@@ -72,7 +72,7 @@ fn get_x25519_keypair() -> (StaticSecret, X25519PublicKey) {
 
 // TODO: move to cert creation:
 
-#[cfg(all(feature = "client", feature = "fast"))]
+#[cfg(all(feature = "client", any(feature = "fast_software", feature = "fast_hardware")))]
 #[inline]
 fn create_test_certificate() -> Certificate {
     let (_, vpk) = get_ed25519_keypair();
@@ -83,7 +83,7 @@ fn create_test_certificate() -> Certificate {
     }
 }
 
-#[cfg(all(feature = "server", feature = "fast"))]
+#[cfg(all(feature = "server", any(feature = "fast_software", feature = "fast_hardware")))]
 #[inline]
 fn create_test_server_secret() -> ServerSecret<'static> {
     let esk = get_mceliece_secret();
@@ -95,7 +95,7 @@ fn create_test_server_secret() -> ServerSecret<'static> {
     }
 }
 
-#[cfg(all(feature = "client", feature = "full"))]
+#[cfg(all(feature = "client", any(feature = "full_software", feature = "full_hardware")))]
 #[inline]
 fn create_test_certificate() -> Certificate {
     let (_, vpk) = get_ed25519_keypair();
@@ -107,7 +107,7 @@ fn create_test_certificate() -> Certificate {
     }
 }
 
-#[cfg(all(feature = "server", feature = "full"))]
+#[cfg(all(feature = "server", any(feature = "full_software", feature = "full_hardware")))]
 #[inline]
 fn create_test_server_secret() -> ServerSecret<'static> {
     let esk = get_mceliece_secret();
@@ -156,7 +156,7 @@ fn test_handshake_cycle() {
 }
 
 // Test: full mode encrypt/obfuscate then decrypt/deobfuscate cycle succeeds.
-#[cfg(all(feature = "full", feature = "client", feature = "server"))]
+#[cfg(all(any(feature = "full_software", feature = "full_hardware"), feature = "client", feature = "server"))]
 #[test]
 fn test_obfuscate_cycle() {
     let certificate = create_test_certificate();

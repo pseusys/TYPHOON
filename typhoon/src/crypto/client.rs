@@ -3,10 +3,7 @@ use crate::bytes::{BytePool, DynamicByteBuffer};
 use crate::crypto::certificate::{Certificate, ClientData, ObfuscationBufferContainer};
 use crate::crypto::error::{CryptoError, HandshakeError};
 use crate::crypto::symmetric::ObfuscationTranscript;
-use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
-
-#[cfg(feature = "fast")]
-use crate::crypto::symmetric::{decrypt_auth, encrypt_auth, verify_auth};
+use crate::crypto::symmetric::{Symmetric, NONCE_LEN, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN};
 
 /// Client-side cryptographic tool for TYPHOON protocol.
 #[derive(Clone)]
@@ -14,28 +11,25 @@ pub struct ClientCryptoTool {
     cert: Certificate,
     identity: Vec<u8>,
     key: Symmetric,
-    #[cfg(feature = "fast")]
-    obfuscation: Symmetric,
-    #[cfg(feature = "fast")]
-    key_bytes: StaticByteBuffer,
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+    obfuscation_key: Symmetric,
 }
 
 impl ClientCryptoTool {
     /// Create a new ClientCryptoTool with the given certificate and identity.
-    #[cfg(feature = "fast")]
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub fn new(cert: Certificate, identity: DynamicByteBuffer, initial_key: &StaticByteBuffer) -> Self {
         let obfs_buffer = cert.obfuscation_buffer();
         Self {
             cert,
             identity: identity.into(),
             key: Symmetric::new(initial_key),
-            obfuscation: Symmetric::new(&obfs_buffer),
-            key_bytes: initial_key.to_owned(),
+            obfuscation_key: Symmetric::new_split(obfs_buffer, initial_key.clone()),
         }
     }
 
     /// Create a new ClientCryptoTool with the given certificate and identity.
-    #[cfg(feature = "full")]
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn new(cert: Certificate, identity: DynamicByteBuffer, initial_key: &StaticByteBuffer) -> Self {
         Self {
             cert,
@@ -91,40 +85,43 @@ impl ClientCryptoTool {
     }
 
     /// Obfuscate (encrypt) tailor bytes for sending.
-    #[cfg(feature = "fast")]
-    pub fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer) -> Result<DynamicByteBuffer, CryptoError> {
-        Ok(encrypt_auth(&self.key_bytes, plaintext, &self.key_bytes))
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+    pub fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, _: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
+        self.obfuscation_key.encrypt_auth(plaintext, None::<&StaticByteBuffer>)
     }
 
     /// Obfuscate (encrypt) tailor bytes for sending.
-    #[cfg(feature = "full")]
-    pub fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer) -> Result<DynamicByteBuffer, CryptoError> {
-        self.key.encrypt_auth::<StaticByteBuffer>(plaintext, None)
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+    pub fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, pool: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
+        match self.cert.encrypt_obfuscate(plaintext, pool) {
+            Ok(res) => Ok(res),
+            Err(err) => Err(CryptoError::authentication_error(&err.to_string())),
+        }
     }
 
     /// Deobfuscate (decrypt) received tailor bytes.
-    #[cfg(feature = "fast")]
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
-        Ok(decrypt_auth(&self.key_bytes, ciphertext))
+        Ok(self.obfuscation_key.decrypt_no_verify(ciphertext))
     }
 
     /// Deobfuscate (decrypt) received tailor bytes.
-    #[cfg(feature = "full")]
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
-        match self.key.decrypt_auth::<StaticByteBuffer>(ciphertext, None) {
+        match self.key.decrypt_auth(ciphertext, None::<&StaticByteBuffer>) {
             Ok(res) => Ok((res, ObfuscationTranscript {})),
             Err(err) => Err(err),
         }
     }
 
     /// Verify the authentication (fast mode).
-    #[cfg(feature = "fast")]
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub fn verify_tailor(&mut self, transcript: ObfuscationTranscript) -> Result<(), CryptoError> {
-        verify_auth(transcript, &self.key_bytes)
+        self.obfuscation_key.verify_decrypted(transcript, None::<&StaticByteBuffer>)
     }
 
     /// Verify tailor (no-op in full mode).
-    #[cfg(feature = "full")]
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn verify_tailor(&mut self, _: ObfuscationTranscript) -> Result<(), CryptoError> {
         Ok(())
     }
