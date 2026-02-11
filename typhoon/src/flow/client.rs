@@ -25,18 +25,18 @@ struct ClientFlowManagerInternalReceive<'a> {
     provider: CachedValue<ClientCryptoTool<'a>>,
 }
 
-pub struct ClientFlowManager<'a, DP: DecoyCommunicationMode<FlowManagerT = Self>> {
+pub struct ClientFlowManager<'a, 'b, 'c, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> {
     decoy_provider: Mutex<DP>,
     send_internal: Mutex<ClientFlowManagerInternalSend<'a>>,
     receive_internal: Mutex<ClientFlowManagerInternalReceive<'a>>,
     sock: Socket,
     mtu: usize,
     tailor: usize,
-    settings: Arc<Settings>,
+    settings: Arc<Settings<'b, 'c>>,
 }
 
-impl<'a, DP: DecoyCommunicationMode<FlowManagerT = Self>> ClientFlowManager<'a, DP> {
-    async fn new(config: FlowConfig, cipher: CachedValue<ClientCryptoTool<'a>>, settings: Arc<Settings>, mtu: usize, tailor: usize, sock: Socket) -> Result<Arc<Self>, FlowControllerError> {
+impl<'a, 'b, 'c, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> ClientFlowManager<'a, 'b, 'c, DP> {
+    async fn new(config: FlowConfig, cipher: CachedValue<ClientCryptoTool<'a>>, settings: Arc<Settings<'b, 'c>>, mtu: usize, tailor: usize, sock: Socket) -> Result<Arc<Self>, FlowControllerError> {
         let send_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
         let receive_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
         let value = Arc::new_cyclic(|m| ClientFlowManager {
@@ -58,7 +58,7 @@ impl<'a, DP: DecoyCommunicationMode<FlowManagerT = Self>> ClientFlowManager<'a, 
     }
 }
 
-impl<'a, DP: DecoyCommunicationMode<FlowManagerT = Self>> FlowManager for ClientFlowManager<'a, DP> {
+impl<'a, 'b, 'c, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> FlowManager for ClientFlowManager<'a, 'b, 'c, DP> {
     /// Packet should consist of: encrypted payload || valid plaintext tailor.
     /// NB! DecoyCommunicationMode implementations *should not* send non-decoy packets via this method, but they can, if they want.
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {

@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::env::var;
-use std::ops::{Add, Index};
+use std::ops::Add;
 
 use log::warn;
 
 use crate::bytes::BytePool;
+use crate::utils::sync::AsyncExecutor;
 
 /// A typed setting key that carries its value type at compile time.
 /// This ensures type-safe access to settings - you can only get/set
@@ -249,13 +250,14 @@ fn try_env_override<T: SettingType>(key: &Key<T>) -> Option<T> {
 
 /// Builder for creating Settings instances with custom overrides.
 #[derive(Default)]
-pub struct SettingsBuilder {
+pub struct SettingsBuilder<'a, 'b> {
     overrides: OverrideMap,
+    executor: Option<AsyncExecutor<'a, 'b>>,
     pool: Option<BytePool>,
     skip_env: bool,
 }
 
-impl SettingsBuilder {
+impl<'a, 'b> SettingsBuilder<'a, 'b> {
     /// Create a new builder that will read environment variables.
     pub fn new() -> Self {
         Self::default()
@@ -264,6 +266,11 @@ impl SettingsBuilder {
     /// Create a builder that ignores environment variables.
     pub fn without_env(mut self) -> Self {
         self.skip_env = false;
+        self
+    }
+
+    pub fn with_executor(mut self, executor: AsyncExecutor<'a, 'b>) -> Self {
+        self.executor = Some(executor);
         self
     }
 
@@ -280,9 +287,13 @@ impl SettingsBuilder {
     }
 
     /// Build the Settings instance.
-    pub fn build(self) -> Settings {
+    pub fn build(self) -> Settings<'a, 'b> {
         Settings {
             overrides: self.overrides,
+            executor: match self.executor {
+                Some(res) => res,
+                None => AsyncExecutor::default(),
+            },
             pool: match self.pool {
                 Some(res) => res,
                 None => {
@@ -300,12 +311,13 @@ impl SettingsBuilder {
 /// 1. Explicit overrides set via SettingsBuilder
 /// 2. Environment variables (if not disabled)
 /// 3. Default value from the Key definition
-pub struct Settings {
+pub struct Settings<'a, 'b> {
     overrides: OverrideMap,
+    executor: AsyncExecutor<'a, 'b>,
     pool: BytePool,
 }
 
-impl Settings {
+impl<'a, 'b> Settings<'a, 'b> {
     /// Get a setting value with compile-time type safety.
     ///
     /// Resolution order: override -> environment -> default
@@ -335,9 +347,14 @@ impl Settings {
     pub fn pool(&self) -> &BytePool {
         &self.pool
     }
+
+    #[inline]
+    pub fn executor(&self) -> &AsyncExecutor<'a, 'b> {
+        &self.executor
+    }
 }
 
-impl Default for Settings {
+impl<'a, 'b> Default for Settings<'a, 'b> {
     #[inline]
     fn default() -> Self {
         SettingsBuilder::new().build()

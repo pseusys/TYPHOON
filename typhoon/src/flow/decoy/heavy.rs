@@ -9,24 +9,23 @@ use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::flow::common::FlowManager;
 use crate::settings::Settings;
 use crate::settings::keys::*;
-use crate::utils::sync::{RwLock, sleep, spawn};
+use crate::utils::sync::{RwLock, sleep};
 use crate::utils::time::unix_timestamp_ms;
 
 /// Heavy mode implements sending big decoy packets occasionally.
-pub struct HeavyDecoyProvider<FM: FlowManager> {
+pub struct HeavyDecoyProvider<'a, 'b, FM: FlowManager> {
     manager: Weak<FM>,
-    settings: Arc<Settings>,
-    state: Arc<RwLock<DecoyState>>,
+    state: Arc<RwLock<DecoyState<'a, 'b>>>,
 }
 
-impl<FM: FlowManager> HeavyDecoyProvider<FM> {
-    fn calculate_delay(state: &DecoyState, settings: &Settings) -> u64 {
-        let base_rate_rnd = settings.get(&DECOY_BASE_RATE_RND);
-        let heavy_base_rate = settings.get(&DECOY_HEAVY_BASE_RATE);
-        let quietness_factor = settings.get(&DECOY_HEAVY_QUIETNESS_FACTOR);
-        let delay_min = settings.get(&DECOY_HEAVY_DELAY_MIN);
-        let delay_max = settings.get(&DECOY_HEAVY_DELAY_MAX);
-        let delay_default = settings.get(&DECOY_HEAVY_DELAY_DEFAULT);
+impl<'a, 'b, FM: FlowManager> HeavyDecoyProvider<'a, 'b, FM> {
+    fn calculate_delay(state: &DecoyState) -> u64 {
+        let base_rate_rnd = state.settings.get(&DECOY_BASE_RATE_RND);
+        let heavy_base_rate = state.settings.get(&DECOY_HEAVY_BASE_RATE);
+        let quietness_factor = state.settings.get(&DECOY_HEAVY_QUIETNESS_FACTOR);
+        let delay_min = state.settings.get(&DECOY_HEAVY_DELAY_MIN);
+        let delay_max = state.settings.get(&DECOY_HEAVY_DELAY_MAX);
+        let delay_default = state.settings.get(&DECOY_HEAVY_DELAY_DEFAULT);
 
         let base_rate = heavy_base_rate * random_uniform(1.0 - base_rate_rnd, 1.0 + base_rate_rnd);
         let quietness = state.quietness_index();
@@ -41,10 +40,10 @@ impl<FM: FlowManager> HeavyDecoyProvider<FM> {
         (delay as u64).clamp(delay_min, delay_max)
     }
 
-    fn calculate_length(state: &DecoyState, settings: &Settings) -> usize {
-        let base_length_factor = settings.get(&DECOY_HEAVY_BASE_LENGTH);
-        let quietness_length = settings.get(&DECOY_HEAVY_QUIETNESS_LENGTH);
-        let decoy_length_factor = settings.get(&DECOY_HEAVY_DECOY_LENGTH_FACTOR);
+    fn calculate_length(state: &DecoyState<'a, 'b>) -> usize {
+        let base_length_factor = state.settings.get(&DECOY_HEAVY_BASE_LENGTH);
+        let quietness_length = state.settings.get(&DECOY_HEAVY_QUIETNESS_LENGTH);
+        let decoy_length_factor = state.settings.get(&DECOY_HEAVY_DECOY_LENGTH_FACTOR);
 
         let quietness = state.quietness_index();
         let base_length = (state.packet_length_cap as f64) * (base_length_factor + quietness_length * quietness);
@@ -53,7 +52,7 @@ impl<FM: FlowManager> HeavyDecoyProvider<FM> {
         (decoy_length as usize).clamp(state.packet_length_cap / 2, state.packet_length_cap)
     }
 
-    async fn timer_task(manager: Weak<FM>, settings: Arc<Settings>, state: Arc<RwLock<DecoyState>>) {
+    async fn timer_task(manager: Weak<FM>, state: Arc<RwLock<DecoyState<'a, 'b>>>) {
         loop {
             let delay = {
                 let state_guard = state.read().await;
@@ -73,8 +72,8 @@ impl<FM: FlowManager> HeavyDecoyProvider<FM> {
                 let decoy_length = state_guard.pending_length;
                 let decoy_packet = state_guard.create_decoy_packet(decoy_length);
 
-                let delay = Self::calculate_delay(&state_guard, &settings);
-                let length = Self::calculate_length(&state_guard, &settings);
+                let delay = Self::calculate_delay(&state_guard);
+                let length = Self::calculate_length(&state_guard);
                 state_guard.schedule_next(delay, length);
 
                 debug!("HeavyDecoyProvider: generated decoy packet (len={}), next in {}ms", decoy_length, delay);
@@ -88,13 +87,13 @@ impl<FM: FlowManager> HeavyDecoyProvider<FM> {
     }
 }
 
-impl<FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode for HeavyDecoyProvider<FM> {
+impl<'a, 'b, FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode<'a, 'b> for HeavyDecoyProvider<'a, 'b, FM> {
     type FlowManagerT = FM;
 
-    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings>, tailor: usize) -> Self {
+    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings<'a, 'b>>, tailor: usize) -> Self {
         let state = DecoyState::new(settings.clone(), tailor);
-        let delay = Self::calculate_delay(&state, &settings);
-        let length = Self::calculate_length(&state, &settings);
+        let delay = Self::calculate_delay(&state);
+        let length = Self::calculate_length(&state);
         let mut state = state;
         state.schedule_next(delay, length);
 
@@ -102,29 +101,32 @@ impl<FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode for HeavyDe
 
         Self {
             manager,
-            settings,
             state: Arc::new(RwLock::new(state)),
         }
     }
 
     async fn start(&mut self) {
+        let executor = {
+            let lock = self.state.read().await;
+            lock.settings.executor().clone()
+        };
+
         let manager = self.manager.clone();
-        let settings = self.settings.clone();
         let state = self.state.clone();
-        spawn(Self::timer_task(manager, settings, state));
+        executor.spawn(Self::timer_task(manager, state));
         debug!("HeavyDecoyProvider: background timer started");
     }
 
     async fn feed_input(&mut self, packet: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         let mut state = self.state.write().await;
-        state.update(packet.len(), &self.settings);
+        state.update(packet.len());
         Some(packet)
     }
 
     async fn feed_output(&mut self, packet: DynamicByteBuffer, generated: bool) -> Option<DynamicByteBuffer> {
         if !generated {
             let mut state = self.state.write().await;
-            state.update(packet.len(), &self.settings);
+            state.update(packet.len());
         }
         Some(packet)
     }

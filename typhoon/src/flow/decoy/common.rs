@@ -13,11 +13,11 @@ use crate::utils::random::get_rng;
 use crate::utils::time::unix_timestamp_ms;
 
 /// Trait for implementing decoy traffic communication modes.
-pub trait DecoyCommunicationMode: Sized + Send + Sync {
+pub trait DecoyCommunicationMode<'a, 'b>: Sized + Send + Sync {
     type FlowManagerT: FlowManager;
 
     /// Create a new decoy provider with the given manager, settings, and tailor size.
-    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings>, tailor: usize) -> Self;
+    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings<'a, 'b>>, tailor: usize) -> Self;
 
     /// Start the background decoy generation timer.
     fn start(&mut self) -> impl Future<Output = ()> + Send;
@@ -31,8 +31,8 @@ pub trait DecoyCommunicationMode: Sized + Send + Sync {
 
 /// Internal state for tracking packet rates and byte budgets.
 /// This state is shared by all communication modes.
-pub(super) struct DecoyState {
-    pub(super) settings: Arc<Settings>,
+pub(super) struct DecoyState<'a, 'b> {
+    pub(super) settings: Arc<Settings<'a, 'b>>,
     /// Long-term reference transmission rate in packets (milliseconds between packets).
     pub(super) reference_rate: f64,
     /// Current transmission rate in packets (milliseconds between packets).
@@ -57,8 +57,8 @@ pub(super) struct DecoyState {
     pub(super) pending_length: usize,
 }
 
-impl DecoyState {
-    pub(super) fn new(settings: Arc<Settings>, tailor_size: usize) -> Self {
+impl<'a, 'b> DecoyState<'a, 'b> {
+    pub(super) fn new(settings: Arc<Settings<'a, 'b>>, tailor_size: usize) -> Self {
         let byte_rate_cap = settings.get(&DECOY_BYTE_RATE_CAP);
         let byte_rate_factor = settings.get(&DECOY_BYTE_RATE_FACTOR);
         let length_max = settings.get(&DECOY_LENGTH_MAX) as usize;
@@ -83,16 +83,16 @@ impl DecoyState {
     }
 
     /// Update internal state when a packet passes through.
-    pub(super) fn update(&mut self, packet_length: usize, settings: &Settings) {
+    pub(super) fn update(&mut self, packet_length: usize) {
         let current_time = unix_timestamp_ms();
 
         if let Some(prev_time) = self.previous_packet_time {
             let time_delta = (current_time - prev_time) as f64;
 
-            let reference_alpha = settings.get(&DECOY_REFERENCE_ALPHA);
-            let current_alpha = settings.get(&DECOY_CURRENT_ALPHA);
-            let byte_rate_cap = settings.get(&DECOY_BYTE_RATE_CAP);
-            let byte_rate_factor = settings.get(&DECOY_BYTE_RATE_FACTOR);
+            let reference_alpha = self.settings.get(&DECOY_REFERENCE_ALPHA);
+            let current_alpha = self.settings.get(&DECOY_CURRENT_ALPHA);
+            let byte_rate_cap = self.settings.get(&DECOY_BYTE_RATE_CAP);
+            let byte_rate_factor = self.settings.get(&DECOY_BYTE_RATE_FACTOR);
 
             self.reference_rate = (1.0 - reference_alpha) * self.reference_rate + reference_alpha * time_delta;
             self.packet_rate = (1.0 - current_alpha) * self.packet_rate + current_alpha * time_delta;
