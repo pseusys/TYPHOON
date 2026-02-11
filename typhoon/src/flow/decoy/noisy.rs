@@ -9,17 +9,18 @@ use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::flow::common::FlowManager;
 use crate::settings::Settings;
 use crate::settings::keys::*;
+use crate::tailor::IdentityType;
 use crate::utils::sync::{RwLock, sleep};
 use crate::utils::time::unix_timestamp_ms;
 
 /// Noisy mode implements sending smaller decoy packets in bursts often.
-pub struct NoisyDecoyProvider<'a, 'b, FM: FlowManager> {
+pub struct NoisyDecoyProvider<'a, 'b, T: IdentityType + 'b, FM: FlowManager + 'b> {
     manager: Weak<FM>,
-    state: Arc<RwLock<DecoyState<'a, 'b>>>,
+    state: Arc<RwLock<DecoyState<'a, 'b, T>>>,
 }
 
-impl<'a, 'b, FM: FlowManager> NoisyDecoyProvider<'a, 'b, FM> {
-    fn calculate_delay(state: &DecoyState) -> u64 {
+impl<'a, 'b, T: IdentityType, FM: FlowManager> NoisyDecoyProvider<'a, 'b, T, FM> {
+    fn calculate_delay(state: &DecoyState<T>) -> u64 {
         let base_rate_rnd = state.settings.get(&DECOY_BASE_RATE_RND);
         let noisy_base_rate = state.settings.get(&DECOY_NOISY_BASE_RATE);
         let delay_min = state.settings.get(&DECOY_NOISY_DELAY_MIN);
@@ -39,7 +40,7 @@ impl<'a, 'b, FM: FlowManager> NoisyDecoyProvider<'a, 'b, FM> {
         (delay as u64).clamp(delay_min, delay_max)
     }
 
-    fn calculate_length(state: &DecoyState) -> usize {
+    fn calculate_length(state: &DecoyState<T>) -> usize {
         let length_min = state.settings.get(&DECOY_NOISY_DECOY_LENGTH_MIN) as usize;
         let length_jitter = state.settings.get(&DECOY_NOISY_DECOY_LENGTH_JITTER);
 
@@ -50,7 +51,7 @@ impl<'a, 'b, FM: FlowManager> NoisyDecoyProvider<'a, 'b, FM> {
         (decoy_length as usize).clamp(length_min, state.packet_length_cap)
     }
 
-    async fn timer_task(manager: Weak<FM>, state: Arc<RwLock<DecoyState<'a, 'b>>>) {
+    async fn timer_task(manager: Weak<FM>, state: Arc<RwLock<DecoyState<'a, 'b, T>>>) {
         loop {
             let delay = {
                 let state_guard = state.read().await;
@@ -85,11 +86,11 @@ impl<'a, 'b, FM: FlowManager> NoisyDecoyProvider<'a, 'b, FM> {
     }
 }
 
-impl<'a, 'b, FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode<'a, 'b> for NoisyDecoyProvider<'a, 'b, FM> {
+impl<'a, 'b, T: IdentityType, FM: FlowManager + Send + Sync> DecoyCommunicationMode<'a, 'b> for NoisyDecoyProvider<'a, 'b, T, FM> {
     type FlowManagerT = FM;
 
-    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings<'a, 'b>>, tailor: usize) -> Self {
-        let state = DecoyState::new(settings.clone(), tailor);
+    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings<'a, 'b>>) -> Self {
+        let state = DecoyState::new(settings.clone());
         let delay = Self::calculate_delay(&state);
         let length = Self::calculate_length(&state);
         let mut state = state;

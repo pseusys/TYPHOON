@@ -2,4 +2,4 @@ mod flags;
 mod structure;
 
 pub use flags::PacketFlags;
-pub use structure::Tailor;
+pub use structure::{Tailor, IdentityType};

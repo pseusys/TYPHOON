@@ -9,17 +9,18 @@ use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::flow::common::FlowManager;
 use crate::settings::Settings;
 use crate::settings::keys::*;
+use crate::tailor::IdentityType;
 use crate::utils::sync::{RwLock, sleep};
 use crate::utils::time::unix_timestamp_ms;
 
 /// Sparse mode implements sending average decoy packets sparsely distributed in time.
-pub struct SparseDecoyProvider<'a, 'b, FM: FlowManager> {
+pub struct SparseDecoyProvider<'a, 'b, T: IdentityType + 'b, FM: FlowManager + 'b> {
     manager: Weak<FM>,
-    state: Arc<RwLock<DecoyState<'a, 'b>>>,
+    state: Arc<RwLock<DecoyState<'a, 'b, T>>>,
 }
 
-impl<'a, 'b, FM: FlowManager> SparseDecoyProvider<'a, 'b, FM> {
-    fn calculate_delay(state: &DecoyState) -> u64 {
+impl<'a, 'b, T: IdentityType, FM: FlowManager> SparseDecoyProvider<'a, 'b, T, FM> {
+    fn calculate_delay(state: &DecoyState<T>) -> u64 {
         let base_rate_rnd = state.settings.get(&DECOY_BASE_RATE_RND);
         let sparse_base_rate = state.settings.get(&DECOY_SPARSE_BASE_RATE);
         let rate_factor = state.settings.get(&DECOY_SPARSE_RATE_FACTOR);
@@ -42,7 +43,7 @@ impl<'a, 'b, FM: FlowManager> SparseDecoyProvider<'a, 'b, FM> {
         (delay as u64).clamp(delay_min, delay_max)
     }
 
-    fn calculate_length(state: &DecoyState) -> usize {
+    fn calculate_length(state: &DecoyState<T>) -> usize {
         let length_factor = state.settings.get(&DECOY_SPARSE_LENGTH_FACTOR);
         let length_sigma = state.settings.get(&DECOY_SPARSE_LENGTH_SIGMA);
         let length_min = state.settings.get(&DECOY_SPARSE_LENGTH_MIN) as usize;
@@ -54,7 +55,7 @@ impl<'a, 'b, FM: FlowManager> SparseDecoyProvider<'a, 'b, FM> {
         (decoy_length as usize).clamp(length_min, length_max)
     }
 
-    async fn timer_task(manager: Weak<FM>, state: Arc<RwLock<DecoyState<'a, 'b>>>) {
+    async fn timer_task(manager: Weak<FM>, state: Arc<RwLock<DecoyState<'a, 'b, T>>>) {
         loop {
             let delay = {
                 let state_guard = state.read().await;
@@ -89,11 +90,11 @@ impl<'a, 'b, FM: FlowManager> SparseDecoyProvider<'a, 'b, FM> {
     }
 }
 
-impl<'a, 'b, FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode<'a, 'b> for SparseDecoyProvider<'a, 'b, FM> {
+impl<'a, 'b, T: IdentityType, FM: FlowManager + Send + Sync> DecoyCommunicationMode<'a, 'b> for SparseDecoyProvider<'a, 'b, T, FM> {
     type FlowManagerT = FM;
 
-    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings<'a, 'b>>, tailor: usize) -> Self {
-        let state = DecoyState::new(settings.clone(), tailor);
+    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings<'a, 'b>>) -> Self {
+        let state = DecoyState::new(settings.clone());
         let delay = Self::calculate_delay(&state);
         let length = Self::calculate_length(&state);
         let mut state = state;

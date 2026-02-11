@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use log::{debug, info};
@@ -11,7 +12,7 @@ use crate::flow::config::FlowConfig;
 use crate::flow::decoy::DecoyCommunicationMode;
 use crate::flow::error::FlowControllerError;
 use crate::settings::Settings;
-use crate::tailor::{PacketFlags, Tailor};
+use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::socket::Socket;
 use crate::utils::sync::Mutex;
@@ -25,22 +26,22 @@ struct ClientFlowManagerInternalReceive<'a> {
     provider: CachedValue<ClientCryptoTool<'a>>,
 }
 
-pub struct ClientFlowManager<'a, 'b, 'c, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> {
+pub struct ClientFlowManager<'a, 'b, 'c, T: IdentityType, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> {
     decoy_provider: Mutex<DP>,
     send_internal: Mutex<ClientFlowManagerInternalSend<'a>>,
     receive_internal: Mutex<ClientFlowManagerInternalReceive<'a>>,
     sock: Socket,
     mtu: usize,
-    tailor: usize,
     settings: Arc<Settings<'b, 'c>>,
+    _phantom: PhantomData<T>,
 }
 
-impl<'a, 'b, 'c, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> ClientFlowManager<'a, 'b, 'c, DP> {
-    async fn new(config: FlowConfig, cipher: CachedValue<ClientCryptoTool<'a>>, settings: Arc<Settings<'b, 'c>>, mtu: usize, tailor: usize, sock: Socket) -> Result<Arc<Self>, FlowControllerError> {
+impl<'a, 'b, 'c, T: IdentityType, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> ClientFlowManager<'a, 'b, 'c, T, DP> {
+    async fn new(config: FlowConfig, cipher: CachedValue<ClientCryptoTool<'a>>, settings: Arc<Settings<'b, 'c>>, mtu: usize, sock: Socket) -> Result<Arc<Self>, FlowControllerError> {
         let send_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
         let receive_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
         let value = Arc::new_cyclic(|m| ClientFlowManager {
-            decoy_provider: Mutex::new(DP::new(m.clone(), settings.clone(), tailor)),
+            decoy_provider: Mutex::new(DP::new(m.clone(), settings.clone())),
             send_internal: Mutex::new(ClientFlowManagerInternalSend {
                 provider: send_provider,
                 config,
@@ -50,15 +51,15 @@ impl<'a, 'b, 'c, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> Client
             }),
             sock,
             mtu,
-            tailor,
             settings,
+            _phantom: PhantomData,
         });
         value.decoy_provider.lock().await.start().await;
         Ok(value)
     }
 }
 
-impl<'a, 'b, 'c, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> FlowManager for ClientFlowManager<'a, 'b, 'c, DP> {
+impl<'a, 'b, 'c, T: IdentityType, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> FlowManager for ClientFlowManager<'a, 'b, 'c, T, DP> {
     /// Packet should consist of: encrypted payload || valid plaintext tailor.
     /// NB! DecoyCommunicationMode implementations *should not* send non-decoy packets via this method, but they can, if they want.
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {
@@ -74,7 +75,7 @@ impl<'a, 'b, 'c, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> FlowMa
         let mut lock = self.send_internal.lock().await;
         let input_packet = notified_packet.unwrap();
 
-        let (packet_data, packet_tailor) = input_packet.split_buf(input_packet.len() - self.tailor);
+        let (packet_data, packet_tailor) = input_packet.split_buf(input_packet.len() - T::length());
         let packet_flags = PacketFlags::from_bits_truncate(packet_tailor.get(0).clone());
         let encrypted_packet = match lock.provider.get_mut().await {
             Ok(cipher) => match cipher.obfuscate_tailor(packet_tailor) {
@@ -116,7 +117,7 @@ impl<'a, 'b, 'c, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> FlowMa
             let mut lock = self.receive_internal.lock().await;
             let input_packet = notified_packet.unwrap();
 
-            let (encrypted_packet, encrypted_tailor) = input_packet.split_buf(input_packet.len() - self.tailor - ClientCryptoTool::tailor_overhead());
+            let (encrypted_packet, encrypted_tailor) = input_packet.split_buf(input_packet.len() - T::length() - ClientCryptoTool::tailor_overhead());
             let tailor = match lock.provider.get_mut().await {
                 Ok(cipher) => match cipher.deobfuscate_tailor(encrypted_tailor) {
                     Ok((tailor, transcript)) => match cipher.verify_tailor(transcript) {
@@ -140,8 +141,8 @@ impl<'a, 'b, 'c, DP: DecoyCommunicationMode<'b, 'c, FlowManagerT = Self>> FlowMa
                 continue;
             }
 
-            let payload_len = Tailor::get_payload_length(&tailor) as usize;
-            return Ok(encrypted_packet.rebuffer_start(encrypted_packet.len() - payload_len).expand_end(self.tailor));
+            let payload_len = Tailor::<T>::get_payload_length(&tailor) as usize;
+            return Ok(encrypted_packet.rebuffer_start(encrypted_packet.len() - payload_len).expand_end(T::length()));
         }
     }
 }

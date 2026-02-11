@@ -9,17 +9,18 @@ use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::flow::common::FlowManager;
 use crate::settings::Settings;
 use crate::settings::keys::*;
+use crate::tailor::IdentityType;
 use crate::utils::sync::{RwLock, sleep};
 use crate::utils::time::unix_timestamp_ms;
 
 /// Heavy mode implements sending big decoy packets occasionally.
-pub struct HeavyDecoyProvider<'a, 'b, FM: FlowManager> {
+pub struct HeavyDecoyProvider<'a, 'b, T: IdentityType + 'b, FM: FlowManager + 'b> {
     manager: Weak<FM>,
-    state: Arc<RwLock<DecoyState<'a, 'b>>>,
+    state: Arc<RwLock<DecoyState<'a, 'b, T>>>,
 }
 
-impl<'a, 'b, FM: FlowManager> HeavyDecoyProvider<'a, 'b, FM> {
-    fn calculate_delay(state: &DecoyState) -> u64 {
+impl<'a, 'b, T: IdentityType, FM: FlowManager> HeavyDecoyProvider<'a, 'b, T, FM> {
+    fn calculate_delay(state: &DecoyState<'a, 'b, T>) -> u64 {
         let base_rate_rnd = state.settings.get(&DECOY_BASE_RATE_RND);
         let heavy_base_rate = state.settings.get(&DECOY_HEAVY_BASE_RATE);
         let quietness_factor = state.settings.get(&DECOY_HEAVY_QUIETNESS_FACTOR);
@@ -40,7 +41,7 @@ impl<'a, 'b, FM: FlowManager> HeavyDecoyProvider<'a, 'b, FM> {
         (delay as u64).clamp(delay_min, delay_max)
     }
 
-    fn calculate_length(state: &DecoyState<'a, 'b>) -> usize {
+    fn calculate_length(state: &DecoyState<'a, 'b, T>) -> usize {
         let base_length_factor = state.settings.get(&DECOY_HEAVY_BASE_LENGTH);
         let quietness_length = state.settings.get(&DECOY_HEAVY_QUIETNESS_LENGTH);
         let decoy_length_factor = state.settings.get(&DECOY_HEAVY_DECOY_LENGTH_FACTOR);
@@ -52,7 +53,7 @@ impl<'a, 'b, FM: FlowManager> HeavyDecoyProvider<'a, 'b, FM> {
         (decoy_length as usize).clamp(state.packet_length_cap / 2, state.packet_length_cap)
     }
 
-    async fn timer_task(manager: Weak<FM>, state: Arc<RwLock<DecoyState<'a, 'b>>>) {
+    async fn timer_task(manager: Weak<FM>, state: Arc<RwLock<DecoyState<'a, 'b, T>>>) {
         loop {
             let delay = {
                 let state_guard = state.read().await;
@@ -87,11 +88,11 @@ impl<'a, 'b, FM: FlowManager> HeavyDecoyProvider<'a, 'b, FM> {
     }
 }
 
-impl<'a, 'b, FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode<'a, 'b> for HeavyDecoyProvider<'a, 'b, FM> {
+impl<'a, 'b, T: IdentityType, FM: FlowManager + Send + Sync> DecoyCommunicationMode<'a, 'b> for HeavyDecoyProvider<'a, 'b, T, FM> {
     type FlowManagerT = FM;
 
-    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings<'a, 'b>>, tailor: usize) -> Self {
-        let state = DecoyState::new(settings.clone(), tailor);
+    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings<'a, 'b>>) -> Self {
+        let state = DecoyState::new(settings.clone());
         let delay = Self::calculate_delay(&state);
         let length = Self::calculate_length(&state);
         let mut state = state;

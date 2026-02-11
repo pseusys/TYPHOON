@@ -7,15 +7,15 @@ use crate::flow::decoy::common::DecoyCommunicationMode;
 use crate::settings::Settings;
 
 /// Simple mode does not spawn any coroutines and does not send any packets.
-pub struct SimpleDecoyProvider<'a, 'b, FM: FlowManager> {
+pub struct SimpleDecoyProvider<'a, 'b, FM: FlowManager + 'b> {
     _manager: Weak<FM>,
     _settings: std::marker::PhantomData<&'a &'b ()>,
 }
 
-impl<'a, 'b, FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode<'a, 'b> for SimpleDecoyProvider<'a, 'b, FM> {
+impl<'a, 'b, FM: FlowManager + Send + Sync> DecoyCommunicationMode<'a, 'b> for SimpleDecoyProvider<'a, 'b, FM> {
     type FlowManagerT = FM;
 
-    fn new(manager: Weak<Self::FlowManagerT>, _settings: Arc<Settings<'a, 'b>>, _tailor: usize) -> Self {
+    fn new(manager: Weak<Self::FlowManagerT>, _settings: Arc<Settings<'a, 'b>>) -> Self {
         Self {
             _manager: manager,
             _settings: std::marker::PhantomData,
