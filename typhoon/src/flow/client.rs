@@ -78,12 +78,9 @@ impl<T: IdentityType, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowMana
 
         let (packet_data, packet_tailor) = input_packet.split_buf(input_packet.len() - T::length());
         let packet_flags = PacketFlags::from_bits_truncate(packet_tailor.get(0).clone());
-        let encrypted_packet = match lock.provider.get_mut().await {
-            Ok(cipher) => match cipher.obfuscate_tailor(packet_tailor, self.settings.pool()) {
-                Ok(res) => packet_data.expand_end(res.len()),
-                Err(err) => return Err(FlowControllerError::TailorEncryption(err)),
-            },
-            Err(err) => return Err(FlowControllerError::MissingCache(err)),
+        let encrypted_packet = match lock.provider.get_mut().await.map_err(FlowControllerError::MissingCache)?.obfuscate_tailor(packet_tailor, self.settings.pool()) {
+            Ok(res) => packet_data.expand_end(res.len()),
+            Err(err) => return Err(FlowControllerError::TailorEncryption(err)),
         };
 
         let fake_header_len = lock.config.fake_header_mode.len();
@@ -93,19 +90,13 @@ impl<T: IdentityType, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowMana
         lock.config.fake_header_mode.fill(full_packet.rebuffer_end(fake_header_len));
         get_rng().fill(&mut full_packet.rebuffer_both(fake_header_len, full_packet_len));
 
-        match self.sock.send(full_packet.clone()).await {
-            Ok(_) => Ok(()),
-            Err(err) => Err(FlowControllerError::SocketError(err)),
-        }
+        self.sock.send(full_packet.clone()).await.map_err(FlowControllerError::SocketError)?;
+        Ok(())
     }
 
     async fn receive_packet(&self, packet: DynamicByteBuffer) -> Result<DynamicByteBuffer, FlowControllerError> {
         loop {
-            let packet = match self.sock.recv(packet.clone()).await {
-                Ok(res) => res,
-                Err(err) => return Err(FlowControllerError::SocketError(err)),
-            };
-
+            let packet = self.sock.recv(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
             let notified_packet = {
                 let mut lock = self.decoy_provider.lock().await;
                 let notified_packet = lock.feed_input(packet).await;

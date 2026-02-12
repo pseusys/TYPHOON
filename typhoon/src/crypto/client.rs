@@ -93,10 +93,7 @@ impl ClientCryptoTool {
     /// Obfuscate (encrypt) tailor bytes for sending.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, pool: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
-        match self.cert.encrypt_obfuscate(plaintext, pool) {
-            Ok(res) => Ok(res),
-            Err(err) => Err(CryptoError::authentication_error(&err.to_string())),
-        }
+        self.cert.encrypt_obfuscate(plaintext, pool).map_err(|e| CryptoError::authentication_error(&e.to_string()))
     }
 
     /// Deobfuscate (decrypt) received tailor bytes.
@@ -108,10 +105,7 @@ impl ClientCryptoTool {
     /// Deobfuscate (decrypt) received tailor bytes.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
-        match self.key.decrypt_auth(ciphertext, None::<&StaticByteBuffer>) {
-            Ok(res) => Ok((res, ObfuscationTranscript {})),
-            Err(err) => Err(err),
-        }
+        self.key.decrypt_auth(ciphertext, None::<&StaticByteBuffer>).map(|r| (r, ObfuscationTranscript {}))
     }
 
     /// Verify the authentication (fast mode).

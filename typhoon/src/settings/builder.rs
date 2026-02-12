@@ -56,17 +56,11 @@ impl<AE: AsyncExecutor> SettingsBuilder<AE> {
     pub fn build(self) -> Settings<AE> {
         Settings::new(
             self.overrides,
-            match self.executor {
-                Some(res) => res,
-                None => AE::new(),
-            },
-            match self.pool {
-                Some(res) => res,
-                None => {
-                    let capacity = consts::DEFAULT_TYPHOON_MTU_LENGTH / 2;
-                    BytePool::new(capacity, consts::DEFAULT_TYPHOON_MTU_LENGTH, capacity, consts::DEFAULT_POOL_INITIAL_SIZE, consts::DEFAULT_POOL_CAPACITY)
-                }
-            },
+            self.executor.unwrap_or_else(AE::new),
+            self.pool.unwrap_or_else(|| {
+                let capacity = consts::DEFAULT_TYPHOON_MTU_LENGTH / 2;
+                BytePool::new(capacity, consts::DEFAULT_TYPHOON_MTU_LENGTH, capacity, consts::DEFAULT_POOL_INITIAL_SIZE, consts::DEFAULT_POOL_CAPACITY)
+            }),
         )
     }
 }

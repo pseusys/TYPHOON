@@ -54,11 +54,7 @@ impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync> ClientSe
         let mut send_cipher = cipher.create_sibling().await.map_err(SessionControllerError::MissingCache)?;
         let receive_cipher = cipher.create_sibling().await.map_err(SessionControllerError::MissingCache)?;
 
-        let identity = match send_cipher.get().await {
-            Ok(tool) => tool.identity(),
-            Err(err) => return Err(SessionControllerError::MissingCache(err)),
-        };
-
+        let identity = send_cipher.get().await.map_err(SessionControllerError::MissingCache)?.identity();
         let tailor_size = TAILOR_LENGTH + identity_len;
         let (response_tx, response_rx) = channel(1);
         let (shadowride_tx, shadowride_rx) = channel(1);
@@ -106,11 +102,7 @@ impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync> SessionM
         } else {
             // User data: encrypt payload, create DATA tailor, check for shadowriding.
             let mut send_lock = self.send_internal.lock().await;
-
-            let encrypted_payload = match send_lock.cipher.get_mut().await {
-                Ok(cipher) => cipher.encrypt_payload(packet, None).map_err(SessionControllerError::CryptoError)?,
-                Err(err) => return Err(SessionControllerError::MissingCache(err)),
-            };
+            let encrypted_payload = send_lock.cipher.get_mut().await.map_err(SessionControllerError::MissingCache)?.encrypt_payload(packet, None).map_err(SessionControllerError::CryptoError)?;
 
             let payload_length = encrypted_payload.len() as u16;
             let packet_number = send_lock.next_packet_number();
@@ -161,15 +153,12 @@ impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync> SessionM
             // If there is data payload, decrypt and return.
             if tailor.flags.has_payload() {
                 let mut recv_lock = self.receive_internal.lock().await;
-                match recv_lock.cipher.get_mut().await {
-                    Ok(cipher) => match cipher.decrypt_payload(payload_part, None) {
-                        Ok(decrypted) => return Ok(decrypted),
-                        Err(err) => {
-                            debug!("error decrypting payload: {}", err);
-                            continue;
-                        }
+                match recv_lock.cipher.get_mut().await.map_err(SessionControllerError::MissingCache)?.decrypt_payload(payload_part, None) {
+                    Ok(decrypted) => return Ok(decrypted),
+                    Err(err) => {
+                        debug!("error decrypting payload: {}", err);
+                        continue;
                     },
-                    Err(err) => return Err(SessionControllerError::MissingCache(err)),
                 }
             }
 

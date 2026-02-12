@@ -110,7 +110,7 @@ impl Certificate {
     /// Args: plaintext. Returns: ciphertext || obfuscated_key || nonce.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn encrypt_obfuscate(&self, plaintext: DynamicByteBuffer, pool: &BytePool) -> Result<DynamicByteBuffer, HandshakeError> {
-        let nonce = get_rng().random_byte_buffer(NONCE_LENGTH);
+        let nonce = get_rng().random_byte_buffer::<NONCE_LENGTH>();
 
         let ephemeral_secret = StaticSecret::random_from_rng(get_rng());
         let mut ephemeral_public = pool.allocate_precise_from_array_with_capacity(&PublicKey::from(&ephemeral_secret).to_bytes(), 0, ANONYMOUS_NONCE_LEN);
@@ -123,10 +123,7 @@ impl Certificate {
         let encryption_key_hash = Hasher::new_keyed(&hash_derive_key_context(MARSHALLING_ENCRYPTION_KEY)).update(shared_secret.as_bytes()).finalize();
         let encryption_key = StaticByteBuffer::from(encryption_key_hash.as_bytes());
 
-        let ciphertext = match Symmetric::new(&encryption_key).encrypt_auth(plaintext, Some(&nonce)) {
-            Ok(res) => res,
-            Err(err) => return Err(HandshakeError::handshake_crypto_error("encrypting plaintext", err)),
-        };
+        let ciphertext = Symmetric::new(&encryption_key).encrypt_auth(plaintext, Some(&nonce)).map_err(|e| HandshakeError::handshake_crypto_error("encrypting plaintext", e))?;
         let payload = ciphertext.append_buf(&ephemeral_public_obfuscated).append_buf(&nonce);
         Ok(payload)
     }
@@ -212,11 +209,6 @@ impl<'a> ServerSecret<'a> {
         let encryption_key_hash = Hasher::new_keyed(&hash_derive_key_context(MARSHALLING_ENCRYPTION_KEY)).update(shared_secret.as_bytes()).finalize();
         let encryption_key = StaticByteBuffer::from(encryption_key_hash.as_bytes());
 
-        let plaintext = match Symmetric::new(&encryption_key).decrypt_auth(ciphertext, Some(&nonce)) {
-            Ok(res) => res,
-            Err(err) => return Err(HandshakeError::handshake_crypto_error("decrypting plaintext", err)),
-        };
-
-        Ok(plaintext)
+        Symmetric::new(&encryption_key).decrypt_auth(ciphertext, Some(&nonce)).map_err(|e| HandshakeError::handshake_crypto_error("decrypting plaintext", e))
     }
 }

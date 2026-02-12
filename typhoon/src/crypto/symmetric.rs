@@ -163,11 +163,8 @@ impl Symmetric {
         let result = match additional_data {
             Some(res) => self.cipher.encrypt_in_place_detached(&nonce, res.slice(), &mut plaintext.slice_mut()),
             None => self.cipher.encrypt_in_place_detached(&nonce, &[], &mut plaintext.slice_mut()),
-        };
-        match result {
-            Ok(res) => Ok(plaintext.append(&nonce).append(&res)),
-            Err(err) => Err(CryptoError::encryption_error("symmetric encryption", err)),
-        }
+        }.map_err(|e| CryptoError::encryption_error("symmetric encryption", e))?;
+        Ok(plaintext.append(&nonce).append(&result))
     }
 
     #[cfg(all(any(feature = "fast_software", feature = "fast_hardware")))]
@@ -209,13 +206,10 @@ impl Symmetric {
         let nonce = CipherNonce::from_slice(&nonce_slice);
         let tag_slice = authentication.slice();
         let tag = CipherTag::from_slice(&tag_slice);
-        let result = match additional_data {
+        match additional_data {
             Some(res) => self.cipher.decrypt_in_place_detached(&nonce, res.slice(), &mut ciphertext.slice_mut(), &tag),
             None => self.cipher.decrypt_in_place_detached(&nonce, &[], &mut ciphertext.slice_mut(), &tag),
-        };
-        match result {
-            Ok(_) => Ok(ciphertext),
-            Err(err) => Err(CryptoError::encryption_error("symmetric decryption", err)),
-        }
+        }.map_err(|e| CryptoError::encryption_error("symmetric decryption", e))?;
+        Ok(ciphertext)
     }
 }
