@@ -4,11 +4,10 @@ use std::env::var;
 
 use log::warn;
 
-use crate::bytes::BytePool;
-use crate::utils::sync::AsyncExecutor;
-
 use super::builder::SettingsBuilder;
 use super::override_map::{Key, OverrideMap, SettingType};
+use crate::bytes::BytePool;
+use crate::utils::sync::AsyncExecutor;
 
 /// Try to read an environment variable and parse it as type T.
 /// Returns None if the variable is not set or cannot be parsed.
@@ -35,7 +34,11 @@ pub struct Settings<AE: AsyncExecutor> {
 impl<AE: AsyncExecutor> Settings<AE> {
     /// Create a new Settings instance from its components.
     pub(super) fn new(overrides: OverrideMap, executor: AE, pool: BytePool) -> Self {
-        Self { overrides, executor, pool }
+        Self {
+            overrides,
+            executor,
+            pool,
+        }
     }
 
     /// Get a setting value with compile-time type safety.

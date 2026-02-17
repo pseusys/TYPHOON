@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use log::debug;
 
-use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyState, random_uniform};
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::flow::common::FlowManager;
+use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyState, random_uniform};
 use crate::settings::Settings;
 use crate::settings::keys::*;
 use crate::tailor::IdentityType;

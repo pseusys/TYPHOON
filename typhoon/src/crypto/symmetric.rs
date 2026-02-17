@@ -163,7 +163,8 @@ impl Symmetric {
         let result = match additional_data {
             Some(res) => self.cipher.encrypt_in_place_detached(&nonce, res.slice(), &mut plaintext.slice_mut()),
             None => self.cipher.encrypt_in_place_detached(&nonce, &[], &mut plaintext.slice_mut()),
-        }.map_err(|e| CryptoError::encryption_error("symmetric encryption", e))?;
+        }
+        .map_err(|e| CryptoError::encryption_error("symmetric encryption", e))?;
         Ok(plaintext.append(&nonce).append(&result))
     }
 
@@ -171,10 +172,13 @@ impl Symmetric {
     pub fn decrypt_no_verify(&mut self, ciphertext_authenticated: DynamicByteBuffer) -> (DynamicByteBuffer, ObfuscationTranscript) {
         let (ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_ADDITIONAL_AUTH_LEN);
         let plaintext = decrypt_anonymously(&self.encryption_key, &mut ciphertext_with_nonce.copy());
-        (plaintext, ObfuscationTranscript {
-            ciphertext_copy: ciphertext_with_nonce,
-            auth_transcript: authentication,
-        })
+        (
+            plaintext,
+            ObfuscationTranscript {
+                ciphertext_copy: ciphertext_with_nonce,
+                auth_transcript: authentication,
+            },
+        )
     }
 
     #[cfg(all(any(feature = "fast_software", feature = "fast_hardware")))]
@@ -209,7 +213,8 @@ impl Symmetric {
         match additional_data {
             Some(res) => self.cipher.decrypt_in_place_detached(&nonce, res.slice(), &mut ciphertext.slice_mut(), &tag),
             None => self.cipher.decrypt_in_place_detached(&nonce, &[], &mut ciphertext.slice_mut(), &tag),
-        }.map_err(|e| CryptoError::encryption_error("symmetric decryption", e))?;
+        }
+        .map_err(|e| CryptoError::encryption_error("symmetric decryption", e))?;
         Ok(ciphertext)
     }
 }

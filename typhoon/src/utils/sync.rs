@@ -7,10 +7,10 @@ use futures::stream::{FuturesUnordered, StreamExt};
 
 cfg_if! {
     if #[cfg(feature = "tokio")] {
-        pub use tokio::sync::mpsc::{Sender, Receiver, channel};
+        use tokio::sync::broadcast::{Sender, Receiver, channel};
         pub use tokio::sync::{RwLock, Mutex};
     } else if #[cfg(feature = "async-std")] {
-        pub use async_channel::{Sender, Receiver, bounded as channel};
+        use async_channel::{Sender, Receiver, bounded as channel};
         pub use async_lock::{RwLock, Mutex};
     }
 }
@@ -21,6 +21,87 @@ pub trait AsyncExecutor: Clone + Send + Sync {
     fn new() -> Self;
     /// Spawn a fire-and-forget future onto the runtime.
     fn spawn<F: Future<Output = ()> + Send + 'static>(&self, future: F);
+}
+
+/// Channel sender wrapper with runtime-agnostic API.
+pub struct ChannelSender<T> {
+    sender: Sender<T>,
+    #[cfg(feature = "async-std")]
+    receiver: Receiver<T>,
+}
+
+/// Channel receiver wrapper with runtime-agnostic API.
+pub struct ChannelReceiver<T> {
+    receiver: Receiver<T>,
+}
+
+impl<T: Clone> ChannelSender<T> {
+    #[cfg(feature = "tokio")]
+    pub async fn send(&self, value: T) -> bool {
+        self.sender.send(value).is_ok()
+    }
+
+    #[cfg(feature = "async-std")]
+    pub async fn send(&self, value: T) -> bool {
+        self.sender.send(value).await.is_ok()
+    }
+
+    /// Create a new receiver for this channel.
+    #[cfg(feature = "tokio")]
+    pub fn subscribe(&self) -> ChannelReceiver<T> {
+        ChannelReceiver {
+            receiver: self.sender.subscribe(),
+        }
+    }
+
+    /// Create a new receiver for this channel.
+    #[cfg(feature = "async-std")]
+    pub fn subscribe(&self) -> ChannelReceiver<T> {
+        ChannelReceiver {
+            receiver: self.receiver.clone(),
+        }
+    }
+}
+
+impl<T: Clone> ChannelReceiver<T> {
+    #[cfg(feature = "tokio")]
+    pub async fn recv(&mut self) -> Option<T> {
+        loop {
+            match self.receiver.recv().await {
+                Ok(val) => return Some(val),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    }
+
+    #[cfg(feature = "async-std")]
+    pub async fn recv(&mut self) -> Option<T> {
+        match self.receiver.recv().await {
+            Ok(res) => Some(res),
+            Err(_) => None,
+        }
+    }
+}
+
+/// Create a channel with the given capacity.
+pub fn create_channel<T: Clone>(capacity: usize) -> (ChannelSender<T>, ChannelReceiver<T>) {
+    let (sender, receiver) = channel(capacity);
+    #[cfg(feature = "tokio")]
+    let tx = ChannelSender {
+        sender,
+    };
+    #[cfg(feature = "async-std")]
+    let tx = ChannelSender {
+        sender,
+        receiver: receiver.clone(),
+    };
+    (
+        tx,
+        ChannelReceiver {
+            receiver,
+        },
+    )
 }
 
 /// Pool of concurrent futures that resolves them as they complete.

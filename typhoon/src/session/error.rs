@@ -21,4 +21,10 @@ pub enum SessionControllerError {
 
     #[error("connection terminated by peer (code {})", .0)]
     ConnectionTerminated(u8),
+
+    #[error("no flows provided for session client")]
+    NoFlows,
+
+    #[error("session manager health provider terminated")]
+    HealthProviderDied,
 }

@@ -9,8 +9,7 @@ use classic_mceliece_rust::{CRYPTO_BYTES, CRYPTO_CIPHERTEXTBYTES, Ciphertext, de
 use ed25519_dalek::Signature;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
-use crate::bytes::BytePool;
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, DynamicByteBuffer, StaticByteBuffer};
 use crate::crypto::certificate::ObfuscationBufferContainer;
 use crate::crypto::error::HandshakeError;
 use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, Symmetric, decrypt_anonymously, encrypt_anonymously};

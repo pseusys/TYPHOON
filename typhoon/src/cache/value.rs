@@ -84,6 +84,10 @@ impl<T: Clone + Send> CachedValue<T> {
         }
     }
 
+    pub fn get_cached(&self) -> &T {
+        &self.local
+    }
+
     pub async fn get(&mut self) -> Result<&T, CacheError> {
         let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
         let guard = source.read().await;

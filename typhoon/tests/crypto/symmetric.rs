@@ -1,10 +1,9 @@
 use lazy_static::lazy_static;
 
 use crate::bytes::{ByteBuffer, BytePool, StaticByteBuffer};
-use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, SYMMETRIC_KEY_LENGTH, Symmetric, decrypt_anonymously, encrypt_anonymously};
-
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-use crate::crypto::symmetric::{SYMMETRIC_ADDITIONAL_AUTH_LEN};
+use crate::crypto::symmetric::SYMMETRIC_ADDITIONAL_AUTH_LEN;
+use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, SYMMETRIC_KEY_LENGTH, Symmetric, decrypt_anonymously, encrypt_anonymously};
 
 lazy_static! {
     static ref TEST_POOL: BytePool = BytePool::new(32, 256, 32, 4, 16);

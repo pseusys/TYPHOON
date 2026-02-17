@@ -1,28 +1,27 @@
-use crate::bytes::StaticByteBuffer;
-use crate::bytes::{BytePool, DynamicByteBuffer};
+use crate::bytes::{BytePool, DynamicByteBuffer, StaticByteBuffer};
 use crate::crypto::certificate::{Certificate, ClientData, ObfuscationBufferContainer};
 use crate::crypto::error::{CryptoError, HandshakeError};
-use crate::crypto::symmetric::ObfuscationTranscript;
-use crate::crypto::symmetric::{Symmetric, NONCE_LEN, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN};
+use crate::crypto::symmetric::{NONCE_LEN, ObfuscationTranscript, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
+use crate::tailor::IdentityType;
 
 /// Client-side cryptographic tool for TYPHOON protocol.
 #[derive(Clone)]
-pub struct ClientCryptoTool {
+pub struct ClientCryptoTool<T: IdentityType + Clone> {
     cert: Certificate,
-    identity: Vec<u8>,
+    identity: T,
     key: Symmetric,
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     obfuscation_key: Symmetric,
 }
 
-impl ClientCryptoTool {
+impl<T: IdentityType + Clone> ClientCryptoTool<T> {
     /// Create a new ClientCryptoTool with the given certificate and identity.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn new(cert: Certificate, identity: DynamicByteBuffer, initial_key: &StaticByteBuffer) -> Self {
+    pub fn new(cert: Certificate, identity: T, initial_key: &StaticByteBuffer) -> Self {
         let obfs_buffer = cert.obfuscation_buffer();
         Self {
             cert,
-            identity: identity.into(),
+            identity,
             key: Symmetric::new(initial_key),
             obfuscation_key: Symmetric::new_split(obfs_buffer, initial_key.clone()),
         }
@@ -30,10 +29,10 @@ impl ClientCryptoTool {
 
     /// Create a new ClientCryptoTool with the given certificate and identity.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn new(cert: Certificate, identity: DynamicByteBuffer, initial_key: &StaticByteBuffer) -> Self {
+    pub fn new(cert: Certificate, identity: IdentityType, initial_key: &StaticByteBuffer) -> Self {
         Self {
             cert,
-            identity: identity.into(),
+            identity,
             key: Symmetric::new(initial_key),
         }
     }
@@ -46,14 +45,14 @@ impl ClientCryptoTool {
 
     /// Get the identity bytes.
     #[inline]
-    pub fn identity(&self) -> Vec<u8> {
+    pub fn identity(&self) -> T {
         self.identity.clone()
     }
 
     /// Get the identity length.
     #[inline]
     pub fn identity_len(&self) -> usize {
-        self.identity.len()
+        T::length()
     }
 
     /// Overhead added by tailor encryption (nonce + auth tags).

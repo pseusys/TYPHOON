@@ -6,20 +6,16 @@ use lazy_static::lazy_static;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::bytes::{ByteBuffer, BytePool, StaticByteBuffer};
-use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
-use crate::utils::random::get_rng;
-
 #[cfg(feature = "client")]
 use crate::crypto::certificate::Certificate;
-
 #[cfg(feature = "server")]
 use crate::crypto::certificate::ServerSecret;
-
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
-
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 use crate::crypto::symmetric::SYMMETRIC_KEY_LENGTH;
+use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
+use crate::utils::random::get_rng;
 
 const X25519_KEY_LENGTH: usize = 32;
 const NONCE_LENGTH: usize = 32;

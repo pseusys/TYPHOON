@@ -2,12 +2,11 @@ use std::sync::Arc;
 
 use classic_mceliece_rust::{PublicKey as McEliecePublicKey, SecretKey};
 use ed25519_dalek::{SigningKey, VerifyingKey};
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+use x25519_dalek::StaticSecret;
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey};
 
 use crate::bytes::{DynamicByteBuffer, StaticByteBuffer};
-
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
-use x25519_dalek::StaticSecret;
 
 /// Trait for types containing obfuscation key material.
 pub trait ObfuscationBufferContainer {

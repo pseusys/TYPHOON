@@ -1,11 +1,10 @@
 //! Builder pattern for constructing Settings instances.
 
-use crate::bytes::BytePool;
-use crate::utils::sync::AsyncExecutor;
-
 use super::override_map::{Key, OverrideMap, SettingType};
 use super::settings::Settings;
 use super::statics::consts;
+use crate::bytes::BytePool;
+use crate::utils::sync::AsyncExecutor;
 
 /// Builder for creating Settings instances with custom overrides.
 #[derive(Default)]

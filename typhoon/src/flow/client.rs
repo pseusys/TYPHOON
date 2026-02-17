@@ -17,28 +17,28 @@ use crate::utils::random::get_rng;
 use crate::utils::socket::Socket;
 use crate::utils::sync::{AsyncExecutor, Mutex};
 
-struct ClientFlowManagerInternalSend {
-    provider: CachedValue<ClientCryptoTool>,
+struct ClientFlowManagerInternalSend<T: IdentityType + Clone> {
+    provider: CachedValue<ClientCryptoTool<T>>,
     config: FlowConfig,
 }
 
-struct ClientFlowManagerInternalReceive {
-    provider: CachedValue<ClientCryptoTool>,
+struct ClientFlowManagerInternalReceive<T: IdentityType + Clone> {
+    provider: CachedValue<ClientCryptoTool<T>>,
 }
 
 /// Client-side flow manager that handles packet encryption, decoy traffic, and socket I/O.
-pub struct ClientFlowManager<T: IdentityType, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowManagerT = Self>> {
+pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowManagerT = Self>> {
     decoy_provider: Mutex<DP>,
-    send_internal: Mutex<ClientFlowManagerInternalSend>,
-    receive_internal: Mutex<ClientFlowManagerInternalReceive>,
+    send_internal: Mutex<ClientFlowManagerInternalSend<T>>,
+    receive_internal: Mutex<ClientFlowManagerInternalReceive<T>>,
     sock: Socket,
     mtu: usize,
     settings: Arc<Settings<AE>>,
     _phantom: PhantomData<T>,
 }
 
-impl<T: IdentityType, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowManagerT = Self>> ClientFlowManager<T, AE, DP> {
-    async fn new(config: FlowConfig, cipher: CachedValue<ClientCryptoTool>, settings: Arc<Settings<AE>>, mtu: usize, sock: Socket) -> Result<Arc<Self>, FlowControllerError> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowManagerT = Self>> ClientFlowManager<T, AE, DP> {
+    async fn new(config: FlowConfig, cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, mtu: usize, sock: Socket) -> Result<Arc<Self>, FlowControllerError> {
         let send_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
         let receive_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
         let value = Arc::new_cyclic(|m| ClientFlowManager {
@@ -60,7 +60,7 @@ impl<T: IdentityType, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowMana
     }
 }
 
-impl<T: IdentityType, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowManagerT = Self>> FlowManager for ClientFlowManager<T, AE, DP> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowManagerT = Self>> FlowManager for ClientFlowManager<T, AE, DP> {
     /// Packet should consist of: encrypted payload || valid plaintext tailor.
     /// NB! DecoyCommunicationMode implementations *should not* send non-decoy packets via this method, but they can, if they want.
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {
@@ -109,7 +109,7 @@ impl<T: IdentityType, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowMana
             let mut lock = self.receive_internal.lock().await;
             let input_packet = notified_packet.unwrap();
 
-            let (encrypted_packet, encrypted_tailor) = input_packet.split_buf(input_packet.len() - T::length() - ClientCryptoTool::tailor_overhead());
+            let (encrypted_packet, encrypted_tailor) = input_packet.split_buf(input_packet.len() - T::length() - ClientCryptoTool::<T>::tailor_overhead());
             let tailor = match lock.provider.get_mut().await {
                 Ok(cipher) => match cipher.deobfuscate_tailor(encrypted_tailor) {
                     Ok((tailor, transcript)) => match cipher.verify_tailor(transcript) {

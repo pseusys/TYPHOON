@@ -4,7 +4,7 @@ use std::sync::Arc;
 use log::{debug, info};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
-use crate::cache::CachedValue;
+use crate::cache::{CachedValue, SharedValue};
 use crate::crypto::ClientCryptoTool;
 use crate::flow::FlowManager;
 use crate::session::common::SessionManager;
@@ -13,15 +13,28 @@ use crate::session::health::HealthProvider;
 use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{IdentityType, PacketFlags, Tailor};
-use crate::utils::sync::{AsyncExecutor, Mutex, channel};
+use crate::utils::random::{SupportRng, get_rng};
+use crate::utils::sync::{AsyncExecutor, Mutex, create_channel};
 
-struct ClientSessionManagerInternalSend {
-    cipher: CachedValue<ClientCryptoTool>,
-    identity: Vec<u8>,
+struct ClientSessionManagerInternalSend<T: IdentityType + Clone> {
+    cipher: CachedValue<ClientCryptoTool<T>>,
     incremental_counter: u32,
 }
 
-impl ClientSessionManagerInternalSend {
+struct ClientSessionManagerInternalReceive<T: IdentityType + Clone> {
+    cipher: CachedValue<ClientCryptoTool<T>>,
+}
+
+/// Client-side session manager that encrypts data and manages health checking.
+pub struct ClientSessionManager<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + Send + Sync + 'static> {
+    health_provider: Mutex<HealthProvider<T, AE, Self>>,
+    send_internal: Mutex<ClientSessionManagerInternalSend<T>>,
+    receive_internal: Mutex<ClientSessionManagerInternalReceive<T>>,
+    flows: Vec<FM>,
+    settings: Arc<Settings<AE>>,
+}
+
+impl<T: IdentityType + Clone> ClientSessionManagerInternalSend<T> {
     fn next_packet_number(&mut self) -> u64 {
         self.incremental_counter += 1;
         let timestamp = (crate::utils::time::unix_timestamp_ms() / 1000) as u32;
@@ -29,57 +42,29 @@ impl ClientSessionManagerInternalSend {
     }
 }
 
-struct ClientSessionManagerInternalReceive {
-    cipher: CachedValue<ClientCryptoTool>,
-}
-
-/// Client-side session manager that encrypts data and manages health checking.
-pub struct ClientSessionManager<T: IdentityType + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + Send + Sync + 'static> {
-    health_provider: Mutex<HealthProvider<T, AE, Self>>,
-    send_internal: Mutex<ClientSessionManagerInternalSend>,
-    receive_internal: Mutex<ClientSessionManagerInternalReceive>,
-    flows: Vec<Arc<FM>>,
-    tailor_size: usize,
-    settings: Arc<Settings<AE>>,
-}
-
-impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync> ClientSessionManager<T, AE, FM> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> ClientSessionManager<T, AE, FM> {
     /// Create a new client session manager.
-    pub async fn new(
-        cipher: CachedValue<ClientCryptoTool>,
-        flows: Vec<Arc<FM>>,
-        settings: Arc<Settings<AE>>,
-        identity_len: usize,
-    ) -> Result<Arc<Self>, SessionControllerError> {
-        let mut send_cipher = cipher.create_sibling().await.map_err(SessionControllerError::MissingCache)?;
-        let receive_cipher = cipher.create_sibling().await.map_err(SessionControllerError::MissingCache)?;
+    pub async fn new(mut cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>) -> Result<Arc<Self>, SessionControllerError> {
+        let send_cipher = cipher.create_cache().await;
+        let receive_cipher = cipher.create_cache().await;
+        let health_state_crypto = cipher.create_cache().await;
 
-        let identity = send_cipher.get().await.map_err(SessionControllerError::MissingCache)?.identity();
-        let tailor_size = TAILOR_LENGTH + identity_len;
-        let (response_tx, response_rx) = channel(1);
-        let (shadowride_tx, shadowride_rx) = channel(1);
+        let (response_tx, response_rx) = create_channel(1);
+        let (shadowride_tx, shadowride_rx) = create_channel(1);
 
         let value = Arc::new_cyclic(|weak| {
-            let health_provider = HealthProvider::new(
-                weak.clone(),
-                settings.clone(),
-                identity.clone(),
-                response_tx,
-                shadowride_tx,
-            );
+            let health_provider = HealthProvider::new(weak.clone(), settings.clone(), health_state_crypto, response_tx, shadowride_tx);
 
             ClientSessionManager {
                 health_provider: Mutex::new(health_provider),
                 send_internal: Mutex::new(ClientSessionManagerInternalSend {
                     cipher: send_cipher,
-                    identity,
                     incremental_counter: 0,
                 }),
                 receive_internal: Mutex::new(ClientSessionManagerInternalReceive {
                     cipher: receive_cipher,
                 }),
                 flows,
-                tailor_size,
                 settings,
             }
         });
@@ -89,12 +74,12 @@ impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync> ClientSe
     }
 
     /// Select a flow manager (currently uses the first one).
-    fn select_flow(&self) -> &Arc<FM> {
-        self.flows.first().expect("at least one flow manager required")
+    fn select_flow(&self) -> &FM {
+        get_rng().random_item(&self.flows).expect("at least one flow manager required")
     }
 }
 
-impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync> SessionManager for ClientSessionManager<T, AE, FM> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> SessionManager for ClientSessionManager<T, AE, FM> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), SessionControllerError> {
         let full_packet = if generated {
             // Health provider already assembled (body + tailor), pass through directly.
@@ -106,8 +91,8 @@ impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync> SessionM
 
             let payload_length = encrypted_payload.len() as u16;
             let packet_number = send_lock.next_packet_number();
-            let identity_buffer = self.settings.pool().allocate_precise_from_slice_with_capacity(&send_lock.identity, 0, 0);
-            let mut tailor = Tailor::data(T::from_bytes(identity_buffer.slice()), payload_length, packet_number);
+            let identity = send_lock.cipher.get().await.map_err(SessionControllerError::MissingCache)?.identity();
+            let mut tailor = Tailor::data(identity, payload_length, packet_number);
 
             // Let health provider potentially attach a shadowride.
             {
@@ -115,29 +100,24 @@ impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync> SessionM
                 health_lock.feed_output(&mut tailor).await;
             }
 
-            let tailor_buffer = self.settings.pool().allocate(Some(self.tailor_size));
-            let tailor_data = tailor.to_buffer(tailor_buffer);
-
             // Assemble: encrypted_payload || plaintext_tailor.
-            let assembled = encrypted_payload.expand_end(tailor_data.len());
-            assembled.slice_start_mut(encrypted_payload.len()).copy_from_slice(tailor_data.slice());
+            let encrypted_payload_len = encrypted_payload.len();
+            let assembled = tailor.to_buffer(encrypted_payload.expand_end(T::length()).rebuffer_start(encrypted_payload_len));
             assembled
         };
 
-        let flow = self.select_flow();
-        flow.send_packet(full_packet, false).await.map_err(SessionControllerError::FlowError)
+        self.select_flow().send_packet(full_packet, false).await.map_err(SessionControllerError::FlowError)
     }
 
     async fn receive_packet(&self) -> Result<DynamicByteBuffer, SessionControllerError> {
-        let flow = self.select_flow();
         let recv_buf = self.settings.pool().allocate(None);
 
         loop {
-            let packet = flow.receive_packet(recv_buf.clone()).await.map_err(SessionControllerError::FlowError)?;
+            let packet = self.select_flow().receive_packet(recv_buf.clone()).await.map_err(SessionControllerError::FlowError)?;
 
             // The flow manager returns: encrypted_payload || plaintext_tailor.
-            let (payload_part, tailor_part) = packet.split_buf(packet.len() - self.tailor_size);
-            let tailor = Tailor::from_buffer(&tailor_part, self.tailor_size - TAILOR_LENGTH);
+            let (payload_part, tailor_part) = packet.split_buf(packet.len() - T::length());
+            let tailor = Tailor::from_buffer(&tailor_part, T::length() - TAILOR_LENGTH);
 
             // Handle termination.
             if tailor.flags.is_termination() {
@@ -158,7 +138,7 @@ impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync> SessionM
                     Err(err) => {
                         debug!("error decrypting payload: {}", err);
                         continue;
-                    },
+                    }
                 }
             }
 

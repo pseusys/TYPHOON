@@ -61,7 +61,9 @@ impl AsyncExecutor for AsyncStdExecutor {
 #[cfg(feature = "async-std")]
 impl From<std::sync::Arc<async_executor::Executor<'static>>> for AsyncStdExecutor {
     fn from(executor: std::sync::Arc<async_executor::Executor<'static>>) -> Self {
-        Self { executor }
+        Self {
+            executor,
+        }
     }
 }
 

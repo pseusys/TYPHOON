@@ -58,7 +58,7 @@ impl Socket {
 
     #[cfg(feature = "async-std")]
     pub async fn new(peer: SocketAddr, local: Option<SocketAddr>) -> Result<Self, SocketError> {
-        let local_addr = local.unwrap_or_else(||  SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)));
+        let local_addr = local.unwrap_or_else(|| SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)));
         let sock = StdUdpSocket::bind(local_addr).map_err(SocketError::new_socket_error)?;
         if let Err(err) = sock.connect(peer) {
             return Err(SocketError::new_socket_error(err));
