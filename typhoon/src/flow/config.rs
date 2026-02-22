@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../../tests/flow/config.rs"]
+mod tests;
+
 use std::cmp::{max, min};
 use std::net::SocketAddr;
 use std::ops::AddAssign;
@@ -43,14 +47,19 @@ impl FakeBodyMode {
             } => {
                 if !service || (is_service && *service) {
                     let body_space = max_packet_size - taken_packet_size;
-                    get_rng().gen_range(max(*min_length, body_space)..min(*max_length, body_space))
+                    let effective_max = min(*max_length, body_space);
+                    if effective_max <= *min_length {
+                        effective_max
+                    } else {
+                        get_rng().gen_range(*min_length..effective_max)
+                    }
                 } else {
                     0
                 }
             }
             FakeBodyMode::Constant {
                 packet_length,
-            } => max(0, min(max_packet_size, *packet_length) - taken_packet_size),
+            } => min(max_packet_size, *packet_length).saturating_sub(taken_packet_size),
         }
     }
 }

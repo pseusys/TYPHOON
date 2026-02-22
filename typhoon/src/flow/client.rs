@@ -1,4 +1,3 @@
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 use log::{debug, info};
@@ -34,7 +33,6 @@ pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor, DP: Dec
     sock: Socket,
     mtu: usize,
     settings: Arc<Settings<AE>>,
-    _phantom: PhantomData<T>,
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowManagerT = Self>> ClientFlowManager<T, AE, DP> {
@@ -53,7 +51,6 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, 
             sock,
             mtu,
             settings,
-            _phantom: PhantomData,
         });
         value.decoy_provider.lock().await.start().await;
         Ok(value)

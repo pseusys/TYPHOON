@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../../../tests/flow/decoy.rs"]
+mod tests;
+
 /// Shared state and utilities for decoy traffic communication modes.
 use std::marker::PhantomData;
 use std::sync::{Arc, Weak};
@@ -8,6 +12,7 @@ use rand_distr::{Distribution, Exp, Normal};
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::flow::common::FlowManager;
 use crate::settings::Settings;
+use crate::settings::consts::TAILOR_LENGTH;
 use crate::settings::keys::*;
 use crate::tailor::{IdentityType, Tailor};
 use crate::utils::random::get_rng;
@@ -118,14 +123,14 @@ impl<T: IdentityType, AE: AsyncExecutor> DecoyState<T, AE> {
 
     /// Create a decoy packet with the given body length.
     pub(super) fn create_decoy_packet(&mut self, body_length: usize) -> DynamicByteBuffer {
-        let total_length = body_length + T::length();
+        let total_length = body_length + TAILOR_LENGTH + T::length();
         let packet = self.settings.pool().allocate(Some(total_length));
 
         get_rng().fill(packet.slice_end_mut(body_length));
 
         let identity_buffer = self.settings.pool().allocate_precise_from_slice_with_capacity(&self.identity, 0, 0);
         let tailor = Tailor::decoy(T::from_bytes(identity_buffer.slice()), self.next_packet_number());
-        let tailor_buffer = self.settings.pool().allocate(Some(T::length()));
+        let tailor_buffer = self.settings.pool().allocate(Some(T::length() + TAILOR_LENGTH));
         let tailor_data = tailor.to_buffer(tailor_buffer);
         packet.slice_start_mut(body_length).copy_from_slice(tailor_data.slice());
 
