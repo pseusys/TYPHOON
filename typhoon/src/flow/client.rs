@@ -26,7 +26,7 @@ struct ClientFlowManagerInternalReceive<T: IdentityType + Clone> {
 }
 
 /// Client-side flow manager that handles packet encryption, decoy traffic, and socket I/O.
-pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowManagerT = Self>> {
+pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor, DP: Send + Sync> {
     decoy_provider: Mutex<DP>,
     send_internal: Mutex<ClientFlowManagerInternalSend<T>>,
     receive_internal: Mutex<ClientFlowManagerInternalReceive<T>>,
@@ -35,8 +35,8 @@ pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor, DP: Dec
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowManagerT = Self>> ClientFlowManager<T, AE, DP> {
-    async fn new(config: FlowConfig, cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, mtu: usize, sock: Socket) -> Result<Arc<Self>, FlowControllerError> {
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<AE, Self> + 'static> ClientFlowManager<T, AE, DP> {
+    pub(crate) async fn new(config: FlowConfig, cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, sock: Socket) -> Result<Arc<Self>, FlowControllerError> {
         let send_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
         let receive_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
         let value = Arc::new_cyclic(|m| ClientFlowManager {
@@ -49,7 +49,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, 
                 provider: receive_provider,
             }),
             sock,
-            mtu,
+            mtu: settings.mtu(),
             settings,
         });
         value.decoy_provider.lock().await.start().await;
@@ -57,7 +57,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, 
     }
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor, DP: DecoyCommunicationMode<AE, FlowManagerT = Self>> FlowManager for ClientFlowManager<T, AE, DP> {
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<AE, Self> + 'static> FlowManager for ClientFlowManager<T, AE, DP> {
     /// Packet should consist of: encrypted payload || valid plaintext tailor.
     /// NB! DecoyCommunicationMode implementations *should not* send non-decoy packets via this method, but they can, if they want.
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {

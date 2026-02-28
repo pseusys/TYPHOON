@@ -467,19 +467,27 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     /// NB! There's no need for synchronization: even if a couple of packets slip through after termination, they will just get discarded.
     fn drop(&mut self) {
         let manager = self.manager.clone();
-        let pool = self.settings.pool();
-
-        let timestamp = (unix_timestamp_ms() / 1000) as u32;
-        let pn = (timestamp as u64) << 32;
-        let identity = self.state.blocking_lock().crypto_tool.get_cached().identity();
-        let tailor = Tailor::termination(identity, ReturnCode::Success, pn);
-        let tailor_buffer = pool.allocate(Some(T::length()));
-        let packet = tailor.to_buffer(tailor_buffer);
+        let state = self.state.clone();
+        let packet = self.settings.pool().allocate(Some(T::length()));
 
         self.settings.executor().spawn(async move {
+            let identity = match state.lock().await.crypto_tool.get().await {
+                Ok(res) => res.identity(),
+                Err(err) => {
+                    debug!("HealthProvider: crypto tool dropped during drop, cannot send termination packet: {err}");
+                    return;
+                }
+            };
+
+            let packet_number = ((unix_timestamp_ms() / 1000) as u64) << 32;
+            let tailor = Tailor::termination(identity, ReturnCode::Success, packet_number);
+            let packet = tailor.to_buffer(packet);
+
             if let Some(mgr) = manager.upgrade() {
-                let _ = mgr.send_packet(packet, true).await;
-                debug!("HealthProvider: termination packet sent");
+                match mgr.send_packet(packet, true).await {
+                    Ok(()) => debug!("HealthProvider: termination packet sent"),
+                    Err(err) => debug!("HealthProvider: failed to send termination packet: {err}"),
+                }
             }
         });
     }

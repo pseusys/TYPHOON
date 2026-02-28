@@ -10,6 +10,7 @@ use crate::utils::sync::AsyncExecutor;
 
 impl IdentityType for StaticByteBuffer {
     fn from_bytes(bytes: &[u8]) -> Self {
+        assert_eq!(bytes.len(), DEFAULT_TYPHOON_ID_LENGTH, "invalid bytes identity length: expected {}, got {}", DEFAULT_TYPHOON_ID_LENGTH, bytes.len());
         Self::from_slice(bytes)
     }
 

@@ -90,10 +90,8 @@ impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager> SmoothDecoyProvider<T,
     }
 }
 
-impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync> DecoyCommunicationMode<AE> for SmoothDecoyProvider<T, AE, FM> {
-    type FlowManagerT = FM;
-
-    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings<AE>>) -> Self {
+impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode<AE, FM> for SmoothDecoyProvider<T, AE, FM> {
+    fn new(manager: Weak<FM>, settings: Arc<Settings<AE>>) -> Self {
         let state = DecoyState::new(settings.clone());
         let delay = Self::calculate_delay(&state);
         let length = Self::calculate_length(&state);

@@ -1,4 +1,5 @@
 /// Client-side session manager implementation.
+use std::mem::take;
 use std::sync::Arc;
 
 use log::{debug, info};
@@ -44,6 +45,7 @@ impl<T: IdentityType + Clone> ClientSessionManagerInternalSend<T> {
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> ClientSessionManager<T, AE, FM> {
     /// Create a new client session manager.
+    /// // TODO: reset session cipher (handshake (twice), send, receive)
     pub async fn new(mut cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>) -> Result<Arc<Self>, SessionControllerError> {
         let send_cipher = cipher.create_cache().await;
         let receive_cipher = cipher.create_cache().await;
@@ -145,5 +147,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> 
             // Pure health check with no data: loop back.
             info!("standalone health check processed, waiting for next packet");
         }
+    }
+}
+
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> Drop for ClientSessionManager<T, AE, FM> {
+    fn drop(&mut self) {
+        drop(take(&mut self.flows));
     }
 }

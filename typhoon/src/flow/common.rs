@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::sync::Arc;
 
 use crate::bytes::DynamicByteBuffer;
 use crate::flow::error::FlowControllerError;
@@ -12,4 +13,14 @@ pub trait FlowManager {
 
     /// Receive a packet from the flow manager.
     fn receive_packet(&self, packet: DynamicByteBuffer) -> impl Future<Output = Result<DynamicByteBuffer, FlowControllerError>> + Send;
+}
+
+impl<T: FlowManager + Send + Sync> FlowManager for Arc<T> {
+    fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> impl Future<Output = Result<(), FlowControllerError>> + Send {
+        (**self).send_packet(packet, generated)
+    }
+
+    fn receive_packet(&self, packet: DynamicByteBuffer) -> impl Future<Output = Result<DynamicByteBuffer, FlowControllerError>> + Send {
+        (**self).receive_packet(packet)
+    }
 }

@@ -1,5 +1,6 @@
 //! Builder pattern for constructing Settings instances.
 
+use super::error::SettingsError;
 use super::override_map::{Key, OverrideMap, SettingType};
 use super::settings::Settings;
 use super::statics::consts;
@@ -12,6 +13,7 @@ pub struct SettingsBuilder<AE: AsyncExecutor> {
     overrides: OverrideMap,
     executor: Option<AE>,
     pool: Option<BytePool>,
+    mtu: usize,
     skip_env: bool,
 }
 
@@ -22,6 +24,7 @@ impl<AE: AsyncExecutor> SettingsBuilder<AE> {
             overrides: OverrideMap::default(),
             executor: None,
             pool: None,
+            mtu: consts::DEFAULT_TYPHOON_MTU_LENGTH,
             skip_env: false,
         }
     }
@@ -44,6 +47,12 @@ impl<AE: AsyncExecutor> SettingsBuilder<AE> {
         self
     }
 
+    /// Set MTU (max packet size) for all flow managers.
+    pub fn with_mtu(mut self, mtu: usize) -> Self {
+        self.mtu = mtu;
+        self
+    }
+
     /// Set a typed value for a key.
     #[inline]
     pub fn set<T: SettingType>(mut self, key: &Key<T>, value: T) -> Self {
@@ -51,15 +60,18 @@ impl<AE: AsyncExecutor> SettingsBuilder<AE> {
         self
     }
 
-    /// Build the Settings instance.
-    pub fn build(self) -> Settings<AE> {
-        Settings::new(
+    /// Build the Settings instance, validating all invariants.
+    pub fn build(self) -> Result<Settings<AE>, SettingsError> {
+        let settings = Settings::new(
             self.overrides,
             self.executor.unwrap_or_else(AE::new),
             self.pool.unwrap_or_else(|| {
-                let capacity = consts::DEFAULT_TYPHOON_MTU_LENGTH / 2;
-                BytePool::new(capacity, consts::DEFAULT_TYPHOON_MTU_LENGTH, capacity, consts::DEFAULT_POOL_INITIAL_SIZE, consts::DEFAULT_POOL_CAPACITY)
+                let capacity = self.mtu / 2;
+                BytePool::new(capacity, self.mtu, capacity, consts::DEFAULT_POOL_INITIAL_SIZE, consts::DEFAULT_POOL_CAPACITY)
             }),
-        )
+            self.mtu,
+        );
+        settings.assert()?;
+        Ok(settings)
     }
 }

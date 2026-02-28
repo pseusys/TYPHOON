@@ -4,7 +4,7 @@ use crate::bytes::{ByteBuffer, StaticByteBuffer};
 use crate::defaults::DefaultExecutor;
 use crate::flow::decoy::common::{DecoyState, exponential_variance, random_gauss, random_uniform};
 use crate::settings::SettingsBuilder;
-use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
+use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILOR_LENGTH};
 use crate::settings::keys::*;
 use crate::utils::time::unix_timestamp_ms;
 
@@ -98,9 +98,7 @@ fn test_schedule_next() {
 
 // === DecoyState::create_decoy_packet tests ===
 
-// BUG: create_decoy_packet allocates body_length + T::length() for the packet,
-// but to_buffer() produces T::length() + TAILOR_LENGTH bytes for the tailor,
-// causing a slice length mismatch panic on copy_from_slice.
+// Test: create_decoy_packet returns a packet of body + tailor + identity length.
 #[test]
 fn test_create_decoy_packet_size() {
     let settings = make_settings();
@@ -109,18 +107,17 @@ fn test_create_decoy_packet_size() {
     let body_length = 64;
     let packet = state.create_decoy_packet(body_length);
 
-    assert_eq!(packet.len(), body_length + DEFAULT_TYPHOON_ID_LENGTH, "packet should be body + identity length");
+    assert_eq!(packet.len(), body_length + TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH, "packet should be body + tailor + identity length");
 }
 
-// BUG: Same tailor buffer size mismatch as above.
+// Test: create_decoy_packet with zero body returns tailor + identity length.
 #[test]
-#[ignore = "BUG: tailor buffer size mismatch in create_decoy_packet"]
 fn test_create_decoy_packet_zero_body() {
     let settings = make_settings();
     let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings);
 
     let packet = state.create_decoy_packet(0);
-    assert_eq!(packet.len(), DEFAULT_TYPHOON_ID_LENGTH);
+    assert_eq!(packet.len(), TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
 }
 
 // === Random utility function tests ===

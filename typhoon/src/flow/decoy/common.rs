@@ -20,11 +20,9 @@ use crate::utils::sync::AsyncExecutor;
 use crate::utils::time::unix_timestamp_ms;
 
 /// Trait for implementing decoy traffic communication modes.
-pub trait DecoyCommunicationMode<AE: AsyncExecutor>: Sized + Send + Sync {
-    type FlowManagerT: FlowManager;
-
+pub trait DecoyCommunicationMode<AE: AsyncExecutor, FM: Send + Sync + 'static>: Sized + Send + Sync {
     /// Create a new decoy provider with the given manager, settings, and tailor size.
-    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings<AE>>) -> Self;
+    fn new(manager: Weak<FM>, settings: Arc<Settings<AE>>) -> Self;
 
     /// Start the background decoy generation timer.
     fn start(&mut self) -> impl Future<Output = ()> + Send;

@@ -19,12 +19,13 @@ compile_error!("feature 'fast_software' and feature 'fast_hardware' cannot be en
 #[cfg(not(any(feature = "server", feature = "client")))]
 compile_error!("one of the features 'server' and 'client' should be selected");
 
-mod bytes;
-mod cache;
-mod crypto;
-mod defaults;
-mod flow;
+pub mod bytes;
+pub mod cache;
+pub mod crypto;
+pub mod defaults;
+pub mod flow;
 mod session;
-mod settings;
+pub mod settings;
+pub mod socket;
 mod tailor;
 mod utils;
