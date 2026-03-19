@@ -487,7 +487,7 @@ Again, please note that `OBFS` is a shared symmetric key, which means that obfus
 
 > Please note, that this approach is not only faster, but also more extensible.
 > The packets going in both direction have uniform structure in this case and can be decrypted (but not authenticated) by any protocol-aware middleware.
-> That could allow extending protocol with [multi-hop or remote proxy](#future-work) capabilities.
+> That could allow extending protocol with [multi-hop or remote proxy](#multi-hop-proxies-benevolent-mitm) capabilities.
 
 #### Tailor encryption in `full` mode
 
@@ -556,7 +556,7 @@ It is suggested that a flow manager would hold a UDP port, while the session man
 
 On the client side, there is only one session manager that is tightly coupled with all the flow managers (normally they only have different ports but similar IP addresses).
 On the server side, they can be more loosely coupled: a flow manager can be connected to multiple clients at the same time, performing traffic demultiplexing (described below) and delivering packets to virtual session managers (one manager per user).
-Theoretically, different server flow managers can occupy different IP addresses, but if they [reside in separate processes](#future-work) (or on separate machines), their communication is out of scope of the TYPHOON protocol.
+Theoretically, different server flow managers can occupy different IP addresses, but if they [reside in separate processes](#isolated-flow-managers) (or on separate machines), their communication is out of scope of the TYPHOON protocol.
 
 The TYPHOON listener is a logical structure that keeps track of all flow managers (which are constant), spawns session managers for users, and recycles them when done.
 The listener should also be capable of producing client certificates that are guaranteed to be valid while the listener is alive (or restarted with a similar flow manager configuration).
@@ -899,5 +899,22 @@ cargo fmt
 ```
 
 ## Future work
+
+Here are a few protocol extensions outlined that are not yet part of the standard but can be studied and explored further in the future:
+
+### Multi-hop proxies (benevolent MITM)
+
+An app can be configured as a lightweight multi-hop proxy (benevolent man-in-the-middle) by simply chaining a TYPHOON server and TYPHOON client together.
+The idea is simple: all packets received by the server part are directly forwarded to the next server through the client part.
+
+The packet payload never gets decrypted—only the tailor is parsed.
+Thus, the packet payloads are preserved, while decoy packets are dropped and regenerated.
+This allows fast and anonymous data transfer with different obfuscation patterns on both sides of the proxy, enabling the creation of multi-hop [TOR](https://www.torproject.org/)-like networks.
+
+**The challenge**:
+Configuration of this type of proxy would require changing how tailor encryption works, allowing packet data encryption and tailor obfuscation to use different keys (i.e., packet data is encrypted using the original end-to-end session key, while the packet tailor is authenticated using the session key of the last-hop proxy).
+In addition to that, extended delays of the packets going through the complex path would require a way of notifying the client that their original packet is not lost, but still haven't reached its destination: a special "wait more" tailor flag is suggested for adding, that would reset the client decay cycle, but not advance any counters or change any values.
+
+### Isolated flow managers
 
 TODO!
