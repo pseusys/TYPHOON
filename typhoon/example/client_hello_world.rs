@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
-use classic_mceliece_rust::{keypair_boxed, PublicKey as McEliecePublicKey};
+use classic_mceliece_rust::{PublicKey as McEliecePublicKey, keypair_boxed};
 use ed25519_dalek::SigningKey;
 use rand::RngCore;
-
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::crypto::Certificate;
 use typhoon::defaults::DefaultExecutor;
@@ -16,11 +15,7 @@ fn main() {
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     rt.block_on(async {
         // Build protocol settings with defaults.
-        let settings = Arc::new(
-            SettingsBuilder::<DefaultExecutor>::new()
-                .build()
-                .expect("default settings should be valid"),
-        );
+        let settings = Arc::new(SettingsBuilder::<DefaultExecutor>::new().build().expect("default settings should be valid"));
 
         // Generate cryptographic keys.
         let mut rng = rand::thread_rng();
@@ -45,8 +40,7 @@ fn main() {
         let flow = FlowManagerConfiguration::with_address(flow_config, server_addr);
 
         // Build the client socket builder.
-        let builder = ClientSocketBuilder::<StaticByteBuffer, _, SimpleDecoyProvider>::new(certificate)
-            .add_flow(flow).with_settings(settings);
+        let builder = ClientSocketBuilder::<StaticByteBuffer, _, SimpleDecoyProvider>::new(certificate).add_flow(flow).with_settings(settings);
 
         println!("Client socket builder configured for {}", server_addr);
 

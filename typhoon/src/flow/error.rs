@@ -23,5 +23,7 @@ pub enum FlowControllerError {
     TailorEncryption(#[source] CryptoError),
 
     #[error("flow config assertion failed: {message}")]
-    AssertionFailed { message: String },
+    AssertionFailed {
+        message: String,
+    },
 }

@@ -45,8 +45,8 @@ const MARSHALLING_ENCRYPTION_KEY: &str = "marshalling encryption key";
 #[cfg(feature = "client")]
 impl Certificate {
     /// Client handshake: generate ephemeral keys, encapsulate with McEliece, obfuscate.
-    /// Args: buffer for nonce. Returns: (ClientData, handshake_secret, initial_cipher).
-    pub fn encapsulate_handshake_client(&self, pool: &BytePool) -> (ClientData, DynamicByteBuffer, Symmetric) {
+    /// Args: buffer for nonce. Returns: (ClientData, handshake_secret, initial_encryption_key).
+    pub fn encapsulate_handshake_client(&self, pool: &BytePool) -> (ClientData, DynamicByteBuffer, StaticByteBuffer) {
         let nonce = get_rng().random_byte_buffer::<NONCE_LENGTH>();
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
@@ -74,8 +74,7 @@ impl Certificate {
 
         let handshake_buffer = pool.allocate_precise(0, 0, X25519_KEY_LENGTH + CRYPTO_CIPHERTEXTBYTES + ANONYMOUS_NONCE_LEN * 2 + NONCE_LENGTH);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append_buf(&ciphertext_obfuscated).append_buf(&nonce);
-        let initial_encryption_symmetric = Symmetric::new(&initial_encryption_key);
-        (client_data, handshake_secret, initial_encryption_symmetric)
+        (client_data, handshake_secret, initial_encryption_key)
     }
 
     /// Process server handshake response: deobfuscate, verify signature, derive session key.

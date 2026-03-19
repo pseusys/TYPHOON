@@ -5,7 +5,7 @@ use std::sync::Arc;
 use log::{debug, info};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
-use crate::cache::{CachedValue, SharedValue};
+use crate::cache::SharedValue;
 use crate::crypto::ClientCryptoTool;
 use crate::flow::FlowManager;
 use crate::session::common::SessionManager;
@@ -18,12 +18,12 @@ use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::{AsyncExecutor, Mutex, create_channel};
 
 struct ClientSessionManagerInternalSend<T: IdentityType + Clone> {
-    cipher: CachedValue<ClientCryptoTool<T>>,
+    cipher: SharedValue<ClientCryptoTool<T>>,
     incremental_counter: u32,
 }
 
 struct ClientSessionManagerInternalReceive<T: IdentityType + Clone> {
-    cipher: CachedValue<ClientCryptoTool<T>>,
+    cipher: SharedValue<ClientCryptoTool<T>>,
 }
 
 /// Client-side session manager that encrypts data and manages health checking.
@@ -45,11 +45,10 @@ impl<T: IdentityType + Clone> ClientSessionManagerInternalSend<T> {
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> ClientSessionManager<T, AE, FM> {
     /// Create a new client session manager.
-    /// // TODO: reset session cipher (handshake (twice), send, receive)
-    pub async fn new(mut cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>) -> Result<Arc<Self>, SessionControllerError> {
-        let send_cipher = cipher.create_cache().await;
-        let receive_cipher = cipher.create_cache().await;
-        let health_state_crypto = cipher.create_cache().await;
+    pub async fn new(cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>) -> Result<Arc<Self>, SessionControllerError> {
+        let send_cipher = cipher.create_sibling().await;
+        let receive_cipher = cipher.create_sibling().await;
+        let health_state_crypto = cipher.create_sibling().await;
 
         let (response_tx, response_rx) = create_channel(1);
         let (shadowride_tx, shadowride_rx) = create_channel(1);
@@ -89,17 +88,17 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> 
         } else {
             // User data: encrypt payload, create DATA tailor, check for shadowriding.
             let mut send_lock = self.send_internal.lock().await;
-            let encrypted_payload = send_lock.cipher.get_mut().await.map_err(SessionControllerError::MissingCache)?.encrypt_payload(packet, None).map_err(SessionControllerError::CryptoError)?;
+            let encrypted_payload = send_lock.cipher.get_mut().await.encrypt_payload(packet, None).map_err(SessionControllerError::CryptoError)?;
 
             let payload_length = encrypted_payload.len() as u16;
             let packet_number = send_lock.next_packet_number();
-            let identity = send_lock.cipher.get().await.map_err(SessionControllerError::MissingCache)?.identity();
+            let identity = send_lock.cipher.get().await.identity();
             let mut tailor = Tailor::data(identity, payload_length, packet_number);
 
             // Let health provider potentially attach a shadowride.
             {
                 let health_lock = self.health_provider.lock().await;
-                health_lock.feed_output(&mut tailor).await;
+                health_lock.feed_output(&mut tailor).await?;
             }
 
             // Assemble: encrypted_payload || plaintext_tailor.
@@ -126,16 +125,22 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> 
                 return Err(SessionControllerError::ConnectionTerminated(tailor.code));
             }
 
+            // Handle handshake response.
+            if tailor.flags.contains(PacketFlags::HANDSHAKE) {
+                let health_lock = self.health_provider.lock().await;
+                health_lock.feed_handshake_input(&tailor, payload_part.clone()).await?;
+            }
+
             // Handle health check (standalone or shadowride).
             if tailor.flags.contains(PacketFlags::HEALTH_CHECK) {
                 let health_lock = self.health_provider.lock().await;
-                health_lock.feed_input(&tailor).await;
+                health_lock.feed_input(&tailor).await?;
             }
 
             // If there is data payload, decrypt and return.
             if tailor.flags.has_payload() {
                 let mut recv_lock = self.receive_internal.lock().await;
-                match recv_lock.cipher.get_mut().await.map_err(SessionControllerError::MissingCache)?.decrypt_payload(payload_part, None) {
+                match recv_lock.cipher.get_mut().await.decrypt_payload(payload_part, None) {
                     Ok(decrypted) => return Ok(decrypted),
                     Err(err) => {
                         debug!("error decrypting payload: {}", err);

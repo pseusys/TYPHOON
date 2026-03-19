@@ -15,28 +15,39 @@ pub(crate) type ValueMapper<T> = Arc<dyn Fn(&T, Option<&T>) -> T + Send + Sync>;
 pub struct SharedValue<T: Clone + Send> {
     state: Arc<SharedState<T>>,
     local: T,
+    version: u64,
     _not_sync: PhantomData<UnsafeCell<()>>,
 }
 
 impl<T: Clone + Send> SharedValue<T> {
     pub fn new(value: T) -> Self {
+        let version = get_rng().next_u64();
         let versioned = Versioned {
             value: value.clone(),
-            version: get_rng().next_u64(),
+            version,
         };
         SharedValue {
             state: Arc::new(RwLock::new(versioned)),
             local: value,
+            version,
             _not_sync: PhantomData,
         }
     }
 
-    pub fn get(&self) -> &T {
-        &self.local
+    pub async fn get_mut(&mut self) -> &mut T {
+        let guard = self.state.read().await;
+        let value = guard.value.clone();
+
+        if guard.version != self.version {
+            self.local = value;
+            self.version = guard.version;
+        }
+
+        &mut self.local
     }
 
-    pub fn get_mut(&mut self) -> &mut T {
-        &mut self.local
+    pub async fn get(&mut self) -> &T {
+        self.get_mut().await
     }
 
     pub async fn set(&mut self, value: T) {
@@ -45,6 +56,19 @@ impl<T: Clone + Send> SharedValue<T> {
             value: value.clone(),
             version: get_rng().next_u64(),
         };
+    }
+
+    pub async fn create_sibling(&self) -> SharedValue<T> {
+        let guard = self.state.read().await;
+        let value = guard.value.clone();
+        drop(guard);
+
+        SharedValue {
+            state: self.state.clone(),
+            local: value,
+            version: self.version,
+            _not_sync: PhantomData,
+        }
     }
 
     pub async fn create_cache(&self) -> CachedValue<T> {
@@ -84,22 +108,6 @@ impl<T: Clone + Send> CachedValue<T> {
         }
     }
 
-    pub fn get_cached(&self) -> &T {
-        &self.local
-    }
-
-    pub async fn get(&mut self) -> Result<&T, CacheError> {
-        let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
-        let guard = source.read().await;
-
-        if guard.version != self.version {
-            self.local = self.map_value(&guard.value, Some(&self.local));
-            self.version = guard.version;
-        }
-
-        Ok(&self.local)
-    }
-
     pub async fn get_mut(&mut self) -> Result<&mut T, CacheError> {
         let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
         let guard = source.read().await;
@@ -110,6 +118,10 @@ impl<T: Clone + Send> CachedValue<T> {
         }
 
         Ok(&mut self.local)
+    }
+
+    pub async fn get(&mut self) -> Result<&T, CacheError> {
+        self.get_mut().await.map(|v| &*v)
     }
 
     pub async fn create_sibling(&self) -> Result<CachedValue<T>, CacheError> {

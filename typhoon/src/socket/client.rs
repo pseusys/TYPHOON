@@ -9,8 +9,7 @@ use crate::crypto::{Certificate, ClientCryptoTool, KEY_LENGTH};
 use crate::flow::FlowConfig;
 use crate::flow::client::ClientFlowManager;
 use crate::flow::decoy::DecoyCommunicationMode;
-use crate::session::ClientSessionManager;
-use crate::session::SessionManager;
+use crate::session::{ClientSessionManager, SessionManager};
 use crate::settings::Settings;
 use crate::socket::error::ClientSocketError;
 use crate::tailor::IdentityType;
@@ -116,15 +115,11 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
             };
 
             let cipher_cache = cipher.create_cache().await;
-            let flow = ClientFlowManager::new(flow_config.config, cipher_cache, settings.clone(), sock)
-                .await
-                .map_err(ClientSocketError::FlowError)?;
+            let flow = ClientFlowManager::new(flow_config.config, cipher_cache, settings.clone(), sock).await.map_err(ClientSocketError::FlowError)?;
             flows.push(flow);
         }
 
-        let session = ClientSessionManager::new(cipher, flows, settings.clone())
-            .await
-            .map_err(ClientSocketError::SessionError)?;
+        let session = ClientSessionManager::new(cipher, flows, settings.clone()).await.map_err(ClientSocketError::SessionError)?;
 
         Ok(ClientSocket {
             session,
@@ -134,7 +129,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 }
 
 /// Client-side TYPHOON socket providing send/receive operations.
-pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<AE, ClientFlowManager<T, AE, DP>> +Send + Sync + 'static> {
+pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<AE, ClientFlowManager<T, AE, DP>> + Send + Sync + 'static> {
     session: Arc<ClientSessionManager<T, AE, Arc<ClientFlowManager<T, AE, DP>>>>,
     settings: Arc<Settings<AE>>,
 }

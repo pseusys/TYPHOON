@@ -122,10 +122,7 @@ impl<AE: AsyncExecutor> Settings<AE> {
             let max_val = self.get(max_key);
             if default_val < min_val || default_val > max_val {
                 return Err(SettingsError::AssertionFailed {
-                    message: format!(
-                        "{} ({}) must be within [{} ({}), {} ({})]",
-                        default_key.name, default_val, min_key.name, min_val, max_key.name, max_val
-                    ),
+                    message: format!("{} ({}) must be within [{} ({}), {} ({})]", default_key.name, default_val, min_key.name, min_val, max_key.name, max_val),
                 });
             }
             Ok(())
@@ -196,10 +193,7 @@ impl<AE: AsyncExecutor> Settings<AE> {
         let timeout_max = self.get(&keys::TIMEOUT_MAX);
         if next_in_min <= timeout_max {
             return Err(SettingsError::AssertionFailed {
-                message: format!(
-                    "{} ({}) must be > {} ({})",
-                    keys::HEALTH_CHECK_NEXT_IN_MIN.name, next_in_min, keys::TIMEOUT_MAX.name, timeout_max
-                ),
+                message: format!("{} ({}) must be > {} ({})", keys::HEALTH_CHECK_NEXT_IN_MIN.name, next_in_min, keys::TIMEOUT_MAX.name, timeout_max),
             });
         }
 

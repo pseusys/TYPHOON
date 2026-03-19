@@ -17,20 +17,14 @@ fn test_default_settings_pass_assertions() {
 // Test: TIMEOUT_MIN > TIMEOUT_MAX fails assertion.
 #[test]
 fn test_settings_timeout_min_exceeds_max() {
-    let result = builder()
-        .set(&TIMEOUT_MIN, 50000)
-        .set(&TIMEOUT_MAX, 1000)
-        .build();
+    let result = builder().set(&TIMEOUT_MIN, 50000).set(&TIMEOUT_MAX, 1000).build();
     assert!(result.is_err());
 }
 
 // Test: RTT_MIN > RTT_MAX fails assertion.
 #[test]
 fn test_settings_rtt_min_exceeds_max() {
-    let result = builder()
-        .set(&RTT_MIN, 10000)
-        .set(&RTT_MAX, 100)
-        .build();
+    let result = builder().set(&RTT_MIN, 10000).set(&RTT_MAX, 100).build();
     assert!(result.is_err());
 }
 
@@ -72,10 +66,7 @@ fn test_settings_fake_header_probability_zero_ok() {
 // Test: HEALTH_CHECK_NEXT_IN_MIN <= TIMEOUT_MAX fails assertion (next_in must be > timeout).
 #[test]
 fn test_settings_next_in_not_greater_than_timeout() {
-    let result = builder()
-        .set(&HEALTH_CHECK_NEXT_IN_MIN, 30000)
-        .set(&TIMEOUT_MAX, 32000)
-        .build();
+    let result = builder().set(&HEALTH_CHECK_NEXT_IN_MIN, 30000).set(&TIMEOUT_MAX, 32000).build();
     assert!(result.is_err());
 }
 
@@ -103,20 +94,13 @@ fn test_settings_negative_service_probability() {
 // Test: DECOY_LENGTH_MIN > DECOY_LENGTH_MAX fails assertion.
 #[test]
 fn test_settings_decoy_length_min_exceeds_max() {
-    let result = builder()
-        .set(&DECOY_LENGTH_MIN, 2000)
-        .set(&DECOY_LENGTH_MAX, 100)
-        .build();
+    let result = builder().set(&DECOY_LENGTH_MIN, 2000).set(&DECOY_LENGTH_MAX, 100).build();
     assert!(result.is_err());
 }
 
 // Test: valid custom settings pass assertions.
 #[test]
 fn test_settings_valid_custom_pass() {
-    let result = builder()
-        .set(&RTT_ALPHA, 0.5)
-        .set(&RTT_BETA, 0.5)
-        .set(&FAKE_HEADER_PROBABILITY, 0.5)
-        .build();
+    let result = builder().set(&RTT_ALPHA, 0.5).set(&RTT_BETA, 0.5).set(&FAKE_HEADER_PROBABILITY, 0.5).build();
     assert!(result.is_ok());
 }

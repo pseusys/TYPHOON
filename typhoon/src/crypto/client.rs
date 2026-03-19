@@ -1,5 +1,7 @@
 use crate::bytes::{BytePool, DynamicByteBuffer, StaticByteBuffer};
-use crate::crypto::certificate::{Certificate, ClientData, ObfuscationBufferContainer};
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+use crate::crypto::certificate::ObfuscationBufferContainer;
+use crate::crypto::certificate::{Certificate, ClientData};
 use crate::crypto::error::{CryptoError, HandshakeError};
 use crate::crypto::symmetric::{NONCE_LEN, ObfuscationTranscript, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
 use crate::tailor::IdentityType;
@@ -29,7 +31,7 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
 
     /// Create a new ClientCryptoTool with the given certificate and identity.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn new(cert: Certificate, identity: IdentityType, initial_key: &StaticByteBuffer) -> Self {
+    pub fn new(cert: Certificate, identity: T, initial_key: &StaticByteBuffer) -> Self {
         Self {
             cert,
             identity,
@@ -62,8 +64,8 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
     }
 
     /// Client handshake step 1: generate ephemeral keys, encapsulate with McEliece, obfuscate.
-    /// Returns (ClientData, handshake_secret, initial_cipher).
-    pub fn create_handshake(&self, pool: &BytePool) -> (ClientData, DynamicByteBuffer, Symmetric) {
+    /// Returns (ClientData, handshake_secret, initial_encryption_key).
+    pub fn create_handshake(&self, pool: &BytePool) -> (ClientData, DynamicByteBuffer, StaticByteBuffer) {
         self.cert.encapsulate_handshake_client(pool)
     }
 
@@ -117,5 +119,27 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn verify_tailor(&mut self, _: ObfuscationTranscript) -> Result<(), CryptoError> {
         Ok(())
+    }
+
+    /// Create a copy of this crypto tool with a different session key.
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+    pub fn with_key(&self, new_key: &StaticByteBuffer) -> Self {
+        let obfs_buffer = self.cert.obfuscation_buffer();
+        Self {
+            cert: self.cert.clone(),
+            identity: self.identity.clone(),
+            key: Symmetric::new(new_key),
+            obfuscation_key: Symmetric::new_split(obfs_buffer, new_key.clone()),
+        }
+    }
+
+    /// Create a copy of this crypto tool with a different session key.
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+    pub fn with_key(&self, new_key: &StaticByteBuffer) -> Self {
+        Self {
+            cert: self.cert.clone(),
+            identity: self.identity.clone(),
+            key: Symmetric::new(new_key),
+        }
     }
 }

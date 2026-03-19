@@ -5,9 +5,9 @@ mod tests;
 use std::cmp::min;
 use std::ops::AddAssign;
 
+use rand::Rng;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
-use rand::Rng;
 
 use crate::bytes::{ByteBufferMut, DynamicByteBuffer};
 use crate::flow::error::FlowControllerError;
@@ -150,7 +150,9 @@ pub struct FakeHeaderConfig {
 
 impl FakeHeaderConfig {
     pub fn new(pattern: Vec<FieldTypeHolder>) -> Self {
-        Self { pattern }
+        Self {
+            pattern,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -214,13 +216,12 @@ impl FlowConfig {
     /// Validate that the flow configuration is consistent with the given max packet size.
     pub fn assert(&self, max_packet_size: usize) -> Result<(), FlowControllerError> {
         match &self.fake_body_mode {
-            FakeBodyMode::Constant { packet_length } => {
+            FakeBodyMode::Constant {
+                packet_length,
+            } => {
                 if *packet_length > max_packet_size {
                     return Err(FlowControllerError::AssertionFailed {
-                        message: format!(
-                            "constant fake body packet_length ({}) must not exceed max_packet_size ({})",
-                            packet_length, max_packet_size
-                        ),
+                        message: format!("constant fake body packet_length ({}) must not exceed max_packet_size ({})", packet_length, max_packet_size),
                     });
                 }
             }
@@ -231,10 +232,7 @@ impl FlowConfig {
             } => {
                 if min_length > max_length {
                     return Err(FlowControllerError::AssertionFailed {
-                        message: format!(
-                            "random fake body min_length ({}) must be <= max_length ({})",
-                            min_length, max_length
-                        ),
+                        message: format!("random fake body min_length ({}) must be <= max_length ({})", min_length, max_length),
                     });
                 }
             }
@@ -244,10 +242,7 @@ impl FlowConfig {
         let header_len = self.fake_header_mode.len();
         if header_len > max_packet_size {
             return Err(FlowControllerError::AssertionFailed {
-                message: format!(
-                    "fake header length ({}) must not exceed max_packet_size ({})",
-                    header_len, max_packet_size
-                ),
+                message: format!("fake header length ({}) must not exceed max_packet_size ({})", header_len, max_packet_size),
             });
         }
 

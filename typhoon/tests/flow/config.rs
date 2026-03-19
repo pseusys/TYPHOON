@@ -22,7 +22,9 @@ fn test_fake_body_empty_returns_zero() {
 // Test: Constant mode returns packet_length minus taken, clamped to max_packet_size.
 #[test]
 fn test_fake_body_constant_basic() {
-    let mode = FakeBodyMode::Constant { packet_length: 500 };
+    let mode = FakeBodyMode::Constant {
+        packet_length: 500,
+    };
     // min(1500, 500) - 100 = 400
     assert_eq!(mode.get_length(1500, 100, false), 400);
     assert_eq!(mode.get_length(1500, 100, true), 400);
@@ -31,14 +33,18 @@ fn test_fake_body_constant_basic() {
 // Test: Constant mode when taken equals packet_length returns 0.
 #[test]
 fn test_fake_body_constant_exact_fit() {
-    let mode = FakeBodyMode::Constant { packet_length: 100 };
+    let mode = FakeBodyMode::Constant {
+        packet_length: 100,
+    };
     assert_eq!(mode.get_length(1500, 100, false), 0);
 }
 
 // Test: Constant mode returns 0 when taken exceeds packet_length.
 #[test]
 fn test_fake_body_constant_returns_zero_when_taken_exceeds() {
-    let mode = FakeBodyMode::Constant { packet_length: 50 };
+    let mode = FakeBodyMode::Constant {
+        packet_length: 50,
+    };
     assert_eq!(mode.get_length(1500, 100, false), 0);
 }
 
@@ -99,7 +105,9 @@ fn test_fake_body_random_tight_space() {
 // Test: Constant field always returns the same value.
 #[test]
 fn test_field_type_constant() {
-    let mut field: FieldType<u32> = FieldType::Constant { value: 42 };
+    let mut field: FieldType<u32> = FieldType::Constant {
+        value: 42,
+    };
     for _ in 0..10 {
         assert_eq!(field.apply(), 42);
     }
@@ -108,7 +116,9 @@ fn test_field_type_constant() {
 // Test: Incremental field increments by 1 each call.
 #[test]
 fn test_field_type_incremental() {
-    let mut field: FieldType<u16> = FieldType::Incremental { value: 0 };
+    let mut field: FieldType<u16> = FieldType::Incremental {
+        value: 0,
+    };
     assert_eq!(field.apply(), 1);
     assert_eq!(field.apply(), 2);
     assert_eq!(field.apply(), 3);
@@ -117,7 +127,9 @@ fn test_field_type_incremental() {
 // Test: Incremental field starts from given initial value.
 #[test]
 fn test_field_type_incremental_from_offset() {
-    let mut field: FieldType<u8> = FieldType::Incremental { value: 250 };
+    let mut field: FieldType<u8> = FieldType::Incremental {
+        value: 250,
+    };
     assert_eq!(field.apply(), 251);
     assert_eq!(field.apply(), 252);
 }
@@ -174,10 +186,18 @@ fn test_field_type_switching_after_timeout() {
 fn test_fake_header_config_len() {
     let config = FakeHeaderConfig {
         pattern: vec![
-            FieldTypeHolder::U8(FieldType::Constant { value: 0 }),
-            FieldTypeHolder::U16(FieldType::Constant { value: 0 }),
-            FieldTypeHolder::U32(FieldType::Constant { value: 0 }),
-            FieldTypeHolder::U64(FieldType::Constant { value: 0 }),
+            FieldTypeHolder::U8(FieldType::Constant {
+                value: 0,
+            }),
+            FieldTypeHolder::U16(FieldType::Constant {
+                value: 0,
+            }),
+            FieldTypeHolder::U32(FieldType::Constant {
+                value: 0,
+            }),
+            FieldTypeHolder::U64(FieldType::Constant {
+                value: 0,
+            }),
         ],
     };
     assert_eq!(config.len(), 1 + 2 + 4 + 8, "total header length should be 15 bytes");
@@ -186,7 +206,9 @@ fn test_fake_header_config_len() {
 // Test: len() with empty pattern returns 0.
 #[test]
 fn test_fake_header_config_len_empty() {
-    let config = FakeHeaderConfig { pattern: vec![] };
+    let config = FakeHeaderConfig {
+        pattern: vec![],
+    };
     assert_eq!(config.len(), 0);
 }
 
@@ -195,9 +217,15 @@ fn test_fake_header_config_len_empty() {
 fn test_fake_header_config_fill_constants() {
     let mut config = FakeHeaderConfig {
         pattern: vec![
-            FieldTypeHolder::U8(FieldType::Constant { value: 0xAB }),
-            FieldTypeHolder::U16(FieldType::Constant { value: 0x1234 }),
-            FieldTypeHolder::U32(FieldType::Constant { value: 0xDEADBEEF }),
+            FieldTypeHolder::U8(FieldType::Constant {
+                value: 0xAB,
+            }),
+            FieldTypeHolder::U16(FieldType::Constant {
+                value: 0x1234,
+            }),
+            FieldTypeHolder::U32(FieldType::Constant {
+                value: 0xDEADBEEF,
+            }),
         ],
     };
 
@@ -216,7 +244,9 @@ fn test_fake_header_config_fill_constants() {
 #[test]
 fn test_fake_header_config_fill_incremental() {
     let mut config = FakeHeaderConfig {
-        pattern: vec![FieldTypeHolder::U8(FieldType::Incremental { value: 0 })],
+        pattern: vec![FieldTypeHolder::U8(FieldType::Incremental {
+            value: 0,
+        })],
     };
 
     let buffer = TEST_POOL.allocate(Some(1));
@@ -241,7 +271,9 @@ fn test_flow_config_assert_empty_body_ok() {
 #[test]
 fn test_flow_config_assert_constant_body_ok() {
     let config = FlowConfig::new(
-        FakeBodyMode::Constant { packet_length: 1000 },
+        FakeBodyMode::Constant {
+            packet_length: 1000,
+        },
         FakeHeaderConfig::new(vec![]),
     );
     assert!(config.assert(1500).is_ok());
@@ -251,7 +283,9 @@ fn test_flow_config_assert_constant_body_ok() {
 #[test]
 fn test_flow_config_assert_constant_body_exceeds_max() {
     let config = FlowConfig::new(
-        FakeBodyMode::Constant { packet_length: 2000 },
+        FakeBodyMode::Constant {
+            packet_length: 2000,
+        },
         FakeHeaderConfig::new(vec![]),
     );
     assert!(config.assert(1500).is_err());
@@ -261,7 +295,11 @@ fn test_flow_config_assert_constant_body_exceeds_max() {
 #[test]
 fn test_flow_config_assert_random_body_ok() {
     let config = FlowConfig::new(
-        FakeBodyMode::Random { min_length: 10, max_length: 200, service: false },
+        FakeBodyMode::Random {
+            min_length: 10,
+            max_length: 200,
+            service: false,
+        },
         FakeHeaderConfig::new(vec![]),
     );
     assert!(config.assert(1500).is_ok());
@@ -271,7 +309,11 @@ fn test_flow_config_assert_random_body_ok() {
 #[test]
 fn test_flow_config_assert_random_body_min_exceeds_max() {
     let config = FlowConfig::new(
-        FakeBodyMode::Random { min_length: 300, max_length: 100, service: false },
+        FakeBodyMode::Random {
+            min_length: 300,
+            max_length: 100,
+            service: false,
+        },
         FakeHeaderConfig::new(vec![]),
     );
     assert!(config.assert(1500).is_err());
@@ -281,12 +323,13 @@ fn test_flow_config_assert_random_body_min_exceeds_max() {
 #[test]
 fn test_flow_config_assert_header_exceeds_max() {
     let large_pattern: Vec<FieldTypeHolder> = (0..200)
-        .map(|_| FieldTypeHolder::U64(FieldType::Constant { value: 0 }))
+        .map(|_| {
+            FieldTypeHolder::U64(FieldType::Constant {
+                value: 0,
+            })
+        })
         .collect();
-    let config = FlowConfig::new(
-        FakeBodyMode::Empty,
-        FakeHeaderConfig::new(large_pattern),
-    );
+    let config = FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(large_pattern));
     // 200 * 8 = 1600 > 1500
     assert!(config.assert(1500).is_err());
 }
@@ -295,7 +338,9 @@ fn test_flow_config_assert_header_exceeds_max() {
 #[test]
 fn test_flow_config_assert_constant_body_at_max() {
     let config = FlowConfig::new(
-        FakeBodyMode::Constant { packet_length: 1500 },
+        FakeBodyMode::Constant {
+            packet_length: 1500,
+        },
         FakeHeaderConfig::new(vec![]),
     );
     assert!(config.assert(1500).is_ok());
@@ -305,7 +350,11 @@ fn test_flow_config_assert_constant_body_at_max() {
 #[test]
 fn test_flow_config_assert_random_body_equal_bounds() {
     let config = FlowConfig::new(
-        FakeBodyMode::Random { min_length: 100, max_length: 100, service: false },
+        FakeBodyMode::Random {
+            min_length: 100,
+            max_length: 100,
+            service: false,
+        },
         FakeHeaderConfig::new(vec![]),
     );
     assert!(config.assert(1500).is_ok());

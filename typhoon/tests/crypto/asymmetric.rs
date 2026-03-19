@@ -129,7 +129,8 @@ fn test_handshake_cycle() {
     let initial_data_data = b"Secret initial data message";
     let initial_data = TEST_POOL.allocate_precise_from_slice_with_capacity(initial_data_data, 0, NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN);
 
-    let (client_data, client_handshake, mut client_initial_cipher) = certificate.encapsulate_handshake_client(&TEST_POOL);
+    let (client_data, client_handshake, client_initial_key) = certificate.encapsulate_handshake_client(&TEST_POOL);
+    let mut client_initial_cipher = Symmetric::new(&client_initial_key);
     let initial_data_encrypted = client_initial_cipher.encrypt_auth(initial_data, None::<&StaticByteBuffer>).expect("initial data encryption failed");
 
     let (server_data, mut server_initial_cipher) = server_secret.decapsulate_handshake_server(client_handshake);
