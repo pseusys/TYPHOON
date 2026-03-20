@@ -21,6 +21,7 @@ pub mod keys {
     pub const HEALTH_CHECK_NEXT_IN_MAX: Key<u64> = Key::new("TYPHOON_HEALTH_CHECK_NEXT_IN_MAX", 256000);
     pub const HANDSHAKE_NEXT_IN_FACTOR: Key<f64> = Key::new("TYPHOON_HANDSHAKE_NEXT_IN_FACTOR", 0.02);
     pub const MAX_RETRIES: Key<u64> = Key::new("TYPHOON_MAX_RETRIES", 12);
+    pub const RECEIVE_BUFFER_SIZE: Key<u64> = Key::new("TYPHOON_RECEIVE_BUFFER_SIZE", 16);
 
     // Fake body/header settings
     pub const FAKE_BODY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_BODY_LENGTH_MIN", 0);

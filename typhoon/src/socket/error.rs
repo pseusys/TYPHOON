@@ -17,4 +17,7 @@ pub enum ClientSocketError {
 
     #[error("no flow configurations provided")]
     NoFlows,
+
+    #[error("receive channel closed")]
+    ChannelClosed,
 }

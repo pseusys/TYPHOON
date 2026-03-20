@@ -3,6 +3,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::vec;
 
+use log::debug;
+
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::cache::SharedValue;
 use crate::crypto::{Certificate, ClientCryptoTool, KEY_LENGTH};
@@ -10,12 +12,12 @@ use crate::flow::FlowConfig;
 use crate::flow::client::ClientFlowManager;
 use crate::flow::decoy::DecoyCommunicationMode;
 use crate::session::{ClientSessionManager, SessionManager};
-use crate::settings::Settings;
+use crate::settings::{Settings, keys};
 use crate::socket::error::ClientSocketError;
 use crate::tailor::IdentityType;
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::socket::Socket;
-use crate::utils::sync::AsyncExecutor;
+use crate::utils::sync::{AsyncExecutor, ChannelReceiver, Mutex, create_channel};
 
 /// Configuration for a single flow manager.
 pub struct FlowManagerConfiguration {
@@ -121,8 +123,29 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 
         let session = ClientSessionManager::new(cipher, flows, settings.clone()).await.map_err(ClientSocketError::SessionError)?;
 
+        let buffer_size = settings.get(&keys::RECEIVE_BUFFER_SIZE) as usize;
+        let (data_tx, data_rx) = create_channel(buffer_size);
+
+        let receive_session = session.clone();
+        settings.executor().spawn(async move {
+            loop {
+                match receive_session.receive_packet().await {
+                    Ok(buffer) => {
+                        if !data_tx.send(buffer).await {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        debug!("background receive loop terminated: {}", err);
+                        break;
+                    }
+                }
+            }
+        });
+
         Ok(ClientSocket {
             session,
+            receiver: Mutex::new(data_rx),
             settings,
         })
     }
@@ -131,6 +154,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 /// Client-side TYPHOON socket providing send/receive operations.
 pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<AE, ClientFlowManager<T, AE, DP>> + Send + Sync + 'static> {
     session: Arc<ClientSessionManager<T, AE, Arc<ClientFlowManager<T, AE, DP>>>>,
+    receiver: Mutex<ChannelReceiver<DynamicByteBuffer>>,
     settings: Arc<Settings<AE>>,
 }
 
@@ -148,7 +172,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 
     /// Receive a packet, returning the decrypted payload as a buffer.
     pub async fn receive(&self) -> Result<DynamicByteBuffer, ClientSocketError> {
-        self.session.receive_packet().await.map_err(ClientSocketError::SessionError)
+        self.receiver.lock().await.recv().await.ok_or(ClientSocketError::ChannelClosed)
     }
 
     /// Receive a packet, returning the decrypted payload as a byte vector.
