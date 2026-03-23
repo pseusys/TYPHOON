@@ -54,7 +54,7 @@ pub struct ClientSocketBuilder<T: IdentityType + Clone, AE: AsyncExecutor + 'sta
     _phantom: PhantomData<(T, DP)>,
 }
 
-impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<AE, ClientFlowManager<T, AE, DP>> + 'static> ClientSocketBuilder<T, AE, DP> {
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ClientFlowManager<T, AE, DP>> + 'static> ClientSocketBuilder<T, AE, DP> {
     /// Create a new builder with the given cipher and settings.
     pub fn new(certificate: Certificate) -> Self {
         Self {
@@ -152,13 +152,13 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 }
 
 /// Client-side TYPHOON socket providing send/receive operations.
-pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<AE, ClientFlowManager<T, AE, DP>> + Send + Sync + 'static> {
+pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ClientFlowManager<T, AE, DP>> + Send + Sync + 'static> {
     session: Arc<ClientSessionManager<T, AE, Arc<ClientFlowManager<T, AE, DP>>>>,
     receiver: Mutex<ChannelReceiver<DynamicByteBuffer>>,
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<AE, ClientFlowManager<T, AE, DP>> + 'static> ClientSocket<T, AE, DP> {
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ClientFlowManager<T, AE, DP>> + 'static> ClientSocket<T, AE, DP> {
     /// Send a packet using a pre-allocated buffer.
     pub async fn send(&self, packet: DynamicByteBuffer) -> Result<(), ClientSocketError> {
         self.session.send_packet(packet, false).await.map_err(ClientSocketError::SessionError)

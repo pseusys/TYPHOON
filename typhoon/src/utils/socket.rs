@@ -68,6 +68,22 @@ impl Socket {
         })
     }
 
+    /// Bind a socket without connecting (for server use with multiple peers).
+    #[cfg(feature = "tokio")]
+    pub async fn bind(local: SocketAddr) -> Result<Self, SocketError> {
+        let sock = TokioSocket::bind(local).await.map_err(SocketError::new_socket_error)?;
+        Ok(Self { sock })
+    }
+
+    /// Bind a socket without connecting (for server use with multiple peers).
+    #[cfg(feature = "async-std")]
+    pub async fn bind(local: SocketAddr) -> Result<Self, SocketError> {
+        let sock = StdUdpSocket::bind(local).map_err(SocketError::new_socket_error)?;
+        Ok(Self {
+            sock: Async::new(sock).map_err(SocketError::new_socket_error)?,
+        })
+    }
+
     /// Send to socket
 
     #[cfg(feature = "tokio")]
@@ -92,6 +108,32 @@ impl Socket {
     pub async fn recv(&self, buf: DynamicByteBuffer) -> Result<DynamicByteBuffer, SocketError> {
         let res = self.sock.recv(buf.slice_mut()).await.map_err(SocketError::new_socket_error)?;
         Ok(buf.rebuffer_end(res))
+    }
+
+    /// Send to a specific address (for unconnected sockets).
+
+    #[cfg(feature = "tokio")]
+    pub async fn send_to(&self, data: DynamicByteBuffer, target: SocketAddr) -> Result<usize, SocketError> {
+        self.sock.send_to(data.slice(), target).await.map_err(SocketError::new_socket_error)
+    }
+
+    #[cfg(feature = "async-std")]
+    pub async fn send_to(&self, data: DynamicByteBuffer, target: SocketAddr) -> Result<usize, SocketError> {
+        self.sock.send_to(data.slice(), target).await.map_err(SocketError::new_socket_error)
+    }
+
+    /// Receive from any peer, returning the data and source address.
+
+    #[cfg(feature = "tokio")]
+    pub async fn recv_from(&self, buf: DynamicByteBuffer) -> Result<(DynamicByteBuffer, SocketAddr), SocketError> {
+        let (res, addr) = self.sock.recv_from(buf.slice_mut()).await.map_err(SocketError::new_socket_error)?;
+        Ok((buf.rebuffer_end(res), addr))
+    }
+
+    #[cfg(feature = "async-std")]
+    pub async fn recv_from(&self, buf: DynamicByteBuffer) -> Result<(DynamicByteBuffer, SocketAddr), SocketError> {
+        let (res, addr) = self.sock.recv_from(buf.slice_mut()).await.map_err(SocketError::new_socket_error)?;
+        Ok((buf.rebuffer_end(res), addr))
     }
 
     /// Attempt best effort synchronous send a final message and close the socket

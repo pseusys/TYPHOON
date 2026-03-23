@@ -4,13 +4,14 @@ use std::sync::Weak;
 use crate::bytes::DynamicByteBuffer;
 use crate::flow::decoy::common::DecoyCommunicationMode;
 use crate::settings::Settings;
+use crate::tailor::IdentityType;
 use crate::utils::sync::AsyncExecutor;
 
 /// Simple mode does not spawn any coroutines and does not send any packets.
 pub struct SimpleDecoyProvider;
 
-impl<AE: AsyncExecutor, FM: Send + Sync + 'static> DecoyCommunicationMode<AE, FM> for SimpleDecoyProvider {
-    fn new(_manager: Weak<FM>, _settings: std::sync::Arc<Settings<AE>>) -> Self {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: Send + Sync + 'static> DecoyCommunicationMode<T, AE, FM> for SimpleDecoyProvider {
+    fn new(_manager: Weak<FM>, _settings: std::sync::Arc<Settings<AE>>, _identity: T) -> Self {
         Self
     }
 

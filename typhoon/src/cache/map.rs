@@ -11,7 +11,7 @@ use crate::utils::random::get_rng;
 use crate::utils::sync::RwLock;
 
 pub(crate) type SharedState<K, V> = RwLock<HashMap<K, Versioned<V>>>;
-pub(crate) type ValueMapper<V> = Arc<dyn Fn(&V, Option<&V>) -> V + Send>;
+pub(crate) type ValueMapper<V> = Arc<dyn Fn(&V, Option<&V>) -> V + Send + Sync>;
 
 struct LocalEntry<V> {
     value: V,
@@ -75,7 +75,7 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
         }
     }
 
-    pub fn create_cache_with<F: Fn(&V, Option<&V>) -> V + Send + 'static>(&self, mapper: F) -> CachedMap<K, V> {
+    pub fn create_cache_with<F: Fn(&V, Option<&V>) -> V + Send + Sync + 'static>(&self, mapper: F) -> CachedMap<K, V> {
         CachedMap {
             source: Arc::downgrade(&self.state),
             local: HashMap::new(),
@@ -157,7 +157,7 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMap<K, V> {
         })
     }
 
-    pub fn create_sibling_with<F: Fn(&V, Option<&V>) -> V + Send + 'static>(&self, mapper: F) -> Result<CachedMap<K, V>, CacheError> {
+    pub fn create_sibling_with<F: Fn(&V, Option<&V>) -> V + Send + Sync + 'static>(&self, mapper: F) -> Result<CachedMap<K, V>, CacheError> {
         if self.source.strong_count() == 0 {
             return Err(CacheError::SourceDropped);
         }

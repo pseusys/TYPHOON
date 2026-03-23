@@ -14,12 +14,12 @@ use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
 use crate::utils::time::unix_timestamp_ms;
 
 /// Sparse mode implements sending average decoy packets sparsely distributed in time.
-pub struct SparseDecoyProvider<T: IdentityType + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + 'static> {
+pub struct SparseDecoyProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + 'static> {
     manager: Weak<FM>,
     state: Arc<RwLock<DecoyState<T, AE>>>,
 }
 
-impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager> SparseDecoyProvider<T, AE, FM> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager> SparseDecoyProvider<T, AE, FM> {
     fn calculate_delay(state: &DecoyState<T, AE>) -> u64 {
         let base_rate_rnd = state.settings.get(&DECOY_BASE_RATE_RND);
         let sparse_base_rate = state.settings.get(&DECOY_SPARSE_BASE_RATE);
@@ -90,9 +90,9 @@ impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager> SparseDecoyProvider<T,
     }
 }
 
-impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode<AE, FM> for SparseDecoyProvider<T, AE, FM> {
-    fn new(manager: Weak<FM>, settings: Arc<Settings<AE>>) -> Self {
-        let state = DecoyState::new(settings.clone());
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode<T, AE, FM> for SparseDecoyProvider<T, AE, FM> {
+    fn new(manager: Weak<FM>, settings: Arc<Settings<AE>>, identity: T) -> Self {
+        let state = DecoyState::new(settings.clone(), identity);
         let delay = Self::calculate_delay(&state);
         let length = Self::calculate_length(&state);
         let mut state = state;

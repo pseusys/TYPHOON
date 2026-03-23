@@ -18,7 +18,7 @@ fn make_settings() -> Arc<crate::settings::Settings<DefaultExecutor>> {
 #[test]
 fn test_decoy_state_new_defaults() {
     let settings = make_settings();
-    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone());
+    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
 
     let expected_ref_rate = settings.get(&DECOY_REFERENCE_PACKET_RATE_DEFAULT);
     let expected_pkt_rate = settings.get(&DECOY_CURRENT_PACKET_RATE_DEFAULT);
@@ -37,7 +37,7 @@ fn test_decoy_state_new_defaults() {
 #[test]
 fn test_decoy_state_new_initial_budget() {
     let settings = make_settings();
-    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone());
+    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
 
     let byte_rate_cap = settings.get(&DECOY_BYTE_RATE_CAP);
     let byte_rate_factor = settings.get(&DECOY_BYTE_RATE_FACTOR);
@@ -52,7 +52,7 @@ fn test_decoy_state_new_initial_budget() {
 #[test]
 fn test_quietness_index_busy() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
     state.reference_rate = 100.0;
     state.packet_rate = 100.0;
     assert_eq!(state.quietness_index(), 0.0);
@@ -62,7 +62,7 @@ fn test_quietness_index_busy() {
 #[test]
 fn test_quietness_index_quiet() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
     state.reference_rate = 1000.0;
     state.packet_rate = 1.0;
     let qi = state.quietness_index();
@@ -73,7 +73,7 @@ fn test_quietness_index_quiet() {
 #[test]
 fn test_quietness_index_clamped_to_zero() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
     state.reference_rate = 50.0;
     state.packet_rate = 200.0;
     assert_eq!(state.quietness_index(), 0.0, "should clamp negative values to 0");
@@ -85,7 +85,7 @@ fn test_quietness_index_clamped_to_zero() {
 #[test]
 fn test_schedule_next() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
 
     let before = unix_timestamp_ms();
     state.schedule_next(500, 256);
@@ -102,7 +102,7 @@ fn test_schedule_next() {
 #[test]
 fn test_create_decoy_packet_size() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
 
     let body_length = 64;
     let packet = state.create_decoy_packet(body_length);
@@ -114,7 +114,7 @@ fn test_create_decoy_packet_size() {
 #[test]
 fn test_create_decoy_packet_zero_body() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
 
     let packet = state.create_decoy_packet(0);
     assert_eq!(packet.len(), TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);

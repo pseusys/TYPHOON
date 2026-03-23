@@ -14,12 +14,12 @@ use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
 use crate::utils::time::unix_timestamp_ms;
 
 /// Heavy mode implements sending big decoy packets occasionally.
-pub struct HeavyDecoyProvider<T: IdentityType + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + 'static> {
+pub struct HeavyDecoyProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + 'static> {
     manager: Weak<FM>,
     state: Arc<RwLock<DecoyState<T, AE>>>,
 }
 
-impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager> HeavyDecoyProvider<T, AE, FM> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager> HeavyDecoyProvider<T, AE, FM> {
     fn calculate_delay(state: &DecoyState<T, AE>) -> u64 {
         let base_rate_rnd = state.settings.get(&DECOY_BASE_RATE_RND);
         let heavy_base_rate = state.settings.get(&DECOY_HEAVY_BASE_RATE);
@@ -88,9 +88,9 @@ impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager> HeavyDecoyProvider<T, 
     }
 }
 
-impl<T: IdentityType, AE: AsyncExecutor, FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode<AE, FM> for HeavyDecoyProvider<T, AE, FM> {
-    fn new(manager: Weak<FM>, settings: Arc<Settings<AE>>) -> Self {
-        let state = DecoyState::new(settings.clone());
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode<T, AE, FM> for HeavyDecoyProvider<T, AE, FM> {
+    fn new(manager: Weak<FM>, settings: Arc<Settings<AE>>, identity: T) -> Self {
+        let state = DecoyState::new(settings.clone(), identity);
         let delay = Self::calculate_delay(&state);
         let length = Self::calculate_length(&state);
         let mut state = state;

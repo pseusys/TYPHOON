@@ -183,4 +183,10 @@ impl<T: IdentityType> Tailor<T> {
         let correct_buffer = buffer.ensure_size(TAILOR_LENGTH);
         u16::from_be_bytes((&correct_buffer.rebuffer_both(PL_OFFSET, PL_OFFSET + PL_LENGTH)).into())
     }
+
+    /// Extract identity from a raw tailor buffer.
+    pub fn get_identity<A: ByteBuffer>(buffer: &DynamicByteBuffer, identity_len: usize) -> T {
+        let correct_buffer = buffer.ensure_size(identity_len + TAILOR_LENGTH);
+        T::from_bytes(correct_buffer.rebuffer_both(ID_OFFSET, ID_OFFSET + identity_len).slice())
+    }
 }

@@ -4,6 +4,7 @@ use crate::crypto::certificate::ObfuscationBufferContainer;
 use crate::crypto::certificate::{Certificate, ClientData};
 use crate::crypto::error::{CryptoError, HandshakeError};
 use crate::crypto::symmetric::{NONCE_LEN, ObfuscationTranscript, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
+use crate::flow::FlowCryptoProvider;
 use crate::tailor::IdentityType;
 
 /// Client-side cryptographic tool for TYPHOON protocol.
@@ -141,5 +142,29 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
             identity: self.identity.clone(),
             key: Symmetric::new(new_key),
         }
+    }
+}
+
+impl<T: IdentityType + Clone> FlowCryptoProvider for ClientCryptoTool<T> {
+    type Identity = T;
+
+    #[inline]
+    fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, pool: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
+        self.obfuscate_tailor(plaintext, pool)
+    }
+
+    #[inline]
+    fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+        self.deobfuscate_tailor(ciphertext)
+    }
+
+    #[inline]
+    fn verify_tailor(&mut self, transcript: ObfuscationTranscript) -> Result<(), CryptoError> {
+        self.verify_tailor(transcript)
+    }
+
+    #[inline]
+    fn tailor_overhead() -> usize {
+        Self::tailor_overhead()
     }
 }

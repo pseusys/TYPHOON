@@ -3,14 +3,12 @@
 mod tests;
 
 /// Shared state and utilities for decoy traffic communication modes.
-use std::marker::PhantomData;
 use std::sync::{Arc, Weak};
 
 use rand::Rng;
 use rand_distr::{Distribution, Exp, Normal};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
-use crate::flow::common::FlowManager;
 use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
 use crate::settings::keys::*;
@@ -20,9 +18,9 @@ use crate::utils::sync::AsyncExecutor;
 use crate::utils::time::unix_timestamp_ms;
 
 /// Trait for implementing decoy traffic communication modes.
-pub trait DecoyCommunicationMode<AE: AsyncExecutor, FM: Send + Sync + 'static>: Sized + Send + Sync {
-    /// Create a new decoy provider with the given manager, settings, and tailor size.
-    fn new(manager: Weak<FM>, settings: Arc<Settings<AE>>) -> Self;
+pub trait DecoyCommunicationMode<T: IdentityType + Clone, AE: AsyncExecutor, FM: Send + Sync + 'static>: Sized + Send + Sync {
+    /// Create a new decoy provider with the given manager, settings, and identity.
+    fn new(manager: Weak<FM>, settings: Arc<Settings<AE>>, identity: T) -> Self;
 
     /// Start the background decoy generation timer.
     fn start(&mut self) -> impl Future<Output = ()> + Send;
@@ -36,7 +34,7 @@ pub trait DecoyCommunicationMode<AE: AsyncExecutor, FM: Send + Sync + 'static>: 
 
 /// Internal state for tracking packet rates and byte budgets.
 /// This state is shared by all communication modes.
-pub(super) struct DecoyState<T: IdentityType, AE: AsyncExecutor> {
+pub(super) struct DecoyState<T: IdentityType + Clone, AE: AsyncExecutor> {
     pub(super) settings: Arc<Settings<AE>>,
     /// Long-term reference transmission rate in packets (milliseconds between packets).
     pub(super) reference_rate: f64,
@@ -52,17 +50,16 @@ pub(super) struct DecoyState<T: IdentityType, AE: AsyncExecutor> {
     pub(super) packet_length_cap: usize,
     /// Incremental packet number counter.
     packet_number: u64,
-    /// Identity bytes for decoy packets (16 bytes of zeros).
-    identity: Vec<u8>,
+    /// Identity for decoy packets.
+    identity: T,
     /// Next scheduled decoy time (milliseconds since epoch).
     pub(super) next_decoy_time: u128,
     /// Pre-computed length for next decoy.
     pub(super) pending_length: usize,
-    _phantom: PhantomData<T>,
 }
 
-impl<T: IdentityType, AE: AsyncExecutor> DecoyState<T, AE> {
-    pub(super) fn new(settings: Arc<Settings<AE>>) -> Self {
+impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
+    pub(super) fn new(settings: Arc<Settings<AE>>, identity: T) -> Self {
         let byte_rate_cap = settings.get(&DECOY_BYTE_RATE_CAP);
         let byte_rate_factor = settings.get(&DECOY_BYTE_RATE_FACTOR);
         let length_max = settings.get(&DECOY_LENGTH_MAX) as usize;
@@ -79,10 +76,9 @@ impl<T: IdentityType, AE: AsyncExecutor> DecoyState<T, AE> {
             previous_packet_time: None,
             packet_length_cap: length_max.max(length_min),
             packet_number: 0,
-            identity: vec![0u8; 16],
+            identity,
             next_decoy_time: now,
             pending_length: length_min,
-            _phantom: PhantomData,
         }
     }
 
@@ -126,8 +122,7 @@ impl<T: IdentityType, AE: AsyncExecutor> DecoyState<T, AE> {
 
         get_rng().fill(packet.slice_end_mut(body_length));
 
-        let identity_buffer = self.settings.pool().allocate_precise_from_slice_with_capacity(&self.identity, 0, 0);
-        let tailor = Tailor::decoy(T::from_bytes(identity_buffer.slice()), self.next_packet_number());
+        let tailor = Tailor::decoy(self.identity.clone(), self.next_packet_number());
         let tailor_buffer = self.settings.pool().allocate(Some(T::length() + TAILOR_LENGTH));
         let tailor_data = tailor.to_buffer(tailor_buffer);
         packet.slice_start_mut(body_length).copy_from_slice(tailor_data.slice());

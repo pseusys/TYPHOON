@@ -26,4 +26,9 @@ pub enum FlowControllerError {
     AssertionFailed {
         message: String,
     },
+
+    #[error("user not found in flow manager: {identity}")]
+    UserNotFound {
+        identity: String,
+    },
 }
