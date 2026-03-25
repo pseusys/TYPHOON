@@ -12,7 +12,9 @@ use x25519_dalek::{EphemeralSecret, PublicKey};
 use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, DynamicByteBuffer, StaticByteBuffer};
 use crate::crypto::certificate::ObfuscationBufferContainer;
 use crate::crypto::error::HandshakeError;
-use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, Symmetric, decrypt_anonymously, encrypt_anonymously};
+use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, decrypt_anonymously, encrypt_anonymously};
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+use crate::crypto::symmetric::Symmetric;
 use crate::utils::random::{SupportRng, get_rng};
 
 cfg_if! {
@@ -129,9 +131,9 @@ impl Certificate {
 
 #[cfg(feature = "server")]
 impl<'a> ServerSecret<'a> {
-    /// Server decapsulate client handshake: deobfuscate, decapsulate McEliece, derive cipher.
-    /// Args: client handshake_secret. Returns: (ServerData, initial_cipher).
-    pub fn decapsulate_handshake_server(&self, handshake_secret: DynamicByteBuffer) -> (ServerData, Symmetric) {
+    /// Server decapsulate client handshake: deobfuscate, decapsulate McEliece, derive key.
+    /// Args: client handshake_secret. Returns: (ServerData, initial_encryption_key).
+    pub fn decapsulate_handshake_server(&self, handshake_secret: DynamicByteBuffer) -> (ServerData, StaticByteBuffer) {
         let (mut ephemeral_public_obfuscated, rest) = handshake_secret.split_buf(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN);
         let (mut ciphertext_obfuscated, nonce) = rest.split_buf(CRYPTO_CIPHERTEXTBYTES + ANONYMOUS_NONCE_LEN);
 
@@ -159,13 +161,12 @@ impl<'a> ServerSecret<'a> {
             nonce: nonce.to_owned(),
         };
 
-        let initial_encryption_symmetric = Symmetric::new(&initial_encryption_key);
-        (server_data, initial_encryption_symmetric)
+        (server_data, initial_encryption_key)
     }
 
     /// Server handshake response: generate ephemeral X25519, sign transcript, derive session key.
-    /// Args: server data, buffer. Returns: (handshake_secret, session_cipher).
-    pub fn encapsulate_handshake_server(&self, data: ServerData, pool: &BytePool) -> (DynamicByteBuffer, Symmetric) {
+    /// Args: server data, buffer. Returns: (handshake_secret, session_key).
+    pub fn encapsulate_handshake_server(&self, data: ServerData, pool: &BytePool) -> (DynamicByteBuffer, StaticByteBuffer) {
         let nonce = get_rng().random_byte_buffer::<NONCE_LENGTH>();
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
@@ -184,9 +185,8 @@ impl<'a> ServerSecret<'a> {
 
         let handshake_buffer = pool.allocate_precise(0, 0, X25519_KEY_LENGTH + Signature::BYTE_SIZE + ANONYMOUS_NONCE_LEN + NONCE_LENGTH);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append(&transcript_signed.to_bytes()).append_buf(&nonce);
-        let session_symmetric = Symmetric::new(&session_key);
 
-        (handshake_secret, session_symmetric)
+        (handshake_secret, session_key)
     }
 
     /// Full mode: deobfuscate and decrypt ciphertext using server's X25519 secret.

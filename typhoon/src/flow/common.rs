@@ -105,13 +105,13 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
             Err(err) => return Err(FlowControllerError::MissingCache(err)),
         };
 
-        let packet_flags = PacketFlags::from_bits_truncate(tailor.get(0).clone());
-        if packet_flags.is_discardable() {
+        let tailor = Tailor::<CP::Identity>::new(tailor);
+        if tailor.flags().is_discardable() {
             info!("decoy packet received, skipping...");
             return Ok(None);
         }
 
-        let payload_len = Tailor::<CP::Identity>::get_payload_length(&tailor) as usize;
+        let payload_len = tailor.payload_length() as usize;
         Ok(Some(encrypted_packet.rebuffer_start(encrypted_packet.len() - payload_len).expand_end(identity_len)))
     }
 }

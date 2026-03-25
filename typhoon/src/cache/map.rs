@@ -83,6 +83,16 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
             _not_sync: PhantomData,
         }
     }
+
+    pub fn create_cache_for(&self, key: K) -> CachedMapEntry<K, V> {
+        CachedMapEntry {
+            source: Arc::downgrade(&self.state),
+            key,
+            local: None,
+            mapper: None,
+            _not_sync: PhantomData,
+        }
+    }
 }
 
 impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> Default for SharedMap<K, V> {
@@ -166,6 +176,73 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMap<K, V> {
             source: self.source.clone(),
             local: HashMap::new(),
             mapper: Some(Arc::new(mapper)),
+            _not_sync: PhantomData,
+        })
+    }
+}
+
+/// Single-entry cache connected to a `SharedMap`, watching one specific key.
+/// Change once this is implemented: https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html
+pub struct CachedMapEntry<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
+    source: Weak<SharedState<K, V>>,
+    key: K,
+    local: Option<LocalEntry<V>>,
+    mapper: Option<ValueMapper<V>>,
+    _not_sync: PhantomData<UnsafeCell<()>>,
+}
+
+impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMapEntry<K, V> {
+    fn map_value(&self, source: &V, old: Option<&V>) -> V {
+        match &self.mapper {
+            Some(mapper) => mapper(source, old),
+            None => source.clone(),
+        }
+    }
+
+    async fn fetch(&mut self) -> Result<&mut LocalEntry<V>, CacheError> {
+        let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
+        let guard = source.read().await;
+
+        match guard.get(&self.key) {
+            Some(entry) => {
+                let needs_update = self.local.as_ref().map(|local| local.source_version != entry.version).unwrap_or(true);
+
+                if needs_update {
+                    let old_value = self.local.as_ref().map(|e| &e.value);
+                    let new_value = self.map_value(&entry.value, old_value);
+                    self.local = Some(LocalEntry {
+                        value: new_value,
+                        source_version: entry.version,
+                    });
+                }
+                drop(guard);
+                Ok(self.local.as_mut().unwrap())
+            }
+            None => {
+                self.local = None;
+                Err(CacheError::KeyNotFound(self.key.to_string()))
+            }
+        }
+    }
+
+    pub async fn get(&mut self) -> Result<&V, CacheError> {
+        Ok(&self.fetch().await?.value)
+    }
+
+    pub async fn get_mut(&mut self) -> Result<&mut V, CacheError> {
+        Ok(&mut self.fetch().await?.value)
+    }
+
+    pub fn create_sibling(&self) -> Result<CachedMapEntry<K, V>, CacheError> {
+        if self.source.strong_count() == 0 {
+            return Err(CacheError::SourceDropped);
+        }
+
+        Ok(CachedMapEntry {
+            source: self.source.clone(),
+            key: self.key.clone(),
+            local: None,
+            mapper: self.mapper.clone(),
             _not_sync: PhantomData,
         })
     }

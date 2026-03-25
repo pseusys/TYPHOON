@@ -1,6 +1,10 @@
 /// Server-side cryptographic tool for TYPHOON protocol.
 use std::hash::Hash;
 use std::net::SocketAddr;
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+use std::sync::Arc;
+
+use fixedbitset::FixedBitSet;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, DynamicByteBuffer, StaticByteBuffer};
 use crate::cache::CachedMap;
@@ -38,22 +42,54 @@ impl UserCryptoState {
     }
 }
 
-/// Combined per-user server state: crypto keys + source address.
+impl UserCryptoState {
+    /// Encrypt payload data with session key.
+    pub fn encrypt_payload(&mut self, plaintext: DynamicByteBuffer, additional_data: Option<&DynamicByteBuffer>) -> Result<DynamicByteBuffer, CryptoError> {
+        self.key.encrypt_auth(plaintext, additional_data)
+    }
+
+    /// Decrypt payload data with session key.
+    pub fn decrypt_payload(&mut self, ciphertext: DynamicByteBuffer, additional_data: Option<&DynamicByteBuffer>) -> Result<DynamicByteBuffer, CryptoError> {
+        self.key.decrypt_auth(ciphertext, additional_data)
+    }
+}
+
+/// Combined per-user server state: crypto keys + source address + active flow bitmap.
 /// Stored in the global SharedMap, accessed via CachedMap by crypto tool and flow managers.
 #[derive(Clone)]
 pub struct UserServerState {
     crypto: UserCryptoState,
     addr: SocketAddr,
+    active_flows: FixedBitSet,
 }
 
 impl UserServerState {
     pub fn new(crypto: UserCryptoState, addr: SocketAddr) -> Self {
-        Self { crypto, addr }
+        Self { crypto, addr, active_flows: FixedBitSet::new() }
     }
 
     #[inline]
     pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// Mark a flow manager index as active for this user.
+    #[inline]
+    pub fn activate_flow(&mut self, index: usize) {
+        self.active_flows.grow(index + 1);
+        self.active_flows.set(index, true);
+    }
+
+    /// Get the bitmap of active flow manager indices.
+    #[inline]
+    pub fn active_flows(&self) -> &FixedBitSet {
+        &self.active_flows
+    }
+
+    /// Get mutable reference to the user's crypto state.
+    #[inline]
+    pub fn crypto_mut(&mut self) -> &mut UserCryptoState {
+        &mut self.crypto
     }
 }
 
@@ -65,7 +101,7 @@ pub struct ServerCryptoTool<T: IdentityType + Clone + Eq + Hash + Send + ToStrin
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     shared_obfs_decryptor: Symmetric,
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    secret: ServerSecret<'static>,
+    secret: Arc<ServerSecret<'static>>,
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> {
@@ -80,7 +116,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
 
     /// Create a new server crypto tool (full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn new(users: CachedMap<T, UserServerState>, secret: ServerSecret<'static>) -> Self {
+    pub fn new(users: CachedMap<T, UserServerState>, secret: Arc<ServerSecret<'static>>) -> Self {
         Self { users, secret }
     }
 

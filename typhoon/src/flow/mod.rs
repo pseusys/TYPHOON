@@ -8,3 +8,4 @@ pub mod server;
 pub use common::{FlowCryptoProvider, FlowManager};
 pub use config::{FakeBodyMode, FakeHeaderConfig, FieldType, FieldTypeHolder, FlowConfig};
 pub use error::FlowControllerError;
+pub use server::RawReceivedPacket;

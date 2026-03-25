@@ -12,7 +12,6 @@ use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
 use crate::session::health::HealthProvider;
 use crate::settings::Settings;
-use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::{AsyncExecutor, Mutex, create_channel};
@@ -93,18 +92,19 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> 
             let payload_length = encrypted_payload.len() as u16;
             let packet_number = send_lock.next_packet_number();
             let identity = send_lock.cipher.get().await.identity();
-            let mut tailor = Tailor::data(identity, payload_length, packet_number);
+
+            let encrypted_payload_len = encrypted_payload.len();
+            let tailor_buf = encrypted_payload.expand_end(T::length()).rebuffer_start(encrypted_payload_len);
+            let tailor = Tailor::data(tailor_buf, &identity, payload_length, packet_number);
 
             // Let health provider potentially attach a shadowride.
+            // Clone is cheap (Arc), and writes are visible through the shared buffer.
             {
                 let health_lock = self.health_provider.lock().await;
-                health_lock.feed_output(&mut tailor).await?;
+                health_lock.feed_output(tailor.clone()).await?;
             }
 
-            // Assemble: encrypted_payload || plaintext_tailor.
-            let encrypted_payload_len = encrypted_payload.len();
-            let assembled = tailor.to_buffer(encrypted_payload.expand_end(T::length()).rebuffer_start(encrypted_payload_len));
-            assembled
+            tailor.into_buffer()
         };
 
         self.select_flow().send_packet(full_packet, false).await.map_err(SessionControllerError::FlowError)
@@ -118,27 +118,27 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> 
 
             // The flow manager returns: encrypted_payload || plaintext_tailor.
             let (payload_part, tailor_part) = packet.split_buf(packet.len() - T::length());
-            let tailor = Tailor::from_buffer(&tailor_part, T::length() - TAILOR_LENGTH);
+            let tailor = Tailor::<T>::new(tailor_part);
 
             // Handle termination.
-            if tailor.flags.is_termination() {
-                return Err(SessionControllerError::ConnectionTerminated(tailor.code));
+            if tailor.flags().is_termination() {
+                return Err(SessionControllerError::ConnectionTerminated(tailor.code()));
             }
 
             // Handle handshake response.
-            if tailor.flags.contains(PacketFlags::HANDSHAKE) {
+            if tailor.flags().contains(PacketFlags::HANDSHAKE) {
                 let health_lock = self.health_provider.lock().await;
-                health_lock.feed_handshake_input(&tailor, payload_part.clone()).await?;
+                health_lock.feed_handshake_input(tailor.clone(), payload_part.clone()).await?;
             }
 
             // Handle health check (standalone or shadowride).
-            if tailor.flags.contains(PacketFlags::HEALTH_CHECK) {
+            if tailor.flags().contains(PacketFlags::HEALTH_CHECK) {
                 let health_lock = self.health_provider.lock().await;
-                health_lock.feed_input(&tailor).await?;
+                health_lock.feed_input(tailor.clone()).await?;
             }
 
             // If there is data payload, decrypt and return.
-            if tailor.flags.has_payload() {
+            if tailor.flags().has_payload() {
                 let mut recv_lock = self.receive_internal.lock().await;
                 match recv_lock.cipher.get_mut().await.decrypt_payload(payload_part, None) {
                     Ok(decrypted) => return Ok(decrypted),

@@ -158,16 +158,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> HealthState<T, AE> {
         self.crypto_tool.get().await.identity()
     }
 
-    /// Serialize a tailor into a buffer.
-    fn serialize_tailor(&self, tailor: Tailor<T>) -> DynamicByteBuffer {
-        let buf = self.settings.pool().allocate(Some(T::length()));
-        tailor.to_buffer(buf)
-    }
-
     /// Create a health check packet (empty body + tailor).
     async fn create_health_check_packet(&mut self, pn: u64, next_in: u32) -> DynamicByteBuffer {
         let identity = self.identity_value().await;
-        self.serialize_tailor(Tailor::health_check(identity, next_in, pn))
+        let buf = self.settings.pool().allocate(Some(T::length()));
+        Tailor::health_check(buf, &identity, next_in, pn).into_buffer()
     }
 
     /// Create a handshake packet with encryption: handshake_secret || tailor.
@@ -178,11 +173,10 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> HealthState<T, AE> {
         self.client_data = Some(client_data);
 
         let identity = self.identity_value().await;
-        let tailor = Tailor::handshake(identity, 0, next_in, pn);
         let tailor_buffer = settings.pool().allocate(Some(T::length() + TAILOR_LENGTH));
-        let tailor_data = tailor.to_buffer(tailor_buffer);
+        let tailor = Tailor::handshake(tailor_buffer, &identity, 0, next_in, pn);
 
-        let packet = handshake_secret.append(tailor_data.slice());
+        let packet = handshake_secret.append(tailor.buffer().slice());
         (packet, initial_key)
     }
 
@@ -256,16 +250,19 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     }
 
     /// Called when a packet with HEALTH_CHECK flag is received.
-    pub async fn feed_input(&self, tailor: &Tailor<T>) -> Result<(), SessionControllerError> {
+    pub async fn feed_input(&self, tailor: Tailor<T>) -> Result<(), SessionControllerError> {
+        let pn = tailor.packet_number();
+        let time = tailor.time();
+
         let state = self.state.lock().await;
 
-        if tailor.packet_number != state.current_pn {
-            debug!("HealthProvider: discarding health check with unexpected PN (got {}, expected {})", tailor.packet_number, state.current_pn);
+        if pn != state.current_pn {
+            debug!("HealthProvider: discarding health check with unexpected PN (got {}, expected {})", pn, state.current_pn);
             return Ok(());
         }
 
         let receive_time = unix_timestamp_ms();
-        let server_next_in = tailor.time.clamp(state.settings.get(&HEALTH_CHECK_NEXT_IN_MIN) as u32, state.settings.get(&HEALTH_CHECK_NEXT_IN_MAX) as u32);
+        let server_next_in = time.clamp(state.settings.get(&HEALTH_CHECK_NEXT_IN_MIN) as u32, state.settings.get(&HEALTH_CHECK_NEXT_IN_MAX) as u32);
 
         match self.response_tx.send((server_next_in, receive_time, None)).await {
             true => Ok(()),
@@ -274,16 +271,19 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     }
 
     /// Called when a packet with HANDSHAKE flag is received, carrying the server handshake body.
-    pub async fn feed_handshake_input(&self, tailor: &Tailor<T>, body: DynamicByteBuffer) -> Result<(), SessionControllerError> {
+    pub async fn feed_handshake_input(&self, tailor: Tailor<T>, body: DynamicByteBuffer) -> Result<(), SessionControllerError> {
+        let pn = tailor.packet_number();
+        let time = tailor.time();
+
         let state = self.state.lock().await;
 
-        if tailor.packet_number != state.current_pn {
-            debug!("HealthProvider: discarding handshake with unexpected PN (got {}, expected {})", tailor.packet_number, state.current_pn);
+        if pn != state.current_pn {
+            debug!("HealthProvider: discarding handshake with unexpected PN (got {}, expected {})", pn, state.current_pn);
             return Ok(());
         }
 
         let receive_time = unix_timestamp_ms();
-        let server_next_in = tailor.time.clamp(state.settings.get(&HEALTH_CHECK_NEXT_IN_MIN) as u32, state.settings.get(&HEALTH_CHECK_NEXT_IN_MAX) as u32);
+        let server_next_in = time.clamp(state.settings.get(&HEALTH_CHECK_NEXT_IN_MIN) as u32, state.settings.get(&HEALTH_CHECK_NEXT_IN_MAX) as u32);
 
         match self.response_tx.send((server_next_in, receive_time, Some(body))).await {
             true => Ok(()),
@@ -292,16 +292,16 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     }
 
     /// Called before a data packet is sent. May modify the tailor for shadowriding.
-    pub async fn feed_output(&self, tailor: &mut Tailor<T>) -> Result<(), SessionControllerError> {
-        if tailor.flags.contains(PacketFlags::HEALTH_CHECK) {
+    pub async fn feed_output(&self, tailor: Tailor<T>) -> Result<(), SessionControllerError> {
+        if tailor.flags().contains(PacketFlags::HEALTH_CHECK) {
             return Ok(());
         }
 
         let mut state = self.state.lock().await;
         if let Some((pn, next_in)) = state.shadowride_pending.take() {
-            tailor.flags |= PacketFlags::HEALTH_CHECK;
-            tailor.time = next_in;
-            tailor.packet_number = pn;
+            tailor.set_flags(tailor.flags() | PacketFlags::HEALTH_CHECK);
+            tailor.set_time(next_in);
+            tailor.set_packet_number_raw(pn);
             state.last_sent_time = unix_timestamp_ms();
             debug!("HealthProvider: shadowride attached (PN={}, next_in={}ms)", pn, next_in);
 
@@ -528,11 +528,10 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         self.settings.executor().spawn(async move {
             let identity = state.lock().await.crypto_tool.get().await.identity();
             let packet_number = ((unix_timestamp_ms() / 1000) as u64) << 32;
-            let tailor = Tailor::termination(identity, ReturnCode::Success, packet_number);
-            let packet = tailor.to_buffer(packet);
+            let tailor = Tailor::termination(packet, &identity, ReturnCode::Success, packet_number);
 
             if let Some(mgr) = manager.upgrade() {
-                match mgr.send_packet(packet, true).await {
+                match mgr.send_packet(tailor.into_buffer(), true).await {
                     Ok(()) => debug!("HealthProvider: termination packet sent"),
                     Err(err) => debug!("HealthProvider: failed to send termination packet: {err}"),
                 }

@@ -133,7 +133,8 @@ fn test_handshake_cycle() {
     let mut client_initial_cipher = Symmetric::new(&client_initial_key);
     let initial_data_encrypted = client_initial_cipher.encrypt_auth(initial_data, None::<&StaticByteBuffer>).expect("initial data encryption failed");
 
-    let (server_data, mut server_initial_cipher) = server_secret.decapsulate_handshake_server(client_handshake);
+    let (server_data, server_initial_key) = server_secret.decapsulate_handshake_server(client_handshake);
+    let mut server_initial_cipher = Symmetric::new(&server_initial_key);
     let initial_data_decrypted = server_initial_cipher.decrypt_auth(initial_data_encrypted, None::<&StaticByteBuffer>).expect("initial data decryption failed");
 
     assert_eq!(client_data.shared_secret, server_data.shared_secret, "client and server should derive the same shared secret");
@@ -142,7 +143,8 @@ fn test_handshake_cycle() {
     let session_data_data = b"Secret session data message";
     let session_data = TEST_POOL.allocate_precise_from_slice_with_capacity(session_data_data, 0, NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN);
 
-    let (server_handshake, mut server_session_cipher) = server_secret.encapsulate_handshake_server(server_data, &TEST_POOL);
+    let (server_handshake, server_session_key) = server_secret.encapsulate_handshake_server(server_data, &TEST_POOL);
+    let mut server_session_cipher = Symmetric::new(&server_session_key);
     let session_data_encrypted = server_session_cipher.encrypt_auth(session_data, None::<&StaticByteBuffer>).expect("session data encryption failed");
 
     let client_session_key_bytes = certificate.decapsulate_handshake_client(client_data, server_handshake).expect("client handshake decapsulation failed");

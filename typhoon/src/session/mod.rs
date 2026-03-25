@@ -5,9 +5,10 @@ mod health;
 
 #[cfg(feature = "client")]
 mod client;
+#[cfg(feature = "server")]
+pub(crate) mod server;
 
 #[cfg(feature = "client")]
 pub use client::ClientSessionManager;
 pub use common::SessionManager;
 pub use error::SessionControllerError;
-pub use health::HealthProvider;

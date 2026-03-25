@@ -1,6 +1,7 @@
 /// Server-side flow manager implementation.
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use log::{debug, info};
@@ -17,6 +18,16 @@ use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::socket::Socket;
 use crate::utils::sync::{AsyncExecutor, Mutex};
+
+/// Raw received packet from the server flow manager before session-level processing.
+pub struct RawReceivedPacket<T: IdentityType> {
+    /// The encrypted payload portion of the packet.
+    pub body: DynamicByteBuffer,
+    /// The decrypted tailor.
+    pub tailor: Tailor<T>,
+    /// The source address of the packet.
+    pub source_addr: SocketAddr,
+}
 
 /// Server-side flow manager that handles per-user packet encryption, decoy traffic, and socket I/O.
 /// User addresses and crypto state are stored in the global SharedMap (accessed via ServerCryptoTool).
@@ -57,6 +68,74 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     pub async fn remove_user(&self, id: &T) {
         let mut providers = self.decoy_providers.lock().await;
         providers.remove(id);
+    }
+
+    /// Receive a raw packet, deobfuscating the tailor but returning the full body + tailor view.
+    /// For handshake packets, per-user verification is skipped (user not registered yet).
+    /// Decoy packets are filtered. Non-handshake packets are verified per-user and fed to decoy providers.
+    pub async fn receive_raw(&self, packet: DynamicByteBuffer) -> Result<RawReceivedPacket<T>, FlowControllerError> {
+        let identity_len = T::length();
+        let tailor_overhead = ServerCryptoTool::<T>::tailor_overhead();
+
+        loop {
+            let (packet, source_addr) = self.sock.recv_from(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
+
+            // Strip encrypted tailor from the end.
+            let (encrypted_packet, encrypted_tailor) = packet.split_buf(packet.len() - identity_len - tailor_overhead);
+
+            // Deobfuscate tailor and wrap as a view.
+            let (tailor, transcript) = {
+                let mut crypto = self.crypto.lock().await;
+                let (tailor_buf, transcript) = match crypto.deobfuscate_tailor(encrypted_tailor) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        debug!("error decrypting packet tailor: {}", err);
+                        continue;
+                    }
+                };
+                (Tailor::<T>::new(tailor_buf), transcript)
+            };
+
+            let packet_flags = tailor.flags();
+
+            // Decoy packets are always discarded at flow level.
+            if packet_flags.is_discardable() {
+                info!("decoy packet received, skipping...");
+                continue;
+            }
+
+            let identity = tailor.identity();
+
+            // For non-handshake packets, verify per-user and feed decoy providers.
+            if !packet_flags.contains(PacketFlags::HANDSHAKE) {
+                {
+                    let mut crypto = self.crypto.lock().await;
+                    match crypto.verify_tailor(&identity, transcript).await {
+                        Ok(_) => {}
+                        Err(err) => {
+                            debug!("error verifying packet tailor: {}", err);
+                            continue;
+                        }
+                    }
+                }
+
+                {
+                    let mut providers = self.decoy_providers.lock().await;
+                    if let Some(dp) = providers.get_mut(&identity) {
+                        let notified = dp.feed_input(tailor.buffer().clone()).await;
+                        if notified.is_none() {
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            return Ok(RawReceivedPacket {
+                body: encrypted_packet,
+                tailor,
+                source_addr,
+            });
+        }
     }
 }
 
@@ -124,17 +203,18 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             // Strip encrypted tailor from the end.
             let (encrypted_packet, encrypted_tailor) = packet.split_buf(packet.len() - identity_len - tailor_overhead);
 
-            // Deobfuscate and verify tailor.
-            let (tailor, identity) = {
+            // Deobfuscate, verify, and wrap as a tailor view.
+            let tailor = {
                 let mut crypto = self.crypto.lock().await;
-                let (tailor, transcript) = match crypto.deobfuscate_tailor(encrypted_tailor) {
+                let (tailor_buf, transcript) = match crypto.deobfuscate_tailor(encrypted_tailor) {
                     Ok(result) => result,
                     Err(err) => {
                         debug!("error decrypting packet tailor: {}", err);
                         continue;
                     }
                 };
-                let identity = ServerCryptoTool::<T>::extract_identity(&tailor);
+                let tailor = Tailor::<T>::new(tailor_buf);
+                let identity = tailor.identity();
                 match crypto.verify_tailor(&identity, transcript).await {
                     Ok(_) => {}
                     Err(err) => {
@@ -142,14 +222,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                         continue;
                     }
                 }
-                (tailor, identity)
+                tailor
             };
 
             // Feed decoy provider for rate tracking.
             {
+                let identity = tailor.identity();
                 let mut providers = self.decoy_providers.lock().await;
                 if let Some(dp) = providers.get_mut(&identity) {
-                    let notified = dp.feed_input(tailor.clone()).await;
+                    let notified = dp.feed_input(tailor.buffer().clone()).await;
                     if notified.is_none() {
                         continue;
                     }
@@ -157,14 +238,13 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             }
 
             // Check if decoy packet.
-            let packet_flags = PacketFlags::from_bits_truncate(tailor.get(0).clone());
-            if packet_flags.is_discardable() {
+            if tailor.flags().is_discardable() {
                 info!("decoy packet received, skipping...");
                 continue;
             }
 
             // Extract payload.
-            let payload_len = Tailor::<T>::get_payload_length(&tailor) as usize;
+            let payload_len = tailor.payload_length() as usize;
             return Ok(encrypted_packet.rebuffer_start(encrypted_packet.len() - payload_len).expand_end(identity_len));
         }
     }
