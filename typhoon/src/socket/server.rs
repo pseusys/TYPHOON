@@ -245,7 +245,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         };
 
         if let Some(session) = session {
-            // Activate this flow for the user if not already.
+            // Activate this flow for the user.
             {
                 let mut users = self.users.lock().await;
                 if let Some(user_state) = users.get_mut(&identity) {
@@ -284,7 +284,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             match ServerSessionManager::from_handshake(
                 raw_packet.body,
                 raw_packet.tailor,
-                raw_packet.source_addr,
                 &self.secret,
                 &mut users,
                 user_data_tx,
@@ -308,6 +307,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 user_state.activate_flow(flow_index);
             }
         }
+
+        // Register initial source address on the handshake flow manager.
+        self.flows[flow_index].register_user_addr(identity.clone(), raw_packet.source_addr).await;
 
         // Register user in all flow managers for decoy traffic.
         for flow in &self.flows {

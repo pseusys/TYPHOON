@@ -130,6 +130,17 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
         packet
     }
 
+    /// Try to spend byte budget for a decoy packet.
+    /// Returns true if budget was sufficient and has been deducted.
+    pub(super) fn try_spend_budget(&mut self, bytes: usize) -> bool {
+        if self.byte_budget >= bytes as f64 {
+            self.byte_budget -= bytes as f64;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Schedule the next decoy packet.
     pub(super) fn schedule_next(&mut self, delay: u64, length: usize) {
         self.next_decoy_time = unix_timestamp_ms() + delay as u128;

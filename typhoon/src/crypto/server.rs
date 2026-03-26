@@ -1,6 +1,5 @@
 /// Server-side cryptographic tool for TYPHOON protocol.
 use std::hash::Hash;
-use std::net::SocketAddr;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use std::sync::Arc;
 
@@ -54,23 +53,18 @@ impl UserCryptoState {
     }
 }
 
-/// Combined per-user server state: crypto keys + source address + active flow bitmap.
+/// Combined per-user server state: crypto keys + active flow bitmap.
 /// Stored in the global SharedMap, accessed via CachedMap by crypto tool and flow managers.
+/// Per-flow source addresses are tracked locally by each ServerFlowManager.
 #[derive(Clone)]
 pub struct UserServerState {
     crypto: UserCryptoState,
-    addr: SocketAddr,
     active_flows: FixedBitSet,
 }
 
 impl UserServerState {
-    pub fn new(crypto: UserCryptoState, addr: SocketAddr) -> Self {
-        Self { crypto, addr, active_flows: FixedBitSet::new() }
-    }
-
-    #[inline]
-    pub fn addr(&self) -> SocketAddr {
-        self.addr
+    pub fn new(crypto: UserCryptoState) -> Self {
+        Self { crypto, active_flows: FixedBitSet::new() }
     }
 
     /// Mark a flow manager index as active for this user.
@@ -124,12 +118,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
     pub fn extract_identity(buffer: &DynamicByteBuffer) -> T {
         let correct_buffer = buffer.ensure_size(T::length() + TAILOR_LENGTH);
         T::from_bytes(correct_buffer.rebuffer_both(ID_OFFSET, ID_OFFSET + T::length()).slice())
-    }
-
-    /// Look up user's source address.
-    pub async fn get_user_addr(&mut self, identity: &T) -> Result<SocketAddr, CryptoError> {
-        let user = self.users.get(identity).await.map_err(|e| CryptoError::authentication_error(&e.to_string()))?;
-        Ok(user.addr())
     }
 
     /// Encrypt payload data with per-user session key.

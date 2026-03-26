@@ -49,7 +49,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     pub async fn from_handshake(
         handshake_body: DynamicByteBuffer,
         handshake_tailor: Tailor<T>,
-        source_addr: std::net::SocketAddr,
         secret: &crate::crypto::ServerSecret<'_>,
         users: &mut SharedMap<T, UserServerState>,
         user_data_tx: ChannelSender<DynamicByteBuffer>,
@@ -69,7 +68,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         // Create per-user crypto state.
         let obfuscation_buffer = secret.obfuscation_buffer();
         let crypto_state = UserCryptoState::new(&session_key, obfuscation_buffer);
-        let user_state = UserServerState::new(crypto_state, source_addr);
+        let user_state = UserServerState::new(crypto_state);
 
         // Insert user into shared map.
         let identity = handshake_tailor.identity();
@@ -108,7 +107,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     pub async fn from_handshake(
         handshake_body: DynamicByteBuffer,
         handshake_tailor: Tailor<T>,
-        source_addr: std::net::SocketAddr,
         secret: &ServerSecret<'_>,
         users: &mut SharedMap<T, UserServerState>,
         user_data_tx: ChannelSender<DynamicByteBuffer>,
@@ -125,7 +123,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
 
         // Create per-user crypto state.
         let crypto_state = UserCryptoState::new(&session_key);
-        let user_state = UserServerState::new(crypto_state, source_addr);
+        let user_state = UserServerState::new(crypto_state);
 
         // Insert user into shared map.
         let identity = handshake_tailor.identity();

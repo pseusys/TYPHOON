@@ -70,21 +70,29 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager> SparseDecoyPro
                 break;
             };
 
-            let decoy_packet = {
+            {
                 let mut state_guard = state.write().await;
                 let decoy_length = state_guard.pending_length;
-                let decoy_packet = state_guard.create_decoy_packet(decoy_length);
 
+                if state_guard.try_spend_budget(decoy_length) {
+                    let decoy_packet = state_guard.create_decoy_packet(decoy_length);
+                    debug!("SparseDecoyProvider: generated decoy packet (len={})", decoy_length);
+                    drop(state_guard);
+
+                    if let Err(err) = manager_arc.send_packet(decoy_packet, true).await {
+                        debug!("SparseDecoyProvider: failed to send decoy packet: {:?}", err);
+                    }
+                } else {
+                    debug!("SparseDecoyProvider: insufficient byte budget for {} bytes, skipping", decoy_length);
+                }
+            }
+
+            {
+                let mut state_guard = state.write().await;
                 let delay = Self::calculate_delay(&state_guard);
                 let length = Self::calculate_length(&state_guard);
                 state_guard.schedule_next(delay, length);
-
-                debug!("SparseDecoyProvider: generated decoy packet (len={}), next in {}ms", decoy_length, delay);
-                decoy_packet
-            };
-
-            if let Err(err) = manager_arc.send_packet(decoy_packet, true).await {
-                debug!("SparseDecoyProvider: failed to send decoy packet: {:?}", err);
+                debug!("SparseDecoyProvider: next in {}ms", delay);
             }
         }
     }

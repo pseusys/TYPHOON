@@ -17,7 +17,7 @@ use crate::settings::Settings;
 use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::socket::Socket;
-use crate::utils::sync::{AsyncExecutor, Mutex};
+use crate::utils::sync::{AsyncExecutor, Mutex, RwLock};
 
 /// Raw received packet from the server flow manager before session-level processing.
 pub struct RawReceivedPacket<T: IdentityType> {
@@ -30,9 +30,10 @@ pub struct RawReceivedPacket<T: IdentityType> {
 }
 
 /// Server-side flow manager that handles per-user packet encryption, decoy traffic, and socket I/O.
-/// User addresses and crypto state are stored in the global SharedMap (accessed via ServerCryptoTool).
-/// Per-user decoy providers are local to each flow manager instance.
+/// Per-user crypto state is in the global SharedMap (accessed via ServerCryptoTool).
+/// Per-user source addresses and decoy providers are local to each flow manager instance.
 pub struct ServerFlowManager<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, DP: Send + Sync> {
+    user_addrs: RwLock<HashMap<T, SocketAddr>>,
     decoy_providers: Mutex<HashMap<T, DP>>,
     crypto: Mutex<ServerCryptoTool<T>>,
     config: Mutex<FlowConfig>,
@@ -45,6 +46,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Create a new server flow manager.
     pub fn new(config: FlowConfig, crypto: ServerCryptoTool<T>, settings: Arc<Settings<AE>>, sock: Socket) -> Arc<Self> {
         Arc::new(ServerFlowManager {
+            user_addrs: RwLock::new(HashMap::new()),
             decoy_providers: Mutex::new(HashMap::new()),
             crypto: Mutex::new(crypto),
             config: Mutex::new(config),
@@ -54,8 +56,13 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         })
     }
 
+    /// Register a user's source address for this flow manager.
+    pub async fn register_user_addr(&self, id: T, addr: SocketAddr) {
+        self.user_addrs.write().await.insert(id, addr);
+    }
+
     /// Register a per-user decoy provider and start its background timer.
-    /// The user's address and crypto state must already be in the global SharedMap.
+    /// The user's crypto state must already be in the global SharedMap.
     pub async fn register_user(self: &Arc<Self>, id: T) {
         let weak = Arc::downgrade(self);
         let mut dp = DP::new(weak, self.settings.clone(), id.clone());
@@ -106,7 +113,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
             let identity = tailor.identity();
 
-            // For non-handshake packets, verify per-user and feed decoy providers.
+            // For non-handshake packets, verify per-user, update address, and feed decoy providers.
             if !packet_flags.contains(PacketFlags::HANDSHAKE) {
                 {
                     let mut crypto = self.crypto.lock().await;
@@ -118,6 +125,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                         }
                     }
                 }
+
+                // Update source address for this user (rebinding).
+                self.user_addrs.write().await.insert(identity.clone(), source_addr);
 
                 {
                     let mut providers = self.decoy_providers.lock().await;
@@ -161,10 +171,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             }
         };
 
-        // Look up user address from global state (via crypto tool).
+        // Look up user address from this flow manager's local mapping.
         let addr = {
-            let mut crypto = self.crypto.lock().await;
-            crypto.get_user_addr(&identity).await.map_err(|_| FlowControllerError::UserNotFound {
+            let addrs = self.user_addrs.read().await;
+            *addrs.get(&identity).ok_or_else(|| FlowControllerError::UserNotFound {
                 identity: identity.to_string(),
             })?
         };

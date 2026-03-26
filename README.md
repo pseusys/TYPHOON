@@ -128,11 +128,12 @@ During packet delivery, a random flow manager picks up the packet, where randomn
 
 On the server side, everything is a little more complex.
 The server keeps a set of clients mapped to their unique identifiers (**ID** tailor field), but it is never notified about client proxy selection.
-Whenever it receives a valid packet from a client, it [updates a set of packet source addresses for the client](#sockets-and-listeners), and whenever it wants to send a packet back, it selects the packet destination address from the set randomly (no weights are involved).
+Each server flow manager independently tracks the last known source address per client: whenever it receives a correctly-authenticated packet from a client, it [updates the stored source address for that client](#identification-and-rebinding).
+When a flow manager wants to send a packet back, it uses the last known source address it has for that client.
 
 Finally, since server IP addresses and port numbers are static, clients can just send packets to it directly.
 But it’s not the same for servers: according to UDP specification, the client IP address and port can change at any time.
-That is why the server flow managers should maintain client number to client address mapping and update it upon receiving every packet (and decrypting its header).
+That is why each server flow manager should maintain its own client-to-address mapping and update it upon receiving every authenticated packet.
 
 ### Data packets
 
@@ -592,8 +593,9 @@ By default, the **ID** field is `16` bytes ([UUID](https://en.wikipedia.org/wiki
 Alternatively, if there exists another way of identifying users (e.g. each of them gets unique access to a resource, like a server process or socket), the required **ID** field length can be different (it may be changed using the `TYPHOON_ID_LENGTH` constant).
 A scenario when an attacker impersonates a user, forging a fake packet on their behalf, should not be a concern, since [tailor structure is authenticated with user session key anyway](#tailor-encryption).
 
-The UDP source address rebinding happens only if a correctly-authenticated packet with incremental number higher than before arrives from a new source address.
-This approach allows verifying packet tailor identity, safe attribution, and rebinding.
+The UDP source address rebinding is performed independently by each server flow manager.
+A flow manager updates its stored address for a client only when a correctly-authenticated packet arrives from a new source address.
+This per-flow-manager approach ensures that each flow path maintains the correct return address, even when a client uses multiple flow managers with different source addresses (e.g. different network interfaces), or when a client's address changes mid-session due to NAT rebinding or network handover.
 
 #### Global user structures
 
@@ -604,6 +606,9 @@ Rebinding happens on the flow manager only, without the session manager or any o
 The only requirement for this is packet validation, which is [performed using the user session key](#tailor-encryption) — this key is pulled from the global user table.
 
 #### Initial data handling
+
+> The initial data structure is fully optional and implementation-specific.
+> The TYPHOON protocol does not define any particular format for initial data; the approaches described below are for reference only and can be adapted to suit specific deployment requirements.
 
 Initial data plays a crucial role in user identification.
 It is passed from client to server and from server to client during handshake, and it plays a different role in these cases.
@@ -838,14 +843,16 @@ It is designed to be fast, modern and efficient.
 
 The crate defines the following features:
 
-- `hardware`: use `hardware` [symmetric cryptographic mode](#cryptography).
-- `software`: use `software` [symmetric cryptographic mode](#cryptography).
-- `fast`: use `fast` [asymmetric cryptographic mode](#cryptography).
-- `full`: use `full` [asymmetric cryptographic mode](#cryptography).
+- `fast_software`: use `fast` [asymmetric cryptographic mode](#cryptography) with `software` [symmetric cryptographic mode](#cryptography).
+- `fast_hardware`: use `fast` [asymmetric cryptographic mode](#cryptography) with `hardware` [symmetric cryptographic mode](#cryptography).
+- `full_software`: use `full` [asymmetric cryptographic mode](#cryptography) with `software` [symmetric cryptographic mode](#cryptography).
+- `full_hardware`: use `full` [asymmetric cryptographic mode](#cryptography) with `hardware` [symmetric cryptographic mode](#cryptography).
 - `server`: include TYPHOON server implementation.
 - `client`: include TYPHOON client implementation.
+- `tokio`: use [tokio](https://tokio.rs/) async runtime.
+- `async-std`: use [async-std](https://async.rs/) async runtime.
 
-The default features are: `software`, `fast`, `server`, `client`.
+The default features are: `fast_software`, `server`, `client`, `tokio`.
 
 ### Buffer Pool
 
@@ -914,6 +921,40 @@ This allows fast and anonymous data transfer with different obfuscation patterns
 **The challenge**:
 Configuration of this type of proxy would require changing how tailor encryption works, allowing packet data encryption and tailor obfuscation to use different keys (i.e., packet data is encrypted using the original end-to-end session key, while the packet tailor is authenticated using the session key of the last-hop proxy).
 In addition to that, extended delays of the packets going through the complex path would require a way of notifying the client that their original packet is not lost, but still haven't reached its destination: a special "wait more" tailor flag is suggested for adding, that would reset the client decay cycle, but not advance any counters or change any values.
+
+### Time-bounded address tracking
+
+Currently, each server flow manager stores a single source address per client, overwriting it on every authenticated packet (simple rebinding).
+This can be improved by maintaining a small time-bounded set of recently-seen addresses per (client, flow manager) pair instead.
+
+The idea is to keep up to a few (e.g. 4) source addresses per flow, each tagged with a last-seen timestamp.
+When a packet arrives, the address is either refreshed (if already known) or inserted, evicting the oldest entry if at capacity.
+When sending, only addresses seen within a configurable TTL are considered live; one is selected at random.
+If all entries are stale, the most-recently-seen address is used as a fallback.
+
+This naturally handles several scenarios: if a client alternates between two source addresses (e.g. dual-homed or NAT port rotation), both stay in the set and are used.
+If an address goes dead (NAT timeout, network handover), it ages out of the set without manual cleanup.
+
+**The challenge**:
+Choosing the right TTL value requires balancing responsiveness (short TTL drops stale addresses quickly) against tolerance for traffic bursts (long TTL keeps addresses alive through quiet periods).
+A reasonable default might be derived from health check timing (e.g. `2 × TYPHOON_HEALTH_CHECK_NEXT_IN_MAX`), but the optimal value is deployment-dependent and may warrant a dedicated configurable constant.
+
+### Path degrading
+
+In the current design, each client connects to each server through multiple paths (every server flow manager listed in the user certificate connects to every user flow manager).
+In more complex deployments - particularly those with remote server flow managers or multi-hop routes - some of these paths may degrade or become temporarily unavailable.
+
+To handle this gracefully, both client and server should track the availability of each path and adjust their selection strategies accordingly.
+Paths known to be active and responsive should be preferred, while stale paths should still be periodically tested to detect when they recover.
+This can be achieved by applying dynamic weight modifications to the random flow manager selection algorithm on both sides.
+
+For example, a path could accumulate a "health score" based on successful packet exchanges, with the score decaying over time without activity.
+Selectors would prefer paths with higher health scores, but always maintain a small probability of testing dormant paths to detect recovery.
+
+**The challenge**:
+Balancing two competing objectives is critical: aggressively favoring healthy paths reduces latency and improves reliability, but being too aggressive risks abandoning temporarily unavailable paths permanently.
+The health score decay rate, selection preference curve, and test probability must be calibrated carefully to ensure that brief network interruptions (e.g., temporary routing changes) do not permanently exclude viable paths, while actual permanent failures are deprioritized quickly.
+Furthermore, the algorithm should be resistant to adversarial path degradation patterns, where an attacker deliberately makes certain paths appear unhealthy to force all the traffic through observable channels.
 
 ### Isolated flow managers
 
