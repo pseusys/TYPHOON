@@ -214,8 +214,6 @@ impl<AE: AsyncExecutor> Settings<AE> {
         assert_positive(&keys::HANDSHAKE_NEXT_IN_FACTOR)?;
         assert_positive(&keys::DECOY_BYTE_RATE_CAP)?;
         assert_positive(&keys::DECOY_BYTE_RATE_FACTOR)?;
-        assert_positive(&keys::DECOY_REFERENCE_BURST_FACTOR)?;
-
         Ok(())
     }
 }

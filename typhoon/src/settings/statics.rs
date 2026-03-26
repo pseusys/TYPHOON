@@ -41,7 +41,6 @@ pub mod keys {
     pub const DECOY_REFERENCE_ALPHA: Key<f64> = Key::new("TYPHOON_DECOY_REFERENCE_ALPHA", 0.001);
     pub const DECOY_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_LENGTH_MAX", 1024);
     pub const DECOY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_LENGTH_MIN", 16);
-    pub const DECOY_REFERENCE_BURST_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_REFERENCE_BURST_FACTOR", 3.0);
     pub const DECOY_BASE_RATE_RND: Key<f64> = Key::new("TYPHOON_DECOY_BASE_RATE_RND", 0.25);
 
     // Decoy heavy settings

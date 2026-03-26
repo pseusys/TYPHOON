@@ -262,7 +262,7 @@ The configuration includes:
 - Communication mode: defines general decoy packet sending behavior, possible values are: `heavy`, `noisy`, `sparse`, `smooth` (and also any other defined by user).
 - Maintenance mode: defines the way how maintenance packets would look like, possible values are: `none`, `random`, `timed`, `sized`, `both`.
 - Replication mode: defines what packets will be duplicated, possible values are: `none`, `maintenance`, `all`.
-- Subheader pattern: defines whether the maintenance packets should have their own fake header, boolean.
+- Subheader pattern: defines whether the decoy packets should have their own fake header, possible values are: `none`, `maintenance`, `all`.
 
 #### Communication mode
 
@@ -286,13 +286,7 @@ They are updated whenever a packet leaves from or arrives to the flow manager, u
   - `byte_rate = (1 - TYPHOON_DECOY_CURRENT_ALPHA) * byte_rate + TYPHOON_DECOY_CURRENT_ALPHA * packet_length`
   - `byte_budget = min(byte_budget + (current_packet_time - previous_packet_time) * TYPHOON_DECOY_BYTE_RATE_CAP, TYPHOON_DECOY_BYTE_RATE_CAP * TYPHOON_DECOY_BYTE_RATE_FACTOR)`
 
-Some other values used in computation are defined once during initialization or derived from the state:
-
-- `packet_length_cap`: maximum allowed length of the decoy packet, capped between `TYPHOON_DECOY_LENGTH_MAX` and `TYPHOON_DECOY_LENGTH_MIN` constants.
-- `quietness_index`: a value used for checking how busy the current traffic situation is, computed as `(reference_rate - packet_rate) / reference_rate`, clamped between `0` and `1`.
-- `burst_factor_threshold`: a packet rate value that is considered to be a traffic burst, computed as `reference_rate * TYPHOON_DECOY_REFERENCE_BURST_FACTOR`.
-
-Every mode defines its own equations for calculation of decoy packet length (`decoy_length`, in bytes), delay before the next decoy packet (`decoy_delay`) and decoy packet skipping probability (`decoy_skip_probability`).
+Every mode defines its own equations for calculation of decoy packet length (`decoy_length`, in bytes) and delay before the next decoy packet (`decoy_delay`).
 By default, communication mode is chosen with equal probability for every option.
 
 A TYPHOON implementation should provide an "interface" for supplying custom decoy communication modes.
@@ -635,6 +629,11 @@ WARNING: this design comes with a significant limitation - since the client does
 The following communication modes are proposed.
 They are designed to be general-purpose, suitable for most network environments, and not resource-demanding (only using basic maths and lightweight persistent states).
 
+Some values used in computation are defined once during initialization or derived from the state:
+
+- `packet_length_cap`: maximum allowed length of the decoy packet, capped between `TYPHOON_DECOY_LENGTH_MAX` and `TYPHOON_DECOY_LENGTH_MIN` constants.
+- `quietness_index`: a value used for checking how busy the current traffic situation is, computed as `(reference_rate - packet_rate) / reference_rate`, clamped between `0` and `1`.
+
 #### Heavy mode
 
 Heavy mode implements sending big decoy packets occasionally.
@@ -765,7 +764,6 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_DECOY_REFERENCE_ALPHA` | Reference byte rate calculation multiplier (updates slowly) | `0.001` |
 | `TYPHOON_DECOY_LENGTH_MAX` | Maximum length of a decoy packet | `1024` |
 | `TYPHOON_DECOY_LENGTH_MIN` | Minimum length of a decoy packet | `16` |
-| `TYPHOON_DECOY_REFERENCE_BURST_FACTOR` | The factor of reference rate that is considered to be a burst | `3` |
 | `TYPHOON_DECOY_BASE_RATE_RND` | Randomization jitter for decoy modes | `0.25` |
 | `TYPHOON_DECOY_HEAVY_BASE_RATE` | Base rate of the heavy decoy mode | `0.05` |
 | `TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR` | Quietness score factor that is used for heavy decoy mode rate calculation | `3` |
