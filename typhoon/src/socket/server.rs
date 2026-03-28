@@ -22,7 +22,7 @@ use crate::session::SessionManager;
 use crate::session::server::{IncomingPacket, OutgoingRouter, ServerSessionManager};
 use crate::settings::{Settings, keys};
 use crate::socket::error::ServerSocketError;
-use crate::tailor::{IdentityType, PacketFlags};
+use crate::tailor::{IdentityGenerator, IdentityType, PacketFlags};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::socket::Socket;
 use crate::utils::sync::{AsyncExecutor, ChannelReceiver, ChannelSender, Mutex, create_channel};
@@ -55,20 +55,22 @@ impl ServerFlowConfiguration {
 }
 
 /// Builder for constructing a `Listener`.
-pub struct ListenerBuilder<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor + 'static, DP> {
+pub struct ListenerBuilder<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor + 'static, DP, IG: IdentityGenerator<T>> {
     settings: Option<Arc<Settings<AE>>>,
     flow_configs: Vec<ServerFlowConfiguration>,
     secret: ServerSecret<'static>,
+    identity_generator: IG,
     _phantom: std::marker::PhantomData<(T, DP)>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static> ListenerBuilder<T, AE, DP> {
-    /// Create a new builder with the given server secret.
-    pub fn new(secret: ServerSecret<'static>) -> Self {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: IdentityGenerator<T> + 'static> ListenerBuilder<T, AE, DP, IG> {
+    /// Create a new builder with the given server secret and identity generator.
+    pub fn new(secret: ServerSecret<'static>, identity_generator: IG) -> Self {
         Self {
             settings: None,
             flow_configs: Vec::new(),
             secret,
+            identity_generator,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -93,7 +95,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
     /// Build the listener, creating all flow managers.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub async fn build(mut self) -> Result<Listener<T, AE, DP>, ServerSocketError> {
+    pub async fn build(mut self) -> Result<Listener<T, AE, DP, IG>, ServerSocketError> {
         if self.flow_configs.is_empty() {
             return Err(ServerSocketError::NoFlows);
         }
@@ -128,6 +130,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             sessions: Mutex::new(HashMap::new()),
             users: Mutex::new(users),
             secret: self.secret,
+            identity_generator: self.identity_generator,
             accept_queue: SegQueue::new(),
             accept_signal_tx,
             accept_signal_rx: Mutex::new(accept_signal_rx),
@@ -137,7 +140,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
     /// Build the listener, creating all flow managers (full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub async fn build(mut self) -> Result<Listener<T, AE, DP>, ServerSocketError> {
+    pub async fn build(mut self) -> Result<Listener<T, AE, DP, IG>, ServerSocketError> {
         if self.flow_configs.is_empty() {
             return Err(ServerSocketError::NoFlows);
         }
@@ -172,6 +175,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             sessions: Mutex::new(HashMap::new()),
             users: Mutex::new(users),
             secret: secret_arc,
+            identity_generator: self.identity_generator,
             accept_queue: SegQueue::new(),
             accept_signal_tx,
             accept_signal_rx: Mutex::new(accept_signal_rx),
@@ -181,7 +185,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 }
 
 /// Server-side listener that manages flow managers and client sessions.
-pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static> {
+pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: IdentityGenerator<T> + 'static> {
     flows: Vec<Arc<ServerFlowManager<T, AE, DP>>>,
     sessions: Mutex<HashMap<T, Arc<ServerSessionManager<T, AE>>>>,
     users: Mutex<SharedMap<T, UserServerState>>,
@@ -189,13 +193,14 @@ pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'sta
     secret: ServerSecret<'static>,
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     secret: Arc<ServerSecret<'static>>,
+    identity_generator: IG,
     accept_queue: SegQueue<ClientHandle<T, AE>>,
     accept_signal_tx: ChannelSender<()>,
     accept_signal_rx: Mutex<ChannelReceiver<()>>,
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static> Listener<T, AE, DP> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: IdentityGenerator<T> + 'static> Listener<T, AE, DP, IG> {
     /// Start the listener's background receive loops.
     /// Must be called after build() to begin processing incoming packets.
     pub async fn start(self: &Arc<Self>) {
@@ -267,7 +272,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
     /// Handle a handshake from a new client: create session, send response, publish ClientHandle.
     async fn handle_new_client(self: &Arc<Self>, raw_packet: crate::flow::server::RawReceivedPacket<T>, flow_index: usize) {
-        let identity = raw_packet.tailor.identity();
+        let identity = self.identity_generator.generate(raw_packet.body.slice());
         let buffer_size = self.settings.get(&keys::RECEIVE_BUFFER_SIZE) as usize;
 
         // Create user data channels (session <-> ClientHandle).
@@ -284,6 +289,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             match ServerSessionManager::from_handshake(
                 raw_packet.body,
                 raw_packet.tailor,
+                identity.clone(),
                 &self.secret,
                 &mut users,
                 user_data_tx,
@@ -372,7 +378,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 }
 
 /// OutgoingRouter implementation: selects an active flow and sends the packet.
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static> OutgoingRouter<T> for Listener<T, AE, DP> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: IdentityGenerator<T> + 'static> OutgoingRouter<T> for Listener<T, AE, DP, IG> {
     fn route_packet<'a>(&'a self, packet: DynamicByteBuffer, identity: &'a T) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
         Box::pin(async move {
             let flow_idx = {

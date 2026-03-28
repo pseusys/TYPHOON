@@ -6,7 +6,10 @@ use crate::bytes::{ByteBuffer, StaticByteBuffer};
 use crate::settings::Settings;
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 use crate::tailor::{IdentityType, Tailor};
+use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::AsyncExecutor;
+
+pub use crate::tailor::IdentityGenerator;
 
 impl IdentityType for StaticByteBuffer {
     fn from_bytes(bytes: &[u8]) -> Self {
@@ -83,3 +86,13 @@ cfg_if! {
 pub type DefaultSettings = Settings<DefaultExecutor>;
 
 pub type DefaultTailor = Tailor<StaticByteBuffer>;
+
+/// Identity generator that produces a fresh random identity for each handshake,
+/// ignoring the initial handshake data.
+pub struct RandomIdentityGenerator;
+
+impl IdentityGenerator<StaticByteBuffer> for RandomIdentityGenerator {
+    fn generate(&self, _initial_data: &[u8]) -> StaticByteBuffer {
+        get_rng().random_byte_buffer::<DEFAULT_TYPHOON_ID_LENGTH>()
+    }
+}

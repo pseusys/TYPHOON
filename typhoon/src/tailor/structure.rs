@@ -22,6 +22,10 @@ pub trait IdentityType: Send + Sync {
     fn length() -> usize;
 }
 
+pub trait IdentityGenerator<T: IdentityType>: Send + Sync {
+    fn generate(&self, initial_data: &[u8]) -> T;
+}
+
 /// Tailor view (16 + TYPHOON_ID_LENGTH bytes total).
 /// Zero-copy view into a `DynamicByteBuffer` containing tailor metadata.
 /// All field access reads directly from the underlying buffer.
