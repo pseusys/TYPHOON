@@ -14,6 +14,7 @@ use crate::crypto::{UserCryptoState, UserServerState};
 use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
 use crate::settings::Settings;
+use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{IdentityType, PacketFlags, ReturnCode, Tailor};
 use crate::utils::sync::{AsyncExecutor, ChannelSender, Mutex};
 use crate::utils::time::unix_timestamp_ms;
@@ -49,6 +50,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     pub async fn from_handshake(
         handshake_body: DynamicByteBuffer,
         handshake_tailor: Tailor<T>,
+        identity: T,
         secret: &crate::crypto::ServerSecret<'_>,
         users: &mut SharedMap<T, UserServerState>,
         user_data_tx: ChannelSender<DynamicByteBuffer>,
@@ -70,8 +72,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         let crypto_state = UserCryptoState::new(&session_key, obfuscation_buffer);
         let user_state = UserServerState::new(crypto_state);
 
-        // Insert user into shared map.
-        let identity = handshake_tailor.identity();
+        // Insert user into shared map under server-generated identity.
         users.insert(identity.clone(), user_state).await;
 
         // Create crypto cache for this session.
@@ -81,14 +82,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         let next_in = handshake_tailor.time();
         let response_body_len = response_body.len();
         let tailor_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
-        let response_tailor = Tailor::handshake(
+        let _response_tailor = Tailor::handshake(
             tailor_buf,
             &identity,
             ReturnCode::Success.into(),
             next_in,
             handshake_tailor.packet_number(),
         );
-        let response_packet = response_tailor.into_buffer();
+        // Include the response body in the packet: response_body || tailor (TAILOR_LENGTH + T::length() bytes).
+        let response_packet = response_body.expand_end(TAILOR_LENGTH + T::length());
 
         let session = Arc::new(Self {
             crypto: Mutex::new(crypto_cache),
@@ -107,6 +109,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     pub async fn from_handshake(
         handshake_body: DynamicByteBuffer,
         handshake_tailor: Tailor<T>,
+        identity: T,
         secret: &ServerSecret<'_>,
         users: &mut SharedMap<T, UserServerState>,
         user_data_tx: ChannelSender<DynamicByteBuffer>,
@@ -125,8 +128,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         let crypto_state = UserCryptoState::new(&session_key);
         let user_state = UserServerState::new(crypto_state);
 
-        // Insert user into shared map.
-        let identity = handshake_tailor.identity();
+        // Insert user into shared map under server-generated identity.
         users.insert(identity.clone(), user_state).await;
 
         // Create crypto cache for this session.
@@ -136,14 +138,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         let next_in = handshake_tailor.time();
         let response_body_len = response_body.len();
         let tailor_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
-        let response_tailor = Tailor::handshake(
+        let _response_tailor = Tailor::handshake(
             tailor_buf,
             &identity,
             ReturnCode::Success.into(),
             next_in,
             handshake_tailor.packet_number(),
         );
-        let response_packet = response_tailor.into_buffer();
+        // Include the response body in the packet: response_body || tailor (TAILOR_LENGTH + T::length() bytes).
+        let response_packet = response_body.expand_end(TAILOR_LENGTH + T::length());
 
         let session = Arc::new(Self {
             crypto: Mutex::new(crypto_cache),
@@ -252,8 +255,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
 
             let encrypted_payload_len = encrypted_payload.len();
             let tailor_buf = encrypted_payload.expand_end(T::length()).rebuffer_start(encrypted_payload_len);
-            let tailor = Tailor::data(tailor_buf, &self.identity, payload_length, packet_number);
-            tailor.into_buffer()
+            let _tailor = Tailor::data(tailor_buf, &self.identity, payload_length, packet_number);
+            // Include encrypted payload: encrypted_payload || tailor (TAILOR_LENGTH + T::length() bytes).
+            encrypted_payload.expand_end(TAILOR_LENGTH + T::length())
         };
 
         self.route_outgoing(full_packet).await

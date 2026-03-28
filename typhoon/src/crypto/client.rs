@@ -143,6 +143,28 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
             key: Symmetric::new(new_key),
         }
     }
+
+    /// Create a copy of this crypto tool with a different session key and identity.
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+    pub fn with_key_and_identity(&self, new_key: &StaticByteBuffer, new_identity: T) -> Self {
+        let obfs_buffer = self.cert.obfuscation_buffer();
+        Self {
+            cert: self.cert.clone(),
+            identity: new_identity,
+            key: Symmetric::new(new_key),
+            obfuscation_key: Symmetric::new_split(obfs_buffer, new_key.clone()),
+        }
+    }
+
+    /// Create a copy of this crypto tool with a different session key and identity.
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+    pub fn with_key_and_identity(&self, new_key: &StaticByteBuffer, new_identity: T) -> Self {
+        Self {
+            cert: self.cert.clone(),
+            identity: new_identity,
+            key: Symmetric::new(new_key),
+        }
+    }
 }
 
 impl<T: IdentityType + Clone> FlowCryptoProvider for ClientCryptoTool<T> {

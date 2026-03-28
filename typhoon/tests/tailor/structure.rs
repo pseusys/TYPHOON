@@ -79,6 +79,19 @@ fn test_shadowride_tailor() {
 }
 
 #[test]
+fn test_handshake_tailor() {
+    let identity = StaticByteBuffer::from_slice(&[6; DEFAULT_TYPHOON_ID_LENGTH]);
+    let buffer = pool_empty(&TEST_POOL, TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
+    let tailor = Tailor::<StaticByteBuffer>::handshake(buffer, &identity, 42, 5000, 12345);
+
+    assert_eq!(tailor.flags(), PacketFlags::HANDSHAKE);
+    assert!(!tailor.flags().is_discardable());
+    assert!(!tailor.flags().has_payload());
+    assert_eq!(tailor.code(), 42);
+    assert_eq!(tailor.time(), 5000);
+}
+
+#[test]
 fn test_decoy_tailor() {
     let identity = StaticByteBuffer::from_slice(&[4; DEFAULT_TYPHOON_ID_LENGTH]);
     let buffer = pool_empty(&TEST_POOL, TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);

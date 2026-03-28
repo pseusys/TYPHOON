@@ -5,7 +5,7 @@ use ed25519_dalek::{SecretKey as X25519SecretKey, SigningKey, VerifyingKey};
 use lazy_static::lazy_static;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
-use crate::bytes::{ByteBuffer, BytePool, StaticByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, StaticByteBuffer};
 #[cfg(feature = "client")]
 use crate::crypto::certificate::Certificate;
 #[cfg(feature = "server")]
@@ -152,6 +152,36 @@ fn test_handshake_cycle() {
     let session_data_decrypted = client_session_cipher.decrypt_auth(session_data_encrypted, None::<&StaticByteBuffer>).expect("session data decryption failed");
 
     assert_eq!(session_data_data.as_slice(), session_data_decrypted.slice(), "client and server should get the same session data");
+}
+
+// Test: tampered handshake ciphertext produces wrong shared secret.
+#[cfg(all(feature = "client", feature = "server"))]
+#[test]
+fn test_handshake_tampered_ciphertext_fails() {
+    let certificate = create_test_certificate();
+    let server_secret = create_test_server_secret();
+
+    let initial_data_data = b"Tampered handshake test";
+    let initial_data = TEST_POOL.allocate_precise_from_slice_with_capacity(initial_data_data, 0, NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN);
+
+    let (client_data, client_handshake, client_initial_key) = certificate.encapsulate_handshake_client(&TEST_POOL);
+    let mut client_initial_cipher = Symmetric::new(&client_initial_key);
+    let initial_data_encrypted = client_initial_cipher.encrypt_auth(initial_data, None::<&StaticByteBuffer>).expect("initial data encryption failed");
+
+    // Tamper with the handshake ciphertext.
+    let tampered_byte_idx = client_handshake.len() / 2;
+    let original = *client_handshake.get(tampered_byte_idx);
+    client_handshake.set(tampered_byte_idx, original ^ 0xFF);
+
+    let (server_data, server_initial_key) = server_secret.decapsulate_handshake_server(client_handshake);
+    let mut server_initial_cipher = Symmetric::new(&server_initial_key);
+
+    // Server should derive a different shared secret from tampered data.
+    assert_ne!(client_data.shared_secret, server_data.shared_secret, "tampered handshake should produce different shared secrets");
+
+    // Decrypting initial data with the wrong key should fail.
+    let result = server_initial_cipher.decrypt_auth(initial_data_encrypted, None::<&StaticByteBuffer>);
+    assert!(result.is_err(), "decrypting initial data with wrong key should fail");
 }
 
 // Test: full mode encrypt/obfuscate then decrypt/deobfuscate cycle succeeds.

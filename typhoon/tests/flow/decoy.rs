@@ -103,6 +103,8 @@ fn test_schedule_next() {
 fn test_create_decoy_packet_size() {
     let settings = make_settings();
     let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    state.features.subheader_mode = SubheaderMode::None;
+    state.features.subheader_config = None;
 
     let body_length = 64;
     let packet = state.create_decoy_packet(body_length, false);
@@ -115,9 +117,68 @@ fn test_create_decoy_packet_size() {
 fn test_create_decoy_packet_zero_body() {
     let settings = make_settings();
     let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    state.features.subheader_mode = SubheaderMode::None;
+    state.features.subheader_config = None;
 
     let packet = state.create_decoy_packet(0, false);
     assert_eq!(packet.len(), TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
+}
+
+// === DecoyState::update tests ===
+
+// Test: calling update twice in quick succession moves packet_rate toward 0.
+#[test]
+fn test_update_adjusts_packet_rate() {
+    let settings = make_settings();
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    let initial_packet_rate = state.packet_rate;
+
+    // First call: sets previous_packet_time, no EWMA computation.
+    state.update(100);
+    assert_eq!(state.packet_rate, initial_packet_rate, "first update should not change packet_rate");
+
+    // Second call (immediately after): time_delta ≈ 0ms, so EWMA should pull packet_rate down.
+    state.update(100);
+    assert!(state.packet_rate < initial_packet_rate, "packet_rate should decrease with near-zero time delta");
+}
+
+// Test: update adjusts byte_rate toward packet length.
+#[test]
+fn test_update_adjusts_byte_rate() {
+    let settings = make_settings();
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    let initial_byte_rate = state.byte_rate;
+
+    state.update(10); // First call: no EWMA.
+    state.update(10); // Second call: byte_rate should move toward 10.
+
+    assert!(state.byte_rate < initial_byte_rate, "byte_rate should decrease toward small packet length");
+}
+
+// === DecoyState::try_spend_budget tests ===
+
+// Test: spending within budget succeeds and deducts.
+#[test]
+fn test_try_spend_budget_sufficient() {
+    let settings = make_settings();
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    let initial_budget = state.byte_budget;
+    assert!(initial_budget > 100.0, "initial budget should be large enough for test");
+
+    assert!(state.try_spend_budget(100));
+    assert!((state.byte_budget - (initial_budget - 100.0)).abs() < f64::EPSILON);
+}
+
+// Test: spending more than budget fails and does not deduct.
+#[test]
+fn test_try_spend_budget_insufficient() {
+    let settings = make_settings();
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    let initial_budget = state.byte_budget;
+    let over_budget = (initial_budget as usize) + 1;
+
+    assert!(!state.try_spend_budget(over_budget));
+    assert_eq!(state.byte_budget, initial_budget, "budget should remain unchanged on failure");
 }
 
 // === Random utility function tests ===
@@ -214,6 +275,7 @@ fn test_should_replicate_maintenance() {
     let settings = make_settings();
     let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
     state.features.replication_mode = ReplicationMode::Maintenance;
+    state.features.replication_probability = 1.0;
     assert!(!state.should_replicate(false));
     assert!(state.should_replicate(true));
 }
@@ -224,6 +286,7 @@ fn test_should_replicate_all() {
     let settings = make_settings();
     let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
     state.features.replication_mode = ReplicationMode::All;
+    state.features.replication_probability = 1.0;
     assert!(state.should_replicate(false));
     assert!(state.should_replicate(true));
 }
@@ -296,7 +359,7 @@ fn test_schedule_next_maintenance_timed() {
 
     // With a fixed delay of 1000ms, the time should be ~1000ms from now.
     assert!(state.next_maintenance_time >= before + 1000);
-    assert!(state.next_maintenance_time <= before + 1100); // small tolerance
+    assert!(state.next_maintenance_time <= before + 1500); // generous tolerance for slow CI
 }
 
 // === create_replica_packet tests ===

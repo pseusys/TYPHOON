@@ -14,6 +14,7 @@ use crate::flow::config::FlowConfig;
 use crate::flow::decoy::DecoyCommunicationMode;
 use crate::flow::error::FlowControllerError;
 use crate::settings::Settings;
+use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::socket::Socket;
@@ -154,7 +155,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let identity_len = T::length();
 
         // Extract identity from the plaintext tailor at the end of the packet.
-        let tailor_buf = packet.rebuffer_start(packet.len() - identity_len);
+        let tailor_buf = packet.rebuffer_start(packet.len() - identity_len - TAILOR_LENGTH);
         let identity = ServerCryptoTool::<T>::extract_identity(&tailor_buf);
 
         // Feed decoy provider for rate tracking.
@@ -180,7 +181,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         };
 
         // Split into data + tailor, encrypt tailor.
-        let (packet_data, packet_tailor) = notified_packet.split_buf(notified_packet.len() - identity_len);
+        let (packet_data, packet_tailor) = notified_packet.split_buf(notified_packet.len() - identity_len - TAILOR_LENGTH);
         let packet_flags = PacketFlags::from_bits_truncate(packet_tailor.get(0).clone());
 
         let encrypted_tailor = {

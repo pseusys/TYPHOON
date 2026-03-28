@@ -20,6 +20,11 @@ fn make_different_key() -> StaticByteBuffer {
     StaticByteBuffer::from(&[0x24u8; SYMMETRIC_KEY_LENGTH])
 }
 
+#[inline]
+fn make_wrong_key() -> StaticByteBuffer {
+    StaticByteBuffer::from(&[0x99u8; SYMMETRIC_KEY_LENGTH])
+}
+
 // Test: anonymous encrypt then decrypt produces original plaintext.
 #[test]
 fn test_anonymous_encrypt_decrypt_cycle() {
@@ -69,4 +74,36 @@ fn test_symmetric_encrypt_decrypt_auth_cycle() {
 
     let decrypted = cipher.decrypt_auth(ciphertext, None::<&StaticByteBuffer>).expect("decryption failed");
     assert_eq!(decrypted.slice(), plaintext_data.as_slice(), "decrypted should match original");
+}
+
+// Test: anonymous decrypt with wrong key produces garbage (not the original plaintext).
+#[test]
+fn test_anonymous_decrypt_wrong_key_produces_garbage() {
+    let key = make_key();
+    let wrong_key = make_wrong_key();
+
+    let plaintext_data = b"Anonymous wrong key test";
+    let mut plaintext = TEST_POOL.allocate_precise_from_slice_with_capacity(plaintext_data, 0, ANONYMOUS_NONCE_LEN);
+
+    let mut ciphertext = encrypt_anonymously(&key, &mut plaintext);
+    let decrypted = decrypt_anonymously(&wrong_key, &mut ciphertext);
+
+    assert_ne!(decrypted.slice(), plaintext_data.as_slice(), "wrong key should not produce original plaintext");
+}
+
+// Test: authenticated decrypt with wrong key fails.
+#[test]
+fn test_symmetric_decrypt_wrong_key_fails() {
+    let key = make_key();
+    let wrong_key = make_wrong_key();
+    let mut encrypt_cipher = Symmetric::new(&key);
+    let mut decrypt_cipher = Symmetric::new(&wrong_key);
+
+    let plaintext_data = b"Wrong key auth test";
+    let plaintext = TEST_POOL.allocate_precise_from_slice_with_capacity(plaintext_data, 0, NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN);
+
+    let ciphertext = encrypt_cipher.encrypt_auth(plaintext, None::<&StaticByteBuffer>).expect("encryption failed");
+    let result = decrypt_cipher.decrypt_auth(ciphertext, None::<&StaticByteBuffer>);
+
+    assert!(result.is_err(), "decryption with wrong key should fail authentication");
 }
