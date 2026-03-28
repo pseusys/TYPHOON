@@ -6,7 +6,7 @@ use log::debug;
 
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::flow::common::FlowManager;
-use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyState, random_gauss, random_uniform};
+use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyState, maintenance_timer_task, random_gauss, random_uniform, try_replicate};
 use crate::settings::Settings;
 use crate::settings::keys::*;
 use crate::tailor::IdentityType;
@@ -19,7 +19,7 @@ pub struct SparseDecoyProvider<T: IdentityType + Clone + 'static, AE: AsyncExecu
     state: Arc<RwLock<DecoyState<T, AE>>>,
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager> SparseDecoyProvider<T, AE, FM> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync + 'static> SparseDecoyProvider<T, AE, FM> {
     fn calculate_delay(state: &DecoyState<T, AE>) -> u64 {
         let base_rate_rnd = state.settings.get(&DECOY_BASE_RATE_RND);
         let sparse_base_rate = state.settings.get(&DECOY_SPARSE_BASE_RATE);
@@ -75,12 +75,15 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager> SparseDecoyPro
                 let decoy_length = state_guard.pending_length;
 
                 if state_guard.try_spend_budget(decoy_length) {
-                    let decoy_packet = state_guard.create_decoy_packet(decoy_length);
+                    let decoy_packet = state_guard.create_decoy_packet(decoy_length, false);
+                    let body_bytes: Vec<u8> = decoy_packet.slice_end(decoy_length).to_vec();
                     debug!("SparseDecoyProvider: generated decoy packet (len={})", decoy_length);
                     drop(state_guard);
 
                     if let Err(err) = manager_arc.send_packet(decoy_packet, true).await {
                         debug!("SparseDecoyProvider: failed to send decoy packet: {:?}", err);
+                    } else {
+                        try_replicate(&state, &manager, false, &body_bytes).await;
                     }
                 } else {
                     debug!("SparseDecoyProvider: insufficient byte budget for {} bytes, skipping", decoy_length);
@@ -122,8 +125,9 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync +
 
         let manager = self.manager.clone();
         let state = self.state.clone();
-        executor.spawn(Self::timer_task(manager, state));
-        debug!("SparseDecoyProvider: background timer started");
+        executor.spawn(Self::timer_task(manager.clone(), state.clone()));
+        executor.spawn(maintenance_timer_task(manager, state));
+        debug!("SparseDecoyProvider: background timers started");
     }
 
     async fn feed_input(&mut self, packet: DynamicByteBuffer) -> Option<DynamicByteBuffer> {

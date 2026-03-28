@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::bytes::{ByteBuffer, StaticByteBuffer};
 use crate::defaults::DefaultExecutor;
-use crate::flow::decoy::common::{DecoyState, exponential_variance, random_gauss, random_uniform};
+use crate::flow::decoy::common::{DecoyFeatureConfig, DecoyState, MaintenanceMode, ReplicationMode, SubheaderMode, exponential_variance, random_gauss, random_uniform};
 use crate::settings::SettingsBuilder;
 use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILOR_LENGTH};
 use crate::settings::keys::*;
@@ -105,7 +105,7 @@ fn test_create_decoy_packet_size() {
     let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
 
     let body_length = 64;
-    let packet = state.create_decoy_packet(body_length);
+    let packet = state.create_decoy_packet(body_length, false);
 
     assert_eq!(packet.len(), body_length + TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH, "packet should be body + tailor + identity length");
 }
@@ -116,7 +116,7 @@ fn test_create_decoy_packet_zero_body() {
     let settings = make_settings();
     let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
 
-    let packet = state.create_decoy_packet(0);
+    let packet = state.create_decoy_packet(0, false);
     assert_eq!(packet.len(), TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
 }
 
@@ -171,4 +171,151 @@ fn test_exponential_variance_positive_rate() {
         let val = exponential_variance(1.0);
         assert!(val > 0.0, "exponential_variance should return positive value, got {val}");
     }
+}
+
+// === DecoyFeatureConfig tests ===
+
+// Test: DecoyFeatureConfig::random produces valid configs.
+#[test]
+fn test_decoy_feature_config_random_valid() {
+    let settings = make_settings();
+    for _ in 0..50 {
+        let config = DecoyFeatureConfig::random(&settings);
+
+        // Replication probability should be within configured bounds.
+        let prob_min = settings.get(&DECOY_REPLICATION_PROBABILITY_MIN);
+        let prob_max = settings.get(&DECOY_REPLICATION_PROBABILITY_MAX);
+        assert!(config.replication_probability >= prob_min && config.replication_probability <= prob_max,
+            "replication_probability {} outside [{}, {}]", config.replication_probability, prob_min, prob_max);
+
+        // Subheader config should be Some iff mode is not None.
+        match config.subheader_mode {
+            SubheaderMode::None => assert!(config.subheader_config.is_none()),
+            _ => assert!(config.subheader_config.is_some()),
+        }
+    }
+}
+
+// === should_replicate tests ===
+
+// Test: ReplicationMode::None never replicates.
+#[test]
+fn test_should_replicate_none() {
+    let settings = make_settings();
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    state.features.replication_mode = ReplicationMode::None;
+    assert!(!state.should_replicate(false));
+    assert!(!state.should_replicate(true));
+}
+
+// Test: ReplicationMode::Maintenance replicates only maintenance packets.
+#[test]
+fn test_should_replicate_maintenance() {
+    let settings = make_settings();
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    state.features.replication_mode = ReplicationMode::Maintenance;
+    assert!(!state.should_replicate(false));
+    assert!(state.should_replicate(true));
+}
+
+// Test: ReplicationMode::All replicates all packets.
+#[test]
+fn test_should_replicate_all() {
+    let settings = make_settings();
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    state.features.replication_mode = ReplicationMode::All;
+    assert!(state.should_replicate(false));
+    assert!(state.should_replicate(true));
+}
+
+// === subheader_length tests ===
+
+// Test: SubheaderMode::None always returns 0.
+#[test]
+fn test_subheader_length_none() {
+    let settings = make_settings();
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    state.features.subheader_mode = SubheaderMode::None;
+    state.features.subheader_config = None;
+    assert_eq!(state.subheader_length(false), 0);
+    assert_eq!(state.subheader_length(true), 0);
+}
+
+// Test: SubheaderMode::Maintenance returns length only for maintenance.
+#[test]
+fn test_subheader_length_maintenance() {
+    let settings = make_settings();
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    state.features.subheader_mode = SubheaderMode::Maintenance;
+    // Ensure a subheader config exists.
+    let min_len = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
+    let max_len = settings.get(&DECOY_SUBHEADER_LENGTH_MAX) as usize;
+    state.features.subheader_config = Some(super::generate_random_fake_header(min_len, max_len));
+    assert_eq!(state.subheader_length(false), 0);
+    assert!(state.subheader_length(true) > 0);
+}
+
+// Test: SubheaderMode::All returns length for both.
+#[test]
+fn test_subheader_length_all() {
+    let settings = make_settings();
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    state.features.subheader_mode = SubheaderMode::All;
+    let min_len = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
+    let max_len = settings.get(&DECOY_SUBHEADER_LENGTH_MAX) as usize;
+    state.features.subheader_config = Some(super::generate_random_fake_header(min_len, max_len));
+    assert!(state.subheader_length(false) > 0);
+    assert!(state.subheader_length(true) > 0);
+}
+
+// === schedule_next_maintenance tests ===
+
+// Test: schedule_next_maintenance sets time in the future.
+#[test]
+fn test_schedule_next_maintenance() {
+    let settings = make_settings();
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    state.features.maintenance_mode = MaintenanceMode::Random;
+
+    let before = unix_timestamp_ms();
+    state.schedule_next_maintenance();
+
+    assert!(state.next_maintenance_time >= before, "next_maintenance_time should be in the future");
+    assert!(state.pending_maintenance_length > 0, "maintenance length should be positive");
+}
+
+// Test: Timed mode produces fixed delay.
+#[test]
+fn test_schedule_next_maintenance_timed() {
+    let settings = make_settings();
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    state.features.maintenance_mode = MaintenanceMode::Timed { delay_ms: 1000 };
+
+    let before = unix_timestamp_ms();
+    state.schedule_next_maintenance();
+
+    // With a fixed delay of 1000ms, the time should be ~1000ms from now.
+    assert!(state.next_maintenance_time >= before + 1000);
+    assert!(state.next_maintenance_time <= before + 1100); // small tolerance
+}
+
+// === create_replica_packet tests ===
+
+// Test: create_replica_packet produces correct size and identical body.
+#[test]
+fn test_create_replica_packet() {
+    let settings = make_settings();
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
+    state.features.subheader_mode = SubheaderMode::None;
+    state.features.subheader_config = None;
+
+    let body: Vec<u8> = vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE];
+    let packet = state.create_replica_packet(&body, false);
+
+    let expected_len = body.len() + TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH;
+    assert_eq!(packet.len(), expected_len, "replica packet should have correct total length");
+
+    // Body bytes should be identical.
+    let packet_body = packet.slice_end(body.len());
+    assert_eq!(packet_body, body.as_slice(), "replica body should match original");
 }

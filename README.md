@@ -330,7 +330,7 @@ The replication mode can have these values:
 - `maintenance`: Only maintenance packets can be replicated (just like in TYPHOON protocol).
 - `all`: All packets can be replicated.
 
-By default, replication mode is chosen with equal probability for every option except for `all`, which is `TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY` heavier than the others.
+By default, replication mode is chosen with equal probability for every option except for `none`, which is `TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY` heavier than the others.
 
 #### Subheader pattern
 
