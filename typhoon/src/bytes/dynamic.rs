@@ -14,7 +14,7 @@ use crate::bytes::common::{ByteBuffer, ByteBufferMut};
 use crate::bytes::holder::BufferHolder;
 use crate::bytes::pool::PoolReturn;
 use crate::bytes::r#static::StaticByteBuffer;
-use crate::bytes::utils::{allocate_ptr, copy_slice};
+use crate::bytes::utils::copy_slice;
 
 /// A mutable byte buffer with Arc-based reference counting.
 /// Send but not Sync - can be moved between threads but not shared.

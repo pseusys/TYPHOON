@@ -67,7 +67,7 @@ fn test_symmetric_encrypt_decrypt_auth_cycle() {
 
     let ciphertext = cipher.encrypt_auth(plaintext, None::<&StaticByteBuffer>).expect("encryption failed");
 
-    let (decrypted, transcript) = cipher.decrypt_no_verify(ciphertext.clone());
+    let (decrypted, transcript) = cipher.decrypt_no_verify(ciphertext.copy());
     assert_eq!(decrypted.slice(), plaintext_data.as_slice(), "decrypted should match original");
     let verify_result = cipher.verify_decrypted(transcript, None::<&StaticByteBuffer>);
     assert!(verify_result.is_ok(), "authentication should verify correctly");

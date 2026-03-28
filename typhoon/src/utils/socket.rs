@@ -5,6 +5,7 @@ use cfg_if::cfg_if;
 use thiserror::Error;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+use crate::socket;
 
 cfg_if! {
     if #[cfg(feature = "tokio")] {

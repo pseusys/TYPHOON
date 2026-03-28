@@ -126,6 +126,8 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
         let buffer_size = settings.get(&keys::RECEIVE_BUFFER_SIZE) as usize;
         let (data_tx, data_rx) = create_channel(buffer_size);
 
+        // Spawn the background receive loop BEFORE the handshake so that
+        // handshake responses from the server can be received and routed.
         let receive_session = session.clone();
         settings.executor().spawn(async move {
             loop {
@@ -142,6 +144,9 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
                 }
             }
         });
+
+        // Now perform the handshake and start the health check timer.
+        session.start().await.map_err(ClientSocketError::SessionError)?;
 
         Ok(ClientSocket {
             session,

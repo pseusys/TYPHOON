@@ -6,7 +6,6 @@ use std::fmt::{Debug, Display};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::bytes::DynamicByteBuffer;
 use crate::bytes::common::ByteBuffer;
 
 /// Immutable owned byte buffer with Arc-based sharing.

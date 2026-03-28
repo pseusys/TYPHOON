@@ -170,12 +170,13 @@ impl Symmetric {
 
     #[cfg(all(any(feature = "fast_software", feature = "fast_hardware")))]
     pub fn decrypt_no_verify(&mut self, ciphertext_authenticated: DynamicByteBuffer) -> (DynamicByteBuffer, ObfuscationTranscript) {
-        let (ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_ADDITIONAL_AUTH_LEN);
-        let plaintext = decrypt_anonymously(&self.encryption_key, &mut ciphertext_with_nonce.copy());
+        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_ADDITIONAL_AUTH_LEN);
+        let ciphertext_copy = ciphertext_with_nonce.copy();
+        let plaintext = decrypt_anonymously(&self.encryption_key, &mut ciphertext_with_nonce);
         (
             plaintext,
             ObfuscationTranscript {
-                ciphertext_copy: ciphertext_with_nonce,
+                ciphertext_copy,
                 auth_transcript: authentication,
             },
         )

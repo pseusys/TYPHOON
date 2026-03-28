@@ -12,6 +12,7 @@ use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
 use crate::session::health::HealthProvider;
 use crate::settings::Settings;
+use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::{AsyncExecutor, Mutex, create_channel};
@@ -27,7 +28,7 @@ struct ClientSessionManagerInternalReceive<T: IdentityType + Clone> {
 
 /// Client-side session manager that encrypts data and manages health checking.
 pub struct ClientSessionManager<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + Send + Sync + 'static> {
-    health_provider: Mutex<HealthProvider<T, AE, Self>>,
+    health_provider: HealthProvider<T, AE, Self>,
     send_internal: Mutex<ClientSessionManagerInternalSend<T>>,
     receive_internal: Mutex<ClientSessionManagerInternalReceive<T>>,
     flows: Vec<FM>,
@@ -43,20 +44,21 @@ impl<T: IdentityType + Clone> ClientSessionManagerInternalSend<T> {
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> ClientSessionManager<T, AE, FM> {
-    /// Create a new client session manager.
+    /// Create a new client session manager without starting the handshake.
+    /// Call `start()` after the background receive loop is running.
     pub async fn new(cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>) -> Result<Arc<Self>, SessionControllerError> {
         let send_cipher = cipher.create_sibling().await;
         let receive_cipher = cipher.create_sibling().await;
         let health_state_crypto = cipher.create_sibling().await;
 
         let (response_tx, response_rx) = create_channel(1);
-        let (shadowride_tx, shadowride_rx) = create_channel(1);
+        let (shadowride_tx, _) = create_channel(1);
 
         let value = Arc::new_cyclic(|weak| {
-            let health_provider = HealthProvider::new(weak.clone(), settings.clone(), health_state_crypto, response_tx, shadowride_tx);
+            let health_provider = HealthProvider::new(weak.clone(), settings.clone(), health_state_crypto, response_tx, shadowride_tx, response_rx);
 
             ClientSessionManager {
-                health_provider: Mutex::new(health_provider),
+                health_provider,
                 send_internal: Mutex::new(ClientSessionManagerInternalSend {
                     cipher: send_cipher,
                     incremental_counter: 0,
@@ -69,8 +71,15 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> 
             }
         });
 
-        value.health_provider.lock().await.start(response_rx, shadowride_rx).await;
         Ok(value)
+    }
+
+    /// Perform the initial handshake and start the background health check timer.
+    /// Must be called after the background receive loop is running so that
+    /// handshake responses can be received and fed back to the health provider.
+    pub async fn start(&self) -> Result<(), SessionControllerError> {
+        self.health_provider.perform_handshake().await;
+        Ok(())
     }
 
     /// Select a flow manager (currently uses the first one).
@@ -99,12 +108,10 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> 
 
             // Let health provider potentially attach a shadowride.
             // Clone is cheap (Arc), and writes are visible through the shared buffer.
-            {
-                let health_lock = self.health_provider.lock().await;
-                health_lock.feed_output(tailor.clone()).await?;
-            }
+            self.health_provider.feed_output(tailor.clone()).await?;
 
-            tailor.into_buffer()
+            // Include encrypted payload: encrypted_payload || tailor (TAILOR_LENGTH + T::length() bytes).
+            encrypted_payload.expand_end(TAILOR_LENGTH + T::length())
         };
 
         self.select_flow().send_packet(full_packet, false).await.map_err(SessionControllerError::FlowError)
@@ -116,8 +123,8 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> 
         loop {
             let packet = self.select_flow().receive_packet(recv_buf.clone()).await.map_err(SessionControllerError::FlowError)?;
 
-            // The flow manager returns: encrypted_payload || plaintext_tailor.
-            let (payload_part, tailor_part) = packet.split_buf(packet.len() - T::length());
+            // The flow manager returns: encrypted_payload || plaintext_tailor (full TAILOR_LENGTH + T::length() bytes).
+            let (payload_part, tailor_part) = packet.split_buf(packet.len() - T::length() - TAILOR_LENGTH);
             let tailor = Tailor::<T>::new(tailor_part);
 
             // Handle termination.
@@ -127,14 +134,12 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> 
 
             // Handle handshake response.
             if tailor.flags().contains(PacketFlags::HANDSHAKE) {
-                let health_lock = self.health_provider.lock().await;
-                health_lock.feed_handshake_input(tailor.clone(), payload_part.clone()).await?;
+                self.health_provider.feed_handshake_input(tailor.clone(), payload_part.clone()).await?;
             }
 
             // Handle health check (standalone or shadowride).
             if tailor.flags().contains(PacketFlags::HEALTH_CHECK) {
-                let health_lock = self.health_provider.lock().await;
-                health_lock.feed_input(tailor.clone()).await?;
+                self.health_provider.feed_input(tailor.clone()).await?;
             }
 
             // If there is data payload, decrypt and return.

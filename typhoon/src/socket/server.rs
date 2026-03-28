@@ -284,7 +284,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let router_weak = Arc::downgrade(&self_dyn);
 
         // Process handshake and create session manager.
-        let (session, response_packet) = {
+        // User is initially registered with the initial key so the handshake response
+        // tailor can be verified by the client before it derives the session key.
+        let (session, response_packet, session_key) = {
             let mut users = self.users.lock().await;
             match ServerSessionManager::from_handshake(
                 raw_packet.body,
@@ -306,14 +308,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             }
         };
 
-        // Mark this flow as active for the user.
-        {
-            let mut users = self.users.lock().await;
-            if let Some(user_state) = users.get_mut(&identity) {
-                user_state.activate_flow(flow_index);
-            }
-        }
-
         // Register initial source address on the handshake flow manager.
         self.flows[flow_index].register_user_addr(identity.clone(), raw_packet.source_addr).await;
 
@@ -323,9 +317,25 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         }
 
         // Send handshake response through the flow that received the handshake.
+        // At this point the tailor is encrypted/authenticated with the initial key.
         if let Err(err) = self.flows[flow_index].send_packet(response_packet, false).await {
             debug!("failed to send handshake response: {}", err);
             return;
+        }
+
+        // Upgrade user crypto from initial key to session key and activate the flow.
+        // Re-insert propagates the change to all CachedMap instances via version bump.
+        {
+            let mut users = self.users.lock().await;
+            if let Some(user_state) = users.get(&identity).cloned() {
+                let mut upgraded = user_state;
+                upgraded.activate_flow(flow_index);
+                #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+                upgraded.upgrade_crypto(&session_key, self.secret.obfuscation_buffer());
+                #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+                upgraded.upgrade_crypto(&session_key);
+                users.insert(identity.clone(), upgraded).await;
+            }
         }
 
         // Spawn background loop: process user_data_outgoing (ClientHandle -> Session -> network).

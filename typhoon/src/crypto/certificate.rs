@@ -6,7 +6,7 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use x25519_dalek::StaticSecret;
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey};
 
-use crate::bytes::{DynamicByteBuffer, StaticByteBuffer};
+use crate::bytes::StaticByteBuffer;
 
 /// Trait for types containing obfuscation key material.
 pub trait ObfuscationBufferContainer {

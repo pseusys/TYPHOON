@@ -424,7 +424,7 @@ Client handshake packet encryption consists of the following steps:
 4. Client obfuscates `CliEphPubKey` and `Ciph` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `CliNnc`), producing `CliEphPubKeyObf` and `CiphObf`.
 5. Client encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with key derived by `BLAKE3` from concatenation of `CliShrSec`, `CliEphPubKeyObf` and `CliNnc`.
 6. Client encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm (NB! Here initial data encryption key is used for additional data instead of session key).
-7. Client constructs the handshake encrypted tailor by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and the encrypted tailor itself, encrypted initial data is passed in the handshake message body.
+7. Client constructs the handshake packet by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and encrypted initial data as the body. The handshake tailor is appended to the body and encrypted by the flow manager, as with all other packets.
 8. The payload is sent to the server inside of a handshake packet.
 
 After the client receives the encrypted handshake message from the server, it decrypts it using the following steps:
@@ -435,7 +435,8 @@ After the client receives the encrypted handshake message from the server, it de
 3. Client builds a transcript by applying `BLAKE3` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
 4. Client verifies server identity using `Ed25519` with `VPK`, applying it to `Trans` and `TransAuth`.
 5. Client computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
-6. Client decrypts the server initial data, verifying `Sess` correctness.
+6. Client extracts the server-generated identity from the server handshake tailor, adopting it for all subsequent communication.
+7. Client decrypts the server initial data, verifying `Sess` correctness.
 
 > In case of an authentication or initial data decryption failure, client should terminate connection silently.
 
@@ -460,10 +461,10 @@ After the server initiates the internal state for the user and waits for an appr
 5. Server builds a transcript by applying `BLAKE3` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
 6. Server authenticates `Trans` using `Ed25519` with `VSK`, producing `TransAuth`.
 7. Server computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
-8. Server encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm.
+8. Server encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm (NB! Here initial data encryption key is used for additional data instead of session key, same as in the client handshake step 6). Server upgrades to the session key after sending the response.
 9. Server encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with `Sess` as a key.
-10. Server constructs the handshake encrypted tailor by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and the encrypted tailor itself.
-11. The payload is sent to the client inside of a handshake packet.
+10. Server constructs the handshake response by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and encrypted initial data as the body. The handshake tailor is appended to the body and encrypted by the flow manager, as with all other packets.
+11. The payload is sent to the client inside of a handshake packet. The server tailor contains the server-generated identity for the client to use in subsequent communication.
 
 ### Tailor encryption
 

@@ -18,17 +18,18 @@ use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, ChannelReceiver, ChannelSender, FuturePool, Mutex, sleep};
 use crate::utils::time::unix_timestamp_ms;
 
-/// Response type for the health check channel: (server_next_in, receive_time, optional handshake body).
-type HealthResponse = (u32, u128, Option<DynamicByteBuffer>);
+/// Response type for the health check channel: (server_next_in, receive_time, optional handshake body, optional server identity).
+type HealthResponse<T> = (u32, u128, Option<DynamicByteBuffer>, Option<T>);
 
 /// Events produced when waiting for a health check response.
-enum DecaySleepEvent {
+enum DecaySleepEvent<T: IdentityType> {
     Timeout,
     Terminated,
     ResponseReceived {
         server_next_in: u32,
         receive_time: u128,
         handshake_body: Option<DynamicByteBuffer>,
+        server_identity: Option<T>,
     },
 }
 
@@ -47,7 +48,7 @@ enum SendOutcome {
 }
 
 /// Internal state shared between the timer task and feed methods.
-struct HealthState<T: IdentityType + Clone, AE: AsyncExecutor> {
+pub(super) struct HealthState<T: IdentityType + Clone, AE: AsyncExecutor> {
     settings: Arc<Settings<AE>>,
     /// EWMA smoothed RTT in milliseconds.
     smooth_rtt: Option<f64>,
@@ -194,7 +195,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> HealthState<T, AE> {
 }
 
 /// Wait for a health check response or timeout.
-async fn wait_for_response(timeout_ms: u64, response_rx: &mut ChannelReceiver<HealthResponse>) -> DecaySleepEvent {
+async fn wait_for_response<T: IdentityType + Clone>(timeout_ms: u64, response_rx: &mut ChannelReceiver<HealthResponse<T>>) -> DecaySleepEvent<T> {
     let mut pool = FuturePool::new();
     pool.add(async {
         sleep(Duration::from_millis(timeout_ms)).await;
@@ -202,10 +203,11 @@ async fn wait_for_response(timeout_ms: u64, response_rx: &mut ChannelReceiver<He
     });
     pool.add(async {
         match response_rx.recv().await {
-            Some((ni, time, body)) => DecaySleepEvent::ResponseReceived {
+            Some((ni, time, body, identity)) => DecaySleepEvent::ResponseReceived {
                 server_next_in: ni,
                 receive_time: time,
                 handshake_body: body,
+                server_identity: identity,
             },
             None => DecaySleepEvent::Terminated,
         }
@@ -218,13 +220,15 @@ pub struct HealthProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor +
     manager: Weak<SM>,
     state: Arc<Mutex<HealthState<T, AE>>>,
     settings: Arc<Settings<AE>>,
-    response_tx: ChannelSender<HealthResponse>,
+    response_tx: ChannelSender<HealthResponse<T>>,
     shadowride_tx: ChannelSender<()>,
+    /// Consumed once by `perform_handshake()`.
+    handshake_rx: Mutex<Option<ChannelReceiver<HealthResponse<T>>>>,
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync> HealthProvider<T, AE, SM> {
     /// Create a new health provider with pre-created channel senders.
-    pub fn new(manager: Weak<SM>, settings: Arc<Settings<AE>>, state_crypto: SharedValue<ClientCryptoTool<T>>, response_tx: ChannelSender<HealthResponse>, shadowride_tx: ChannelSender<()>) -> Self {
+    pub fn new(manager: Weak<SM>, settings: Arc<Settings<AE>>, state_crypto: SharedValue<ClientCryptoTool<T>>, response_tx: ChannelSender<HealthResponse<T>>, shadowride_tx: ChannelSender<()>, response_rx: ChannelReceiver<HealthResponse<T>>) -> Self {
         let state = Arc::new(Mutex::new(HealthState::new(settings.clone(), state_crypto)));
         Self {
             manager,
@@ -232,16 +236,20 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
             settings,
             response_tx,
             shadowride_tx,
+            handshake_rx: Mutex::new(Some(response_rx)),
         }
     }
 
-    /// Perform handshake, then start the background decay cycle timer.
-    pub async fn start(&mut self, mut response_rx: ChannelReceiver<HealthResponse>, _shadowride_rx: ChannelReceiver<()>) {
-        let initial_server_next_in = self.handshake(&mut response_rx).await;
+    /// Perform the handshake and start the background health check timer.
+    /// Must be called exactly once, after the background receive loop is running.
+    pub async fn perform_handshake(&self) {
+        let mut response_rx = self.handshake_rx.lock().await.take()
+            .expect("perform_handshake() must be called exactly once");
+        let handshake_factor = self.settings.get(&HANDSHAKE_NEXT_IN_FACTOR);
+        let initial_server_next_in = self.do_handshake(&mut response_rx, handshake_factor).await;
 
         let timer_response_rx = self.response_tx.subscribe();
         let timer_shadowride_rx = self.shadowride_tx.subscribe();
-
         let manager = self.manager.clone();
         let state = self.state.clone();
         let executor = self.settings.executor().clone();
@@ -264,7 +272,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         let receive_time = unix_timestamp_ms();
         let server_next_in = time.clamp(state.settings.get(&HEALTH_CHECK_NEXT_IN_MIN) as u32, state.settings.get(&HEALTH_CHECK_NEXT_IN_MAX) as u32);
 
-        match self.response_tx.send((server_next_in, receive_time, None)).await {
+        match self.response_tx.send((server_next_in, receive_time, None, None)).await {
             true => Ok(()),
             false => Err(SessionControllerError::HealthProviderDied),
         }
@@ -285,7 +293,8 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         let receive_time = unix_timestamp_ms();
         let server_next_in = time.clamp(state.settings.get(&HEALTH_CHECK_NEXT_IN_MIN) as u32, state.settings.get(&HEALTH_CHECK_NEXT_IN_MAX) as u32);
 
-        match self.response_tx.send((server_next_in, receive_time, Some(body))).await {
+        let server_identity = Some(tailor.identity());
+        match self.response_tx.send((server_next_in, receive_time, Some(body), server_identity)).await {
             true => Ok(()),
             false => Err(SessionControllerError::HealthProviderDied),
         }
@@ -297,14 +306,21 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
             return Ok(());
         }
 
-        let mut state = self.state.lock().await;
-        if let Some((pn, next_in)) = state.shadowride_pending.take() {
-            tailor.set_flags(tailor.flags() | PacketFlags::HEALTH_CHECK);
-            tailor.set_time(next_in);
-            tailor.set_packet_number_raw(pn);
-            state.last_sent_time = unix_timestamp_ms();
-            debug!("HealthProvider: shadowride attached (PN={}, next_in={}ms)", pn, next_in);
+        let shadowridden = {
+            let mut state = self.state.lock().await;
+            if let Some((pn, next_in)) = state.shadowride_pending.take() {
+                tailor.set_flags(tailor.flags() | PacketFlags::HEALTH_CHECK);
+                tailor.set_time(next_in);
+                tailor.set_packet_number_raw(pn);
+                state.last_sent_time = unix_timestamp_ms();
+                debug!("HealthProvider: shadowride attached (PN={}, next_in={}ms)", pn, next_in);
+                true
+            } else {
+                false
+            }
+        };
 
+        if shadowridden {
             if !self.shadowride_tx.send(()).await {
                 return Err(SessionControllerError::HealthProviderDied);
             }
@@ -314,7 +330,12 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     }
 
     /// Send a packet via the session manager, incrementing retry on failure.
-    async fn try_send(manager: &Weak<SM>, packet: DynamicByteBuffer, state: &Arc<Mutex<HealthState<T, AE>>>) -> SendOutcome {
+    async fn try_send(&self, packet: DynamicByteBuffer) -> SendOutcome {
+        Self::try_send_static(&self.manager, packet, &self.state).await
+    }
+
+    /// Static version of try_send for use in spawned background tasks.
+    async fn try_send_static(manager: &Weak<SM>, packet: DynamicByteBuffer, state: &Arc<Mutex<HealthState<T, AE>>>) -> SendOutcome {
         let Some(mgr) = manager.upgrade() else {
             debug!("HealthProvider: session manager dropped");
             return SendOutcome::Stop;
@@ -333,10 +354,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     }
 
     /// Perform the client handshake exchange with retry logic.
-    /// Returns the server's next_in from the response, or None on failure.
-    async fn handshake(&self, response_rx: &mut ChannelReceiver<HealthResponse>) -> Option<u32> {
-        let handshake_factor = self.settings.get(&HANDSHAKE_NEXT_IN_FACTOR);
-
+    async fn do_handshake(
+        &self,
+        response_rx: &mut ChannelReceiver<HealthResponse<T>>,
+        handshake_factor: f64,
+    ) -> Option<u32> {
         loop {
             let (packet, next_in) = {
                 let mut st = self.state.lock().await;
@@ -352,10 +374,10 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                 (packet, next_in)
             };
 
-            match Self::try_send(&self.manager, packet, &self.state).await {
-                SendOutcome::Sent => (),
-                SendOutcome::Retry => continue,
-                SendOutcome::Stop => return None,
+            match self.try_send(packet).await {
+                SendOutcome::Sent => debug!("do_handshake: handshake packet sent"),
+                SendOutcome::Retry => { debug!("do_handshake: retry"); continue; },
+                SendOutcome::Stop => { debug!("do_handshake: stop"); return None; },
             }
 
             let timeout_ms = {
@@ -363,9 +385,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                 let handshake_delay = (next_in as f64 * handshake_factor) as u64;
                 handshake_delay + st.compute_timeout()
             };
+            debug!("do_handshake: waiting for response, timeout={}ms", timeout_ms);
 
             match wait_for_response(timeout_ms, response_rx).await {
                 DecaySleepEvent::Timeout => {
+                    debug!("do_handshake: TIMEOUT");
                     let mut st = self.state.lock().await;
                     if st.increment_retry() {
                         debug!("HealthProvider: handshake timeout, retry {}/{}", st.retry_count, st.settings.get(&MAX_RETRIES));
@@ -381,6 +405,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                 DecaySleepEvent::ResponseReceived {
                     server_next_in,
                     handshake_body,
+                    server_identity,
                     ..
                 } => {
                     let mut st = self.state.lock().await;
@@ -389,7 +414,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                     if let Some(body) = handshake_body {
                         match st.process_handshake_response(body).await {
                             Some(session_key) => {
-                                let updated_tool = st.crypto_tool.get().await.with_key(&session_key);
+                                let updated_tool = if let Some(new_identity) = server_identity {
+                                    st.crypto_tool.get().await.with_key_and_identity(&session_key, new_identity)
+                                } else {
+                                    st.crypto_tool.get().await.with_key(&session_key)
+                                };
                                 st.crypto_tool.set(updated_tool).await;
                             }
                             None => return None,
@@ -438,7 +467,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                     st.last_sent_time = unix_timestamp_ms();
                     let packet = st.create_health_check_packet(pn, next_in).await;
                     drop(st);
-                    Self::try_send(manager, packet, state).await
+                    Self::try_send_static(manager, packet, state).await
                 }
                 DecayShadowrideEvent::Terminated => {
                     debug!("HealthProvider: shadowride channel closed, stopping");
@@ -455,12 +484,12 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                 st.last_sent_time = unix_timestamp_ms();
                 st.create_health_check_packet(pn, next_in).await
             };
-            Self::try_send(manager, packet, state).await
+            Self::try_send_static(manager, packet, state).await
         }
     }
 
     /// Background timer task implementing the client-side decay cycle.
-    async fn timer_task(manager: Weak<SM>, state: Arc<Mutex<HealthState<T, AE>>>, mut response_rx: ChannelReceiver<HealthResponse>, mut shadowride_rx: ChannelReceiver<()>, initial_server_next_in: Option<u32>) {
+    async fn timer_task(manager: Weak<SM>, state: Arc<Mutex<HealthState<T, AE>>>, mut response_rx: ChannelReceiver<HealthResponse<T>>, mut shadowride_rx: ChannelReceiver<()>, initial_server_next_in: Option<u32>) {
         let mut server_next_in = initial_server_next_in;
 
         loop {

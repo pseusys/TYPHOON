@@ -14,11 +14,18 @@ Always compare your implementation to [README.md](./README.md) file, the code sh
 
 - The core library resides in `./typhoon` directory and is written in `rust`.
 - The concurrent code should be implemented using asynchronous feature and runtime-agnostic primitives, defined in `utils/sync.rs`.
+- Use constants instead of magic numbers whenever possible.
+- Take care of memory management: avoid copies as much as possible, data should almost be never copied, and instead be represented as views on pre-allocated pooled `ByteBuffer`s.
+- Also please, avoid any other object runtime allocation: cloning, copying, but most importantly heap-based types, like `Box`es or `Vec`s, these should never used if possible.
+- Short functions should be inlined.
+- No internal types should be exposed, exceptions include: `ByteBuffer`s, `Socket`s, `Settings`, `Certificate`s and configuration objects.
+- As a general rule, in every case, where an object is constructed, that is meant to *intercept*, *send* or *receive* some data flow, the data flow (including all the queues, background tasks, etc.) should be constructed in advance, ideally - in the same construction method as the object itself, and then returned as a tuple.
+- In the concurrent environment, excessive locking (even the critical sections) should be avoided, as the protocol is designed for transferring large data payloads; non-locking types (atomics or the ones from `crossbeam` library) should be preferred over `RwLock`s, while `RwLock`s should be preferred over `Mutex`es.
 
 ### Formatting
 
-- Implementation should be clean, short, correct and efficient; additional effort should be put into making sure that as few data is copied at runtime as possible.
-- No unnecessary unused functions should be generated, no comments describing generation process should be outputted.
+- Implementation should be clean, short, correct and efficient.
+- No unnecessary unused functions, constants, variables or traits should be generated, no comments describing generation process should be outputted.
 - Comments should be put in a form of documentation strings, one per function, trait, struct and file.
 
 ### Testing

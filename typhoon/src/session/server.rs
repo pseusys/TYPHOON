@@ -6,7 +6,7 @@ use std::sync::{Arc, Weak as StdWeak};
 
 use log::debug;
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
 use crate::cache::{CachedMapEntry, SharedMap};
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::crypto::ServerSecret;
@@ -44,8 +44,10 @@ pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToS
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> ServerSessionManager<T, AE> {
     /// Process a client handshake and create a new server session manager.
     ///
-    /// Returns `(Arc<Self>, response_packet)` where response_packet should be sent back
-    /// through a flow manager to complete the handshake.
+    /// Returns `(Arc<Self>, response_packet, session_key)` where response_packet should be sent back
+    /// through a flow manager to complete the handshake. The caller must upgrade the user's crypto
+    /// state to `session_key` after sending the response (the response tailor is authenticated with
+    /// the initial key so the client can verify it before deriving the session key).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub async fn from_handshake(
         handshake_body: DynamicByteBuffer,
@@ -56,20 +58,21 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         user_data_tx: ChannelSender<DynamicByteBuffer>,
         router: StdWeak<dyn OutgoingRouter<T>>,
         settings: Arc<Settings<AE>>,
-    ) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
+    ) -> Result<(Arc<Self>, DynamicByteBuffer, StaticByteBuffer), SessionControllerError> {
         use crate::crypto::ObfuscationBufferContainer;
 
         let pool = settings.pool();
 
         // Decapsulate client handshake to get server data + initial encryption key.
-        let (server_data, _initial_key) = secret.decapsulate_handshake_server(handshake_body);
+        let (server_data, initial_key) = secret.decapsulate_handshake_server(handshake_body);
 
         // Generate server handshake response and derive session key.
         let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool);
 
-        // Create per-user crypto state.
+        // Register user with initial key so that the handshake response tailor is
+        // authenticated with the initial key (the client can verify before deriving session key).
         let obfuscation_buffer = secret.obfuscation_buffer();
-        let crypto_state = UserCryptoState::new(&session_key, obfuscation_buffer);
+        let crypto_state = UserCryptoState::new(&initial_key, obfuscation_buffer);
         let user_state = UserServerState::new(crypto_state);
 
         // Insert user into shared map under server-generated identity.
@@ -101,7 +104,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
             settings,
         });
 
-        Ok((session, response_packet))
+        Ok((session, response_packet, session_key))
     }
 
     /// Process a client handshake and create a new server session manager (full mode).
@@ -115,17 +118,18 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         user_data_tx: ChannelSender<DynamicByteBuffer>,
         router: StdWeak<dyn OutgoingRouter<T>>,
         settings: Arc<Settings<AE>>,
-    ) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
+    ) -> Result<(Arc<Self>, DynamicByteBuffer, StaticByteBuffer), SessionControllerError> {
         let pool = settings.pool();
 
         // Decapsulate client handshake to get server data + initial encryption key.
-        let (server_data, _initial_key) = secret.decapsulate_handshake_server(handshake_body);
+        let (server_data, initial_key) = secret.decapsulate_handshake_server(handshake_body);
 
         // Generate server handshake response and derive session key.
         let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool);
 
-        // Create per-user crypto state.
-        let crypto_state = UserCryptoState::new(&session_key);
+        // Register user with initial key so that the handshake response tailor is
+        // encrypted with the initial key (the client can decrypt before deriving session key).
+        let crypto_state = UserCryptoState::new(&initial_key);
         let user_state = UserServerState::new(crypto_state);
 
         // Insert user into shared map under server-generated identity.
@@ -157,7 +161,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
             settings,
         });
 
-        Ok((session, response_packet))
+        Ok((session, response_packet, session_key))
     }
 
     /// Get the next packet number: (unix_timestamp_seconds << 32) | incremental.

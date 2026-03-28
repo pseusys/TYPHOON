@@ -9,6 +9,7 @@ use crate::cache::CachedValue;
 use crate::crypto::{CryptoError, ObfuscationTranscript};
 use crate::flow::config::FlowConfig;
 use crate::flow::error::FlowControllerError;
+use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::random::get_rng;
 
@@ -65,7 +66,8 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
     /// Encrypt tailor, add fake header and body, return assembled packet ready for socket send.
     pub(crate) async fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &crate::bytes::BytePool) -> Result<DynamicByteBuffer, FlowControllerError> {
         let identity_len = <CP::Identity as IdentityType>::length();
-        let (packet_data, packet_tailor) = packet.split_buf(packet.len() - identity_len);
+        let full_tailor_len = TAILOR_LENGTH + identity_len;
+        let (packet_data, packet_tailor) = packet.split_buf(packet.len() - full_tailor_len);
         let packet_flags = PacketFlags::from_bits_truncate(packet_tailor.get(0).clone());
         let encrypted_packet = match self.provider.get_mut().await.map_err(FlowControllerError::MissingCache)?.obfuscate_tailor(packet_tailor, pool) {
             Ok(res) => packet_data.expand_end(res.len()),
@@ -87,16 +89,24 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
     /// Decrypt tailor, verify, check if discardable. Returns processed packet or None if decoy.
     pub(crate) async fn process_incoming(&mut self, packet: DynamicByteBuffer) -> Result<Option<DynamicByteBuffer>, FlowControllerError> {
         let identity_len = <CP::Identity as IdentityType>::length();
-        let (encrypted_packet, encrypted_tailor) = packet.split_buf(packet.len() - identity_len - CP::tailor_overhead());
+        let full_tailor_len = TAILOR_LENGTH + identity_len;
+        let encrypted_tailor_len = identity_len + CP::tailor_overhead();
+        let (encrypted_packet, encrypted_tailor) = packet.split_buf(packet.len() - encrypted_tailor_len);
+        // Deobfuscation decrypts in-place on the shared underlying buffer.
+        // The decrypted tailor sits at the start of the encrypted_tailor region,
+        // reachable via encrypted_packet.expand_end(full_tailor_len).
         let tailor = match self.provider.get_mut().await {
             Ok(cipher) => match cipher.deobfuscate_tailor(encrypted_tailor) {
-                Ok((tailor, transcript)) => match cipher.verify_tailor(transcript) {
-                    Ok(_) => tailor,
-                    Err(err) => {
-                        debug!("error verifying packet tailor: {}", err);
-                        return Ok(None);
+                Ok((tailor, transcript)) => {
+                    match cipher.verify_tailor(transcript) {
+                        Ok(_) => {}
+                        Err(err) => {
+                            debug!("error verifying packet tailor: {}", err);
+                            return Ok(None);
+                        }
                     }
-                },
+                    tailor
+                }
                 Err(err) => {
                     debug!("error decrypting packet tailor: {}", err);
                     return Ok(None);
@@ -112,6 +122,14 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
         }
 
         let payload_len = tailor.payload_length() as usize;
-        Ok(Some(encrypted_packet.rebuffer_start(encrypted_packet.len() - payload_len).expand_end(identity_len)))
+        let is_handshake = tailor.flags().contains(PacketFlags::HANDSHAKE);
+
+        // For handshake packets the entire body is the handshake payload (payload_length=0 is unused).
+        // For all other packets, use payload_length to strip fake body/header from the front.
+        if is_handshake {
+            Ok(Some(encrypted_packet.expand_end(full_tailor_len)))
+        } else {
+            Ok(Some(encrypted_packet.rebuffer_start(encrypted_packet.len() - payload_len).expand_end(full_tailor_len)))
+        }
     }
 }

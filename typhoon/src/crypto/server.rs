@@ -85,6 +85,20 @@ impl UserServerState {
     pub fn crypto_mut(&mut self) -> &mut UserCryptoState {
         &mut self.crypto
     }
+
+    /// Replace the user's crypto state with one derived from the session key.
+    /// Used after handshake to upgrade from initial key to session key.
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+    pub fn upgrade_crypto(&mut self, session_key: &StaticByteBuffer, obfuscation_buffer: StaticByteBuffer) {
+        self.crypto = UserCryptoState::new(session_key, obfuscation_buffer);
+    }
+
+    /// Replace the user's crypto state with one derived from the session key.
+    /// Used after handshake to upgrade from initial key to session key.
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+    pub fn upgrade_crypto(&mut self, session_key: &StaticByteBuffer) {
+        self.crypto = UserCryptoState::new(session_key);
+    }
 }
 
 /// Server-side cryptographic tool that manages per-user tailor encryption.
