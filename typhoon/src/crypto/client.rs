@@ -65,14 +65,15 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
     }
 
     /// Client handshake step 1: generate ephemeral keys, encapsulate with McEliece, obfuscate.
+    /// If `initial_data` is non-empty, encrypts it with the initial key and appends to the handshake.
     /// Returns (ClientData, handshake_secret, initial_encryption_key).
-    pub fn create_handshake(&self, pool: &BytePool) -> (ClientData, DynamicByteBuffer, StaticByteBuffer) {
-        self.cert.encapsulate_handshake_client(pool)
+    pub fn create_handshake(&self, pool: &BytePool, initial_data: &[u8]) -> (ClientData, DynamicByteBuffer, StaticByteBuffer) {
+        self.cert.encapsulate_handshake_client(pool, initial_data)
     }
 
     /// Client handshake step 2: process server response, verify signature, derive session key.
-    /// Returns the session key bytes.
-    pub fn process_handshake_response(&self, data: ClientData, handshake_secret: DynamicByteBuffer) -> Result<StaticByteBuffer, HandshakeError> {
+    /// Returns (session_key, server_initial_data).
+    pub fn process_handshake_response(&self, data: ClientData, handshake_secret: DynamicByteBuffer) -> Result<(StaticByteBuffer, Vec<u8>), HandshakeError> {
         self.cert.decapsulate_handshake_client(data, handshake_secret)
     }
 

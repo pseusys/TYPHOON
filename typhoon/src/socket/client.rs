@@ -14,7 +14,7 @@ use crate::flow::decoy::DecoyCommunicationMode;
 use crate::session::{ClientSessionManager, SessionManager};
 use crate::settings::{Settings, keys};
 use crate::socket::error::ClientSocketError;
-use crate::tailor::IdentityType;
+use crate::tailor::{IdentityType, InitialDataGenerator};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::socket::Socket;
 use crate::utils::sync::{AsyncExecutor, ChannelReceiver, Mutex, create_channel};
@@ -51,6 +51,7 @@ pub struct ClientSocketBuilder<T: IdentityType + Clone, AE: AsyncExecutor + 'sta
     settings: Option<Arc<Settings<AE>>>,
     flow_configs: Vec<FlowManagerConfiguration>,
     certificate: Certificate,
+    initial_data_generator: Option<Arc<dyn InitialDataGenerator>>,
     _phantom: PhantomData<(T, DP)>,
 }
 
@@ -61,6 +62,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
             settings: None,
             flow_configs: Vec::new(),
             certificate,
+            initial_data_generator: None,
             _phantom: PhantomData,
         }
     }
@@ -80,6 +82,12 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
     /// Set all flow manager configurations at once.
     pub fn with_flows(mut self, configs: Vec<FlowManagerConfiguration>) -> Self {
         self.flow_configs = configs;
+        self
+    }
+
+    /// Set the initial data generator for the handshake.
+    pub fn with_initial_data_generator(mut self, generator: Arc<dyn InitialDataGenerator>) -> Self {
+        self.initial_data_generator = Some(generator);
         self
     }
 
@@ -121,7 +129,9 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
             flows.push(flow);
         }
 
-        let session = ClientSessionManager::new(cipher, flows, settings.clone()).await.map_err(ClientSocketError::SessionError)?;
+        let initial_data_generator = self.initial_data_generator.take()
+            .unwrap_or_else(|| Arc::new(crate::defaults::EmptyInitialDataGenerator));
+        let session = ClientSessionManager::new(cipher, flows, settings.clone(), initial_data_generator).await.map_err(ClientSocketError::SessionError)?;
 
         let buffer_size = settings.get(&keys::RECEIVE_BUFFER_SIZE) as usize;
         let (data_tx, data_rx) = create_channel(buffer_size);

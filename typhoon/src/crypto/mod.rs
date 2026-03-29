@@ -6,7 +6,7 @@ mod error;
 mod server;
 mod symmetric;
 
-pub use certificate::{Certificate, ClientData};
+pub use certificate::{Certificate, ClientData, ServerData};
 #[cfg(feature = "server")]
 pub use certificate::{ObfuscationBufferContainer, ServerSecret};
 #[cfg(feature = "client")]

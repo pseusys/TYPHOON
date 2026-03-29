@@ -13,7 +13,6 @@ use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, DynamicByteBuffer, Stati
 use crate::crypto::certificate::ObfuscationBufferContainer;
 use crate::crypto::error::HandshakeError;
 use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, decrypt_anonymously, encrypt_anonymously};
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::crypto::symmetric::Symmetric;
 use crate::utils::random::{SupportRng, get_rng};
 
@@ -33,6 +32,9 @@ use crate::crypto::certificate::{Certificate, ClientData};
 const X25519_KEY_LENGTH: usize = 32;
 const NONCE_LENGTH: usize = 32;
 
+const CLIENT_HANDSHAKE_HEADER_SIZE: usize = X25519_KEY_LENGTH + CRYPTO_CIPHERTEXTBYTES + 2 * ANONYMOUS_NONCE_LEN + NONCE_LENGTH;
+const SERVER_HANDSHAKE_HEADER_SIZE: usize = X25519_KEY_LENGTH + Signature::BYTE_SIZE + ANONYMOUS_NONCE_LEN + NONCE_LENGTH;
+
 const INITIAL_DATA_KEY: &str = "handshake client obfuscation key";
 const CLIENT_HANDSHAKE_OBFUSCATION_KEY: &str = "handshake client obfuscation key";
 const SERVER_HANDSHAKE_OBFUSCATION_KEY: &str = "handshake server obfuscation key";
@@ -47,8 +49,9 @@ const MARSHALLING_ENCRYPTION_KEY: &str = "marshalling encryption key";
 #[cfg(feature = "client")]
 impl Certificate {
     /// Client handshake: generate ephemeral keys, encapsulate with McEliece, obfuscate.
-    /// Args: buffer for nonce. Returns: (ClientData, handshake_secret, initial_encryption_key).
-    pub fn encapsulate_handshake_client(&self, pool: &BytePool) -> (ClientData, DynamicByteBuffer, StaticByteBuffer) {
+    /// If `initial_data` is non-empty, encrypts it with the initial key and appends to the handshake.
+    /// Args: buffer pool, initial data bytes. Returns: (ClientData, handshake_secret, initial_encryption_key).
+    pub fn encapsulate_handshake_client(&self, pool: &BytePool, initial_data: &[u8]) -> (ClientData, DynamicByteBuffer, StaticByteBuffer) {
         let nonce = get_rng().random_byte_buffer::<NONCE_LENGTH>();
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
@@ -74,15 +77,33 @@ impl Certificate {
             nonce: nonce.to_owned(),
         };
 
-        let handshake_buffer = pool.allocate_precise(0, 0, X25519_KEY_LENGTH + CRYPTO_CIPHERTEXTBYTES + ANONYMOUS_NONCE_LEN * 2 + NONCE_LENGTH);
+        let handshake_buffer = pool.allocate_precise(0, 0, CLIENT_HANDSHAKE_HEADER_SIZE);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append_buf(&ciphertext_obfuscated).append_buf(&nonce);
+
+        let handshake_secret = if !initial_data.is_empty() {
+            let plaintext = pool.allocate_precise_from_slice_with_capacity(initial_data, 0, 0);
+            let mut cipher = Symmetric::new(&initial_encryption_key);
+            let encrypted = cipher.encrypt_auth(plaintext, None::<&StaticByteBuffer>).expect("initial data encryption failed");
+            handshake_secret.append_buf(&encrypted)
+        } else {
+            handshake_secret
+        };
+
         (client_data, handshake_secret, initial_encryption_key)
     }
 
     /// Process server handshake response: deobfuscate, verify signature, derive session key.
-    /// Args: client ephemeral data, server handshake. Returns: session key bytes.
-    pub fn decapsulate_handshake_client(&self, data: ClientData, handshake_secret: DynamicByteBuffer) -> Result<StaticByteBuffer, HandshakeError> {
-        let (mut ephemeral_public_obfuscated, rest) = handshake_secret.split_buf(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN);
+    /// If the response contains encrypted initial data beyond the crypto header, decrypts it with the session key.
+    /// Args: client ephemeral data, server handshake. Returns: (session_key, server_initial_data).
+    pub fn decapsulate_handshake_client(&self, data: ClientData, handshake_secret: DynamicByteBuffer) -> Result<(StaticByteBuffer, Vec<u8>), HandshakeError> {
+        let (crypto_header, encrypted_initial_data) = if handshake_secret.len() > SERVER_HANDSHAKE_HEADER_SIZE {
+            let (header, enc_data) = handshake_secret.split_buf(SERVER_HANDSHAKE_HEADER_SIZE);
+            (header, Some(enc_data))
+        } else {
+            (handshake_secret, None)
+        };
+
+        let (mut ephemeral_public_obfuscated, rest) = crypto_header.split_buf(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN);
         let (transcript_signed, nonce) = rest.split_buf(Signature::BYTE_SIZE);
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(SERVER_HANDSHAKE_OBFUSCATION_KEY)).update(self.obfuscation_buffer().slice()).update(nonce.slice()).finalize();
@@ -103,7 +124,16 @@ impl Certificate {
         let session_key_hash = Hasher::new_keyed(&hash_derive_key_context(SESSION_KEY)).update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(transcript.as_bytes()).finalize();
         let session_key = StaticByteBuffer::from(session_key_hash.as_bytes());
 
-        Ok(session_key)
+        let initial_data = if let Some(encrypted) = encrypted_initial_data {
+            let mut cipher = Symmetric::new(&session_key);
+            cipher.decrypt_auth(encrypted, None::<&StaticByteBuffer>)
+                .map(|buf| buf.slice().to_vec())
+                .map_err(|e| HandshakeError::handshake_crypto_error("decrypting server initial data", e))?
+        } else {
+            Vec::new()
+        };
+
+        Ok((session_key, initial_data))
     }
 
     /// Full mode: encrypt and obfuscate plaintext with X25519 ephemeral exchange.
@@ -132,9 +162,17 @@ impl Certificate {
 #[cfg(feature = "server")]
 impl<'a> ServerSecret<'a> {
     /// Server decapsulate client handshake: deobfuscate, decapsulate McEliece, derive key.
-    /// Args: client handshake_secret. Returns: (ServerData, initial_encryption_key).
-    pub fn decapsulate_handshake_server(&self, handshake_secret: DynamicByteBuffer) -> (ServerData, StaticByteBuffer) {
-        let (mut ephemeral_public_obfuscated, rest) = handshake_secret.split_buf(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN);
+    /// If the handshake contains encrypted initial data beyond the crypto header, decrypts it with the initial key.
+    /// Args: client handshake_secret. Returns: (ServerData, initial_encryption_key, client_initial_data).
+    pub fn decapsulate_handshake_server(&self, handshake_secret: DynamicByteBuffer) -> (ServerData, StaticByteBuffer, Vec<u8>) {
+        let (crypto_header, encrypted_initial_data) = if handshake_secret.len() > CLIENT_HANDSHAKE_HEADER_SIZE {
+            let (header, enc_data) = handshake_secret.split_buf(CLIENT_HANDSHAKE_HEADER_SIZE);
+            (header, Some(enc_data))
+        } else {
+            (handshake_secret, None)
+        };
+
+        let (mut ephemeral_public_obfuscated, rest) = crypto_header.split_buf(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN);
         let (mut ciphertext_obfuscated, nonce) = rest.split_buf(CRYPTO_CIPHERTEXTBYTES + ANONYMOUS_NONCE_LEN);
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(CLIENT_HANDSHAKE_OBFUSCATION_KEY)).update(self.obfuscation_buffer().slice()).update(nonce.slice()).finalize();
@@ -151,6 +189,15 @@ impl<'a> ServerSecret<'a> {
         let initial_encryption_key_hash = Hasher::new_keyed(&hash_derive_key_context(INITIAL_DATA_KEY)).update(shared_secret.as_array()).update(ephemeral_public_obfuscated.slice()).update(nonce.slice()).finalize();
         let initial_encryption_key = StaticByteBuffer::from(initial_encryption_key_hash.as_bytes());
 
+        let client_initial_data = if let Some(encrypted) = encrypted_initial_data {
+            let mut cipher = Symmetric::new(&initial_encryption_key);
+            cipher.decrypt_auth(encrypted, None::<&StaticByteBuffer>)
+                .map(|buf| buf.slice().to_vec())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
         let ephemeral_public_deobfuscated = decrypt_anonymously(&masking_key, &mut ephemeral_public_obfuscated);
         let ephemeral_public_bytes: [u8; X25519_KEY_LENGTH] = (&ephemeral_public_deobfuscated).into();
         let ephemeral_public = PublicKey::from(ephemeral_public_bytes);
@@ -161,12 +208,13 @@ impl<'a> ServerSecret<'a> {
             nonce: nonce.to_owned(),
         };
 
-        (server_data, initial_encryption_key)
+        (server_data, initial_encryption_key, client_initial_data)
     }
 
     /// Server handshake response: generate ephemeral X25519, sign transcript, derive session key.
-    /// Args: server data, buffer. Returns: (handshake_secret, session_key).
-    pub fn encapsulate_handshake_server(&self, data: ServerData, pool: &BytePool) -> (DynamicByteBuffer, StaticByteBuffer) {
+    /// If `initial_data` is non-empty, encrypts it with the session key and appends to the response.
+    /// Args: server data, buffer pool, initial data bytes. Returns: (handshake_secret, session_key).
+    pub fn encapsulate_handshake_server(&self, data: ServerData, pool: &BytePool, initial_data: &[u8]) -> (DynamicByteBuffer, StaticByteBuffer) {
         let nonce = get_rng().random_byte_buffer::<NONCE_LENGTH>();
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
@@ -183,8 +231,17 @@ impl<'a> ServerSecret<'a> {
         let session_key_hash = Hasher::new_keyed(&hash_derive_key_context(SESSION_KEY)).update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(transcript.as_bytes()).finalize();
         let session_key = StaticByteBuffer::from(session_key_hash.as_bytes());
 
-        let handshake_buffer = pool.allocate_precise(0, 0, X25519_KEY_LENGTH + Signature::BYTE_SIZE + ANONYMOUS_NONCE_LEN + NONCE_LENGTH);
+        let handshake_buffer = pool.allocate_precise(0, 0, SERVER_HANDSHAKE_HEADER_SIZE);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append(&transcript_signed.to_bytes()).append_buf(&nonce);
+
+        let handshake_secret = if !initial_data.is_empty() {
+            let plaintext = pool.allocate_precise_from_slice_with_capacity(initial_data, 0, 0);
+            let mut cipher = Symmetric::new(&session_key);
+            let encrypted = cipher.encrypt_auth(plaintext, None::<&StaticByteBuffer>).expect("server initial data encryption failed");
+            handshake_secret.append_buf(&encrypted)
+        } else {
+            handshake_secret
+        };
 
         (handshake_secret, session_key)
     }

@@ -13,7 +13,7 @@ use crate::session::common::SessionManager;
 use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
 use crate::settings::keys::*;
-use crate::tailor::{IdentityType, PacketFlags, ReturnCode, Tailor};
+use crate::tailor::{IdentityType, InitialDataGenerator, PacketFlags, ReturnCode, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, ChannelReceiver, ChannelSender, FuturePool, Mutex, sleep};
 use crate::utils::time::unix_timestamp_ms;
@@ -70,10 +70,12 @@ pub(super) struct HealthState<T: IdentityType + Clone, AE: AsyncExecutor> {
     crypto_tool: SharedValue<ClientCryptoTool<T>>,
     /// Ephemeral handshake state stored between send and receive.
     client_data: Option<ClientData>,
+    /// Client-side initial data generator for handshake.
+    initial_data_generator: Arc<dyn InitialDataGenerator>,
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor> HealthState<T, AE> {
-    fn new(settings: Arc<Settings<AE>>, crypto_tool: SharedValue<ClientCryptoTool<T>>) -> Self {
+    fn new(settings: Arc<Settings<AE>>, crypto_tool: SharedValue<ClientCryptoTool<T>>, initial_data_generator: Arc<dyn InitialDataGenerator>) -> Self {
         Self {
             settings,
             smooth_rtt: None,
@@ -86,6 +88,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> HealthState<T, AE> {
             shadowride_pending: None,
             crypto_tool,
             client_data: None,
+            initial_data_generator,
         }
     }
 
@@ -170,7 +173,8 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> HealthState<T, AE> {
     /// Returns the packet and the initial data encryption key.
     async fn create_handshake_packet(&mut self, pn: u64, next_in: u32) -> (DynamicByteBuffer, StaticByteBuffer) {
         let settings = self.settings.clone();
-        let (client_data, handshake_secret, initial_key) = self.crypto_tool.get().await.create_handshake(settings.pool());
+        let initial_data = self.initial_data_generator.initial_data();
+        let (client_data, handshake_secret, initial_key) = self.crypto_tool.get().await.create_handshake(settings.pool(), &initial_data);
         self.client_data = Some(client_data);
 
         let identity = self.identity_value().await;
@@ -182,10 +186,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> HealthState<T, AE> {
     }
 
     /// Process the server handshake response and derive the session key.
-    async fn process_handshake_response(&mut self, handshake_body: DynamicByteBuffer) -> Option<StaticByteBuffer> {
+    /// Returns (session_key, server_initial_data).
+    async fn process_handshake_response(&mut self, handshake_body: DynamicByteBuffer) -> Option<(StaticByteBuffer, Vec<u8>)> {
         let client_data = self.client_data.take()?;
         match self.crypto_tool.get().await.process_handshake_response(client_data, handshake_body) {
-            Ok(session_key) => Some(session_key),
+            Ok((session_key, server_initial_data)) => Some((session_key, server_initial_data)),
             Err(err) => {
                 debug!("HealthProvider: handshake response decryption failed: {}", err);
                 None
@@ -228,8 +233,8 @@ pub struct HealthProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor +
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync> HealthProvider<T, AE, SM> {
     /// Create a new health provider with pre-created channel senders.
-    pub fn new(manager: Weak<SM>, settings: Arc<Settings<AE>>, state_crypto: SharedValue<ClientCryptoTool<T>>, response_tx: ChannelSender<HealthResponse<T>>, shadowride_tx: ChannelSender<()>, response_rx: ChannelReceiver<HealthResponse<T>>) -> Self {
-        let state = Arc::new(Mutex::new(HealthState::new(settings.clone(), state_crypto)));
+    pub fn new(manager: Weak<SM>, settings: Arc<Settings<AE>>, state_crypto: SharedValue<ClientCryptoTool<T>>, response_tx: ChannelSender<HealthResponse<T>>, shadowride_tx: ChannelSender<()>, response_rx: ChannelReceiver<HealthResponse<T>>, initial_data_generator: Arc<dyn InitialDataGenerator>) -> Self {
+        let state = Arc::new(Mutex::new(HealthState::new(settings.clone(), state_crypto, initial_data_generator)));
         Self {
             manager,
             state,
@@ -413,7 +418,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
 
                     if let Some(body) = handshake_body {
                         match st.process_handshake_response(body).await {
-                            Some(session_key) => {
+                            Some((session_key, _server_initial_data)) => {
                                 let updated_tool = if let Some(new_identity) = server_identity {
                                     st.crypto_tool.get().await.with_key_and_identity(&session_key, new_identity)
                                 } else {

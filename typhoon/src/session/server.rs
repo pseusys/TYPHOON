@@ -8,8 +8,7 @@ use log::debug;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
 use crate::cache::{CachedMapEntry, SharedMap};
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
-use crate::crypto::ServerSecret;
+use crate::crypto::ServerData;
 use crate::crypto::{UserCryptoState, UserServerState};
 use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
@@ -42,15 +41,19 @@ pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToS
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> ServerSessionManager<T, AE> {
-    /// Process a client handshake and create a new server session manager.
+    /// Create a server session manager from pre-decapsulated handshake data.
+    ///
+    /// The caller is responsible for decapsulating the client handshake (via `decapsulate_handshake_server`)
+    /// and generating the identity and server initial data before calling this method.
     ///
     /// Returns `(Arc<Self>, response_packet, session_key)` where response_packet should be sent back
     /// through a flow manager to complete the handshake. The caller must upgrade the user's crypto
-    /// state to `session_key` after sending the response (the response tailor is authenticated with
-    /// the initial key so the client can verify it before deriving the session key).
+    /// state to `session_key` after sending the response.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub async fn from_handshake(
-        handshake_body: DynamicByteBuffer,
+        server_data: ServerData,
+        initial_key: StaticByteBuffer,
+        server_initial_data: &[u8],
         handshake_tailor: Tailor<T>,
         identity: T,
         secret: &crate::crypto::ServerSecret<'_>,
@@ -63,11 +66,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
 
         let pool = settings.pool();
 
-        // Decapsulate client handshake to get server data + initial encryption key.
-        let (server_data, initial_key) = secret.decapsulate_handshake_server(handshake_body);
-
-        // Generate server handshake response and derive session key.
-        let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool);
+        // Generate server handshake response (with encrypted server initial data) and derive session key.
+        let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool, server_initial_data);
 
         // Register user with initial key so that the handshake response tailor is
         // authenticated with the initial key (the client can verify before deriving session key).
@@ -107,13 +107,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         Ok((session, response_packet, session_key))
     }
 
-    /// Process a client handshake and create a new server session manager (full mode).
+    /// Create a server session manager from pre-decapsulated handshake data (full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub async fn from_handshake(
-        handshake_body: DynamicByteBuffer,
+        server_data: ServerData,
+        initial_key: StaticByteBuffer,
+        server_initial_data: &[u8],
         handshake_tailor: Tailor<T>,
         identity: T,
-        secret: &ServerSecret<'_>,
+        secret: &crate::crypto::ServerSecret<'_>,
         users: &mut SharedMap<T, UserServerState>,
         user_data_tx: ChannelSender<DynamicByteBuffer>,
         router: StdWeak<dyn OutgoingRouter<T>>,
@@ -121,11 +123,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     ) -> Result<(Arc<Self>, DynamicByteBuffer, StaticByteBuffer), SessionControllerError> {
         let pool = settings.pool();
 
-        // Decapsulate client handshake to get server data + initial encryption key.
-        let (server_data, initial_key) = secret.decapsulate_handshake_server(handshake_body);
-
-        // Generate server handshake response and derive session key.
-        let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool);
+        // Generate server handshake response (with encrypted server initial data) and derive session key.
+        let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool, server_initial_data);
 
         // Register user with initial key so that the handshake response tailor is
         // encrypted with the initial key (the client can decrypt before deriving session key).

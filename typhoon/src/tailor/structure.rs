@@ -23,7 +23,23 @@ pub trait IdentityType: Send + Sync {
 }
 
 pub trait IdentityGenerator<T: IdentityType>: Send + Sync {
+    /// Derive a client identity from the client's initial data bytes.
     fn generate(&self, initial_data: &[u8]) -> T;
+
+    /// Produce initial data to include in the server handshake response for the given identity.
+    /// Default: no initial data.
+    fn initial_data(&self, _identity: &T) -> Vec<u8> {
+        Vec::new()
+    }
+}
+
+/// Client-side initial data generator for the handshake.
+pub trait InitialDataGenerator: Send + Sync {
+    /// Produce initial data to include in the client handshake.
+    /// Default: no initial data.
+    fn initial_data(&self) -> Vec<u8> {
+        Vec::new()
+    }
 }
 
 /// Tailor view (16 + TYPHOON_ID_LENGTH bytes total).

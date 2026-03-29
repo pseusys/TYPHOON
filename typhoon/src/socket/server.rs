@@ -272,7 +272,13 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
     /// Handle a handshake from a new client: create session, send response, publish ClientHandle.
     async fn handle_new_client(self: &Arc<Self>, raw_packet: crate::flow::server::RawReceivedPacket<T>, flow_index: usize) {
-        let identity = self.identity_generator.generate(raw_packet.body.slice());
+        // Decapsulate client handshake to get server data, initial key, and client initial data.
+        let (server_data, initial_key, client_initial_data) = self.secret.decapsulate_handshake_server(raw_packet.body);
+
+        // Generate identity from decrypted client initial data and produce server initial data.
+        let identity = self.identity_generator.generate(&client_initial_data);
+        let server_initial_data = self.identity_generator.initial_data(&identity);
+
         let buffer_size = self.settings.get(&keys::RECEIVE_BUFFER_SIZE) as usize;
 
         // Create user data channels (session <-> ClientHandle).
@@ -283,13 +289,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let self_dyn: Arc<dyn OutgoingRouter<T>> = Arc::clone(self) as Arc<dyn OutgoingRouter<T>>;
         let router_weak = Arc::downgrade(&self_dyn);
 
-        // Process handshake and create session manager.
+        // Create session manager from pre-decapsulated handshake data.
         // User is initially registered with the initial key so the handshake response
         // tailor can be verified by the client before it derives the session key.
         let (session, response_packet, session_key) = {
             let mut users = self.users.lock().await;
             match ServerSessionManager::from_handshake(
-                raw_packet.body,
+                server_data,
+                initial_key,
+                &server_initial_data,
                 raw_packet.tailor,
                 identity.clone(),
                 &self.secret,

@@ -9,7 +9,7 @@ use crate::tailor::{IdentityType, Tailor};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::AsyncExecutor;
 
-pub use crate::tailor::IdentityGenerator;
+pub use crate::tailor::{IdentityGenerator, InitialDataGenerator};
 
 impl IdentityType for StaticByteBuffer {
     fn from_bytes(bytes: &[u8]) -> Self {
@@ -96,3 +96,8 @@ impl IdentityGenerator<StaticByteBuffer> for RandomIdentityGenerator {
         get_rng().random_byte_buffer::<DEFAULT_TYPHOON_ID_LENGTH>()
     }
 }
+
+/// Initial data generator that produces no initial data.
+pub struct EmptyInitialDataGenerator;
+
+impl InitialDataGenerator for EmptyInitialDataGenerator {}

@@ -136,16 +136,4 @@ impl Socket {
         let (res, addr) = self.sock.recv_from(buf.slice_mut()).await.map_err(SocketError::new_socket_error)?;
         Ok((buf.rebuffer_end(res), addr))
     }
-
-    /// Attempt best effort synchronous send a final message and close the socket
-
-    #[cfg(feature = "tokio")]
-    fn close(self, data: DynamicByteBuffer) -> Result<usize, SocketError> {
-        self.sock.try_send(data.slice()).map_err(SocketError::new_socket_error)
-    }
-
-    #[cfg(feature = "async-std")]
-    fn close(self, data: DynamicByteBuffer) -> Result<usize, SocketError> {
-        self.sock.into_inner().map_err(SocketError::new_socket_error)?.send(data.slice()).map_err(SocketError::new_socket_error)
-    }
 }

@@ -13,7 +13,7 @@ use crate::session::error::SessionControllerError;
 use crate::session::health::HealthProvider;
 use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
-use crate::tailor::{IdentityType, PacketFlags, Tailor};
+use crate::tailor::{IdentityType, InitialDataGenerator, PacketFlags, Tailor};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::{AsyncExecutor, Mutex, create_channel};
 
@@ -46,7 +46,7 @@ impl<T: IdentityType + Clone> ClientSessionManagerInternalSend<T> {
 impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> ClientSessionManager<T, AE, FM> {
     /// Create a new client session manager without starting the handshake.
     /// Call `start()` after the background receive loop is running.
-    pub async fn new(cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>) -> Result<Arc<Self>, SessionControllerError> {
+    pub async fn new(cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>, initial_data_generator: Arc<dyn InitialDataGenerator>) -> Result<Arc<Self>, SessionControllerError> {
         let send_cipher = cipher.create_sibling().await;
         let receive_cipher = cipher.create_sibling().await;
         let health_state_crypto = cipher.create_sibling().await;
@@ -55,7 +55,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> 
         let (shadowride_tx, _) = create_channel(1);
 
         let value = Arc::new_cyclic(|weak| {
-            let health_provider = HealthProvider::new(weak.clone(), settings.clone(), health_state_crypto, response_tx, shadowride_tx, response_rx);
+            let health_provider = HealthProvider::new(weak.clone(), settings.clone(), health_state_crypto, response_tx, shadowride_tx, response_rx, initial_data_generator);
 
             ClientSessionManager {
                 health_provider,
