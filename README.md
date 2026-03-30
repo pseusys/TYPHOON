@@ -64,7 +64,7 @@ The tailor structure consists of the following fields:
 | **TM** | time | `4` | Delay before the next health check packet (milliseconds), unused for other packets | Packet sending timestamp |
 | **PN** | packet number | `8` | Combined packet number | - |
 | **PL** | payload length | `2` | Length of encrypted packet payload | - |
-| **ID** | identity | constant | Client version in client handshake, client identification number afterwards | - |
+| **ID** | identity | constant | Client [version](#version-checking) in client handshake, client identification number afterwards | - |
 
 > The **ID** field length is controlled by `TYPHOON_ID_LENGTH` constant and specifies the maximum number of simultaneous connections.
 > See [implementation advices](#sockets-and-listeners) for more information on client attribution.
@@ -436,7 +436,7 @@ After the client receives the encrypted handshake message from the server, it de
 4. Client verifies server identity using `Ed25519` with `VPK`, applying it to `Trans` and `TransAuth`.
 5. Client computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
 6. Client extracts the server-generated identity from the server handshake tailor, adopting it for all subsequent communication.
-7. Client decrypts the server initial data, verifying `Sess` correctness.
+7. Client decrypts the server initial data using the initial data encryption key (derived by `BLAKE3` from `CliShrSec`, `CliEphPubKeyObf` and `CliNnc`).
 
 > In case of an authentication or initial data decryption failure, client should terminate connection silently.
 
@@ -462,7 +462,7 @@ After the server initiates the internal state for the user and waits for an appr
 6. Server authenticates `Trans` using `Ed25519` with `VSK`, producing `TransAuth`.
 7. Server computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
 8. Server encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm (NB! Here initial data encryption key is used for additional data instead of session key, same as in the client handshake step 6). Server upgrades to the session key after sending the response.
-9. Server encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with `Sess` as a key.
+9. Server encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm using the same initial data encryption key (derived by `BLAKE3` from `CliShrSec`, `CliEphPubKeyObf` and `CliNnc`).
 10. Server constructs the handshake response by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and encrypted initial data as the body. The handshake tailor is appended to the body and encrypted by the flow manager, as with all other packets.
 11. The payload is sent to the client inside of a handshake packet. The server tailor contains the server-generated identity for the client to use in subsequent communication.
 
@@ -625,6 +625,23 @@ Even though [suggested listener design](#sockets-and-listeners) outlines that th
 In that special case it might be inevitable to only embed the server address itself into certificates - and pass "proxy" addresses dynamically, after the handshake is established, in initial data.
 WARNING: this design comes with a significant limitation - since the client does not know any "proxy" addresses initially, every new handshake will inevitably go to the server address, which will create a clear pattern for an external observer.
 
+#### Version checking
+
+The client embeds its application version into the **ID** field of the handshake tailor.
+The version string follows the format `major[.minor[.patch[-tag]]]`, stored as left-aligned ASCII and zero-padded to the **ID** field length.
+Only the first `TYPHOON_ID_LENGTH` bytes of the version string are used; longer strings are truncated.
+
+Upon receiving a handshake, the server reads the **ID** field and compares it to its own compile-time version:
+
+- **Patch mismatch** (same major and minor, different patch): the server logs a debug message and continues the handshake normally.
+- **Minor mismatch** (same major, different minor): the server logs a warning and continues the handshake normally.
+- **Major mismatch** (different major): the server rejects the handshake.
+  It sends a termination packet back to the client with the **CD** field set to `1` (`VersionMismatch`), then discards the handshake without creating a session.
+
+This mechanism allows the server to detect outdated clients in logs and enforce strict forward-compatibility at the major version boundary.
+The version checking logic can be overridden by providing a custom `ServerConnectionHandler` implementation.
+Likewise, a custom `ClientConnectionHandler` can supply a different version string (for example, an application-level version rather than the library version).
+
 ### Communication modes
 
 The following communication modes are proposed.
@@ -719,6 +736,7 @@ However, in order to speed things up and improve logging, a few things are highl
 The sample valid **CD** values are given below:
 
 - `0`: No error (successful handshake or graceful termination).
+- `1`: [Version mismatch](#version-checking) (client major version differs from server major version).
 - `101`: Unknown error (some error happened indeed, but it is not clear which one exactly).
 
 TODO!

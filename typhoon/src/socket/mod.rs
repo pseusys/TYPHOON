@@ -12,5 +12,7 @@ pub use error::ClientSocketError;
 pub use error::ServerSocketError;
 #[cfg(feature = "server")]
 pub use server::{ClientHandle, Listener, ListenerBuilder, ServerFlowConfiguration};
+#[cfg(feature = "client")]
+pub use crate::tailor::ClientConnectionHandler;
 #[cfg(feature = "server")]
-pub use crate::tailor::IdentityGenerator;
+pub use crate::tailor::ServerConnectionHandler;

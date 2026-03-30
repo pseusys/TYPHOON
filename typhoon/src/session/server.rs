@@ -67,7 +67,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         let pool = settings.pool();
 
         // Generate server handshake response (with encrypted server initial data) and derive session key.
-        let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool, server_initial_data);
+        let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool, server_initial_data, &initial_key);
 
         // Register user with initial key so that the handshake response tailor is
         // authenticated with the initial key (the client can verify before deriving session key).
@@ -124,7 +124,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         let pool = settings.pool();
 
         // Generate server handshake response (with encrypted server initial data) and derive session key.
-        let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool, server_initial_data);
+        let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool, server_initial_data, &initial_key);
 
         // Register user with initial key so that the handshake response tailor is
         // encrypted with the initial key (the client can decrypt before deriving session key).

@@ -75,6 +75,7 @@ impl Certificate {
             ephemeral_key: ephemeral_secret,
             shared_secret: shared_buffer.to_owned(),
             nonce: nonce.to_owned(),
+            initial_key: initial_encryption_key.clone(),
         };
 
         let handshake_buffer = pool.allocate_precise(0, 0, CLIENT_HANDSHAKE_HEADER_SIZE);
@@ -93,7 +94,7 @@ impl Certificate {
     }
 
     /// Process server handshake response: deobfuscate, verify signature, derive session key.
-    /// If the response contains encrypted initial data beyond the crypto header, decrypts it with the session key.
+    /// If the response contains encrypted initial data beyond the crypto header, decrypts it with the initial key.
     /// Args: client ephemeral data, server handshake. Returns: (session_key, server_initial_data).
     pub fn decapsulate_handshake_client(&self, data: ClientData, handshake_secret: DynamicByteBuffer) -> Result<(StaticByteBuffer, Vec<u8>), HandshakeError> {
         let (crypto_header, encrypted_initial_data) = if handshake_secret.len() > SERVER_HANDSHAKE_HEADER_SIZE {
@@ -125,7 +126,7 @@ impl Certificate {
         let session_key = StaticByteBuffer::from(session_key_hash.as_bytes());
 
         let initial_data = if let Some(encrypted) = encrypted_initial_data {
-            let mut cipher = Symmetric::new(&session_key);
+            let mut cipher = Symmetric::new(&data.initial_key);
             cipher.decrypt_auth(encrypted, None::<&StaticByteBuffer>)
                 .map(|buf| buf.slice().to_vec())
                 .map_err(|e| HandshakeError::handshake_crypto_error("decrypting server initial data", e))?
@@ -212,9 +213,9 @@ impl<'a> ServerSecret<'a> {
     }
 
     /// Server handshake response: generate ephemeral X25519, sign transcript, derive session key.
-    /// If `initial_data` is non-empty, encrypts it with the session key and appends to the response.
-    /// Args: server data, buffer pool, initial data bytes. Returns: (handshake_secret, session_key).
-    pub fn encapsulate_handshake_server(&self, data: ServerData, pool: &BytePool, initial_data: &[u8]) -> (DynamicByteBuffer, StaticByteBuffer) {
+    /// If `initial_data` is non-empty, encrypts it with the initial key and appends to the response.
+    /// Args: server data, buffer pool, initial data bytes, initial key. Returns: (handshake_secret, session_key).
+    pub fn encapsulate_handshake_server(&self, data: ServerData, pool: &BytePool, initial_data: &[u8], initial_key: &StaticByteBuffer) -> (DynamicByteBuffer, StaticByteBuffer) {
         let nonce = get_rng().random_byte_buffer::<NONCE_LENGTH>();
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
@@ -236,7 +237,7 @@ impl<'a> ServerSecret<'a> {
 
         let handshake_secret = if !initial_data.is_empty() {
             let plaintext = pool.allocate_precise_from_slice_with_capacity(initial_data, 0, 0);
-            let mut cipher = Symmetric::new(&session_key);
+            let mut cipher = Symmetric::new(initial_key);
             let encrypted = cipher.encrypt_auth(plaintext, None::<&StaticByteBuffer>).expect("server initial data encryption failed");
             handshake_secret.append_buf(&encrypted)
         } else {

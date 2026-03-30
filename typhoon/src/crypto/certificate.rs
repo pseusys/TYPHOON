@@ -77,11 +77,12 @@ impl ObfuscationBufferContainer for Certificate {
     }
 }
 
-/// Ephemeral client handshake state: X25519 secret, McEliece shared secret, nonce.
+/// Ephemeral client handshake state: X25519 secret, McEliece shared secret, nonce, initial key.
 pub struct ClientData {
     pub ephemeral_key: EphemeralSecret,
     pub shared_secret: StaticByteBuffer,
     pub nonce: StaticByteBuffer,
+    pub initial_key: StaticByteBuffer,
 }
 
 /// Ephemeral server handshake state: client X25519 public key, McEliece shared secret, nonce.

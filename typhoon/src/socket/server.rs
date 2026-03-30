@@ -13,7 +13,7 @@ use crate::cache::SharedMap;
 use crate::crypto::ServerSecret;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 use crate::crypto::ObfuscationBufferContainer;
-use crate::crypto::UserServerState;
+use crate::crypto::{UserCryptoState, UserServerState};
 use crate::flow::FlowConfig;
 use crate::flow::FlowManager;
 use crate::flow::decoy::DecoyCommunicationMode;
@@ -22,7 +22,7 @@ use crate::session::SessionManager;
 use crate::session::server::{IncomingPacket, OutgoingRouter, ServerSessionManager};
 use crate::settings::{Settings, keys};
 use crate::socket::error::ServerSocketError;
-use crate::tailor::{IdentityGenerator, IdentityType, PacketFlags};
+use crate::tailor::{IdentityType, PacketFlags, ReturnCode, ServerConnectionHandler, Tailor};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::socket::Socket;
 use crate::utils::sync::{AsyncExecutor, ChannelReceiver, ChannelSender, Mutex, create_channel};
@@ -55,7 +55,7 @@ impl ServerFlowConfiguration {
 }
 
 /// Builder for constructing a `Listener`.
-pub struct ListenerBuilder<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor + 'static, DP, IG: IdentityGenerator<T>> {
+pub struct ListenerBuilder<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor + 'static, DP, IG: ServerConnectionHandler<T>> {
     settings: Option<Arc<Settings<AE>>>,
     flow_configs: Vec<ServerFlowConfiguration>,
     secret: ServerSecret<'static>,
@@ -63,7 +63,7 @@ pub struct ListenerBuilder<T: IdentityType + Clone + Eq + Hash + Send + ToString
     _phantom: std::marker::PhantomData<(T, DP)>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: IdentityGenerator<T> + 'static> ListenerBuilder<T, AE, DP, IG> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: ServerConnectionHandler<T> + 'static> ListenerBuilder<T, AE, DP, IG> {
     /// Create a new builder with the given server secret and identity generator.
     pub fn new(secret: ServerSecret<'static>, identity_generator: IG) -> Self {
         Self {
@@ -185,7 +185,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 }
 
 /// Server-side listener that manages flow managers and client sessions.
-pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: IdentityGenerator<T> + 'static> {
+pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: ServerConnectionHandler<T> + 'static> {
     flows: Vec<Arc<ServerFlowManager<T, AE, DP>>>,
     sessions: Mutex<HashMap<T, Arc<ServerSessionManager<T, AE>>>>,
     users: Mutex<SharedMap<T, UserServerState>>,
@@ -200,7 +200,7 @@ pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'sta
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: IdentityGenerator<T> + 'static> Listener<T, AE, DP, IG> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: ServerConnectionHandler<T> + 'static> Listener<T, AE, DP, IG> {
     /// Start the listener's background receive loops.
     /// Must be called after build() to begin processing incoming packets.
     pub async fn start(self: &Arc<Self>) {
@@ -274,6 +274,32 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     async fn handle_new_client(self: &Arc<Self>, raw_packet: crate::flow::server::RawReceivedPacket<T>, flow_index: usize) {
         // Decapsulate client handshake to get server data, initial key, and client initial data.
         let (server_data, initial_key, client_initial_data) = self.secret.decapsulate_handshake_server(raw_packet.body);
+
+        // Check client version from the handshake tailor ID field.
+        let client_version_identity = raw_packet.tailor.identity();
+        if !self.identity_generator.verify_version(client_version_identity.to_bytes()) {
+            // Temporarily register client with initial key so the tailor can be obfuscated.
+            {
+                let mut users = self.users.lock().await;
+                #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+                let crypto_state = UserCryptoState::new(&initial_key, self.secret.obfuscation_buffer());
+                #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+                let crypto_state = UserCryptoState::new(&initial_key);
+                users.insert(client_version_identity.clone(), UserServerState::new(crypto_state)).await;
+            }
+            self.flows[flow_index].register_user_addr(client_version_identity.clone(), raw_packet.source_addr).await;
+            let pn = ((crate::utils::time::unix_timestamp_ms() / 1000) as u64) << 32;
+            let buf = self.settings.pool().allocate(Some(T::length()));
+            let tailor = Tailor::termination(buf, &client_version_identity, ReturnCode::VersionMismatch, pn);
+            if let Err(err) = self.flows[flow_index].send_packet(tailor.into_buffer(), true).await {
+                debug!("failed to send version mismatch rejection: {}", err);
+            }
+            {
+                let mut users = self.users.lock().await;
+                users.remove(&client_version_identity).await;
+            }
+            return;
+        }
 
         // Generate identity from decrypted client initial data and produce server initial data.
         let identity = self.identity_generator.generate(&client_initial_data);
@@ -396,7 +422,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 }
 
 /// OutgoingRouter implementation: selects an active flow and sends the packet.
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: IdentityGenerator<T> + 'static> OutgoingRouter<T> for Listener<T, AE, DP, IG> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: ServerConnectionHandler<T> + 'static> OutgoingRouter<T> for Listener<T, AE, DP, IG> {
     fn route_packet<'a>(&'a self, packet: DynamicByteBuffer, identity: &'a T) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
         Box::pin(async move {
             let flow_idx = {

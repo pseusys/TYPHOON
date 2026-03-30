@@ -13,7 +13,7 @@ use crate::session::common::SessionManager;
 use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
 use crate::settings::keys::*;
-use crate::tailor::{IdentityType, InitialDataGenerator, PacketFlags, ReturnCode, Tailor};
+use crate::tailor::{ClientConnectionHandler, IdentityType, PacketFlags, ReturnCode, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, ChannelReceiver, ChannelSender, FuturePool, Mutex, sleep};
 use crate::utils::time::unix_timestamp_ms;
@@ -48,7 +48,7 @@ enum SendOutcome {
 }
 
 /// Internal state shared between the timer task and feed methods.
-pub(super) struct HealthState<T: IdentityType + Clone, AE: AsyncExecutor> {
+pub(super) struct HealthState<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> {
     settings: Arc<Settings<AE>>,
     /// EWMA smoothed RTT in milliseconds.
     smooth_rtt: Option<f64>,
@@ -71,11 +71,11 @@ pub(super) struct HealthState<T: IdentityType + Clone, AE: AsyncExecutor> {
     /// Ephemeral handshake state stored between send and receive.
     client_data: Option<ClientData>,
     /// Client-side initial data generator for handshake.
-    initial_data_generator: Arc<dyn InitialDataGenerator>,
+    initial_data_generator: CC,
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor> HealthState<T, AE> {
-    fn new(settings: Arc<Settings<AE>>, crypto_tool: SharedValue<ClientCryptoTool<T>>, initial_data_generator: Arc<dyn InitialDataGenerator>) -> Self {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> HealthState<T, AE, CC> {
+    fn new(settings: Arc<Settings<AE>>, crypto_tool: SharedValue<ClientCryptoTool<T>>, initial_data_generator: CC) -> Self {
         Self {
             settings,
             smooth_rtt: None,
@@ -221,9 +221,9 @@ async fn wait_for_response<T: IdentityType + Clone>(timeout_ms: u64, response_rx
 }
 
 /// Health check provider for client-side decay cycle management.
-pub struct HealthProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, SM: SessionManager + Send + Sync + 'static> {
+pub struct HealthProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, SM: SessionManager + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> {
     manager: Weak<SM>,
-    state: Arc<Mutex<HealthState<T, AE>>>,
+    state: Arc<Mutex<HealthState<T, AE, CC>>>,
     settings: Arc<Settings<AE>>,
     response_tx: ChannelSender<HealthResponse<T>>,
     shadowride_tx: ChannelSender<()>,
@@ -231,9 +231,9 @@ pub struct HealthProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor +
     handshake_rx: Mutex<Option<ChannelReceiver<HealthResponse<T>>>>,
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync> HealthProvider<T, AE, SM> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync, CC: ClientConnectionHandler + 'static> HealthProvider<T, AE, SM, CC> {
     /// Create a new health provider with pre-created channel senders.
-    pub fn new(manager: Weak<SM>, settings: Arc<Settings<AE>>, state_crypto: SharedValue<ClientCryptoTool<T>>, response_tx: ChannelSender<HealthResponse<T>>, shadowride_tx: ChannelSender<()>, response_rx: ChannelReceiver<HealthResponse<T>>, initial_data_generator: Arc<dyn InitialDataGenerator>) -> Self {
+    pub fn new(manager: Weak<SM>, settings: Arc<Settings<AE>>, state_crypto: SharedValue<ClientCryptoTool<T>>, response_tx: ChannelSender<HealthResponse<T>>, shadowride_tx: ChannelSender<()>, response_rx: ChannelReceiver<HealthResponse<T>>, initial_data_generator: CC) -> Self {
         let state = Arc::new(Mutex::new(HealthState::new(settings.clone(), state_crypto, initial_data_generator)));
         Self {
             manager,
@@ -340,7 +340,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     }
 
     /// Static version of try_send for use in spawned background tasks.
-    async fn try_send_static(manager: &Weak<SM>, packet: DynamicByteBuffer, state: &Arc<Mutex<HealthState<T, AE>>>) -> SendOutcome {
+    async fn try_send_static(manager: &Weak<SM>, packet: DynamicByteBuffer, state: &Arc<Mutex<HealthState<T, AE, CC>>>) -> SendOutcome {
         let Some(mgr) = manager.upgrade() else {
             debug!("HealthProvider: session manager dropped");
             return SendOutcome::Stop;
@@ -438,7 +438,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     }
 
     /// Attempt to send a health check, with shadowriding if a previous server_next_in is available.
-    async fn send_or_shadowride(manager: &Weak<SM>, state: &Arc<Mutex<HealthState<T, AE>>>, shadowride_rx: &mut ChannelReceiver<()>, server_next_in: Option<u32>, pn: u64, next_in: u32) -> SendOutcome {
+    async fn send_or_shadowride(manager: &Weak<SM>, state: &Arc<Mutex<HealthState<T, AE, CC>>>, shadowride_rx: &mut ChannelReceiver<()>, server_next_in: Option<u32>, pn: u64, next_in: u32) -> SendOutcome {
         if let Some(srv_ni) = server_next_in {
             let rtt = state.lock().await.smooth_rtt_or_default();
             let pre_wait = ((srv_ni as f64) - rtt).max(0.0) as u64;
@@ -494,7 +494,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     }
 
     /// Background timer task implementing the client-side decay cycle.
-    async fn timer_task(manager: Weak<SM>, state: Arc<Mutex<HealthState<T, AE>>>, mut response_rx: ChannelReceiver<HealthResponse<T>>, mut shadowride_rx: ChannelReceiver<()>, initial_server_next_in: Option<u32>) {
+    async fn timer_task(manager: Weak<SM>, state: Arc<Mutex<HealthState<T, AE, CC>>>, mut response_rx: ChannelReceiver<HealthResponse<T>>, mut shadowride_rx: ChannelReceiver<()>, initial_server_next_in: Option<u32>) {
         let mut server_next_in = initial_server_next_in;
 
         loop {
@@ -552,7 +552,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     }
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync> Drop for HealthProvider<T, AE, SM> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync, CC: ClientConnectionHandler> Drop for HealthProvider<T, AE, SM, CC> {
     /// NB! There's no need for synchronization: even if a couple of packets slip through after termination, they will just get discarded.
     fn drop(&mut self) {
         let manager = self.manager.clone();

@@ -133,13 +133,13 @@ fn test_handshake_cycle() {
     let (client_data, client_handshake, _client_initial_key) = certificate.encapsulate_handshake_client(&TEST_POOL, client_initial_data);
 
     // Server decapsulates and receives decrypted client initial data.
-    let (server_data, _server_initial_key, decrypted_client_initial_data) = server_secret.decapsulate_handshake_server(client_handshake);
+    let (server_data, server_initial_key, decrypted_client_initial_data) = server_secret.decapsulate_handshake_server(client_handshake);
 
     assert_eq!(client_data.shared_secret, server_data.shared_secret, "client and server should derive the same shared secret");
     assert_eq!(client_initial_data.as_slice(), decrypted_client_initial_data.as_slice(), "server should receive the same client initial data");
 
-    // Server creates response with server initial data encrypted inside.
-    let (server_handshake, server_session_key) = server_secret.encapsulate_handshake_server(server_data, &TEST_POOL, server_initial_data);
+    // Server creates response with server initial data encrypted with initial key.
+    let (server_handshake, server_session_key) = server_secret.encapsulate_handshake_server(server_data, &TEST_POOL, server_initial_data, &server_initial_key);
 
     // Client decapsulates and receives session key + decrypted server initial data.
     let (client_session_key, decrypted_server_initial_data) = certificate.decapsulate_handshake_client(client_data, server_handshake).expect("client handshake decapsulation failed");

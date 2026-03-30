@@ -108,16 +108,17 @@ fn test_settings_valid_custom_pass() {
 }
 
 // Test: environment variable override is applied when no explicit override is set.
+// Uses HANDSHAKE_NEXT_IN_FACTOR — a key no other test touches — to avoid parallel test races.
 #[test]
 fn test_env_var_override_applied() {
-    let env_name = TIMEOUT_RTT_FACTOR.name;
+    let env_name = HANDSHAKE_NEXT_IN_FACTOR.name;
     let original = env::var(env_name).ok();
 
     // SAFETY: test-only, single-threaded access to this env var.
-    unsafe { env::set_var(env_name, "7.5") };
+    unsafe { env::set_var(env_name, "0.5") };
     let settings = builder().build().expect("settings should build with env override");
-    let val: f64 = settings.get(&TIMEOUT_RTT_FACTOR);
-    assert_eq!(val, 7.5, "env var override should take effect");
+    let val: f64 = settings.get(&HANDSHAKE_NEXT_IN_FACTOR);
+    assert_eq!(val, 0.5, "env var override should take effect");
 
     // Cleanup.
     unsafe {

@@ -13,7 +13,7 @@ use crate::session::error::SessionControllerError;
 use crate::session::health::HealthProvider;
 use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
-use crate::tailor::{IdentityType, InitialDataGenerator, PacketFlags, Tailor};
+use crate::tailor::{ClientConnectionHandler, IdentityType, PacketFlags, Tailor};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::{AsyncExecutor, Mutex, create_channel};
 
@@ -27,8 +27,8 @@ struct ClientSessionManagerInternalReceive<T: IdentityType + Clone> {
 }
 
 /// Client-side session manager that encrypts data and manages health checking.
-pub struct ClientSessionManager<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + Send + Sync + 'static> {
-    health_provider: HealthProvider<T, AE, Self>,
+pub struct ClientSessionManager<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> {
+    health_provider: HealthProvider<T, AE, Self, CC>,
     send_internal: Mutex<ClientSessionManagerInternalSend<T>>,
     receive_internal: Mutex<ClientSessionManagerInternalReceive<T>>,
     flows: Vec<FM>,
@@ -43,10 +43,10 @@ impl<T: IdentityType + Clone> ClientSessionManagerInternalSend<T> {
     }
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> ClientSessionManager<T, AE, FM> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, CC: ClientConnectionHandler + 'static> ClientSessionManager<T, AE, FM, CC> {
     /// Create a new client session manager without starting the handshake.
     /// Call `start()` after the background receive loop is running.
-    pub async fn new(cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>, initial_data_generator: Arc<dyn InitialDataGenerator>) -> Result<Arc<Self>, SessionControllerError> {
+    pub async fn new(cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>, initial_data_generator: CC) -> Result<Arc<Self>, SessionControllerError> {
         let send_cipher = cipher.create_sibling().await;
         let receive_cipher = cipher.create_sibling().await;
         let health_state_crypto = cipher.create_sibling().await;
@@ -88,7 +88,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> 
     }
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> SessionManager for ClientSessionManager<T, AE, FM> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, CC: ClientConnectionHandler + 'static> SessionManager for ClientSessionManager<T, AE, FM, CC> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), SessionControllerError> {
         let full_packet = if generated {
             // Health provider already assembled (body + tailor), pass through directly.
@@ -160,7 +160,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> 
     }
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync> Drop for ClientSessionManager<T, AE, FM> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, CC: ClientConnectionHandler + 'static> Drop for ClientSessionManager<T, AE, FM, CC> {
     fn drop(&mut self) {
         drop(take(&mut self.flows));
     }

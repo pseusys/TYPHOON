@@ -22,24 +22,27 @@ pub trait IdentityType: Send + Sync {
     fn length() -> usize;
 }
 
-pub trait IdentityGenerator<T: IdentityType>: Send + Sync {
-    /// Derive a client identity from the client's initial data bytes.
+/// Server-side connection handler: generates identities, produces server initial data, and checks client version.
+pub trait ServerConnectionHandler<T: IdentityType>: Send + Sync {
+    /// Derive a client session identity from the client's decrypted initial data bytes.
     fn generate(&self, initial_data: &[u8]) -> T;
 
     /// Produce initial data to include in the server handshake response for the given identity.
-    /// Default: no initial data.
-    fn initial_data(&self, _identity: &T) -> Vec<u8> {
-        Vec::new()
-    }
+    fn initial_data(&self, identity: &T) -> Vec<u8>;
+
+    /// Check whether the client version (from the handshake tailor ID field) is compatible.
+    /// Returns `true` if the handshake should proceed, `false` if it should be rejected.
+    /// Implementations are responsible for any logging before returning.
+    fn verify_version(&self, version_bytes: &[u8]) -> bool;
 }
 
-/// Client-side initial data generator for the handshake.
-pub trait InitialDataGenerator: Send + Sync {
+/// Client-side connection handler: produces client initial data and the version bytes for the handshake.
+pub trait ClientConnectionHandler: Send + Sync {
     /// Produce initial data to include in the client handshake.
-    /// Default: no initial data.
-    fn initial_data(&self) -> Vec<u8> {
-        Vec::new()
-    }
+    fn initial_data(&self) -> Vec<u8>;
+
+    /// Produce the version bytes to place in the handshake tailor ID field, clamped to `length` bytes.
+    fn version(&self, length: usize) -> Vec<u8>;
 }
 
 /// Tailor view (16 + TYPHOON_ID_LENGTH bytes total).
