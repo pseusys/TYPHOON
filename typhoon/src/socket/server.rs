@@ -10,9 +10,10 @@ use log::{debug, info};
 
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::cache::SharedMap;
-use crate::crypto::ServerSecret;
+use crate::certificate::ServerKeyPair;
+use crate::certificate::ServerSecret;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-use crate::crypto::ObfuscationBufferContainer;
+use crate::certificate::ObfuscationBufferContainer;
 use crate::crypto::{UserCryptoState, UserServerState};
 use crate::flow::FlowConfig;
 use crate::flow::FlowManager;
@@ -64,12 +65,12 @@ pub struct ListenerBuilder<T: IdentityType + Clone + Eq + Hash + Send + ToString
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: ServerConnectionHandler<T> + 'static> ListenerBuilder<T, AE, DP, IG> {
-    /// Create a new builder with the given server secret and identity generator.
-    pub fn new(secret: ServerSecret<'static>, identity_generator: IG) -> Self {
+    /// Create a new builder with the given server key pair and identity generator.
+    pub fn new(key_pair: ServerKeyPair, identity_generator: IG) -> Self {
         Self {
             settings: None,
             flow_configs: Vec::new(),
-            secret,
+            secret: key_pair.into_server_secret(),
             identity_generator,
             _phantom: std::marker::PhantomData,
         }

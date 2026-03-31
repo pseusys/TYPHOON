@@ -536,7 +536,33 @@ Use of `anonymous` marshalling encryption mode is always marked specifically.
 
 ### Certificate structure
 
-TODO!
+A **server key pair** contains all secret key material the server needs to accept connections.
+It must never be distributed and should be stored securely on the server host.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `ESK` | [Classic McEliece](#handshake-encryption) secret key | Decapsulates the KEM ciphertext in the client handshake |
+| `VSK` | [Ed25519](#handshake-encryption) signing key | Signs the handshake transcript to authenticate the server |
+| `OBFS` _(fast mode)_ | 32-byte symmetric key | Pre-shared key used for [tailor obfuscation](#tailor-encryption) |
+| `OPK` _(full mode)_ | [X25519](#marshalling-encryption) public key | Long-term public key corresponding to `OSK` (also included in the certificate) |
+| `OSK` _(full mode)_ | [X25519](#marshalling-encryption) static secret | Decrypts client-to-server tailors via ephemeral X25519 exchange |
+
+A **client certificate** bundles the corresponding public material together with the server's network addresses.
+It is derived from the server key pair, distributed to clients out-of-band, and must be reissued whenever the server keys or flow manager addresses change.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `EPK` | [Classic McEliece](#handshake-encryption) public key | Encapsulates the client's KEM shared secret to the server |
+| `VPK` | [Ed25519](#handshake-encryption) verifying key | Verifies the server's handshake signature |
+| `OBFS` _(fast mode)_ | 32-byte symmetric key | Pre-shared [tailor obfuscation](#tailor-encryption) key (same value as in the server key pair) |
+| `OPK` _(full mode)_ | [X25519](#marshalling-encryption) public key | Server's long-term public key for encrypting client-to-server tailors |
+| Addresses | list of `host:port` pairs | Network addresses of the server flow managers the client connects to |
+
+The certificate is a complete, self-contained connection descriptor: a client needs nothing beyond it to establish a session.
+The cipher mode and symmetric cipher variant are also embedded in the certificate so that both sides always agree on algorithms without any additional negotiation.
+
+> The server key pair and the client certificates derived from it are tightly coupled: rotating either requires regenerating the other.
+> It is therefore recommended to treat the server key pair as a long-lived deployment identity, separate from any application-level credentials.
 
 ## Proposed implementation
 
@@ -624,6 +650,8 @@ According to [TYPHOON architecture](#architecture), server flow managers can hav
 Even though [suggested listener design](#sockets-and-listeners) outlines that their parameters should be static, so that they can be embedded into certificate and delivered to users, sometimes this constraint is impossible to fulfill (especially when it comes to volatile distributed setups where it is necessary to add or remove server flow managers dynamically).
 In that special case it might be inevitable to only embed the server address itself into certificates - and pass "proxy" addresses dynamically, after the handshake is established, in initial data.
 WARNING: this design comes with a significant limitation - since the client does not know any "proxy" addresses initially, every new handshake will inevitably go to the server address, which will create a clear pattern for an external observer.
+
+> The latter situation is not supported by the proposed implementation and can be developed further along with the [isolated flow managers](#isolated-flow-managers) proposal.
 
 #### Version checking
 
@@ -739,7 +767,7 @@ The sample valid **CD** values are given below:
 - `1`: [Version mismatch](#version-checking) (client major version differs from server major version).
 - `101`: Unknown error (some error happened indeed, but it is not clear which one exactly).
 
-TODO!
+TODO! Other proposed implementation details worth mentioning.
 
 ### Constants and defaults
 
@@ -839,7 +867,7 @@ As a final attempt, an implementation should attempt to read these constants fro
 
 ### Debug mode
 
-TODO!
+TODO! Debug mode should act as a "stress testing", test reachability of all the flows, server itself, and also transfer a sequence of large packages to check connection speed (reference: PING).
 
 ### Supporting math
 
@@ -900,7 +928,95 @@ Cipher modes:
 - `fast` feature: Symmetric key obfuscation with dual authentication (AEAD + BLAKE3)
 - `full` feature: Asymmetric key obfuscation using X25519 ephemeral exchange
 
-TODO!
+TODO! Other implementation details.
+
+### Certificate file format
+
+Every file produced by the certificate module begins with a fixed 10-byte header:
+
+| Offset | Size | Field | Values | Description |
+| --- | --- | --- | --- | --- |
+| 0 | 7 | Magic | `TYPHOON` | Fixed identifier |
+| 7 | 1 | Type | `S` / `C` | Server key pair or client certificate |
+| 8 | 1 | Mode | `F` / `U` | Cipher mode: fast or full |
+| 9 | 1 | Version | `1` | Format version (currently always `1`) |
+
+The payload immediately follows the header. Field sizes use these stable constants:
+
+| Constant | Value | Description |
+| --- | --- | --- |
+| `EPK_BYTES` | 261120 | [Classic McEliece](#handshake-encryption) 348864 public key |
+| `ESK_BYTES` | 6492 | [Classic McEliece](#handshake-encryption) 348864 secret key |
+| `ED25519_BYTES` | 32 | [Ed25519](#handshake-encryption) key (signing seed, verifying key, or OBFS key) |
+| `X25519_BYTES` | 32 | [X25519](#marshalling-encryption) key (public or static secret) |
+
+**Server key pair — fast mode (`SF1`):**
+
+| Offset | Size | Field | Description |
+| --- | --- | --- | --- |
+| 10 | 261120 | EPK | Classic McEliece 348864 public key |
+| 261130 | 6492 | ESK | Classic McEliece 348864 secret key |
+| 267622 | 32 | VSK | Ed25519 signing key seed |
+| 267654 | 32 | OBFS | Symmetric tailor obfuscation key |
+| **267686** | — | EOF | |
+
+**Server key pair — full mode (`SU1`):**
+
+| Offset | Size | Field | Description |
+| --- | --- | --- | --- |
+| 10 | 261120 | EPK | Classic McEliece 348864 public key |
+| 261130 | 6492 | ESK | Classic McEliece 348864 secret key |
+| 267622 | 32 | VSK | Ed25519 signing key seed |
+| 267654 | 32 | OPK | X25519 long-term public key |
+| 267686 | 32 | OSK | X25519 static secret key |
+| **267718** | — | EOF | |
+
+**Client certificate — fast mode (`CF1`):**
+
+| Offset | Size | Field | Description |
+| --- | --- | --- | --- |
+| 10 | 261120 | EPK | Classic McEliece 348864 public key |
+| 261130 | 32 | VPK | Ed25519 verifying key |
+| 261162 | 32 | OBFS | Symmetric tailor obfuscation key |
+| 261194 | 2 | ADDR_COUNT | Number of addresses (big-endian u16) |
+| 261196 | varies | ADDRS | Address list (see below) |
+
+**Client certificate — full mode (`CU1`):**
+
+| Offset | Size | Field | Description |
+| --- | --- | --- | --- |
+| 10 | 261120 | EPK | Classic McEliece 348864 public key |
+| 261130 | 32 | VPK | Ed25519 verifying key |
+| 261162 | 32 | OPK | X25519 long-term public key |
+| 261194 | 2 | ADDR_COUNT | Number of addresses (big-endian u16) |
+| 261196 | varies | ADDRS | Address list (see below) |
+
+**Address list encoding** (`ADDRS` field, repeated `ADDR_COUNT` times):
+
+| Size | Field | Description |
+| --- | --- | --- |
+| 1 | Family | `4` = IPv4, `6` = IPv6 |
+| 4 or 16 | IP | IPv4 or IPv6 address octets (network byte order) |
+| 2 | Port | Port number (big-endian u16) |
+
+> NB! In the proposed implementation every client certificate should have _at least_ one address in it, having 0 addresses will result in a `CertificateError::NoAddresses` at socket build time.
+> For address-less certificates, see [isolated flow managers](#isolated-flow-managers).
+
+### Certificate module
+
+The `certificate` module provides helpers for generating, persisting, and loading certificate material, separating I/O and address management from the low-level cryptographic operations in `crypto/asymmetric.rs`.
+
+**Server side**:
+
+- Generate a `ServerKeyPair` (McEliece + Ed25519 + mode-specific obfuscation key/pair) and write it to a file.
+- Call `to_client_certificate(addresses)` to produce a distributable `ClientCertificate` file.
+
+**Client side**:
+
+- Load a `ClientCertificate` from a file and pass it to `ClientSocketBuilder::new`.
+- Flow configs are auto-generated from the embedded addresses using `FlowConfig::random`; override individual addresses with `with_flow_config(addr, config)`.
+
+The binary file format is documented in [Certificate file format](#certificate-file-format) above.
 
 ## Development
 
@@ -975,4 +1091,4 @@ Furthermore, the algorithm should be resistant to adversarial path degradation p
 
 ### Isolated flow managers
 
-TODO!
+TODO! Server could support other flow managers residing in other processes or on other devices even, in that case communication and synchronisation of the server with these managers should become the biggest concern. In a standard mode, their lifetime should match: flow managers should be guaranteed alive while server is alive, so that all user certificates are always valid. However, as an edge case for unreliable networks, the design with initial data carrying addresses of currently active flow managers (described in "Initial data handling") can be used; in that case a functionality of tuntime plugging/unplugging of the flow managers to a running server will have to be implemented.

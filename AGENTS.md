@@ -5,6 +5,7 @@ Below several instructions for AI agents are stated, that are highly recommended
 ## General rules
 
 - Before making any changes, please, come up with a short summary of what you are about to do, present it to me and ask for my confirmation.
+- After making any changes, please, don't forget to update related documentation and tests and then run the unit tests.
 
 ## Core library
 
@@ -21,6 +22,7 @@ Always compare your implementation to [README.md](./README.md) file, the code sh
 - No internal types should be exposed, exceptions include: `ByteBuffer`s, `Socket`s, `Settings`, `Certificate`s and configuration objects.
 - As a general rule, in every case, where an object is constructed, that is meant to *intercept*, *send* or *receive* some data flow, the data flow (including all the queues, background tasks, etc.) should be constructed in advance, ideally - in the same construction method as the object itself, and then returned as a tuple.
 - In the concurrent environment, excessive locking (even the critical sections) should be avoided, as the protocol is designed for transferring large data payloads; non-locking types (atomics or the ones from `crossbeam` library) should be preferred over `RwLock`s, while `RwLock`s should be preferred over `Mutex`es.
+- Template types should be preferred over dynamically-sized types (`dyn`-prefixed), for reducing heap allocations.
 
 ### Formatting
 

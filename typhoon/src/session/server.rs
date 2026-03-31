@@ -56,13 +56,13 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         server_initial_data: &[u8],
         handshake_tailor: Tailor<T>,
         identity: T,
-        secret: &crate::crypto::ServerSecret<'_>,
+        secret: &crate::certificate::ServerSecret<'_>,
         users: &mut SharedMap<T, UserServerState>,
         user_data_tx: ChannelSender<DynamicByteBuffer>,
         router: StdWeak<dyn OutgoingRouter<T>>,
         settings: Arc<Settings<AE>>,
     ) -> Result<(Arc<Self>, DynamicByteBuffer, StaticByteBuffer), SessionControllerError> {
-        use crate::crypto::ObfuscationBufferContainer;
+        use crate::certificate::ObfuscationBufferContainer;
 
         let pool = settings.pool();
 
@@ -115,7 +115,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         server_initial_data: &[u8],
         handshake_tailor: Tailor<T>,
         identity: T,
-        secret: &crate::crypto::ServerSecret<'_>,
+        secret: &crate::certificate::ServerSecret<'_>,
         users: &mut SharedMap<T, UserServerState>,
         user_data_tx: ChannelSender<DynamicByteBuffer>,
         router: StdWeak<dyn OutgoingRouter<T>>,

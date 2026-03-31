@@ -1,14 +1,13 @@
 mod asymmetric;
-mod certificate;
 #[cfg(feature = "client")]
 mod client;
 mod error;
 mod server;
 mod symmetric;
 
-pub use certificate::{Certificate, ClientData, ServerData};
-#[cfg(feature = "server")]
-pub use certificate::{ObfuscationBufferContainer, ServerSecret};
+#[cfg(feature = "client")]
+pub(crate) use client::ClientData;
+pub(crate) use server::ServerData;
 #[cfg(feature = "client")]
 pub use client::ClientCryptoTool;
 pub use error::CryptoError;

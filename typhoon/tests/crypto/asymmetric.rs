@@ -7,9 +7,9 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, StaticByteBuffer};
 #[cfg(feature = "client")]
-use crate::crypto::certificate::Certificate;
+use crate::certificate::ClientCertificate;
 #[cfg(feature = "server")]
-use crate::crypto::certificate::ServerSecret;
+use crate::certificate::ServerSecret;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
@@ -70,12 +70,13 @@ fn get_x25519_keypair() -> (StaticSecret, X25519PublicKey) {
 
 #[cfg(all(feature = "client", any(feature = "fast_software", feature = "fast_hardware")))]
 #[inline]
-fn create_test_certificate() -> Certificate {
+fn create_test_certificate() -> ClientCertificate {
     let (_, vpk) = get_ed25519_keypair();
-    Certificate {
+    ClientCertificate {
         epk: Arc::new(McEliecePublicKey::from(Box::new(*MCELIECE_KEYPAIR_BYTES.0))),
         vpk,
         obfs: get_obfuscation_key(),
+        addresses: vec![],
     }
 }
 
@@ -93,13 +94,14 @@ fn create_test_server_secret() -> ServerSecret<'static> {
 
 #[cfg(all(feature = "client", any(feature = "full_software", feature = "full_hardware")))]
 #[inline]
-fn create_test_certificate() -> Certificate {
+fn create_test_certificate() -> ClientCertificate {
     let (_, vpk) = get_ed25519_keypair();
     let (_, opk) = get_x25519_keypair();
-    Certificate {
+    ClientCertificate {
         epk: Arc::new(McEliecePublicKey::from(Box::new(*MCELIECE_KEYPAIR_BYTES.0))),
         vpk,
         opk,
+        addresses: vec![],
     }
 }
 

@@ -8,9 +8,9 @@ use crate::settings::Settings;
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 use crate::tailor::{IdentityType, Tailor};
 use crate::utils::random::{SupportRng, get_rng};
-use crate::utils::sync::AsyncExecutor;
 
 pub use crate::tailor::{ClientConnectionHandler, ServerConnectionHandler};
+pub use crate::utils::sync::AsyncExecutor;
 
 /// Parse a version byte slice of the form `"major[.minor[.patch[-tag]]]"` into `(major, minor, patch)`.
 /// Bytes after the first null are ignored. Components that cannot be parsed default to `0`.

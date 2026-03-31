@@ -4,12 +4,20 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use fixedbitset::FixedBitSet;
+use x25519_dalek::PublicKey as X25519PublicKey;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, DynamicByteBuffer, StaticByteBuffer};
 use crate::cache::CachedMap;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-use crate::crypto::certificate::ServerSecret;
+use crate::certificate::ServerSecret;
 use crate::crypto::error::CryptoError;
+
+/// Ephemeral server handshake state: client X25519 public key, McEliece shared secret, nonce.
+pub(crate) struct ServerData {
+    pub ephemeral_key: X25519PublicKey,
+    pub shared_secret: StaticByteBuffer,
+    pub nonce: StaticByteBuffer,
+}
 use crate::crypto::symmetric::{NONCE_LEN, ObfuscationTranscript, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
 use crate::settings::consts::{ID_OFFSET, TAILOR_LENGTH};
 use crate::tailor::IdentityType;
@@ -124,7 +132,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
 
     /// Create a new server crypto tool (full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn new(users: CachedMap<T, UserServerState>, secret: Arc<ServerSecret<'static>>) -> Self {
+    pub(crate) fn new(users: CachedMap<T, UserServerState>, secret: Arc<ServerSecret<'static>>) -> Self {
         Self { users, secret }
     }
 

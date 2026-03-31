@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -6,8 +7,9 @@ use log::debug;
 
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::cache::SharedValue;
-use crate::crypto::{Certificate, ClientCryptoTool, KEY_LENGTH};
-use crate::flow::FlowConfig;
+use crate::certificate::{CertificateError, ClientCertificate};
+use crate::crypto::{ClientCryptoTool, KEY_LENGTH};
+use crate::flow::{FlowConfig};
 use crate::flow::client::ClientFlowManager;
 use crate::flow::decoy::DecoyCommunicationMode;
 use crate::session::{ClientSessionManager, SessionManager};
@@ -18,48 +20,27 @@ use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::socket::Socket;
 use crate::utils::sync::{AsyncExecutor, ChannelReceiver, Mutex, create_channel};
 
-/// Configuration for a single flow manager.
-pub struct FlowManagerConfiguration {
-    socket: Option<Socket>,
-    address: Option<SocketAddr>,
-    config: FlowConfig,
-}
-
-impl FlowManagerConfiguration {
-    /// Create a configuration with a pre-built socket.
-    pub fn new(config: FlowConfig, socket: Socket) -> Self {
-        Self {
-            socket: Some(socket),
-            address: None,
-            config,
-        }
-    }
-
-    /// Create a configuration that will create a socket from the given address.
-    pub fn with_address(config: FlowConfig, address: SocketAddr) -> Self {
-        Self {
-            socket: None,
-            address: Some(address),
-            config,
-        }
-    }
-}
-
 /// Builder for constructing a `ClientSocket`.
 pub struct ClientSocketBuilder<T: IdentityType + Clone, AE: AsyncExecutor + 'static, DP, CC: ClientConnectionHandler> {
     settings: Option<Arc<Settings<AE>>>,
-    flow_configs: Vec<FlowManagerConfiguration>,
-    certificate: Certificate,
+    /// Per-address flow config overrides. Addresses not present here get a random default config.
+    flow_overrides: HashMap<SocketAddr, FlowConfig>,
+    certificate: ClientCertificate,
     initial_data_generator: CC,
     _phantom: PhantomData<(T, DP)>,
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ClientFlowManager<T, AE, DP>> + 'static, CC: ClientConnectionHandler + 'static> ClientSocketBuilder<T, AE, DP, CC> {
     /// Create a new builder with the given certificate and client connection handler.
-    pub fn new(certificate: Certificate, initial_data_generator: CC) -> Self {
+    ///
+    /// The certificate must contain at least one server address; otherwise `build` will return
+    /// [`CertificateError::NoAddresses`](crate::certificate::CertificateError::NoAddresses).
+    /// A random [`FlowConfig`] is generated for each address in the certificate unless overridden
+    /// with [`with_flow_config`](Self::with_flow_config).
+    pub fn new(certificate: ClientCertificate, initial_data_generator: CC) -> Self {
         Self {
             settings: None,
-            flow_configs: Vec::new(),
+            flow_overrides: HashMap::new(),
             certificate,
             initial_data_generator,
             _phantom: PhantomData,
@@ -72,44 +53,45 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
         self
     }
 
-    /// Append a single flow manager configuration.
-    pub fn add_flow(mut self, config: FlowManagerConfiguration) -> Self {
-        self.flow_configs.push(config);
-        self
-    }
-
-    /// Set all flow manager configurations at once.
-    pub fn with_flows(mut self, configs: Vec<FlowManagerConfiguration>) -> Self {
-        self.flow_configs = configs;
+    /// Override the [`FlowConfig`] for a specific server address.
+    ///
+    /// The address must be present in the certificate; otherwise `build` will return
+    /// [`ClientSocketError::AddressNotInCertificate`].
+    pub fn with_flow_config(mut self, addr: SocketAddr, config: FlowConfig) -> Self {
+        self.flow_overrides.insert(addr, config);
         self
     }
 
     /// Build the client socket, validating all flow configs and creating underlying managers.
     pub async fn build(mut self) -> Result<ClientSocket<T, AE, DP, CC>, ClientSocketError> {
-        if self.flow_configs.is_empty() {
-            return Err(ClientSocketError::NoFlows);
+        let cert_addrs = self.certificate.addresses();
+        if cert_addrs.is_empty() {
+            return Err(ClientSocketError::CertificateError(CertificateError::NoAddresses));
         }
 
         let settings = self.settings.take().unwrap_or_else(|| Arc::new(Settings::default()));
-        let mut flows = Vec::with_capacity(self.flow_configs.len());
+
+        // Validate that all override addresses are in the certificate.
+        for addr in self.flow_overrides.keys() {
+            if !cert_addrs.contains(addr) {
+                return Err(ClientSocketError::AddressNotInCertificate(*addr));
+            }
+        }
 
         let identity_bytes = T::from_bytes(&self.initial_data_generator.version(T::length()));
         let static_key = get_rng().random_byte_buffer::<KEY_LENGTH>();
-        let cipher = SharedValue::new(ClientCryptoTool::new(self.certificate, identity_bytes, &static_key));
+        let cipher = SharedValue::new(ClientCryptoTool::new(self.certificate.clone(), identity_bytes, &static_key));
 
-        for flow_config in self.flow_configs.drain(..) {
-            flow_config.config.assert(settings.mtu()).map_err(ClientSocketError::FlowError)?;
+        let mut flows = Vec::with_capacity(cert_addrs.len());
+        for &addr in cert_addrs {
+            let config = self.flow_overrides.remove(&addr)
+                .unwrap_or_else(|| FlowConfig::random(&settings));
 
-            let sock = match flow_config.socket {
-                Some(socket) => socket,
-                None => {
-                    let address = flow_config.address.expect("FlowManagerConfiguration must have either socket or address");
-                    Socket::new(address, None).await.map_err(ClientSocketError::SocketError)?
-                }
-            };
+            config.assert(settings.mtu()).map_err(ClientSocketError::FlowError)?;
 
+            let sock = Socket::new(addr, None).await.map_err(ClientSocketError::SocketError)?;
             let cipher_cache = cipher.create_cache().await;
-            let flow = ClientFlowManager::new(flow_config.config, cipher_cache, settings.clone(), sock).await.map_err(ClientSocketError::FlowError)?;
+            let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock).await.map_err(ClientSocketError::FlowError)?;
             flows.push(flow);
         }
 

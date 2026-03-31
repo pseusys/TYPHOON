@@ -21,6 +21,7 @@ compile_error!("one of the features 'server' and 'client' should be selected");
 
 pub mod bytes;
 pub mod cache;
+pub mod certificate;
 pub mod crypto;
 pub mod defaults;
 pub mod flow;

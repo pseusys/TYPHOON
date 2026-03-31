@@ -1,63 +1,49 @@
 use std::sync::Arc;
 
-use classic_mceliece_rust::{PublicKey as McEliecePublicKey, keypair_boxed};
-use ed25519_dalek::SigningKey;
-use rand::RngCore;
 use typhoon::bytes::StaticByteBuffer;
-use typhoon::crypto::{Certificate, ServerSecret};
-use typhoon::defaults::{DefaultExecutor, RandomIdentityGenerator};
+use typhoon::certificate::ServerKeyPair;
+use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
 use typhoon::flow::decoy::SimpleDecoyProvider;
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::SettingsBuilder;
 use typhoon::socket::{
-    ClientSocketBuilder, FlowManagerConfiguration, ListenerBuilder, ServerFlowConfiguration,
+    ClientSocketBuilder, ListenerBuilder, ServerFlowConfiguration,
 };
 
+#[cfg(feature = "tokio")]
 fn main() {
-    let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-    rt.block_on(async {
+    tokio::runtime::Runtime::new()
+        .expect("failed to create tokio runtime")
+        .block_on(run());
+}
+
+#[cfg(not(feature = "tokio"))]
+fn main() {
+    futures::executor::block_on(run());
+}
+
+async fn run() {
     let settings = Arc::new(
         SettingsBuilder::<DefaultExecutor>::new()
             .build()
             .expect("default settings should be valid"),
     );
 
-    // Generate shared key material.
-    let mut rng = rand::thread_rng();
-    let (pk, sk) = keypair_boxed(&mut rng);
+    let server_addr = "127.0.0.1:19999".parse().expect("valid address");
 
-    let mut signing_bytes = [0u8; 32];
-    rng.fill_bytes(&mut signing_bytes);
-    let signing_key = SigningKey::from_bytes(&signing_bytes);
-    let verifying_key = signing_key.verifying_key();
-
-    let mut obfs_bytes = [0u8; 32];
-    rng.fill_bytes(&mut obfs_bytes);
-
-    // Client certificate (public side).
-    let certificate = Certificate {
-        epk: Arc::new(McEliecePublicKey::from(pk)),
-        vpk: verifying_key,
-        obfs: StaticByteBuffer::from(&obfs_bytes),
-    };
-
-    // Server secret (private side).
-    let server_secret = ServerSecret {
-        esk: sk,
-        vsk: signing_key,
-        obfs: StaticByteBuffer::from(&obfs_bytes),
-    };
+    // Generate a server key pair and derive a client certificate with the server address.
+    let key_pair = ServerKeyPair::generate();
+    let certificate = key_pair.to_client_certificate(vec![server_addr]);
 
     // Shared flow config: no fake headers or body padding.
     let flow_config = FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![]));
-    let server_addr = "127.0.0.1:19999".parse().expect("valid address");
 
     // --- Build and start the server ---
-    let server_flow = ServerFlowConfiguration::with_address(flow_config.clone(), server_addr);
+    let server_flow = ServerFlowConfiguration::with_address(flow_config, server_addr);
     let listener: Arc<_> = Arc::new(
-        ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, RandomIdentityGenerator>::new(
-            server_secret,
-            RandomIdentityGenerator,
+        ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>::new(
+            key_pair,
+            DefaultServerConnectionHandler,
         )
         .add_flow(server_flow)
         .with_settings(settings.clone())
@@ -70,9 +56,9 @@ fn main() {
 
     // Spawn server handler: accept one client, echo back what it receives.
     let listener_handle = listener.clone();
-    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<String>();
+    let (done_tx, done_rx) = futures::channel::oneshot::channel::<String>();
 
-    tokio::spawn(async move {
+    settings.executor().spawn(async move {
         let client = listener_handle
             .accept()
             .await
@@ -96,12 +82,12 @@ fn main() {
     });
 
     // --- Build the client and connect ---
-    let client_flow = FlowManagerConfiguration::with_address(flow_config, server_addr);
+    // Flows are auto-created from the addresses embedded in the certificate.
     let socket =
-        ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider>::new(
+        ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultClientConnectionHandler>::new(
             certificate,
+            DefaultClientConnectionHandler,
         )
-        .add_flow(client_flow)
         .with_settings(settings.clone())
         .build()
         .await
@@ -128,5 +114,4 @@ fn main() {
     let server_received = done_rx.await.expect("server task should complete");
     assert_eq!(server_received, "hello world");
     println!("Success! Round-trip verified.");
-    });
 }

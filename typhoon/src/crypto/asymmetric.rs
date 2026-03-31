@@ -10,7 +10,7 @@ use ed25519_dalek::Signature;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, DynamicByteBuffer, StaticByteBuffer};
-use crate::crypto::certificate::ObfuscationBufferContainer;
+use crate::certificate::ObfuscationBufferContainer;
 use crate::crypto::error::HandshakeError;
 use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, decrypt_anonymously, encrypt_anonymously};
 use crate::crypto::symmetric::Symmetric;
@@ -19,7 +19,8 @@ use crate::utils::random::{SupportRng, get_rng};
 cfg_if! {
     if #[cfg(feature = "server")] {
         use ed25519_dalek::ed25519::signature::Signer;
-        use crate::crypto::certificate::{ServerData, ServerSecret};
+        use crate::certificate::ServerSecret;
+        use crate::crypto::ServerData;
     }
 }
 
@@ -27,7 +28,9 @@ cfg_if! {
 use x25519_dalek::StaticSecret;
 
 #[cfg(feature = "client")]
-use crate::crypto::certificate::{Certificate, ClientData};
+use crate::certificate::ClientCertificate;
+#[cfg(feature = "client")]
+use crate::crypto::ClientData;
 
 const X25519_KEY_LENGTH: usize = 32;
 const NONCE_LENGTH: usize = 32;
@@ -47,11 +50,11 @@ const MARSHALLING_OBFUSCATION_KEY: &str = "marshalling obfuscation key";
 const MARSHALLING_ENCRYPTION_KEY: &str = "marshalling encryption key";
 
 #[cfg(feature = "client")]
-impl Certificate {
+impl ClientCertificate {
     /// Client handshake: generate ephemeral keys, encapsulate with McEliece, obfuscate.
     /// If `initial_data` is non-empty, encrypts it with the initial key and appends to the handshake.
     /// Args: buffer pool, initial data bytes. Returns: (ClientData, handshake_secret, initial_encryption_key).
-    pub fn encapsulate_handshake_client(&self, pool: &BytePool, initial_data: &[u8]) -> (ClientData, DynamicByteBuffer, StaticByteBuffer) {
+    pub(crate) fn encapsulate_handshake_client(&self, pool: &BytePool, initial_data: &[u8]) -> (ClientData, DynamicByteBuffer, StaticByteBuffer) {
         let nonce = get_rng().random_byte_buffer::<NONCE_LENGTH>();
 
         let ephemeral_secret = EphemeralSecret::random_from_rng(get_rng());
@@ -96,7 +99,7 @@ impl Certificate {
     /// Process server handshake response: deobfuscate, verify signature, derive session key.
     /// If the response contains encrypted initial data beyond the crypto header, decrypts it with the initial key.
     /// Args: client ephemeral data, server handshake. Returns: (session_key, server_initial_data).
-    pub fn decapsulate_handshake_client(&self, data: ClientData, handshake_secret: DynamicByteBuffer) -> Result<(StaticByteBuffer, Vec<u8>), HandshakeError> {
+    pub(crate) fn decapsulate_handshake_client(&self, data: ClientData, handshake_secret: DynamicByteBuffer) -> Result<(StaticByteBuffer, Vec<u8>), HandshakeError> {
         let (crypto_header, encrypted_initial_data) = if handshake_secret.len() > SERVER_HANDSHAKE_HEADER_SIZE {
             let (header, enc_data) = handshake_secret.split_buf(SERVER_HANDSHAKE_HEADER_SIZE);
             (header, Some(enc_data))

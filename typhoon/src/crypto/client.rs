@@ -1,16 +1,26 @@
+use x25519_dalek::EphemeralSecret;
+
 use crate::bytes::{BytePool, DynamicByteBuffer, StaticByteBuffer};
+use crate::certificate::ClientCertificate;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-use crate::crypto::certificate::ObfuscationBufferContainer;
-use crate::crypto::certificate::{Certificate, ClientData};
+use crate::certificate::ObfuscationBufferContainer;
 use crate::crypto::error::{CryptoError, HandshakeError};
 use crate::crypto::symmetric::{NONCE_LEN, ObfuscationTranscript, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
 use crate::flow::FlowCryptoProvider;
 use crate::tailor::IdentityType;
 
+/// Ephemeral client handshake state: X25519 secret, McEliece shared secret, nonce, initial key.
+pub(crate) struct ClientData {
+    pub ephemeral_key: EphemeralSecret,
+    pub shared_secret: StaticByteBuffer,
+    pub nonce: StaticByteBuffer,
+    pub initial_key: StaticByteBuffer,
+}
+
 /// Client-side cryptographic tool for TYPHOON protocol.
 #[derive(Clone)]
 pub struct ClientCryptoTool<T: IdentityType + Clone> {
-    cert: Certificate,
+    cert: ClientCertificate,
     identity: T,
     key: Symmetric,
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
@@ -20,7 +30,7 @@ pub struct ClientCryptoTool<T: IdentityType + Clone> {
 impl<T: IdentityType + Clone> ClientCryptoTool<T> {
     /// Create a new ClientCryptoTool with the given certificate and identity.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn new(cert: Certificate, identity: T, initial_key: &StaticByteBuffer) -> Self {
+    pub(crate) fn new(cert: ClientCertificate, identity: T, initial_key: &StaticByteBuffer) -> Self {
         let obfs_buffer = cert.obfuscation_buffer();
         Self {
             cert,
@@ -32,18 +42,12 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
 
     /// Create a new ClientCryptoTool with the given certificate and identity.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn new(cert: Certificate, identity: T, initial_key: &StaticByteBuffer) -> Self {
+    pub(crate) fn new(cert: ClientCertificate, identity: T, initial_key: &StaticByteBuffer) -> Self {
         Self {
             cert,
             identity,
             key: Symmetric::new(initial_key),
         }
-    }
-
-    /// Get certificate.
-    #[inline]
-    pub fn certificate(&self) -> Certificate {
-        self.cert.clone()
     }
 
     /// Get the identity bytes.
@@ -67,13 +71,13 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
     /// Client handshake step 1: generate ephemeral keys, encapsulate with McEliece, obfuscate.
     /// If `initial_data` is non-empty, encrypts it with the initial key and appends to the handshake.
     /// Returns (ClientData, handshake_secret, initial_encryption_key).
-    pub fn create_handshake(&self, pool: &BytePool, initial_data: &[u8]) -> (ClientData, DynamicByteBuffer, StaticByteBuffer) {
+    pub(crate) fn create_handshake(&self, pool: &BytePool, initial_data: &[u8]) -> (ClientData, DynamicByteBuffer, StaticByteBuffer) {
         self.cert.encapsulate_handshake_client(pool, initial_data)
     }
 
     /// Client handshake step 2: process server response, verify signature, derive session key.
     /// Returns (session_key, server_initial_data).
-    pub fn process_handshake_response(&self, data: ClientData, handshake_secret: DynamicByteBuffer) -> Result<(StaticByteBuffer, Vec<u8>), HandshakeError> {
+    pub(crate) fn process_handshake_response(&self, data: ClientData, handshake_secret: DynamicByteBuffer) -> Result<(StaticByteBuffer, Vec<u8>), HandshakeError> {
         self.cert.decapsulate_handshake_client(data, handshake_secret)
     }
 

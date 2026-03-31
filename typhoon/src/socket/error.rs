@@ -1,5 +1,8 @@
+use std::net::SocketAddr;
+
 use thiserror::Error;
 
+use crate::certificate::CertificateError;
 use crate::flow::FlowControllerError;
 use crate::session::SessionControllerError;
 use crate::utils::socket::SocketError;
@@ -15,8 +18,11 @@ pub enum ClientSocketError {
     #[error("socket error: {}", .0.to_string())]
     SocketError(#[source] SocketError),
 
-    #[error("no flow configurations provided")]
-    NoFlows,
+    #[error("certificate error: {}", .0.to_string())]
+    CertificateError(#[source] CertificateError),
+
+    #[error("address {0} is not present in the certificate")]
+    AddressNotInCertificate(SocketAddr),
 
     #[error("receive channel closed")]
     ChannelClosed,
