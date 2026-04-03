@@ -98,7 +98,7 @@ async fn run() {
             println!("Client: completed {}/{} round trips", i + 1, ROUND_TRIPS);
         }
 
-        sleep(Duration::from_millis(100)).await;
+        sleep(Duration::from_secs_f32(1.5)).await;
     }
 
     let server_count = done_rx.await.expect("server task should complete");

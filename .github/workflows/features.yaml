@@ -33,7 +33,7 @@ jobs:
           - async-std
           - tokio
         debug-impl:
-          - ',debug'
+          - 'debug'
           - ''
         architecture:
           - image: ubuntu-24.04
@@ -59,8 +59,8 @@ jobs:
 
       - name: Build TYPHOON Crate 🏗️
         working-directory: typhoon
-        run: cargo build --no-default-features --features ${{ matrix.crypto-impl }},${{ matrix.protocol-part }},${{ matrix.asynchronous-lib }}${{ matrix.debug-impl }}
+        run: cargo build --no-default-features --features ${{ matrix.crypto-impl }},${{ matrix.protocol-part }},${{ matrix.asynchronous-lib }},${{ matrix.debug-impl }}
 
       - name: Test TYPHOON Crate 🧪
         working-directory: typhoon
-        run: cargo test --no-default-features --features ${{ matrix.crypto-impl }},${{ matrix.protocol-part }},${{ matrix.asynchronous-lib }}${{ matrix.debug-impl }}
+        run: cargo test --no-default-features --features ${{ matrix.crypto-impl }},${{ matrix.protocol-part }},${{ matrix.asynchronous-lib }},${{ matrix.debug-impl }}
