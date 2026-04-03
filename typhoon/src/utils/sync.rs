@@ -6,9 +6,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use cfg_if::cfg_if;
-use crossbeam::queue::{ArrayQueue, SegQueue};
+use crossbeam::queue::SegQueue;
+#[cfg(feature = "server")]
+use crossbeam::queue::ArrayQueue;
 #[cfg(feature = "client")]
 use futures::stream::{FuturesUnordered, StreamExt};
+#[cfg(feature = "server")]
 use log::debug;
 
 cfg_if! {
@@ -102,8 +105,14 @@ impl<T: Send> WatchReceiver<T> {
     /// Wait for the next value change and return it, or None if the sender is dropped.
     pub async fn recv(&mut self) -> Option<T> {
         loop {
+            // `enable()` pre-registers the waiter before we check the value.
+            // Without it, a `notify_waiters()` call between `notified()` creation
+            // and `notified.await` (i.e. before the first poll) would be lost,
+            // because Tokio only wakes already-registered waiters.
             #[cfg(feature = "tokio")]
-            let notified = self.state.notify.notified();
+            let mut notified = std::pin::pin!(self.state.notify.notified());
+            #[cfg(feature = "tokio")]
+            notified.as_mut().enable();
 
             {
                 let mut guard = self.state.value.lock().unwrap();
@@ -196,17 +205,20 @@ pub fn create_notify_queue<T: Send>() -> (NotifyQueueSender<T>, NotifyQueueRecei
 
 /// Push side of a bounded notifying queue.
 /// If the queue is full, the item is dropped and a warning is logged.
+#[cfg(feature = "server")]
 pub struct BoundedNotifyQueueSender<T: Send> {
     queue: Arc<ArrayQueue<T>>,
     wake: WatchSender<()>,
 }
 
 /// Pop side of a bounded notifying queue.
+#[cfg(feature = "server")]
 pub struct BoundedNotifyQueueReceiver<T: Send> {
     queue: Arc<ArrayQueue<T>>,
     wake: WatchReceiver<()>,
 }
 
+#[cfg(feature = "server")]
 impl<T: Send> BoundedNotifyQueueSender<T> {
     /// Push an item; silently drops it (with a debug log) if the queue is full.
     pub fn push(&self, item: T) {
@@ -218,6 +230,7 @@ impl<T: Send> BoundedNotifyQueueSender<T> {
     }
 }
 
+#[cfg(feature = "server")]
 impl<T: Send> BoundedNotifyQueueReceiver<T> {
     /// Pop the next item immediately if available, otherwise wait until one is pushed.
     /// Returns `None` if the sender has been dropped and the queue is empty.
@@ -232,6 +245,7 @@ impl<T: Send> BoundedNotifyQueueReceiver<T> {
 }
 
 /// Create a bounded notifying queue with the given capacity.
+#[cfg(feature = "server")]
 pub fn create_bounded_notify_queue<T: Send>(cap: usize) -> (BoundedNotifyQueueSender<T>, BoundedNotifyQueueReceiver<T>) {
     let queue = Arc::new(ArrayQueue::new(cap));
     let (wake_tx, wake_rx) = create_watch::<()>();

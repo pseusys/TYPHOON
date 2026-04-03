@@ -361,6 +361,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         // Lock scope limited to shared-map mutations + packet assembly only.
         let (session, response_packet) = {
             let mut users = self.users.lock().await;
+            // Guard against TOCTOU: two concurrent handshakes for the same identity can
+            // both pass the read-lock check in route_incoming and reach this point.
+            // The second to acquire the users lock must abort — proceeding would
+            // overwrite the first session's user-state entry in the shared map,
+            // leaving the surviving session with the wrong crypto key.
+            if users.contains_key(&identity) {
+                debug!("concurrent handshake race for {}: aborting duplicate under users lock", identity.to_string());
+                return;
+            }
             #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
             let result = ServerSessionManager::from_handshake(
                 response_body,
