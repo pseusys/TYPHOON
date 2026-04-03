@@ -353,15 +353,18 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         // Create Weak<Listener<...>> for the session to send packets back.
         let router_weak = Arc::downgrade(self);
 
-        // Create session manager from pre-decapsulated handshake data.
-        // User is initially registered with the initial key so the handshake response
-        // tailor can be verified by the client before it derives the session key.
-        let (session, response_packet, session_key) = {
+        // Perform crypto BEFORE acquiring the users lock: encapsulate_handshake_server is
+        // CPU-intensive (McEliece + ChaCha20) and does not need access to the shared user map.
+        let (response_body, session_key) = self.secret.encapsulate_handshake_server(
+            server_data, self.settings.pool(), server_initial_data.slice(), &initial_key);
+
+        // Lock scope limited to shared-map mutations + packet assembly only.
+        let (session, response_packet) = {
             let mut users = self.users.lock().await;
-            match ServerSessionManager::from_handshake(
-                server_data,
+            #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+            let result = ServerSessionManager::from_handshake(
+                response_body,
                 initial_key,
-                server_initial_data.slice(),
                 raw_packet.tailor,
                 identity.clone(),
                 &self.secret,
@@ -370,10 +373,21 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 router_weak,
                 self.flows.len(),
                 self.settings.clone(),
-            )
-            .await
-            {
-                Ok(result) => result,
+            ).await;
+            #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+            let result = ServerSessionManager::from_handshake(
+                response_body,
+                initial_key,
+                raw_packet.tailor,
+                identity.clone(),
+                &mut users,
+                incoming_tx,
+                router_weak,
+                self.flows.len(),
+                self.settings.clone(),
+            ).await;
+            match result {
+                Ok(r) => r,
                 Err(err) => {
                     debug!("handshake failed: {}", err);
                     return;
@@ -418,9 +432,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         // Mark the handshake flow as active for this session (lock-free, atomic bitmask).
         session.note_active_flow(flow_index);
 
-        // Store session.
+        // Store session — guard against the TOCTOU race where two concurrent
+        // handshake packets from the same client both pass the read-lock check
+        // in route_incoming and reach this point simultaneously.
         {
             let mut sessions = self.sessions.write().await;
+            if sessions.contains_key(&identity) {
+                debug!("concurrent handshake for {}: discarding duplicate", identity.to_string());
+                return;
+            }
             sessions.insert(identity.clone(), Arc::clone(&session));
         }
 

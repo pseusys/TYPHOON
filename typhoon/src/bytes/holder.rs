@@ -35,7 +35,13 @@ impl BufferHolder {
     }
 }
 
-// SAFETY: Data pointer is exclusively owned by this holder.
+// SAFETY: `BufferHolder` owns its data pointer exclusively at the *holder* level.
+// `DynamicByteBuffer::clone()` shares the same `Arc<BufferHolder>` across multiple
+// buffer views (zero-copy windowing), so the *pointer* is no longer exclusive after a clone.
+// Concurrent mutation through two clones residing in different threads is undefined behaviour.
+// The caller's invariant: never concurrently mutate overlapping views of a shared holder.
+// `DynamicByteBuffer` is `!Sync` to prevent shared references across threads; `Send` is
+// permitted only for exclusive ownership transfer — not for concurrent access.
 unsafe impl Send for BufferHolder {}
 unsafe impl Sync for BufferHolder {}
 
