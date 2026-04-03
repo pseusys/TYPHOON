@@ -577,7 +577,7 @@ The session manager keeps track of session health, encryption, and data transfer
 It is suggested that a flow manager would hold a UDP port, while the session manager would be purely virtual.
 
 On the client side, there is only one session manager that is tightly coupled with all the flow managers (normally they only have different ports but similar IP addresses).
-On the server side, they can be more loosely coupled: a flow manager can be connected to multiple clients at the same time, performing traffic demultiplexing (described below) and delivering packets to virtual session managers (one manager per user).
+On the server side, they can be more loosely coupled: a flow manager can be connected to multiple clients at the same time, performing traffic [demultiplexing](#identification-and-rebinding) and delivering packets to virtual session managers (one manager per user).
 Theoretically, different server flow managers can occupy different IP addresses, but if they [reside in separate processes](#isolated-flow-managers) (or on separate machines), their communication is out of scope of the TYPHOON protocol.
 
 The TYPHOON listener is a logical structure that keeps track of all flow managers (which are constant), spawns session managers for users, and recycles them when done.
@@ -615,7 +615,7 @@ Alternatively, if there exists another way of identifying users (e.g. each of th
 A scenario when an attacker impersonates a user, forging a fake packet on their behalf, should not be a concern, since [tailor structure is authenticated with user session key anyway](#tailor-encryption).
 
 The UDP source address rebinding is performed independently by each server flow manager.
-A flow manager updates its stored address for a client only when a correctly-authenticated packet arrives from a new source address.
+A flow manager updates its [stored address for a client](#global-user-structures) only when a correctly-authenticated packet arrives from a new source address.
 This per-flow-manager approach ensures that each flow path maintains the correct return address, even when a client uses multiple flow managers with different source addresses (e.g. different network interfaces), or when a client's address changes mid-session due to NAT rebinding or network handover.
 
 #### Global user structures
@@ -623,7 +623,7 @@ This per-flow-manager approach ensures that each flow path maintains the correct
 In order to maintain all the user sessions and decoy flows, it is proposed to maintain a global table in the listener, mapping user **ID**s to user information (including session manager, session key, connected flow managers, etc.).
 In addition to that, every flow manager keeps a table of all the connected user **ID**s mapped to the connected source address.
 
-Rebinding happens on the flow manager only, without the session manager or any other listener parts being involved.
+[Rebinding](#identification-and-rebinding) happens on the flow manager only, without the session manager or any other listener parts being involved.
 The only requirement for this is packet validation, which is [performed using the user session key](#tailor-encryption) — this key is pulled from the global user table.
 
 #### Initial data handling
@@ -860,6 +860,9 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY` | Probability multiplier for no decoy packets replication | `3` |
 | `TYPHOON_DECOY_SUBHEADER_LENGTH_MIN` | Minimum decoy packets subheader length | `4` |
 | `TYPHOON_DECOY_SUBHEADER_LENGTH_MAX` | Maximum decoy packets subheader length | `16` |
+| `TYPHOON_DEBUG_PROBE_COUNT` | Number of probes sent in the throughput phase | `10` |
+| `TYPHOON_DEBUG_PROBE_SIZE` | Payload size of each throughput probe in bytes | `65000` |
+| `TYPHOON_DEBUG_PROBE_TIMEOUT` | Per-probe receive timeout in milliseconds | `5000` |
 
 A protocol implementation should allow overriding these values at runtime.
 Still keep in mind that it might be dangerous because some of these constants affect both client and server behavior at the same time.
@@ -867,7 +870,26 @@ As a final attempt, an implementation should attempt to read these constants fro
 
 ### Debug mode
 
-TODO! Debug mode should act as a "stress testing", test reachability of all the flows, server itself, and also transfer a sequence of large packages to check connection speed (reference: PING).
+Debug mode is a diagnostic facility for TYPHOON connection testing: it verifies flow reachability, measures round-trip time, and benchmarks throughput.
+It reinterprets three [tailor fields](#tailor-structure) to carry diagnostic metadata instead of their production meanings:
+
+| Field | Production meaning | Debug meaning |
+| --- | --- | --- |
+| **CD** | Client type / return code | Packet unique reference number (0–255, rolling) |
+| **TM** | Next-in delay (milliseconds) | Packet send timestamp (lower 32 bits of Unix time in milliseconds) |
+| **PN** | `unix_ts_s (32 bits) \|\| incremental (32 bits)` | `global_sequence (32 bits) \|\| phase_id (32 bits)` |
+
+`phase_id` encodes the active debug phase: `0` = reachability, `1` = return time, `2` = throughput.
+`global_sequence` is a monotonically increasing counter across all probes in the run, enabling the receiver to detect packet loss and reordering.
+
+Three phases are available, selected via `DebugMode`:
+
+- **Reachability** (`phase_id = 0`): Verifies that a full protocol handshake completes and one echo round-trip succeeds within `TYPHOON_DEBUG_PROBE_TIMEOUT` milliseconds.
+- **Return time** (`phase_id = 1`): Sends a single small probe and measures the round-trip time.
+- **Throughput** (`phase_id = 2`): Sends `TYPHOON_DEBUG_PROBE_COUNT` probes of `TYPHOON_DEBUG_PROBE_SIZE` bytes each, receives them back, and reports bytes per second and packet loss rate.
+
+Debug mode requires the server to echo all received data verbatim back to the sender.
+In the reference implementation debug functionality is available under the `debug` feature flag (see [Code and tests](#code-and-tests)).
 
 ### Supporting math
 
@@ -894,6 +916,7 @@ The crate defines the following features:
 - `full_hardware`: use `full` [asymmetric cryptographic mode](#cryptography) with `hardware` [symmetric cryptographic mode](#cryptography).
 - `server`: include TYPHOON server implementation.
 - `client`: include TYPHOON client implementation.
+- `debug`: include [debug diagnostic tools](#debug-mode) (`DebugMode`, `DebugResult`, `run_debug`, `DebugServerConnectionHandler`); requires `client` and `server`.
 - `tokio`: use [tokio](https://tokio.rs/) async runtime.
 - `async-std`: use [async-std](https://async.rs/) async runtime.
 

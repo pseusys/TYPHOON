@@ -1,7 +1,9 @@
 /// Client-side flow manager implementation.
 use std::sync::Arc;
 
-use crate::bytes::DynamicByteBuffer;
+use log::trace;
+
+use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::cache::CachedValue;
 use crate::crypto::ClientCryptoTool;
 use crate::flow::common::{FlowManager, FlowReceiveInternal, FlowSendInternal};
@@ -49,6 +51,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, Self> + 'static> FlowManager for ClientFlowManager<T, AE, DP> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {
+        trace!("client flow: send_packet {} bytes (generated={})", packet.len(), generated);
         let notified_packet = {
             let mut lock = self.decoy_provider.lock().await;
             let notified_packet = lock.feed_output(packet, generated).await;
@@ -60,6 +63,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 
         let mut lock = self.send_internal.lock().await;
         let full_packet = lock.prepare_outgoing(notified_packet.unwrap(), self.mtu, self.settings.pool()).await?;
+        trace!("client flow: wire packet {} bytes", full_packet.len());
         self.sock.send(full_packet.clone()).await.map_err(FlowControllerError::SocketError)?;
         Ok(())
     }
@@ -67,6 +71,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
     async fn receive_packet(&self, packet: DynamicByteBuffer) -> Result<DynamicByteBuffer, FlowControllerError> {
         loop {
             let packet = self.sock.recv(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
+            trace!("client flow: recv {} bytes from socket", packet.len());
             let notified_packet = {
                 let mut lock = self.decoy_provider.lock().await;
                 let notified_packet = lock.feed_input(packet).await;
@@ -78,7 +83,10 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 
             let mut lock = self.receive_internal.lock().await;
             match lock.process_incoming(notified_packet.unwrap()).await? {
-                Some(result) => return Ok(result),
+                Some(result) => {
+                    trace!("client flow: processed packet → {} bytes", result.len());
+                    return Ok(result);
+                }
                 None => continue,
             }
         }

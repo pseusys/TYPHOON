@@ -21,7 +21,7 @@ pub mod keys {
     pub const HEALTH_CHECK_NEXT_IN_MAX: Key<u64> = Key::new("TYPHOON_HEALTH_CHECK_NEXT_IN_MAX", 256000);
     pub const HANDSHAKE_NEXT_IN_FACTOR: Key<f64> = Key::new("TYPHOON_HANDSHAKE_NEXT_IN_FACTOR", 0.02);
     pub const MAX_RETRIES: Key<u64> = Key::new("TYPHOON_MAX_RETRIES", 12);
-    pub const RECEIVE_BUFFER_SIZE: Key<u64> = Key::new("TYPHOON_RECEIVE_BUFFER_SIZE", 16);
+    pub const RECEIVE_BUFFER_SIZE: Key<u64> = Key::new("TYPHOON_RECEIVE_BUFFER_SIZE", 512);
 
     // Fake body/header settings
     pub const FAKE_BODY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_BODY_LENGTH_MIN", 0);
@@ -104,6 +104,19 @@ pub mod keys {
     // Decoy subheader settings
     pub const DECOY_SUBHEADER_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SUBHEADER_LENGTH_MIN", 4);
     pub const DECOY_SUBHEADER_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SUBHEADER_LENGTH_MAX", 16);
+
+    // Channel capacity settings
+    /// Capacity of the per-flow drain channel (packets buffered between drain task and route task).
+    /// Excess packets are dropped by the drain task to keep the socket buffer empty.
+    pub const DRAIN_CHANNEL_CAPACITY: Key<u64> = Key::new("TYPHOON_DRAIN_CHANNEL_CAPACITY", 512);
+
+    // Debug settings
+    /// Number of probes sent during the throughput phase.
+    pub const DEBUG_PROBE_COUNT: Key<u64> = Key::new("TYPHOON_DEBUG_PROBE_COUNT", 10);
+    /// Payload size in bytes of each throughput probe.
+    pub const DEBUG_PROBE_SIZE: Key<u64> = Key::new("TYPHOON_DEBUG_PROBE_SIZE", 65000);
+    /// Per-probe receive timeout in milliseconds.
+    pub const DEBUG_PROBE_TIMEOUT: Key<u64> = Key::new("TYPHOON_DEBUG_PROBE_TIMEOUT", 5000);
 }
 
 pub mod consts {

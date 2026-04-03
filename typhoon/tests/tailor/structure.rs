@@ -110,3 +110,56 @@ fn test_termination_tailor() {
     assert!(tailor.flags().is_termination());
     assert_eq!(tailor.return_code(), ReturnCode::Success);
 }
+
+#[test]
+fn test_debug_probe_tailor_roundtrip() {
+    let identity = StaticByteBuffer::from_slice(&[7; DEFAULT_TYPHOON_ID_LENGTH]);
+    let buffer = pool_empty(&TEST_POOL, TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
+    let tailor = Tailor::<StaticByteBuffer>::debug_probe(buffer, &identity, 42, 0xDEADBEEF, 99, 1, 1024);
+
+    assert_eq!(tailor.flags(), PacketFlags::DATA);
+    assert_eq!(tailor.debug_ref_num(), 42);
+    assert_eq!(tailor.debug_send_time(), 0xDEADBEEF);
+    assert_eq!(tailor.debug_sequence(), 99);
+    assert_eq!(tailor.debug_phase(), 1);
+    assert_eq!(tailor.payload_length(), 1024);
+}
+
+#[test]
+fn test_debug_probe_accessors_all_phases() {
+    let identity = StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH);
+
+    // Phase 0: reachability
+    let buf = pool_empty(&TEST_POOL, TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
+    let t = Tailor::<StaticByteBuffer>::debug_probe(buf, &identity, 0, 1000, 0, 0, 0);
+    assert_eq!(t.debug_phase(), 0);
+    assert_eq!(t.debug_sequence(), 0);
+
+    // Phase 1: return time
+    let buf = pool_empty(&TEST_POOL, TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
+    let t = Tailor::<StaticByteBuffer>::debug_probe(buf, &identity, 1, 2000, 1, 1, 0);
+    assert_eq!(t.debug_phase(), 1);
+    assert_eq!(t.debug_sequence(), 1);
+
+    // Phase 2: throughput
+    let buf = pool_empty(&TEST_POOL, TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
+    let t = Tailor::<StaticByteBuffer>::debug_probe(buf, &identity, 255, 3000, 9, 2, 65016);
+    assert_eq!(t.debug_ref_num(), 255);
+    assert_eq!(t.debug_send_time(), 3000);
+    assert_eq!(t.debug_sequence(), 9);
+    assert_eq!(t.debug_phase(), 2);
+    assert_eq!(t.payload_length(), 65016);
+}
+
+#[test]
+fn test_debug_probe_pn_encoding() {
+    // Verify upper/lower 32-bit split of the packet number field.
+    let identity = StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH);
+    let buf = pool_empty(&TEST_POOL, TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
+    let sequence: u32 = 0x0000_CAFE;
+    let phase: u32 = 0x0000_0002;
+    let t = Tailor::<StaticByteBuffer>::debug_probe(buf, &identity, 0, 0, sequence, phase, 0);
+    let raw_pn = t.packet_number();
+    assert_eq!((raw_pn >> 32) as u32, sequence);
+    assert_eq!(raw_pn as u32, phase);
+}

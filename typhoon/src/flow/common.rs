@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use log::{debug, info};
+use log::{debug, info, trace};
 use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
@@ -76,11 +76,19 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
 
         let fake_header_len = self.config.fake_header_mode.len();
         let full_packet_len = fake_header_len + self.config.fake_body_mode.get_length(mtu, fake_header_len + encrypted_packet.len(), packet_flags.is_service());
-        let full_packet = encrypted_packet.expand_start(full_packet_len);
+        let full_packet = if full_packet_len <= encrypted_packet.before_capacity() {
+            encrypted_packet.expand_start(full_packet_len)
+        } else {
+            // Insufficient headroom — reallocate with the required before_capacity.
+            let staged = pool.allocate_precise(encrypted_packet.len(), full_packet_len, 0);
+            staged.slice_mut().copy_from_slice(encrypted_packet.slice());
+            staged.expand_start(full_packet_len)
+        };
 
         self.config.fake_header_mode.fill(full_packet.rebuffer_end(fake_header_len));
         get_rng().fill(&mut full_packet.rebuffer_both(fake_header_len, full_packet_len));
 
+        trace!("prepare_outgoing: payload+tailor={}B → wire={}B (header={}B, body_pad={}B)", encrypted_packet.len(), full_packet.len(), fake_header_len, full_packet_len.saturating_sub(fake_header_len + encrypted_packet.len()));
         Ok(full_packet)
     }
 }
@@ -123,13 +131,11 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
 
         let payload_len = tailor.payload_length() as usize;
         let is_handshake = tailor.flags().contains(PacketFlags::HANDSHAKE);
+        trace!("process_incoming: wire={}B flags={:?} payload_len={} is_handshake={}", packet.len(), tailor.flags(), payload_len, is_handshake);
 
-        // For handshake packets the entire body is the handshake payload (payload_length=0 is unused).
-        // For all other packets, use payload_length to strip fake body/header from the front.
-        if is_handshake {
-            Ok(Some(encrypted_packet.expand_end(full_tailor_len)))
-        } else {
-            Ok(Some(encrypted_packet.rebuffer_start(encrypted_packet.len() - payload_len).expand_end(full_tailor_len)))
-        }
+        // For all packets, use payload_length to strip fake body/header from the front.
+        // Handshake packets encode the handshake body length in payload_length so that
+        // fake prefixes can be stripped the same way as data packets.
+        Ok(Some(encrypted_packet.rebuffer_start(encrypted_packet.len() - payload_len).expand_end(full_tailor_len)))
     }
 }

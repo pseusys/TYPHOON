@@ -55,6 +55,14 @@ pub const SYMMETRIC_KEY_LENGTH: usize = 32;
 pub const SYMMETRIC_BUILT_IN_AUTH_LEN: usize = 16;
 pub const SYMMETRIC_ADDITIONAL_AUTH_LEN: usize = 32;
 
+/// Bytes added to a payload by `encrypt_auth` (nonce + authentication tag).
+/// Used to compute the maximum user-data that fits within MTU.
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+pub const PAYLOAD_CRYPTO_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN;
+
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+pub const PAYLOAD_CRYPTO_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN;
+
 #[cfg(any(feature = "fast_software", feature = "full_software"))]
 pub const NONCE_LEN: usize = 24;
 

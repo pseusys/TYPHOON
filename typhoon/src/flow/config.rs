@@ -38,6 +38,15 @@ pub enum FakeBodyMode {
 }
 
 impl FakeBodyMode {
+    /// Maximum fake body length this mode can produce — used to bound MTU calculations.
+    pub fn max_len(&self) -> usize {
+        match self {
+            FakeBodyMode::Empty => 0,
+            FakeBodyMode::Random { max_length, .. } => *max_length,
+            FakeBodyMode::Constant { packet_length } => *packet_length,
+        }
+    }
+
     pub fn get_length(&self, max_packet_size: usize, taken_packet_size: usize, is_service: bool) -> usize {
         match self {
             FakeBodyMode::Empty => 0,
@@ -47,7 +56,7 @@ impl FakeBodyMode {
                 service,
             } => {
                 if !service || (is_service && *service) {
-                    let body_space = max_packet_size - taken_packet_size;
+                    let body_space = max_packet_size.saturating_sub(taken_packet_size);
                     let effective_max = min(*max_length, body_space);
                     if effective_max <= *min_length {
                         effective_max
@@ -246,6 +255,11 @@ impl FlowConfig {
         };
 
         Self { fake_body_mode, fake_header_mode }
+    }
+
+    /// Maximum bytes this flow config can add on top of payload: fake header + worst-case fake body.
+    pub fn max_overhead(&self) -> usize {
+        self.fake_header_mode.len() + self.fake_body_mode.max_len()
     }
 
     /// Validate that the flow configuration is consistent with the given max packet size.

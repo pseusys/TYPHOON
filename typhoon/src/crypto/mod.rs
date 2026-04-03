@@ -14,3 +14,4 @@ pub use error::CryptoError;
 pub use server::{ServerCryptoTool, UserCryptoState, UserServerState};
 pub use symmetric::ObfuscationTranscript;
 pub use symmetric::SYMMETRIC_KEY_LENGTH as KEY_LENGTH;
+pub use symmetric::PAYLOAD_CRYPTO_OVERHEAD;

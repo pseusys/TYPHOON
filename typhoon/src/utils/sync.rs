@@ -1,5 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use cfg_if::cfg_if;
@@ -7,10 +9,8 @@ use futures::stream::{FuturesUnordered, StreamExt};
 
 cfg_if! {
     if #[cfg(feature = "tokio")] {
-        use tokio::sync::broadcast::{Sender, Receiver, channel};
         pub use tokio::sync::{RwLock, Mutex};
     } else if #[cfg(feature = "async-std")] {
-        use async_channel::{Sender, Receiver, bounded as channel};
         pub use async_lock::{RwLock, Mutex};
     }
 }
@@ -23,86 +23,125 @@ pub trait AsyncExecutor: Clone + Send + Sync {
     fn spawn<F: Future<Output = ()> + Send + 'static>(&self, future: F);
 }
 
-/// Channel sender wrapper with runtime-agnostic API.
-pub struct ChannelSender<T> {
-    sender: Sender<T>,
+// ── Watch channel (latest-value-wins, point-to-point) ────────────────────────
+
+/// Shared state for the watch channel.
+struct WatchState<T> {
+    value: std::sync::Mutex<Option<T>>,
+    closed: AtomicBool,
+    #[cfg(feature = "tokio")]
+    notify: tokio::sync::Notify,
     #[cfg(feature = "async-std")]
-    receiver: Receiver<T>,
+    notifiers: std::sync::Mutex<Vec<async_channel::Sender<()>>>,
 }
 
-/// Channel receiver wrapper with runtime-agnostic API.
-pub struct ChannelReceiver<T> {
-    receiver: Receiver<T>,
+/// Watch channel sender: stores the latest value, wakes all current receivers on change.
+/// Requires only `T: Send` (not `T: Sync`).
+pub struct WatchSender<T: Send> {
+    state: Arc<WatchState<T>>,
 }
 
-impl<T: Clone> ChannelSender<T> {
-    #[cfg(feature = "tokio")]
-    pub async fn send(&self, value: T) -> bool {
-        self.sender.send(value).is_ok()
-    }
-
+/// Watch channel receiver: waits for the next value change and returns the latest value.
+pub struct WatchReceiver<T> {
+    state: Arc<WatchState<T>>,
     #[cfg(feature = "async-std")]
-    pub async fn send(&self, value: T) -> bool {
-        self.sender.send(value).await.is_ok()
+    notify: async_channel::Receiver<()>,
+}
+
+impl<T: Send> WatchSender<T> {
+    /// Send a new value, overwriting the previous one.
+    /// Returns false if all receivers have been dropped.
+    pub fn send(&self, value: T) -> bool {
+        *self.state.value.lock().unwrap() = Some(value);
+        #[cfg(feature = "tokio")]
+        self.state.notify.notify_waiters();
+        #[cfg(feature = "async-std")]
+        {
+            let notifiers = self.state.notifiers.lock().unwrap();
+            for tx in notifiers.iter() {
+                let _ = tx.try_send(());
+            }
+        }
+        !self.state.closed.load(Ordering::Relaxed)
     }
 
-    /// Create a new receiver for this channel.
-    #[cfg(feature = "tokio")]
-    pub fn subscribe(&self) -> ChannelReceiver<T> {
-        ChannelReceiver {
-            receiver: self.sender.subscribe(),
+    /// Create a new receiver watching the same sender.
+    pub fn subscribe(&self) -> WatchReceiver<T> {
+        #[cfg(feature = "tokio")]
+        return WatchReceiver { state: Arc::clone(&self.state) };
+        #[cfg(feature = "async-std")]
+        {
+            let (tx, rx) = async_channel::bounded(1);
+            self.state.notifiers.lock().unwrap().push(tx);
+            WatchReceiver { state: Arc::clone(&self.state), notify: rx }
         }
     }
-
-    /// Create a new receiver for this channel.
-    #[cfg(feature = "async-std")]
-    pub fn subscribe(&self) -> ChannelReceiver<T> {
-        ChannelReceiver {
-            receiver: self.receiver.clone(),
-        }
-    }
 }
 
-impl<T: Clone> ChannelReceiver<T> {
-    #[cfg(feature = "tokio")]
-    pub async fn recv(&mut self) -> Option<T> {
-        loop {
-            match self.receiver.recv().await {
-                Ok(val) => return Some(val),
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+impl<T: Send> Drop for WatchSender<T> {
+    fn drop(&mut self) {
+        self.state.closed.store(true, Ordering::Relaxed);
+        #[cfg(feature = "tokio")]
+        self.state.notify.notify_waiters();
+        #[cfg(feature = "async-std")]
+        {
+            let mut notifiers = self.state.notifiers.lock().unwrap();
+            for tx in notifiers.drain(..) {
+                let _ = tx.try_send(());
             }
         }
     }
+}
 
-    #[cfg(feature = "async-std")]
+impl<T: Clone + Send> WatchReceiver<T> {
+    /// Wait for the next value change and return it, or None if the sender is dropped.
     pub async fn recv(&mut self) -> Option<T> {
-        match self.receiver.recv().await {
-            Ok(res) => Some(res),
-            Err(_) => None,
+        loop {
+            #[cfg(feature = "tokio")]
+            let notified = self.state.notify.notified();
+
+            {
+                let mut guard = self.state.value.lock().unwrap();
+                if let Some(v) = guard.take() {
+                    return Some(v);
+                }
+            }
+
+            if self.state.closed.load(Ordering::Relaxed) {
+                return None;
+            }
+
+            #[cfg(feature = "tokio")]
+            notified.await;
+            #[cfg(feature = "async-std")]
+            { self.notify.recv().await.ok(); }
         }
     }
 }
 
-/// Create a channel with the given capacity.
-pub fn create_channel<T: Clone>(capacity: usize) -> (ChannelSender<T>, ChannelReceiver<T>) {
-    let (sender, receiver) = channel(capacity);
-    #[cfg(feature = "tokio")]
-    let tx = ChannelSender {
-        sender,
-    };
-    #[cfg(feature = "async-std")]
-    let tx = ChannelSender {
-        sender,
-        receiver: receiver.clone(),
-    };
-    (
-        tx,
-        ChannelReceiver {
-            receiver,
-        },
-    )
+/// Create a watch channel: the sender stores the latest value; receivers are woken on each change.
+#[cfg(feature = "tokio")]
+pub fn create_watch<T: Send>() -> (WatchSender<T>, WatchReceiver<T>) {
+    let state = Arc::new(WatchState {
+        value: std::sync::Mutex::new(None),
+        closed: AtomicBool::new(false),
+        notify: tokio::sync::Notify::new(),
+    });
+    (WatchSender { state: Arc::clone(&state) }, WatchReceiver { state })
 }
+
+/// Create a watch channel: the sender stores the latest value; receivers are woken on each change.
+#[cfg(feature = "async-std")]
+pub fn create_watch<T: Send>() -> (WatchSender<T>, WatchReceiver<T>) {
+    let (tx, rx) = async_channel::bounded(1);
+    let state = Arc::new(WatchState {
+        value: std::sync::Mutex::new(None),
+        closed: AtomicBool::new(false),
+        notifiers: std::sync::Mutex::new(vec![tx]),
+    });
+    (WatchSender { state: Arc::clone(&state) }, WatchReceiver { state, notify: rx })
+}
+
 
 /// Pool of concurrent futures that resolves them as they complete.
 pub struct FuturePool<'f, T> {

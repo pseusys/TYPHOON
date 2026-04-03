@@ -84,13 +84,14 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
         }
     }
 
-    pub fn create_cache_for(&self, key: K) -> CachedMapEntry<K, V> {
-        CachedMapEntry {
+    /// Create a `Sync` template that watches one specific key.
+    /// Call `CachedMapEntryTemplate::create_entry()` on the returned value to get a
+    /// working `CachedMapEntry` with a local cache (one per task, no `Mutex` needed).
+    pub fn create_cache_for(&self, key: K) -> CachedMapEntryTemplate<K, V> {
+        CachedMapEntryTemplate {
             source: Arc::downgrade(&self.state),
             key,
-            local: None,
             mapper: None,
-            _not_sync: PhantomData,
         }
     }
 }
@@ -181,6 +182,30 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMap<K, V> {
     }
 }
 
+/// Sync template for a single-key cache entry.
+/// Stores a `Weak` reference to the shared map plus the key and optional value mapper.
+/// Has no local cache of its own — call `create_entry()` to get a `CachedMapEntry`
+/// with a local cache suitable for use within one task (no `Mutex` required at the call site).
+pub struct CachedMapEntryTemplate<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
+    source: Weak<SharedState<K, V>>,
+    key: K,
+    mapper: Option<ValueMapper<V>>,
+}
+
+impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMapEntryTemplate<K, V> {
+    /// Create a working `CachedMapEntry` with an empty local cache.
+    /// Intended to be created once per task invocation and used locally (not shared).
+    pub fn create_entry(&self) -> CachedMapEntry<K, V> {
+        CachedMapEntry {
+            source: self.source.clone(),
+            key: self.key.clone(),
+            local: None,
+            mapper: self.mapper.clone(),
+            _not_sync: PhantomData,
+        }
+    }
+}
+
 /// Single-entry cache connected to a `SharedMap`, watching one specific key.
 /// Change once this is implemented: https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html
 pub struct CachedMapEntry<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
@@ -231,19 +256,5 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMapEntry<K, 
 
     pub async fn get_mut(&mut self) -> Result<&mut V, CacheError> {
         Ok(&mut self.fetch().await?.value)
-    }
-
-    pub fn create_sibling(&self) -> Result<CachedMapEntry<K, V>, CacheError> {
-        if self.source.strong_count() == 0 {
-            return Err(CacheError::SourceDropped);
-        }
-
-        Ok(CachedMapEntry {
-            source: self.source.clone(),
-            key: self.key.clone(),
-            local: None,
-            mapper: self.mapper.clone(),
-            _not_sync: PhantomData,
-        })
     }
 }

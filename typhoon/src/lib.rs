@@ -21,6 +21,8 @@ compile_error!("one of the features 'server' and 'client' should be selected");
 
 pub mod bytes;
 pub mod cache;
+#[cfg(feature = "debug")]
+pub mod debug;
 pub mod certificate;
 pub mod crypto;
 pub mod defaults;

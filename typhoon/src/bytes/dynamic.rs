@@ -63,6 +63,12 @@ impl DynamicByteBuffer {
         StaticByteBuffer::from_slice(self.slice())
     }
 
+    /// Returns the number of bytes available for prepending before the current view.
+    #[inline]
+    pub fn before_capacity(&self) -> usize {
+        self.start
+    }
+
     /// Append `other` buffer contents to end. Returns expanded view.
     #[inline]
     pub fn append_buf(&self, other: &impl ByteBuffer) -> Self {

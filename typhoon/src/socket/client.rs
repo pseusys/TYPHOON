@@ -3,22 +3,23 @@ use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use log::debug;
+use log::{debug, info, trace};
 
-use crate::bytes::{ByteBuffer, DynamicByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::SharedValue;
 use crate::certificate::{CertificateError, ClientCertificate};
 use crate::crypto::{ClientCryptoTool, KEY_LENGTH};
+use crate::crypto::PAYLOAD_CRYPTO_OVERHEAD;
 use crate::flow::{FlowConfig};
 use crate::flow::client::ClientFlowManager;
 use crate::flow::decoy::DecoyCommunicationMode;
 use crate::session::{ClientSessionManager, SessionManager};
-use crate::settings::{Settings, keys};
+use crate::settings::Settings;
 use crate::socket::error::ClientSocketError;
 use crate::tailor::{ClientConnectionHandler, IdentityType};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::socket::Socket;
-use crate::utils::sync::{AsyncExecutor, ChannelReceiver, Mutex, create_channel};
+use crate::utils::sync::{AsyncExecutor, Mutex, WatchReceiver, create_watch};
 
 /// Builder for constructing a `ClientSocket`.
 pub struct ClientSocketBuilder<T: IdentityType + Clone, AE: AsyncExecutor + 'static, DP, CC: ClientConnectionHandler> {
@@ -82,6 +83,9 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
         let static_key = get_rng().random_byte_buffer::<KEY_LENGTH>();
         let cipher = SharedValue::new(ClientCryptoTool::new(self.certificate.clone(), identity_bytes, &static_key));
 
+        let tailor_wire_len = T::length() + ClientCryptoTool::<T>::tailor_overhead();
+        let mut max_data_payload = usize::MAX;
+
         let mut flows = Vec::with_capacity(cert_addrs.len());
         for &addr in cert_addrs {
             let config = self.flow_overrides.remove(&addr)
@@ -89,34 +93,43 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 
             config.assert(settings.mtu()).map_err(ClientSocketError::FlowError)?;
 
+            let flow_overhead = config.max_overhead()
+                + PAYLOAD_CRYPTO_OVERHEAD
+                + tailor_wire_len;
+            max_data_payload = max_data_payload.min(settings.mtu().saturating_sub(flow_overhead));
+
             let sock = Socket::new(addr, None).await.map_err(ClientSocketError::SocketError)?;
             let cipher_cache = cipher.create_cache().await;
             let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock).await.map_err(ClientSocketError::FlowError)?;
             flows.push(flow);
         }
+        let max_data_payload = if max_data_payload == usize::MAX { settings.mtu() } else { max_data_payload };
+        info!("client socket built: max_data_payload={}B (mtu={}B, {} flow(s))", max_data_payload, settings.mtu(), flows.len());
 
         let session = ClientSessionManager::new(cipher, flows, settings.clone(), self.initial_data_generator).await.map_err(ClientSocketError::SessionError)?;
 
-        let buffer_size = settings.get(&keys::RECEIVE_BUFFER_SIZE) as usize;
-        let (data_tx, data_rx) = create_channel(buffer_size);
+        let incoming_queue: Arc<crossbeam::queue::SegQueue<DynamicByteBuffer>> = Arc::new(crossbeam::queue::SegQueue::new());
+        let (incoming_wake_tx, incoming_wake_rx) = create_watch::<()>();
 
         // Spawn the background receive loop BEFORE the handshake so that
         // handshake responses from the server can be received and routed.
         let receive_session = session.clone();
+        let queue_bg = Arc::clone(&incoming_queue);
         settings.executor().spawn(async move {
             loop {
                 match receive_session.receive_packet().await {
                     Ok(buffer) => {
-                        if !data_tx.send(buffer).await {
-                            break;
-                        }
+                        trace!("client bg-recv: pushing {} bytes to queue", buffer.len());
+                        queue_bg.push(buffer);
+                        incoming_wake_tx.send(());
                     }
                     Err(err) => {
-                        debug!("background receive loop terminated: {}", err);
+                        debug!("client bg-recv: terminated: {}", err);
                         break;
                     }
                 }
             }
+            // incoming_wake_tx dropped — receive() will see None and return ChannelClosed.
         });
 
         // Now perform the handshake and start the health check timer.
@@ -124,7 +137,9 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 
         Ok(ClientSocket {
             session,
-            receiver: Mutex::new(data_rx),
+            incoming_queue,
+            incoming_wake: Mutex::new(incoming_wake_rx),
+            max_data_payload,
             settings,
         })
     }
@@ -133,25 +148,49 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 /// Client-side TYPHOON socket providing send/receive operations.
 pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ClientFlowManager<T, AE, DP>> + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> {
     session: Arc<ClientSessionManager<T, AE, Arc<ClientFlowManager<T, AE, DP>>, CC>>,
-    receiver: Mutex<ChannelReceiver<DynamicByteBuffer>>,
+    incoming_queue: Arc<crossbeam::queue::SegQueue<DynamicByteBuffer>>,
+    incoming_wake: Mutex<WatchReceiver<()>>,
+    /// Maximum user-data bytes per packet so the wire packet fits within MTU.
+    max_data_payload: usize,
     settings: Arc<Settings<AE>>,
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ClientFlowManager<T, AE, DP>> + 'static, CC: ClientConnectionHandler + 'static> ClientSocket<T, AE, DP, CC> {
     /// Send a packet using a pre-allocated buffer.
     pub async fn send(&self, packet: DynamicByteBuffer) -> Result<(), ClientSocketError> {
+        trace!("ClientSocket::send {} bytes", packet.len());
         self.session.send_packet(packet, false).await.map_err(ClientSocketError::SessionError)
     }
 
-    /// Send a byte slice, allocating a buffer from the pool.
+    /// Send a byte slice, splitting into payload-sized chunks so each wire packet fits within MTU.
     pub async fn send_bytes(&self, data: &[u8]) -> Result<(), ClientSocketError> {
-        let buffer = self.settings.pool().allocate_precise_from_slice_with_capacity(data, 0, 0);
-        self.send(buffer).await
+        let total = data.chunks(self.max_data_payload).count();
+        trace!("ClientSocket::send_bytes {} bytes → {} chunk(s) of max {}B", data.len(), total, self.max_data_payload);
+        for chunk in data.chunks(self.max_data_payload) {
+            let buffer = self.settings.pool().allocate(Some(chunk.len()));
+            buffer.slice_mut().copy_from_slice(chunk);
+            self.send(buffer).await?;
+        }
+        Ok(())
+    }
+
+    /// Maximum user-data bytes per `send` call so the wire packet fits within MTU.
+    pub fn max_data_payload(&self) -> usize {
+        self.max_data_payload
     }
 
     /// Receive a packet, returning the decrypted payload as a buffer.
     pub async fn receive(&self) -> Result<DynamicByteBuffer, ClientSocketError> {
-        self.receiver.lock().await.recv().await.ok_or(ClientSocketError::ChannelClosed)
+        loop {
+            if let Some(buf) = self.incoming_queue.pop() {
+                trace!("ClientSocket::receive {} bytes", buf.len());
+                return Ok(buf);
+            }
+            match self.incoming_wake.lock().await.recv().await {
+                Some(()) => continue,
+                None => return Err(ClientSocketError::ChannelClosed),
+            }
+        }
     }
 
     /// Receive a packet, returning the decrypted payload as a byte vector.

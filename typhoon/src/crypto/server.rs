@@ -3,7 +3,6 @@ use std::hash::Hash;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use std::sync::Arc;
 
-use fixedbitset::FixedBitSet;
 use x25519_dalek::PublicKey as X25519PublicKey;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, DynamicByteBuffer, StaticByteBuffer};
@@ -61,31 +60,18 @@ impl UserCryptoState {
     }
 }
 
-/// Combined per-user server state: crypto keys + active flow bitmap.
+/// Combined per-user server state: crypto keys only.
 /// Stored in the global SharedMap, accessed via CachedMap by crypto tool and flow managers.
 /// Per-flow source addresses are tracked locally by each ServerFlowManager.
+/// Active flow tracking is done lock-free in the session manager via `AtomicBitSet`.
 #[derive(Clone)]
 pub struct UserServerState {
     crypto: UserCryptoState,
-    active_flows: FixedBitSet,
 }
 
 impl UserServerState {
     pub fn new(crypto: UserCryptoState) -> Self {
-        Self { crypto, active_flows: FixedBitSet::new() }
-    }
-
-    /// Mark a flow manager index as active for this user.
-    #[inline]
-    pub fn activate_flow(&mut self, index: usize) {
-        self.active_flows.grow(index + 1);
-        self.active_flows.set(index, true);
-    }
-
-    /// Get the bitmap of active flow manager indices.
-    #[inline]
-    pub fn active_flows(&self) -> &FixedBitSet {
-        &self.active_flows
+        Self { crypto }
     }
 
     /// Get mutable reference to the user's crypto state.

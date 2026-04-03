@@ -106,13 +106,15 @@ impl<T: IdentityType> Tailor<T> {
     }
 
     /// Write a handshake packet tailor into the buffer.
-    pub fn handshake(buffer: DynamicByteBuffer, identity: &T, code: u8, next_in: u32, packet_number: u64) -> Self {
+    /// `body_len` is the length of the handshake body (excluding tailor), allowing receivers
+    /// to strip any fake header/body prefix before parsing the handshake data.
+    pub fn handshake(buffer: DynamicByteBuffer, identity: &T, code: u8, next_in: u32, packet_number: u64, body_len: u16) -> Self {
         let view = Self::new(buffer);
         view.set_flags(PacketFlags::HANDSHAKE);
         view.set_code(code);
         view.set_time(next_in);
         view.set_packet_number_raw(packet_number);
-        view.set_payload_length(0);
+        view.set_payload_length(body_len);
         view.set_identity(identity);
         view
     }
@@ -125,6 +127,25 @@ impl<T: IdentityType> Tailor<T> {
         view.set_time(0);
         view.set_packet_number_raw(packet_number);
         view.set_payload_length(0);
+        view.set_identity(identity);
+        view
+    }
+
+    /// Write a debug probe tailor into the buffer.
+    ///
+    /// Field semantics in debug mode:
+    /// - **FG**: `DATA` flag (same as data packets so probes blend in).
+    /// - **CD**: `ref_num` — rolling reference number (0–255) uniquely identifying this probe.
+    /// - **TM**: `send_time_ms` — lower 32 bits of the Unix send timestamp in milliseconds.
+    /// - **PN**: `sequence << 32 | phase` — global sequence number and debug phase identifier.
+    /// - **PL**: `payload_len` — length of the probe payload.
+    pub fn debug_probe(buffer: DynamicByteBuffer, identity: &T, ref_num: u8, send_time_ms: u32, sequence: u32, phase: u32, payload_len: u16) -> Self {
+        let view = Self::new(buffer);
+        view.set_flags(PacketFlags::DATA);
+        view.set_code(ref_num);
+        view.set_time(send_time_ms);
+        view.set_packet_number_raw(((sequence as u64) << 32) | (phase as u64));
+        view.set_payload_length(payload_len);
         view.set_identity(identity);
         view
     }
@@ -189,6 +210,33 @@ impl<T: IdentityType> Tailor<T> {
     #[inline]
     pub fn return_code(&self) -> ReturnCode {
         ReturnCode::from(self.code())
+    }
+
+    // --- Debug accessors (reinterpret fields per debug-mode semantics) ---
+
+    /// Debug: rolling reference number from the CD field (0–255).
+    #[inline]
+    pub fn debug_ref_num(&self) -> u8 {
+        self.code()
+    }
+
+    /// Debug: send timestamp in milliseconds from the TM field (lower 32 bits of Unix time).
+    #[inline]
+    pub fn debug_send_time(&self) -> u32 {
+        self.time()
+    }
+
+    /// Debug: global probe sequence number from the upper 32 bits of the PN field.
+    #[inline]
+    pub fn debug_sequence(&self) -> u32 {
+        (self.packet_number() >> 32) as u32
+    }
+
+    /// Debug: phase identifier from the lower 32 bits of the PN field.
+    /// `0` = reachability, `1` = return time, `2` = throughput.
+    #[inline]
+    pub fn debug_phase(&self) -> u32 {
+        self.packet_number() as u32
     }
 
     /// Get the underlying buffer.
