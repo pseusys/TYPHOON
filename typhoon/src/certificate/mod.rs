@@ -14,7 +14,7 @@
 //! The payload following the header depends on record type and cipher mode; see
 //! [`ServerKeyPair::save`] and [`ClientCertificate::save`] for exact field tables.
 
-#[cfg(test)]
+#[cfg(all(test, feature = "server"))]
 #[path = "../../tests/certificate/mod.rs"]
 mod tests;
 

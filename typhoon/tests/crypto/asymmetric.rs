@@ -1,11 +1,11 @@
 use std::sync::Mutex;
-#[cfg(feature = "client")]
+#[cfg(all(feature = "client", feature = "server"))]
 use std::sync::Arc;
 
 use classic_mceliece_rust::{CRYPTO_PUBLICKEYBYTES, CRYPTO_SECRETKEYBYTES, keypair_boxed};
-#[cfg(feature = "client")]
+#[cfg(all(feature = "client", feature = "server"))]
 use classic_mceliece_rust::SecretKey;
-#[cfg(feature = "client")]
+#[cfg(all(feature = "client", feature = "server"))]
 use classic_mceliece_rust::PublicKey as McEliecePublicKey;
 use ed25519_dalek::{SecretKey as X25519SecretKey, SigningKey, VerifyingKey};
 #[cfg(all(feature = "client", any(feature = "full_software", feature = "full_hardware")))]
@@ -16,15 +16,15 @@ use x25519_dalek::StaticSecret;
 use crate::bytes::BytePool;
 #[cfg(all(feature = "client", feature = "server"))]
 use crate::bytes::{ByteBuffer, ByteBufferMut, StaticByteBuffer};
-#[cfg(all(feature = "client", any(feature = "fast_software", feature = "fast_hardware")))]
+#[cfg(all(all(feature = "client", feature = "server"), any(feature = "fast_software", feature = "fast_hardware")))]
 use crate::bytes::FixedByteBuffer;
-#[cfg(feature = "client")]
+#[cfg(all(feature = "client", feature = "server"))]
 use crate::certificate::ClientCertificate;
 #[cfg(all(feature = "client", feature = "server"))]
 use crate::certificate::ServerSecret;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
-#[cfg(all(feature = "client", any(feature = "fast_software", feature = "fast_hardware")))]
+#[cfg(all(all(feature = "client", feature = "server"), any(feature = "fast_software", feature = "fast_hardware")))]
 use crate::crypto::symmetric::SYMMETRIC_KEY_LENGTH;
 #[cfg(all(feature = "client", feature = "server"))]
 use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
@@ -58,25 +58,25 @@ lazy_static! {
     static ref TEST_POOL: BytePool = BytePool::new(32, 256, 32, 4, 16);
 }
 
-#[cfg(all(feature = "client", any(feature = "fast_software", feature = "fast_hardware")))]
+#[cfg(all(all(feature = "client", feature = "server"), any(feature = "fast_software", feature = "fast_hardware")))]
 #[inline]
 fn get_obfuscation_key() -> FixedByteBuffer<SYMMETRIC_KEY_LENGTH> {
     FixedByteBuffer::from([0x55u8; SYMMETRIC_KEY_LENGTH])
 }
 
-#[cfg(feature = "client")]
+#[cfg(all(feature = "client", feature = "server"))]
 #[inline]
 fn get_mceliece_secret() -> SecretKey<'static> {
     SecretKey::from(Box::new(*MCELIECE_KEYPAIR_BYTES.1))
 }
 
-#[cfg(feature = "client")]
+#[cfg(all(feature = "client", feature = "server"))]
 #[inline]
 fn get_ed25519_keypair() -> (SigningKey, VerifyingKey) {
     (ED25519_KEYPAIR.0.clone(), ED25519_KEYPAIR.1)
 }
 
-#[cfg(all(feature = "client", any(feature = "full_software", feature = "full_hardware")))]
+#[cfg(all(all(feature = "client", feature = "server"), any(feature = "full_software", feature = "full_hardware")))]
 #[inline]
 fn get_x25519_keypair() -> (StaticSecret, X25519PublicKey) {
     let bytes = *X25519_SECRET_BYTES.lock().unwrap();
@@ -87,7 +87,7 @@ fn get_x25519_keypair() -> (StaticSecret, X25519PublicKey) {
 
 // TODO: move to cert creation:
 
-#[cfg(all(feature = "client", any(feature = "fast_software", feature = "fast_hardware")))]
+#[cfg(all(all(feature = "client", feature = "server"), any(feature = "fast_software", feature = "fast_hardware")))]
 #[inline]
 fn create_test_certificate() -> ClientCertificate {
     let (_, vpk) = get_ed25519_keypair();
