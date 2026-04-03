@@ -21,4 +21,14 @@ pub enum FlowControllerError {
 
     #[error("error encrypting packet tailor: {}", .0.to_string())]
     TailorEncryption(#[source] CryptoError),
+
+    #[error("flow config assertion failed: {message}")]
+    AssertionFailed {
+        message: String,
+    },
+
+    #[error("user not found in flow manager: {identity}")]
+    UserNotFound {
+        identity: String,
+    },
 }

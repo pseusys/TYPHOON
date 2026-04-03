@@ -1,65 +1,65 @@
-use crate::bytes::StaticByteBuffer;
-use crate::bytes::{BytePool, DynamicByteBuffer};
-use crate::crypto::certificate::{Certificate, ClientData, ObfuscationBufferContainer};
-use crate::crypto::error::{CryptoError, HandshakeError};
-use crate::crypto::symmetric::ObfuscationTranscript;
-use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
+use x25519_dalek::EphemeralSecret;
 
-#[cfg(feature = "fast")]
-use crate::crypto::symmetric::{decrypt_auth, encrypt_auth, verify_auth};
+use crate::bytes::{ByteBuffer, BytePool, DynamicByteBuffer, FixedByteBuffer, StaticByteBuffer};
+use crate::certificate::ClientCertificate;
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+use crate::certificate::ObfuscationBufferContainer;
+use crate::crypto::error::{CryptoError, HandshakeError};
+use crate::crypto::symmetric::{NONCE_LEN, ObfuscationTranscript, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
+use crate::flow::FlowCryptoProvider;
+use crate::tailor::IdentityType;
+
+/// Ephemeral client handshake state: X25519 secret, McEliece shared secret, nonce, initial key.
+pub(crate) struct ClientData {
+    pub ephemeral_key: EphemeralSecret,
+    pub shared_secret: FixedByteBuffer<32>,
+    pub nonce: FixedByteBuffer<32>,
+    pub initial_key: FixedByteBuffer<32>,
+}
 
 /// Client-side cryptographic tool for TYPHOON protocol.
 #[derive(Clone)]
-pub struct ClientCryptoTool<'a> {
-    cert: Certificate<'a>,
-    identity: Vec<u8>,
+pub struct ClientCryptoTool<T: IdentityType + Clone> {
+    cert: ClientCertificate,
+    identity: T,
     key: Symmetric,
-    #[cfg(feature = "fast")]
-    obfuscation: Symmetric,
-    #[cfg(feature = "fast")]
-    key_bytes: StaticByteBuffer,
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+    obfuscation_key: Symmetric,
 }
 
-impl<'a> ClientCryptoTool<'a> {
+impl<T: IdentityType + Clone> ClientCryptoTool<T> {
     /// Create a new ClientCryptoTool with the given certificate and identity.
-    #[cfg(feature = "fast")]
-    pub fn new(cert: Certificate<'a>, identity: DynamicByteBuffer, initial_key: &StaticByteBuffer) -> Self {
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+    pub(crate) fn new(cert: ClientCertificate, identity: T, initial_key: &impl ByteBuffer) -> Self {
         let obfs_buffer = cert.obfuscation_buffer();
         Self {
             cert,
-            identity: identity.into(),
+            identity,
             key: Symmetric::new(initial_key),
-            obfuscation: Symmetric::new(&obfs_buffer),
-            key_bytes: initial_key.to_owned(),
+            obfuscation_key: Symmetric::new_split(&obfs_buffer, initial_key),
         }
     }
 
     /// Create a new ClientCryptoTool with the given certificate and identity.
-    #[cfg(feature = "full")]
-    pub fn new(cert: Certificate<'a>, identity: DynamicByteBuffer, initial_key: &StaticByteBuffer) -> Self {
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+    pub(crate) fn new(cert: ClientCertificate, identity: T, initial_key: &impl ByteBuffer) -> Self {
         Self {
             cert,
-            identity: identity.into(),
+            identity,
             key: Symmetric::new(initial_key),
         }
-    }
-
-    /// Get certificate.
-    #[inline]
-    pub fn certificate(&self) -> Certificate<'a> {
-        self.cert.clone()
     }
 
     /// Get the identity bytes.
     #[inline]
-    pub fn identity(&self) -> Vec<u8> {
+    pub fn identity(&self) -> T {
         self.identity.clone()
     }
 
     /// Get the identity length.
     #[inline]
     pub fn identity_len(&self) -> usize {
-        self.identity.len()
+        T::length()
     }
 
     /// Overhead added by tailor encryption (nonce + auth tags).
@@ -69,14 +69,15 @@ impl<'a> ClientCryptoTool<'a> {
     }
 
     /// Client handshake step 1: generate ephemeral keys, encapsulate with McEliece, obfuscate.
-    /// Returns (ClientData, handshake_secret, initial_cipher).
-    pub fn create_handshake(&self, pool: &BytePool) -> (ClientData, DynamicByteBuffer, Symmetric) {
-        self.cert.encapsulate_handshake_client(pool)
+    /// If `initial_data` is non-empty, encrypts it with the initial key and appends to the handshake.
+    /// Returns (ClientData, handshake_secret, initial_encryption_key).
+    pub(crate) fn create_handshake(&self, pool: &BytePool, initial_data: &[u8]) -> (ClientData, DynamicByteBuffer, FixedByteBuffer<32>) {
+        self.cert.encapsulate_handshake_client(pool, initial_data)
     }
 
     /// Client handshake step 2: process server response, verify signature, derive session key.
-    /// Returns the session key bytes.
-    pub fn process_handshake_response(&self, data: ClientData, handshake_secret: DynamicByteBuffer) -> Result<StaticByteBuffer, HandshakeError> {
+    /// Returns (session_key, server_initial_data).
+    pub(crate) fn process_handshake_response(&self, data: ClientData, handshake_secret: DynamicByteBuffer) -> Result<(FixedByteBuffer<32>, StaticByteBuffer), HandshakeError> {
         self.cert.decapsulate_handshake_client(data, handshake_secret)
     }
 
@@ -91,41 +92,106 @@ impl<'a> ClientCryptoTool<'a> {
     }
 
     /// Obfuscate (encrypt) tailor bytes for sending.
-    #[cfg(feature = "fast")]
-    pub fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer) -> Result<DynamicByteBuffer, CryptoError> {
-        Ok(encrypt_auth(&self.key_bytes, plaintext, &self.key_bytes))
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+    pub fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, _: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
+        self.obfuscation_key.encrypt_auth(plaintext, None::<&DynamicByteBuffer>)
     }
 
     /// Obfuscate (encrypt) tailor bytes for sending.
-    #[cfg(feature = "full")]
-    pub fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer) -> Result<DynamicByteBuffer, CryptoError> {
-        self.key.encrypt_auth::<StaticByteBuffer>(plaintext, None)
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+    pub fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, pool: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
+        self.cert.encrypt_obfuscate(plaintext, pool).map_err(|e| CryptoError::authentication_error(&e.to_string()))
     }
 
     /// Deobfuscate (decrypt) received tailor bytes.
-    #[cfg(feature = "fast")]
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
-        Ok(decrypt_auth(&self.key_bytes, ciphertext))
+        Ok(self.obfuscation_key.decrypt_no_verify(ciphertext))
     }
 
     /// Deobfuscate (decrypt) received tailor bytes.
-    #[cfg(feature = "full")]
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
-        match self.key.decrypt_auth::<StaticByteBuffer>(ciphertext, None) {
-            Ok(res) => Ok((res, ObfuscationTranscript {})),
-            Err(err) => Err(err),
-        }
+        self.key.decrypt_auth(ciphertext, None::<&DynamicByteBuffer>).map(|r| (r, ObfuscationTranscript {}))
     }
 
     /// Verify the authentication (fast mode).
-    #[cfg(feature = "fast")]
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub fn verify_tailor(&mut self, transcript: ObfuscationTranscript) -> Result<(), CryptoError> {
-        verify_auth(transcript, &self.key_bytes)
+        self.obfuscation_key.verify_decrypted(transcript, None::<&DynamicByteBuffer>)
     }
 
     /// Verify tailor (no-op in full mode).
-    #[cfg(feature = "full")]
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn verify_tailor(&mut self, _: ObfuscationTranscript) -> Result<(), CryptoError> {
         Ok(())
+    }
+
+    /// Create a copy of this crypto tool with a different session key.
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+    pub fn with_key(&self, new_key: &impl ByteBuffer) -> Self {
+        let obfs_buffer = self.cert.obfuscation_buffer();
+        Self {
+            cert: self.cert.clone(),
+            identity: self.identity.clone(),
+            key: Symmetric::new(new_key),
+            obfuscation_key: Symmetric::new_split(&obfs_buffer, new_key),
+        }
+    }
+
+    /// Create a copy of this crypto tool with a different session key.
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+    pub fn with_key(&self, new_key: &impl ByteBuffer) -> Self {
+        Self {
+            cert: self.cert.clone(),
+            identity: self.identity.clone(),
+            key: Symmetric::new(new_key),
+        }
+    }
+
+    /// Create a copy of this crypto tool with a different session key and identity.
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+    pub fn with_key_and_identity(&self, new_key: &impl ByteBuffer, new_identity: T) -> Self {
+        let obfs_buffer = self.cert.obfuscation_buffer();
+        Self {
+            cert: self.cert.clone(),
+            identity: new_identity,
+            key: Symmetric::new(new_key),
+            obfuscation_key: Symmetric::new_split(&obfs_buffer, new_key),
+        }
+    }
+
+    /// Create a copy of this crypto tool with a different session key and identity.
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+    pub fn with_key_and_identity(&self, new_key: &impl ByteBuffer, new_identity: T) -> Self {
+        Self {
+            cert: self.cert.clone(),
+            identity: new_identity,
+            key: Symmetric::new(new_key),
+        }
+    }
+}
+
+impl<T: IdentityType + Clone> FlowCryptoProvider for ClientCryptoTool<T> {
+    type Identity = T;
+
+    #[inline]
+    fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, pool: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
+        self.obfuscate_tailor(plaintext, pool)
+    }
+
+    #[inline]
+    fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+        self.deobfuscate_tailor(ciphertext)
+    }
+
+    #[inline]
+    fn verify_tailor(&mut self, transcript: ObfuscationTranscript) -> Result<(), CryptoError> {
+        self.verify_tailor(transcript)
+    }
+
+    #[inline]
+    fn tailor_overhead() -> usize {
+        Self::tailor_overhead()
     }
 }

@@ -1,4 +1,12 @@
-use crate::bytes::utils::{allocate_ptr, copy_ptr, free_ptr, preserve_vector};
+use crate::bytes::utils::{allocate_ptr, copy_nonoverlapping, free_ptr, preserve_vector};
+
+pub fn copy_ptr(ptr: *mut u8, length: usize) -> *mut u8 {
+    let new_ptr = allocate_ptr(length);
+    unsafe {
+        copy_nonoverlapping(ptr, new_ptr, length);
+    }
+    new_ptr
+}
 
 // Test: allocate_ptr returns zeroed memory.
 #[test]

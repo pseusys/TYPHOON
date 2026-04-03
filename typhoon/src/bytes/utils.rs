@@ -12,14 +12,6 @@ pub fn allocate_ptr(size: usize) -> *mut u8 {
     preserve_vector(vec![0u8; size])
 }
 
-pub fn copy_ptr(ptr: *mut u8, length: usize) -> *mut u8 {
-    let new_ptr = allocate_ptr(length);
-    unsafe {
-        copy_nonoverlapping(ptr, new_ptr, length);
-    }
-    new_ptr
-}
-
 pub fn copy_slice(ptr: *mut u8, slice: &[u8]) {
     unsafe {
         copy_nonoverlapping(slice.as_ptr(), ptr, slice.len());

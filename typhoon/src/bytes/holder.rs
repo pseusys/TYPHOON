@@ -1,5 +1,5 @@
 use crate::bytes::pool::PoolReturn;
-use crate::bytes::utils::{allocate_ptr, copy_ptr, free_ptr};
+use crate::bytes::utils::{allocate_ptr, free_ptr};
 
 /// Owns buffer memory and manages its lifecycle.
 pub struct BufferHolder {

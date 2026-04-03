@@ -1,0 +1,72 @@
+name: Build
+
+permissions:
+  contents: read
+
+on:
+  push:
+    paths:
+      - 'typhoon/**'
+      - '.github/workflows/build.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  typhoon-build:
+    name: Build and Run TYPHOON Binaries and Examples
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v4
+
+      - name: Setup Rust 🦀
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.89.0"
+          rust-src-dir: typhoon
+          override: true
+
+      - name: Build debug 🏗️
+        working-directory: typhoon
+        run: cargo build
+
+      - name: Build release 🚀
+        working-directory: typhoon
+        run: cargo build --release
+
+      - name: Build debug binary 🔬
+        working-directory: typhoon
+        run: cargo build --features debug --bin typhoon-debug
+
+      - name: Run hello_world example 🌍
+        working-directory: typhoon
+        env:
+          RUST_LOG: debug
+        run: cargo run --example hello_world
+
+      - name: Run debug_probe example 🩺
+        working-directory: typhoon
+        env:
+          RUST_LOG: debug
+        run: cargo run --example debug_probe --features debug
+
+      - name: Run multi_flow example 🔀
+        working-directory: typhoon
+        env:
+          RUST_LOG: debug
+        run: cargo run --example multi_flow
+
+      - name: Run long_session example ⏳
+        working-directory: typhoon
+        env:
+          RUST_LOG: debug
+        run: cargo run --example long_session
+
+      - name: Run multi_client example 👥
+        working-directory: typhoon
+        env:
+          RUST_LOG: debug
+        run: cargo run --example multi_client
