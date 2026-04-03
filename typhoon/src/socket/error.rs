@@ -31,6 +31,7 @@ pub enum ClientSocketError {
     ChannelClosed,
 }
 
+#[cfg(feature = "server")]
 #[derive(Error, Debug)]
 pub enum ServerSocketError {
     #[error("flow controller error: {}", .0.to_string())]

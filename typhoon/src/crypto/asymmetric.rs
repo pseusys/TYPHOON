@@ -5,7 +5,9 @@ mod tests;
 use blake3::Hasher;
 use blake3::hazmat::hash_derive_key_context;
 use cfg_if::cfg_if;
-use classic_mceliece_rust::{CRYPTO_BYTES, CRYPTO_CIPHERTEXTBYTES, Ciphertext, decapsulate};
+use classic_mceliece_rust::{CRYPTO_BYTES, CRYPTO_CIPHERTEXTBYTES};
+#[cfg(feature = "server")]
+use classic_mceliece_rust::{Ciphertext, decapsulate};
 #[cfg(feature = "client")]
 use classic_mceliece_rust::encapsulate;
 use ed25519_dalek::Signature;
