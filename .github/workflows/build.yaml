@@ -44,29 +44,29 @@ jobs:
       - name: Run hello_world example 🌍
         working-directory: typhoon
         env:
-          RUST_LOG: info
+          RUST_LOG: debug
         run: cargo run --example hello_world
 
       - name: Run debug_probe example 🩺
         working-directory: typhoon
         env:
-          RUST_LOG: info
+          RUST_LOG: debug
         run: cargo run --example debug_probe --features debug
 
       - name: Run multi_flow example 🔀
         working-directory: typhoon
         env:
-          RUST_LOG: info
+          RUST_LOG: debug
         run: cargo run --example multi_flow
 
       - name: Run long_session example ⏳
         working-directory: typhoon
         env:
-          RUST_LOG: info
+          RUST_LOG: debug
         run: cargo run --example long_session
 
       - name: Run multi_client example 👥
         working-directory: typhoon
         env:
-          RUST_LOG: info
+          RUST_LOG: debug
         run: cargo run --example multi_client
