@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use cfg_if::cfg_if;
+use crossbeam::queue::{ArrayQueue, SegQueue};
 use futures::stream::{FuturesUnordered, StreamExt};
+use log::debug;
 
 cfg_if! {
     if #[cfg(feature = "tokio")] {
@@ -93,7 +95,7 @@ impl<T: Send> Drop for WatchSender<T> {
     }
 }
 
-impl<T: Clone + Send> WatchReceiver<T> {
+impl<T: Send> WatchReceiver<T> {
     /// Wait for the next value change and return it, or None if the sender is dropped.
     pub async fn recv(&mut self) -> Option<T> {
         loop {
@@ -142,6 +144,99 @@ pub fn create_watch<T: Send>() -> (WatchSender<T>, WatchReceiver<T>) {
     (WatchSender { state: Arc::clone(&state) }, WatchReceiver { state, notify: rx })
 }
 
+
+// ── Notifying queues ──────────────────────────────────────────────────────────
+
+/// Push side of an unbounded notifying queue.
+/// `push` is synchronous and lock-free; the paired `NotifyQueueReceiver` is woken on each push.
+pub struct NotifyQueueSender<T: Send> {
+    queue: Arc<SegQueue<T>>,
+    wake: WatchSender<()>,
+}
+
+/// Pop side of an unbounded notifying queue.
+pub struct NotifyQueueReceiver<T: Send> {
+    queue: Arc<SegQueue<T>>,
+    wake: WatchReceiver<()>,
+}
+
+impl<T: Send> NotifyQueueSender<T> {
+    /// Push an item and wake the receiver.
+    pub fn push(&self, item: T) {
+        self.queue.push(item);
+        self.wake.send(());
+    }
+}
+
+impl<T: Send> NotifyQueueReceiver<T> {
+    /// Pop the next item immediately if available, otherwise wait until one is pushed.
+    /// Returns `None` if the sender has been dropped and the queue is empty.
+    pub async fn recv(&mut self) -> Option<T> {
+        loop {
+            if let Some(item) = self.queue.pop() {
+                return Some(item);
+            }
+            self.wake.recv().await?;
+        }
+    }
+}
+
+/// Create an unbounded notifying queue.
+pub fn create_notify_queue<T: Send>() -> (NotifyQueueSender<T>, NotifyQueueReceiver<T>) {
+    let queue = Arc::new(SegQueue::new());
+    let (wake_tx, wake_rx) = create_watch::<()>();
+    (
+        NotifyQueueSender { queue: Arc::clone(&queue), wake: wake_tx },
+        NotifyQueueReceiver { queue, wake: wake_rx },
+    )
+}
+
+/// Push side of a bounded notifying queue.
+/// If the queue is full, the item is dropped and a warning is logged.
+pub struct BoundedNotifyQueueSender<T: Send> {
+    queue: Arc<ArrayQueue<T>>,
+    wake: WatchSender<()>,
+}
+
+/// Pop side of a bounded notifying queue.
+pub struct BoundedNotifyQueueReceiver<T: Send> {
+    queue: Arc<ArrayQueue<T>>,
+    wake: WatchReceiver<()>,
+}
+
+impl<T: Send> BoundedNotifyQueueSender<T> {
+    /// Push an item; silently drops it (with a debug log) if the queue is full.
+    pub fn push(&self, item: T) {
+        if self.queue.push(item).is_err() {
+            debug!("BoundedNotifyQueue: queue full, dropping item");
+            return;
+        }
+        self.wake.send(());
+    }
+}
+
+impl<T: Send> BoundedNotifyQueueReceiver<T> {
+    /// Pop the next item immediately if available, otherwise wait until one is pushed.
+    /// Returns `None` if the sender has been dropped and the queue is empty.
+    pub async fn recv(&mut self) -> Option<T> {
+        loop {
+            if let Some(item) = self.queue.pop() {
+                return Some(item);
+            }
+            self.wake.recv().await?;
+        }
+    }
+}
+
+/// Create a bounded notifying queue with the given capacity.
+pub fn create_bounded_notify_queue<T: Send>(cap: usize) -> (BoundedNotifyQueueSender<T>, BoundedNotifyQueueReceiver<T>) {
+    let queue = Arc::new(ArrayQueue::new(cap));
+    let (wake_tx, wake_rx) = create_watch::<()>();
+    (
+        BoundedNotifyQueueSender { queue: Arc::clone(&queue), wake: wake_tx },
+        BoundedNotifyQueueReceiver { queue, wake: wake_rx },
+    )
+}
 
 /// Pool of concurrent futures that resolves them as they complete.
 pub struct FuturePool<'f, T> {

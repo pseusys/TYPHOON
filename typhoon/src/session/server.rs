@@ -17,8 +17,7 @@ use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{IdentityType, PacketFlags, ReturnCode, Tailor};
 use crate::utils::bitset::AtomicBitSet;
-use crate::utils::sync::{AsyncExecutor, WatchSender};
-use crossbeam::queue::SegQueue;
+use crate::utils::sync::{AsyncExecutor, NotifyQueueSender};
 use crate::utils::time::unix_timestamp_ms;
 
 /// Trait for routing outgoing packets from a session back to the network.
@@ -43,8 +42,7 @@ pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToS
     /// Lock-free bitmask of flow indices from which this client has been seen.
     active_flows: AtomicBitSet,
     incremental_counter: AtomicU32,
-    incoming_queue: Arc<SegQueue<DynamicByteBuffer>>,
-    incoming_wake: WatchSender<()>,
+    incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
     router: StdWeak<dyn OutgoingRouter<T>>,
     settings: Arc<Settings<AE>>,
 }
@@ -67,8 +65,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         identity: T,
         secret: &crate::certificate::ServerSecret<'_>,
         users: &mut SharedMap<T, UserServerState>,
-        incoming_queue: Arc<SegQueue<DynamicByteBuffer>>,
-        incoming_wake: WatchSender<()>,
+        incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
         router: StdWeak<dyn OutgoingRouter<T>>,
         num_flows: usize,
         settings: Arc<Settings<AE>>,
@@ -114,8 +111,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
             identity,
             active_flows: AtomicBitSet::new(num_flows),
             incremental_counter: AtomicU32::new(0),
-            incoming_queue,
-            incoming_wake,
+            incoming_tx,
             router,
             settings,
         });
@@ -133,8 +129,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         identity: T,
         secret: &crate::certificate::ServerSecret<'_>,
         users: &mut SharedMap<T, UserServerState>,
-        incoming_queue: Arc<SegQueue<DynamicByteBuffer>>,
-        incoming_wake: WatchSender<()>,
+        incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
         router: StdWeak<dyn OutgoingRouter<T>>,
         num_flows: usize,
         settings: Arc<Settings<AE>>,
@@ -177,8 +172,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
             identity,
             active_flows: AtomicBitSet::new(num_flows),
             incremental_counter: AtomicU32::new(0),
-            incoming_queue,
-            incoming_wake,
+            incoming_tx,
             router,
             settings,
         });
@@ -258,8 +252,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
                     if tailor.flags().contains(PacketFlags::HEALTH_CHECK) {
                         self.schedule_health_response(tailor.time(), tailor.packet_number()).await?;
                     }
-                    self.incoming_queue.push(decrypted);
-                    self.incoming_wake.send(());
+                    self.incoming_tx.push(decrypted);
                 }
                 Err(err) => {
                     debug!("server session: decrypt error: {}", err);
@@ -314,3 +307,17 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     }
 }
 
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> Drop for ServerSessionManager<T, AE> {
+    fn drop(&mut self) {
+        let identity = self.identity.clone();
+        let packet_number = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
+        let buf = self.settings.pool().allocate(Some(T::length()));
+        let tailor = Tailor::termination(buf, &identity, ReturnCode::Success, packet_number);
+        let router = self.router.clone();
+        self.settings.executor().spawn(async move {
+            if let Some(router) = router.upgrade() {
+                router.route_packet(tailor.into_buffer(), &identity).await;
+            }
+        });
+    }
+}

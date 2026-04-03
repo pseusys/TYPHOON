@@ -1115,3 +1115,30 @@ Furthermore, the algorithm should be resistant to adversarial path degradation p
 ### Isolated flow managers
 
 TODO! Server could support other flow managers residing in other processes or on other devices even, in that case communication and synchronisation of the server with these managers should become the biggest concern. In a standard mode, their lifetime should match: flow managers should be guaranteed alive while server is alive, so that all user certificates are always valid. However, as an edge case for unreliable networks, the design with initial data carrying addresses of currently active flow managers (described in "Initial data handling") can be used; in that case a functionality of tuntime plugging/unplugging of the flow managers to a running server will have to be implemented.
+
+## Optimization Proposals
+
+This section documents potential performance improvements that are not yet implemented but have been identified during development.
+
+### Per-packet parallel processing on the server
+
+Currently the server's route task processes incoming packets from all flows sequentially in a single loop: it drains packets from the bounded queue one at a time, identifies the target session by the tailor identity, and dispatches to `process_incoming`.
+
+A straightforward optimization is to spawn a separate async task per packet (or per burst of packets for the same identity):
+
+```rust
+// Instead of:
+while let Some(raw_packet) = drain_rx.recv().await {
+    // ... process synchronously
+}
+
+// Spawn per packet:
+while let Some(raw_packet) = drain_rx.recv().await {
+    let session = /* look up session */;
+    settings.executor().spawn(async move {
+        session.process_incoming(incoming).await;
+    });
+}
+```
+
+This allows packets destined for different clients to be processed concurrently, which is especially beneficial when decryption is the bottleneck (e.g. full PQ mode) or when one client's processing stalls (e.g. a slow `incoming_tx` push).

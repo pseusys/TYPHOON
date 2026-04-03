@@ -19,7 +19,7 @@ use crate::socket::error::ClientSocketError;
 use crate::tailor::{ClientConnectionHandler, IdentityType};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::socket::Socket;
-use crate::utils::sync::{AsyncExecutor, Mutex, WatchReceiver, create_watch};
+use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, create_notify_queue};
 
 /// Builder for constructing a `ClientSocket`.
 pub struct ClientSocketBuilder<T: IdentityType + Clone, AE: AsyncExecutor + 'static, DP, CC: ClientConnectionHandler> {
@@ -108,20 +108,17 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 
         let session = ClientSessionManager::new(cipher, flows, settings.clone(), self.initial_data_generator).await.map_err(ClientSocketError::SessionError)?;
 
-        let incoming_queue: Arc<crossbeam::queue::SegQueue<DynamicByteBuffer>> = Arc::new(crossbeam::queue::SegQueue::new());
-        let (incoming_wake_tx, incoming_wake_rx) = create_watch::<()>();
+        let (incoming_tx, incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
 
         // Spawn the background receive loop BEFORE the handshake so that
         // handshake responses from the server can be received and routed.
         let receive_session = session.clone();
-        let queue_bg = Arc::clone(&incoming_queue);
         settings.executor().spawn(async move {
             loop {
                 match receive_session.receive_packet().await {
                     Ok(buffer) => {
                         trace!("client bg-recv: pushing {} bytes to queue", buffer.len());
-                        queue_bg.push(buffer);
-                        incoming_wake_tx.send(());
+                        incoming_tx.push(buffer);
                     }
                     Err(err) => {
                         debug!("client bg-recv: terminated: {}", err);
@@ -129,7 +126,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
                     }
                 }
             }
-            // incoming_wake_tx dropped — receive() will see None and return ChannelClosed.
+            // incoming_tx dropped — receive() will see None and return ChannelClosed.
         });
 
         // Now perform the handshake and start the health check timer.
@@ -137,8 +134,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 
         Ok(ClientSocket {
             session,
-            incoming_queue,
-            incoming_wake: Mutex::new(incoming_wake_rx),
+            incoming_rx: Mutex::new(incoming_rx),
             max_data_payload,
             settings,
         })
@@ -148,8 +144,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 /// Client-side TYPHOON socket providing send/receive operations.
 pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ClientFlowManager<T, AE, DP>> + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> {
     session: Arc<ClientSessionManager<T, AE, Arc<ClientFlowManager<T, AE, DP>>, CC>>,
-    incoming_queue: Arc<crossbeam::queue::SegQueue<DynamicByteBuffer>>,
-    incoming_wake: Mutex<WatchReceiver<()>>,
+    incoming_rx: Mutex<NotifyQueueReceiver<DynamicByteBuffer>>,
     /// Maximum user-data bytes per packet so the wire packet fits within MTU.
     max_data_payload: usize,
     settings: Arc<Settings<AE>>,
@@ -181,16 +176,9 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 
     /// Receive a packet, returning the decrypted payload as a buffer.
     pub async fn receive(&self) -> Result<DynamicByteBuffer, ClientSocketError> {
-        loop {
-            if let Some(buf) = self.incoming_queue.pop() {
-                trace!("ClientSocket::receive {} bytes", buf.len());
-                return Ok(buf);
-            }
-            match self.incoming_wake.lock().await.recv().await {
-                Some(()) => continue,
-                None => return Err(ClientSocketError::ChannelClosed),
-            }
-        }
+        let buf = self.incoming_rx.lock().await.recv().await.ok_or(ClientSocketError::ChannelClosed)?;
+        trace!("ClientSocket::receive {} bytes", buf.len());
+        Ok(buf)
     }
 
     /// Receive a packet, returning the decrypted payload as a byte vector.

@@ -25,7 +25,8 @@ use crate::socket::error::ServerSocketError;
 use crate::tailor::{IdentityType, PacketFlags, ReturnCode, ServerConnectionHandler, Tailor};
 use crate::utils::socket::Socket;
 use crate::crypto::PAYLOAD_CRYPTO_OVERHEAD;
-use crate::utils::sync::{AsyncExecutor, Mutex, RwLock, WatchReceiver, WatchSender, create_watch};
+use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, RwLock, WatchReceiver, WatchSender, create_bounded_notify_queue, create_notify_queue, create_watch};
+
 
 /// Configuration for a single server flow manager.
 pub struct ServerFlowConfiguration {
@@ -240,13 +241,12 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let drain_capacity = self.settings.get(&keys::DRAIN_CHANNEL_CAPACITY) as usize;
 
         for (index, flow) in self.flows.iter().enumerate() {
-            let queue = Arc::new(crossbeam::queue::ArrayQueue::new(drain_capacity));
-            let (wake_tx, mut wake_rx) = create_watch::<()>();
+            let (drain_tx, mut drain_rx) = create_bounded_notify_queue(drain_capacity);
 
-            // Drain task: only reads from the socket and pushes to the lock-free queue immediately.
+            // Drain task: only reads from the socket and pushes to the bounded queue immediately.
+            // Packets are dropped (with a log) if the route task falls behind.
             let flow_drain = Arc::clone(flow);
             let settings_drain = Arc::clone(&self.settings);
-            let queue_drain = Arc::clone(&queue);
             self.settings.executor().spawn(async move {
                 loop {
                     // Allocate a fresh buffer each iteration: the decrypted payload view
@@ -254,30 +254,21 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     // would corrupt queue items that haven't been consumed yet.
                     let recv_buf = settings_drain.pool().allocate_for_recv();
                     match flow_drain.receive_raw(recv_buf).await {
-                        Ok(raw_packet) => {
-                            // push: drop the packet rather than blocking the drain loop.
-                            queue_drain.push(raw_packet).ok();
-                            wake_tx.send(());
-                        }
+                        Ok(raw_packet) => drain_tx.push(raw_packet),
                         Err(err) => {
                             debug!("flow manager {} receive error: {}", index, err);
                             break;
                         }
                     }
                 }
-                // wake_tx dropped here — route task will see None from wake_rx.recv() and exit.
+                // drain_tx dropped here — route task will see None from drain_rx.recv() and exit.
             });
 
-            // Route task: drains the queue each time the drain task signals a new packet.
+            // Route task: processes packets delivered by the drain task.
             let listener = Arc::clone(self);
             self.settings.executor().spawn(async move {
-                loop {
-                    while let Some(raw_packet) = queue.pop() {
-                        listener.route_incoming(raw_packet, index).await;
-                    }
-                    if wake_rx.recv().await.is_none() {
-                        break;
-                    }
+                while let Some(raw_packet) = drain_rx.recv().await {
+                    listener.route_incoming(raw_packet, index).await;
                 }
             });
         }
@@ -358,9 +349,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let identity = self.identity_generator.generate(&client_initial_data);
         let server_initial_data = self.identity_generator.initial_data(&identity);
 
-        // Incoming data queue and wake signal: session pushes decrypted packets, ClientHandle pops.
-        let incoming_queue: Arc<crossbeam::queue::SegQueue<DynamicByteBuffer>> = Arc::new(crossbeam::queue::SegQueue::new());
-        let (incoming_wake_tx, incoming_wake_rx) = create_watch::<()>();
+        // Incoming data queue: session pushes decrypted packets, ClientHandle pops.
+        let (incoming_tx, incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
 
         // Create Weak<dyn OutgoingRouter<T>> for the session to send packets back.
         let self_dyn: Arc<dyn OutgoingRouter<T>> = Arc::clone(self) as Arc<dyn OutgoingRouter<T>>;
@@ -379,8 +369,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 identity.clone(),
                 &self.secret,
                 &mut users,
-                Arc::clone(&incoming_queue),
-                incoming_wake_tx,
+                incoming_tx,
                 router_weak,
                 self.flows.len(),
                 self.settings.clone(),
@@ -407,6 +396,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         // At this point the tailor is encrypted/authenticated with the initial key.
         if let Err(err) = self.flows[flow_index].send_packet(response_packet, false).await {
             debug!("failed to send handshake response: {}", err);
+            // Clean up: remove user from shared map and all flow decoy providers.
+            self.users.lock().await.remove(&identity).await;
+            for flow in &self.flows {
+                flow.remove_user(&identity).await;
+            }
             return;
         }
 
@@ -436,8 +430,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         // Create and publish ClientHandle via crossbeam queue.
         let client_handle = ClientHandle {
             session,
-            incoming_queue,
-            incoming_wake: Mutex::new(incoming_wake_rx),
+            incoming_rx: Mutex::new(incoming_rx),
             max_data_payload: self.max_data_payload,
             settings: self.settings.clone(),
         };
@@ -483,10 +476,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
 /// Handle to a connected client, providing send/receive operations.
 /// Not cloneable — only one handle per connection.
+/// Handle to a connected client, providing send/receive operations.
+/// Not cloneable — only one handle per connection.
 pub struct ClientHandle<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> {
     session: Arc<ServerSessionManager<T, AE>>,
-    incoming_queue: Arc<crossbeam::queue::SegQueue<DynamicByteBuffer>>,
-    incoming_wake: Mutex<WatchReceiver<()>>,
+    incoming_rx: Mutex<NotifyQueueReceiver<DynamicByteBuffer>>,
     /// Maximum user-data bytes per packet so the wire packet fits within MTU.
     max_data_payload: usize,
     settings: Arc<Settings<AE>>,
@@ -518,16 +512,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> C
 
     /// Receive a packet, returning the decrypted payload as a buffer.
     pub async fn receive(&self) -> Result<DynamicByteBuffer, ServerSocketError> {
-        loop {
-            if let Some(buf) = self.incoming_queue.pop() {
-                trace!("ClientHandle::receive {} bytes", buf.len());
-                return Ok(buf);
-            }
-            match self.incoming_wake.lock().await.recv().await {
-                Some(()) => continue,
-                None => return Err(ServerSocketError::ChannelClosed),
-            }
-        }
+        let buf = self.incoming_rx.lock().await.recv().await.ok_or(ServerSocketError::ChannelClosed)?;
+        trace!("ClientHandle::receive {} bytes", buf.len());
+        Ok(buf)
     }
 
     /// Receive a packet, returning the decrypted payload as a byte vector.
