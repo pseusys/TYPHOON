@@ -2,10 +2,14 @@ use std::sync::{Arc, Mutex};
 
 use classic_mceliece_rust::{CRYPTO_PUBLICKEYBYTES, CRYPTO_SECRETKEYBYTES, PublicKey as McEliecePublicKey, SecretKey, keypair_boxed};
 use ed25519_dalek::{SecretKey as X25519SecretKey, SigningKey, VerifyingKey};
+#[cfg(all(feature = "client", any(feature = "full_software", feature = "full_hardware")))]
+use x25519_dalek::PublicKey as X25519PublicKey;
 use lazy_static::lazy_static;
-use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
+use x25519_dalek::StaticSecret;
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, FixedByteBuffer, StaticByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, StaticByteBuffer};
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+use crate::bytes::FixedByteBuffer;
 #[cfg(feature = "client")]
 use crate::certificate::ClientCertificate;
 #[cfg(feature = "server")]
