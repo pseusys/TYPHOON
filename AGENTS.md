@@ -25,6 +25,7 @@ Always compare your implementation to [README.md](./README.md) file, the code sh
 - Template types should be preferred over dynamically-sized types (`dyn`-prefixed), for reducing heap allocations.
 - Prefer direct imports over fully-qualified ones: `use foo::bar::Type; Type...` instead of just `foo::bar::Type`.
 - Prefer simpler synchronization primitives to channels: `Arc`/`Weak` pairs + function invocations for data transferring, lock-free dequeues for async event processing, etc.
+- When gating code, prefer applying `#[cfg(...)]` to imports, types, fields and functions, but not to the code (inside of a function).
 
 ### Formatting
 

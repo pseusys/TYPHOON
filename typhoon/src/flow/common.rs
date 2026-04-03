@@ -1,16 +1,26 @@
 use std::future::Future;
 use std::sync::Arc;
 
+#[cfg(feature = "client")]
 use log::{debug, info, trace};
+#[cfg(feature = "client")]
 use rand::Rng;
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+use crate::bytes::DynamicByteBuffer;
+#[cfg(feature = "client")]
+use crate::bytes::{ByteBuffer, ByteBufferMut};
+#[cfg(feature = "client")]
 use crate::cache::CachedValue;
 use crate::crypto::{CryptoError, ObfuscationTranscript};
+#[cfg(feature = "client")]
 use crate::flow::config::FlowConfig;
 use crate::flow::error::FlowControllerError;
+#[cfg(feature = "client")]
 use crate::settings::consts::TAILOR_LENGTH;
-use crate::tailor::{IdentityType, PacketFlags, Tailor};
+use crate::tailor::IdentityType;
+#[cfg(feature = "client")]
+use crate::tailor::{PacketFlags, Tailor};
+#[cfg(feature = "client")]
 use crate::utils::random::get_rng;
 
 /// Trait for managing packet flow with encryption and decoy traffic.
@@ -52,16 +62,19 @@ pub trait FlowCryptoProvider: Clone + Send {
 }
 
 /// Shared send-side state for flow managers.
+#[cfg(feature = "client")]
 pub(crate) struct FlowSendInternal<CP: FlowCryptoProvider> {
     pub(crate) provider: CachedValue<CP>,
     pub(crate) config: FlowConfig,
 }
 
 /// Shared receive-side state for flow managers.
+#[cfg(feature = "client")]
 pub(crate) struct FlowReceiveInternal<CP: FlowCryptoProvider> {
     pub(crate) provider: CachedValue<CP>,
 }
 
+#[cfg(feature = "client")]
 impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
     /// Encrypt tailor, add fake header and body, return assembled packet ready for socket send.
     pub(crate) async fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &crate::bytes::BytePool) -> Result<DynamicByteBuffer, FlowControllerError> {
@@ -93,6 +106,7 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
     }
 }
 
+#[cfg(feature = "client")]
 impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
     /// Decrypt tailor, verify, check if discardable. Returns processed packet or None if decoy.
     pub(crate) async fn process_incoming(&mut self, packet: DynamicByteBuffer) -> Result<Option<DynamicByteBuffer>, FlowControllerError> {

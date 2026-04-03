@@ -1,4 +1,5 @@
 use std::future::Future;
+#[cfg(feature = "client")]
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -6,6 +7,7 @@ use std::time::Duration;
 
 use cfg_if::cfg_if;
 use crossbeam::queue::{ArrayQueue, SegQueue};
+#[cfg(feature = "client")]
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::debug;
 
@@ -68,6 +70,7 @@ impl<T: Send> WatchSender<T> {
     }
 
     /// Create a new receiver watching the same sender.
+    #[cfg(feature = "client")]
     pub fn subscribe(&self) -> WatchReceiver<T> {
         #[cfg(feature = "tokio")]
         return WatchReceiver { state: Arc::clone(&self.state) };
@@ -239,10 +242,12 @@ pub fn create_bounded_notify_queue<T: Send>(cap: usize) -> (BoundedNotifyQueueSe
 }
 
 /// Pool of concurrent futures that resolves them as they complete.
+#[cfg(feature = "client")]
 pub struct FuturePool<'f, T> {
     tasks: FuturesUnordered<Pin<Box<dyn Future<Output = T> + Send + 'f>>>,
 }
 
+#[cfg(feature = "client")]
 impl<'f, T> FuturePool<'f, T> {
     pub fn new() -> Self {
         Self {

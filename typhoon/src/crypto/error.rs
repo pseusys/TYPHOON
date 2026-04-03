@@ -20,6 +20,7 @@ pub enum CryptoError {
     UnknownError,
 }
 
+#[cfg(any(feature = "client", feature = "full_software", feature = "full_hardware"))]
 #[derive(Error, Debug)]
 pub enum HandshakeError {
     #[error("cryptography error during {cause}: {}", source.to_string())]
@@ -48,6 +49,7 @@ impl CryptoError {
     }
 }
 
+#[cfg(any(feature = "client", feature = "full_software", feature = "full_hardware"))]
 impl HandshakeError {
     #[inline]
     pub fn handshake_crypto_error(cause: &str, source: CryptoError) -> Self {

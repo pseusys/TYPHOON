@@ -286,6 +286,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         self.route_outgoing(full_packet).await
     }
 
+    #[cfg(feature = "client")]
     async fn receive_packet(&self) -> Result<DynamicByteBuffer, SessionControllerError> {
         // Not used directly — the Listener drives incoming packet processing.
         Err(SessionControllerError::HealthProviderDied)
