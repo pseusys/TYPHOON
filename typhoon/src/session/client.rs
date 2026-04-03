@@ -123,11 +123,20 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
 
     async fn receive_packet(&self) -> Result<DynamicByteBuffer, SessionControllerError> {
         loop {
-            // Allocate a fresh buffer each iteration: the decrypted payload view shares backing
-            // memory with recv_buf, so reusing it across iterations would corrupt payloads that
-            // have already been queued in the channel but not yet consumed.
-            let recv_buf = self.settings.pool().allocate_for_recv();
-            let packet = self.select_flow().receive_packet(recv_buf).await.map_err(SessionControllerError::FlowError)?;
+            // Poll all flows concurrently so responses arriving on any flow are received.
+            // For a single flow the fast path avoids the allocation overhead of select_all.
+            let packet = if self.flows.len() == 1 {
+                let recv_buf = self.settings.pool().allocate_for_recv();
+                self.flows[0].receive_packet(recv_buf).await.map_err(SessionControllerError::FlowError)?
+            } else {
+                let futs: Vec<_> = self.flows.iter()
+                    .map(|flow| {
+                        let buf = self.settings.pool().allocate_for_recv();
+                        Box::pin(flow.receive_packet(buf))
+                    })
+                    .collect();
+                futures::future::select_all(futs).await.0.map_err(SessionControllerError::FlowError)?
+            };
 
             // The flow manager returns: encrypted_payload || plaintext_tailor (full TAILOR_LENGTH + T::length() bytes).
             let (payload_part, tailor_part) = packet.split_buf(packet.len() - T::length() - TAILOR_LENGTH);
