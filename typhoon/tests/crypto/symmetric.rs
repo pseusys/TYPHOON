@@ -33,8 +33,8 @@ fn test_anonymous_encrypt_decrypt_cycle() {
     let plaintext_data = b"Anonymous encryption test";
     let mut plaintext = TEST_POOL.allocate_precise_from_slice_with_capacity(plaintext_data, 0, ANONYMOUS_NONCE_LEN);
 
-    let mut ciphertext = encrypt_anonymously(&key, &mut plaintext);
-    let decrypted = decrypt_anonymously(&key, &mut ciphertext);
+    let mut ciphertext = encrypt_anonymously(key.slice(), &mut plaintext);
+    let decrypted = decrypt_anonymously(key.slice(), &mut ciphertext);
 
     assert_eq!(decrypted.slice(), plaintext_data.as_slice(), "decrypted text should match original");
 }
@@ -60,7 +60,7 @@ fn test_symmetric_encrypt_decrypt_cycle() {
 fn test_symmetric_encrypt_decrypt_auth_cycle() {
     let key = make_key();
     let second_key = make_different_key();
-    let mut cipher = Symmetric::new_split(key, second_key);
+    let mut cipher = Symmetric::new_split(&key, &second_key);
 
     let plaintext_data = b"Authenticated obfuscation message";
     let plaintext = TEST_POOL.allocate_precise_from_slice_with_capacity(plaintext_data, 0, ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN);
@@ -85,8 +85,8 @@ fn test_anonymous_decrypt_wrong_key_produces_garbage() {
     let plaintext_data = b"Anonymous wrong key test";
     let mut plaintext = TEST_POOL.allocate_precise_from_slice_with_capacity(plaintext_data, 0, ANONYMOUS_NONCE_LEN);
 
-    let mut ciphertext = encrypt_anonymously(&key, &mut plaintext);
-    let decrypted = decrypt_anonymously(&wrong_key, &mut ciphertext);
+    let mut ciphertext = encrypt_anonymously(key.slice(), &mut plaintext);
+    let decrypted = decrypt_anonymously(wrong_key.slice(), &mut ciphertext);
 
     assert_ne!(decrypted.slice(), plaintext_data.as_slice(), "wrong key should not produce original plaintext");
 }

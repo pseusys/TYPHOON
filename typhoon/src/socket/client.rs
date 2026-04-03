@@ -79,7 +79,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
             }
         }
 
-        let identity_bytes = T::from_bytes(&self.initial_data_generator.version(T::length()));
+        let identity_bytes = T::from_bytes(self.initial_data_generator.version(T::length()).slice());
         let static_key = get_rng().random_byte_buffer::<KEY_LENGTH>();
         let cipher = SharedValue::new(ClientCryptoTool::new(self.certificate.clone(), identity_bytes, &static_key));
 

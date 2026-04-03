@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use x25519_dalek::PublicKey as X25519PublicKey;
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, DynamicByteBuffer, StaticByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, DynamicByteBuffer, FixedByteBuffer};
 use crate::cache::CachedMap;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::certificate::ServerSecret;
@@ -14,8 +14,8 @@ use crate::crypto::error::CryptoError;
 /// Ephemeral server handshake state: client X25519 public key, McEliece shared secret, nonce.
 pub(crate) struct ServerData {
     pub ephemeral_key: X25519PublicKey,
-    pub shared_secret: StaticByteBuffer,
-    pub nonce: StaticByteBuffer,
+    pub shared_secret: FixedByteBuffer<32>,
+    pub nonce: FixedByteBuffer<32>,
 }
 use crate::crypto::symmetric::{NONCE_LEN, ObfuscationTranscript, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
 use crate::settings::consts::{ID_OFFSET, TAILOR_LENGTH};
@@ -32,16 +32,16 @@ pub struct UserCryptoState {
 impl UserCryptoState {
     /// Create a new user crypto state from key material (fast mode).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn new(session_key: &StaticByteBuffer, obfuscation_buffer: StaticByteBuffer) -> Self {
+    pub fn new(session_key: &impl ByteBuffer, obfuscation_buffer: impl ByteBuffer) -> Self {
         Self {
             key: Symmetric::new(session_key),
-            obfuscation_key: Symmetric::new_split(obfuscation_buffer, session_key.clone()),
+            obfuscation_key: Symmetric::new_split(&obfuscation_buffer, session_key),
         }
     }
 
     /// Create a new user crypto state from key material (full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn new(session_key: &StaticByteBuffer) -> Self {
+    pub fn new(session_key: &impl ByteBuffer) -> Self {
         Self {
             key: Symmetric::new(session_key),
         }
@@ -83,14 +83,14 @@ impl UserServerState {
     /// Replace the user's crypto state with one derived from the session key.
     /// Used after handshake to upgrade from initial key to session key.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn upgrade_crypto(&mut self, session_key: &StaticByteBuffer, obfuscation_buffer: StaticByteBuffer) {
+    pub fn upgrade_crypto(&mut self, session_key: &impl ByteBuffer, obfuscation_buffer: impl ByteBuffer) {
         self.crypto = UserCryptoState::new(session_key, obfuscation_buffer);
     }
 
     /// Replace the user's crypto state with one derived from the session key.
     /// Used after handshake to upgrade from initial key to session key.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn upgrade_crypto(&mut self, session_key: &StaticByteBuffer) {
+    pub fn upgrade_crypto(&mut self, session_key: &impl ByteBuffer) {
         self.crypto = UserCryptoState::new(session_key);
     }
 }
@@ -109,10 +109,10 @@ pub struct ServerCryptoTool<T: IdentityType + Clone + Eq + Hash + Send + ToStrin
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> {
     /// Create a new server crypto tool (fast mode).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn new(users: CachedMap<T, UserServerState>, obfs_buffer: StaticByteBuffer) -> Self {
+    pub fn new(users: CachedMap<T, UserServerState>, obfs_buffer: impl ByteBuffer) -> Self {
         Self {
             users,
-            shared_obfs_decryptor: Symmetric::new_split(obfs_buffer.clone(), obfs_buffer),
+            shared_obfs_decryptor: Symmetric::new_split(&obfs_buffer, &obfs_buffer),
         }
     }
 
@@ -151,7 +151,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
     pub async fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, _: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
         let identity = Self::extract_identity(&plaintext);
         let user = self.users.get_mut(&identity).await.map_err(|e| CryptoError::authentication_error(&e.to_string()))?;
-        user.crypto.obfuscation_key.encrypt_auth(plaintext, None::<&StaticByteBuffer>)
+        user.crypto.obfuscation_key.encrypt_auth(plaintext, None::<&DynamicByteBuffer>)
     }
 
     /// Obfuscate tailor for sending to a specific user (full mode: encrypt with session key).
@@ -159,7 +159,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
     pub async fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, _: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
         let identity = Self::extract_identity(&plaintext);
         let user = self.users.get_mut(&identity).await.map_err(|e| CryptoError::authentication_error(&e.to_string()))?;
-        user.crypto.key.encrypt_auth(plaintext, None::<&StaticByteBuffer>)
+        user.crypto.key.encrypt_auth(plaintext, None::<&DynamicByteBuffer>)
     }
 
     /// Deobfuscate received tailor (fast mode: decrypt with shared OBFS key, defer verification).
@@ -178,7 +178,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub async fn verify_tailor(&mut self, identity: &T, transcript: ObfuscationTranscript) -> Result<(), CryptoError> {
         let user = self.users.get_mut(identity).await.map_err(|e| CryptoError::authentication_error(&e.to_string()))?;
-        user.crypto.obfuscation_key.verify_decrypted(transcript, None::<&StaticByteBuffer>)
+        user.crypto.obfuscation_key.verify_decrypted(transcript, None::<&DynamicByteBuffer>)
     }
 
     /// Verify tailor authentication (full mode: no-op).

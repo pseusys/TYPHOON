@@ -5,7 +5,7 @@ use ed25519_dalek::{SecretKey as X25519SecretKey, SigningKey, VerifyingKey};
 use lazy_static::lazy_static;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, StaticByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, FixedByteBuffer, StaticByteBuffer};
 #[cfg(feature = "client")]
 use crate::certificate::ClientCertificate;
 #[cfg(feature = "server")]
@@ -17,7 +17,10 @@ use crate::crypto::symmetric::SYMMETRIC_KEY_LENGTH;
 use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
 use crate::utils::random::get_rng;
 
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
 const X25519_KEY_LENGTH: usize = 32;
+
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
 const NONCE_LENGTH: usize = 32;
 
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
@@ -44,8 +47,8 @@ lazy_static! {
 
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 #[inline]
-fn get_obfuscation_key() -> StaticByteBuffer {
-    StaticByteBuffer::from(&[0x55u8; SYMMETRIC_KEY_LENGTH])
+fn get_obfuscation_key() -> FixedByteBuffer<SYMMETRIC_KEY_LENGTH> {
+    FixedByteBuffer::from([0x55u8; SYMMETRIC_KEY_LENGTH])
 }
 
 #[inline]
@@ -58,6 +61,7 @@ fn get_ed25519_keypair() -> (SigningKey, VerifyingKey) {
     (ED25519_KEYPAIR.0.clone(), ED25519_KEYPAIR.1)
 }
 
+#[cfg(all(feature = "client", any(feature = "full_software", feature = "full_hardware")))]
 #[inline]
 fn get_x25519_keypair() -> (StaticSecret, X25519PublicKey) {
     let bytes = *X25519_SECRET_BYTES.lock().unwrap();
@@ -138,7 +142,7 @@ fn test_handshake_cycle() {
     let (server_data, server_initial_key, decrypted_client_initial_data) = server_secret.decapsulate_handshake_server(client_handshake);
 
     assert_eq!(client_data.shared_secret, server_data.shared_secret, "client and server should derive the same shared secret");
-    assert_eq!(client_initial_data.as_slice(), decrypted_client_initial_data.as_slice(), "server should receive the same client initial data");
+    assert_eq!(client_initial_data.as_slice(), decrypted_client_initial_data.slice(), "server should receive the same client initial data");
 
     // Server creates response with server initial data encrypted with initial key.
     let (server_handshake, server_session_key) = server_secret.encapsulate_handshake_server(server_data, &TEST_POOL, server_initial_data, &server_initial_key);
@@ -146,7 +150,7 @@ fn test_handshake_cycle() {
     // Client decapsulates and receives session key + decrypted server initial data.
     let (client_session_key, decrypted_server_initial_data) = certificate.decapsulate_handshake_client(client_data, server_handshake).expect("client handshake decapsulation failed");
 
-    assert_eq!(server_initial_data.as_slice(), decrypted_server_initial_data.as_slice(), "client should receive the same server initial data");
+    assert_eq!(server_initial_data.as_slice(), decrypted_server_initial_data.slice(), "client should receive the same server initial data");
 
     // Verify session keys match by encrypting/decrypting a test message.
     let session_data_data = b"Secret session data message";

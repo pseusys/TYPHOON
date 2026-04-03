@@ -5,7 +5,7 @@ use std::time::Duration;
 use log::debug;
 use rand::Rng;
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, FixedByteBuffer, StaticByteBuffer};
 use crate::cache::SharedValue;
 use crate::crypto::{ClientCryptoTool, ClientData};
 use crate::session::SessionControllerError;
@@ -175,10 +175,10 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
 
     /// Create a handshake packet with encryption: handshake_secret || tailor.
     /// Returns the packet and the initial data encryption key.
-    async fn create_handshake_packet(&mut self, pn: u64, next_in: u32) -> (DynamicByteBuffer, StaticByteBuffer) {
+    async fn create_handshake_packet(&mut self, pn: u64, next_in: u32) -> (DynamicByteBuffer, FixedByteBuffer<32>) {
         let settings = self.settings.clone();
         let initial_data = self.initial_data_generator.initial_data();
-        let (client_data, handshake_secret, initial_key) = self.crypto_tool.get().await.create_handshake(settings.pool(), &initial_data);
+        let (client_data, handshake_secret, initial_key) = self.crypto_tool.get().await.create_handshake(settings.pool(), initial_data.slice());
         self.client_data = Some(client_data);
 
         let identity = self.identity_value().await;
@@ -191,7 +191,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
 
     /// Process the server handshake response and derive the session key.
     /// Returns (session_key, server_initial_data).
-    async fn process_handshake_response(&mut self, handshake_body: DynamicByteBuffer) -> Option<(StaticByteBuffer, Vec<u8>)> {
+    async fn process_handshake_response(&mut self, handshake_body: DynamicByteBuffer) -> Option<(FixedByteBuffer<32>, StaticByteBuffer)> {
         let client_data = self.client_data.take()?;
         match self.crypto_tool.get().await.process_handshake_response(client_data, handshake_body) {
             Ok((session_key, server_initial_data)) => Some((session_key, server_initial_data)),

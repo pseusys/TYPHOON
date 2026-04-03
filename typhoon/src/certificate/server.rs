@@ -11,7 +11,7 @@ use rand::RngCore;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
-use crate::bytes::StaticByteBuffer;
+use crate::bytes::FixedByteBuffer;
 use crate::utils::random::get_rng;
 
 use super::client::ClientCertificate;
@@ -38,20 +38,20 @@ pub(crate) struct ServerSecret<'a> {
 pub(crate) struct ServerSecret<'a> {
     pub esk: SecretKey<'a>,
     pub vsk: SigningKey,
-    pub obfs: StaticByteBuffer,
+    pub obfs: FixedByteBuffer<ED25519_BYTES>,
 }
 
 impl<'a> ObfuscationBufferContainer for ServerSecret<'a> {
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     #[inline]
-    fn obfuscation_buffer(&self) -> StaticByteBuffer {
-        StaticByteBuffer::from(self.opk.as_bytes())
+    fn obfuscation_buffer(&self) -> FixedByteBuffer<ED25519_BYTES> {
+        FixedByteBuffer::from(self.opk.as_bytes())
     }
 
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     #[inline]
-    fn obfuscation_buffer(&self) -> StaticByteBuffer {
-        self.obfs.clone()
+    fn obfuscation_buffer(&self) -> FixedByteBuffer<ED25519_BYTES> {
+        self.obfs
     }
 }
 
@@ -69,7 +69,7 @@ pub struct ServerKeyPair {
     epk: Arc<McEliecePublicKey<'static>>,
     esk: SecretKey<'static>,
     vsk: SigningKey,
-    obfs: StaticByteBuffer,
+    obfs: FixedByteBuffer<ED25519_BYTES>,
 }
 
 /// Full server key material: McEliece + Ed25519 + X25519 obfuscation keys (full mode).
@@ -102,7 +102,7 @@ impl ServerKeyPair {
             epk: Arc::new(pk),
             esk: sk,
             vsk,
-            obfs: StaticByteBuffer::from(obfs_bytes),
+            obfs: FixedByteBuffer::from(obfs_bytes),
         }
     }
 
@@ -225,7 +225,7 @@ impl ServerKeyPair {
             epk: Arc::new(McEliecePublicKey::from(epk_buf)),
             esk: SecretKey::from(esk_buf),
             vsk,
-            obfs: StaticByteBuffer::from(obfs_arr),
+            obfs: FixedByteBuffer::from(obfs_arr),
         })
     }
 

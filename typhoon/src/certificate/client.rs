@@ -10,7 +10,7 @@ use ed25519_dalek::VerifyingKey;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use x25519_dalek::PublicKey as X25519PublicKey;
 
-use crate::bytes::StaticByteBuffer;
+use crate::bytes::FixedByteBuffer;
 
 use super::utils::{
     CertificateError, ED25519_BYTES, EPK_BYTES, ObfuscationBufferContainer, TYPE_CLIENT,
@@ -30,7 +30,7 @@ use super::utils::X25519_BYTES;
 pub struct ClientCertificate {
     pub(crate) epk: Arc<McEliecePublicKey<'static>>,
     pub(crate) vpk: VerifyingKey,
-    pub(crate) obfs: StaticByteBuffer,
+    pub(crate) obfs: FixedByteBuffer<ED25519_BYTES>,
     pub(crate) addresses: Vec<SocketAddr>,
 }
 
@@ -115,7 +115,7 @@ impl ClientCertificate {
         Ok(Self {
             epk: Arc::new(McEliecePublicKey::from(epk_buf)),
             vpk,
-            obfs: StaticByteBuffer::from(obfs_arr),
+            obfs: FixedByteBuffer::from(obfs_arr),
             addresses,
         })
     }
@@ -147,14 +147,14 @@ impl ClientCertificate {
 impl ObfuscationBufferContainer for ClientCertificate {
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     #[inline]
-    fn obfuscation_buffer(&self) -> StaticByteBuffer {
-        StaticByteBuffer::from(self.opk.as_bytes())
+    fn obfuscation_buffer(&self) -> FixedByteBuffer<ED25519_BYTES> {
+        FixedByteBuffer::from(self.opk.as_bytes())
     }
 
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     #[inline]
-    fn obfuscation_buffer(&self) -> StaticByteBuffer {
-        self.obfs.clone()
+    fn obfuscation_buffer(&self) -> FixedByteBuffer<ED25519_BYTES> {
+        self.obfs
     }
 }
 

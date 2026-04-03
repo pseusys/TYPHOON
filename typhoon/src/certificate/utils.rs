@@ -5,7 +5,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use classic_mceliece_rust::{CRYPTO_PUBLICKEYBYTES, CRYPTO_SECRETKEYBYTES};
 
-use crate::bytes::StaticByteBuffer;
+use crate::bytes::FixedByteBuffer;
 
 // ── Stable format constants ──────────────────────────────────────────────────
 
@@ -136,5 +136,5 @@ pub(crate) fn read_addresses(r: &mut impl Read) -> Result<Vec<SocketAddr>, Certi
 /// Trait for types containing obfuscation key material.
 pub(crate) trait ObfuscationBufferContainer {
     /// Get obfuscation buffer (OBFS in fast mode, OPK bytes in full mode).
-    fn obfuscation_buffer(&self) -> StaticByteBuffer;
+    fn obfuscation_buffer(&self) -> FixedByteBuffer<ED25519_BYTES>;
 }

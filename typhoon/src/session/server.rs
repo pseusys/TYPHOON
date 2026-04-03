@@ -1,13 +1,12 @@
 /// Server-side session manager implementation.
 use std::future::Future;
 use std::hash::Hash;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak as StdWeak};
 
 use log::{debug, trace};
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, FixedByteBuffer};
 use crate::cache::{CachedMapEntryTemplate, SharedMap};
 use crate::crypto::ServerData;
 use crate::crypto::{UserCryptoState, UserServerState};
@@ -21,9 +20,9 @@ use crate::utils::sync::{AsyncExecutor, NotifyQueueSender};
 use crate::utils::time::unix_timestamp_ms;
 
 /// Trait for routing outgoing packets from a session back to the network.
-/// Implemented by the Listener, stored as `Weak<dyn OutgoingRouter<T>>` in each session.
-pub(crate) trait OutgoingRouter<T>: Send + Sync {
-    fn route_packet<'a>(&'a self, packet: DynamicByteBuffer, identity: &'a T) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+/// Implemented by the Listener, stored as `Weak<R>` in each session.
+pub trait OutgoingRouter<T>: Send + Sync {
+    fn route_packet<'a>(&'a self, packet: DynamicByteBuffer, identity: &'a T) -> impl Future<Output = bool> + Send + 'a;
 }
 
 /// Incoming packet for the server session manager: body + tailor view.
@@ -33,7 +32,7 @@ pub struct IncomingPacket<T: IdentityType> {
 }
 
 /// Server-side session manager for a single client connection.
-pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> {
+pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, R: OutgoingRouter<T> + 'static> {
     /// Sync template — used per-call to create a local cache entry; no Mutex needed.
     crypto_send: CachedMapEntryTemplate<T, UserServerState>,
     /// Sync template — used per-call to create a local cache entry; no Mutex needed.
@@ -43,11 +42,11 @@ pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToS
     active_flows: AtomicBitSet,
     incremental_counter: AtomicU32,
     incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
-    router: StdWeak<dyn OutgoingRouter<T>>,
+    router: StdWeak<R>,
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> ServerSessionManager<T, AE> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> ServerSessionManager<T, AE, R> {
     /// Create a server session manager from pre-decapsulated handshake data.
     ///
     /// The caller is responsible for decapsulating the client handshake (via `decapsulate_handshake_server`)
@@ -59,17 +58,17 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub async fn from_handshake(
         server_data: ServerData,
-        initial_key: StaticByteBuffer,
+        initial_key: FixedByteBuffer<32>,
         server_initial_data: &[u8],
         handshake_tailor: Tailor<T>,
         identity: T,
         secret: &crate::certificate::ServerSecret<'_>,
         users: &mut SharedMap<T, UserServerState>,
         incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
-        router: StdWeak<dyn OutgoingRouter<T>>,
+        router: StdWeak<R>,
         num_flows: usize,
         settings: Arc<Settings<AE>>,
-    ) -> Result<(Arc<Self>, DynamicByteBuffer, StaticByteBuffer), SessionControllerError> {
+    ) -> Result<(Arc<Self>, DynamicByteBuffer, FixedByteBuffer<32>), SessionControllerError> {
         use crate::certificate::ObfuscationBufferContainer;
 
         let pool = settings.pool();
@@ -123,17 +122,17 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub async fn from_handshake(
         server_data: ServerData,
-        initial_key: StaticByteBuffer,
+        initial_key: FixedByteBuffer<32>,
         server_initial_data: &[u8],
         handshake_tailor: Tailor<T>,
         identity: T,
         secret: &crate::certificate::ServerSecret<'_>,
         users: &mut SharedMap<T, UserServerState>,
         incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
-        router: StdWeak<dyn OutgoingRouter<T>>,
+        router: StdWeak<R>,
         num_flows: usize,
         settings: Arc<Settings<AE>>,
-    ) -> Result<(Arc<Self>, DynamicByteBuffer, StaticByteBuffer), SessionControllerError> {
+    ) -> Result<(Arc<Self>, DynamicByteBuffer, FixedByteBuffer<32>), SessionControllerError> {
         let pool = settings.pool();
 
         // Generate server handshake response (with encrypted server initial data) and derive session key.
@@ -274,7 +273,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     }
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> SessionManager for ServerSessionManager<T, AE> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> SessionManager for ServerSessionManager<T, AE, R> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), SessionControllerError> {
         trace!("server session: send_packet {} bytes (generated={})", packet.len(), generated);
         let full_packet = if generated {
@@ -307,7 +306,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     }
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> Drop for ServerSessionManager<T, AE> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> Drop for ServerSessionManager<T, AE, R> {
     fn drop(&mut self) {
         let identity = self.identity.clone();
         let packet_number = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);

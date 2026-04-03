@@ -6,7 +6,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
 use crate::settings::consts::{CD_OFFSET, FG_OFFSET, ID_OFFSET, PL_OFFSET, PN_OFFSET, TAILOR_LENGTH, TM_OFFSET};
 use crate::tailor::flags::{PacketFlags, ReturnCode};
 
@@ -28,7 +28,7 @@ pub trait ServerConnectionHandler<T: IdentityType>: Send + Sync {
     fn generate(&self, initial_data: &[u8]) -> T;
 
     /// Produce initial data to include in the server handshake response for the given identity.
-    fn initial_data(&self, identity: &T) -> Vec<u8>;
+    fn initial_data(&self, identity: &T) -> StaticByteBuffer;
 
     /// Check whether the client version (from the handshake tailor ID field) is compatible.
     /// Returns `true` if the handshake should proceed, `false` if it should be rejected.
@@ -39,10 +39,10 @@ pub trait ServerConnectionHandler<T: IdentityType>: Send + Sync {
 /// Client-side connection handler: produces client initial data and the version bytes for the handshake.
 pub trait ClientConnectionHandler: Send + Sync {
     /// Produce initial data to include in the client handshake.
-    fn initial_data(&self) -> Vec<u8>;
+    fn initial_data(&self) -> StaticByteBuffer;
 
     /// Produce the version bytes to place in the handshake tailor ID field, clamped to `length` bytes.
-    fn version(&self, length: usize) -> Vec<u8>;
+    fn version(&self, length: usize) -> StaticByteBuffer;
 }
 
 /// Tailor view (16 + TYPHOON_ID_LENGTH bytes total).

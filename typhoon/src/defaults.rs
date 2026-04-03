@@ -107,11 +107,11 @@ pub struct DefaultServerConnectionHandler;
 
 impl ServerConnectionHandler<StaticByteBuffer> for DefaultServerConnectionHandler {
     fn generate(&self, _initial_data: &[u8]) -> StaticByteBuffer {
-        get_rng().random_byte_buffer::<DEFAULT_TYPHOON_ID_LENGTH>()
+        StaticByteBuffer::from_slice(get_rng().random_byte_buffer::<DEFAULT_TYPHOON_ID_LENGTH>().slice())
     }
 
-    fn initial_data(&self, _identity: &StaticByteBuffer) -> Vec<u8> {
-        Vec::new()
+    fn initial_data(&self, _identity: &StaticByteBuffer) -> StaticByteBuffer {
+        StaticByteBuffer::from_slice(&[])
     }
 
     fn verify_version(&self, version_bytes: &[u8]) -> bool {
@@ -140,15 +140,15 @@ impl ServerConnectionHandler<StaticByteBuffer> for DefaultServerConnectionHandle
 pub struct DefaultClientConnectionHandler;
 
 impl ClientConnectionHandler for DefaultClientConnectionHandler {
-    fn initial_data(&self) -> Vec<u8> {
-        Vec::new()
+    fn initial_data(&self) -> StaticByteBuffer {
+        StaticByteBuffer::from_slice(&[])
     }
 
-    fn version(&self, length: usize) -> Vec<u8> {
+    fn version(&self, length: usize) -> StaticByteBuffer {
         let ver = env!("CARGO_PKG_VERSION").as_bytes();
         let mut buf = vec![0u8; length];
         let copy_len = ver.len().min(length);
         buf[..copy_len].copy_from_slice(&ver[..copy_len]);
-        buf
+        StaticByteBuffer::from_slice(&buf)
     }
 }

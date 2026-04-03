@@ -9,7 +9,6 @@ use crate::utils::random::get_rng;
 use crate::utils::sync::RwLock;
 
 pub(crate) type SharedState<T> = RwLock<Versioned<T>>;
-pub(crate) type ValueMapper<T> = Arc<dyn Fn(&T, Option<&T>) -> T + Send + Sync>;
 
 /// Change once this is implemented: https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html
 pub struct SharedValue<T: Clone + Send> {
@@ -72,12 +71,8 @@ impl<T: Clone + Send> SharedValue<T> {
     }
 
     pub async fn create_cache(&self) -> CachedValue<T> {
-        self.create_cache_with(|source, _| source.clone()).await
-    }
-
-    pub async fn create_cache_with<F: Fn(&T, Option<&T>) -> T + Send + Sync + 'static>(&self, mapper: F) -> CachedValue<T> {
         let guard = self.state.read().await;
-        let value = mapper(&guard.value, None);
+        let value = guard.value.clone();
         let version = guard.version;
         drop(guard);
 
@@ -85,7 +80,6 @@ impl<T: Clone + Send> SharedValue<T> {
             source: Arc::downgrade(&self.state),
             local: value,
             version,
-            mapper: Some(Arc::new(mapper)),
             _not_sync: PhantomData,
         }
     }
@@ -96,24 +90,16 @@ pub struct CachedValue<T: Clone + Send> {
     source: Weak<SharedState<T>>,
     local: T,
     version: u64,
-    mapper: Option<ValueMapper<T>>,
     _not_sync: PhantomData<UnsafeCell<()>>,
 }
 
 impl<T: Clone + Send> CachedValue<T> {
-    fn map_value(&self, source: &T, old: Option<&T>) -> T {
-        match &self.mapper {
-            Some(mapper) => mapper(source, old),
-            None => source.clone(),
-        }
-    }
-
     pub async fn get_mut(&mut self) -> Result<&mut T, CacheError> {
         let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
         let guard = source.read().await;
 
         if guard.version != self.version {
-            self.local = self.map_value(&guard.value, Some(&self.local));
+            self.local = guard.value.clone();
             self.version = guard.version;
         }
 
@@ -127,7 +113,7 @@ impl<T: Clone + Send> CachedValue<T> {
     pub async fn create_sibling(&self) -> Result<CachedValue<T>, CacheError> {
         let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
         let guard = source.read().await;
-        let value = self.map_value(&guard.value, None);
+        let value = guard.value.clone();
         let version = guard.version;
         drop(guard);
 
@@ -135,23 +121,6 @@ impl<T: Clone + Send> CachedValue<T> {
             source: self.source.clone(),
             local: value,
             version,
-            mapper: self.mapper.clone(),
-            _not_sync: PhantomData,
-        })
-    }
-
-    pub async fn create_sibling_with<F: Fn(&T, Option<&T>) -> T + Send + Sync + 'static>(&self, mapper: F) -> Result<CachedValue<T>, CacheError> {
-        let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
-        let guard = source.read().await;
-        let value = mapper(&guard.value, None);
-        let version = guard.version;
-        drop(guard);
-
-        Ok(CachedValue {
-            source: self.source.clone(),
-            local: value,
-            version,
-            mapper: Some(Arc::new(mapper)),
             _not_sync: PhantomData,
         })
     }

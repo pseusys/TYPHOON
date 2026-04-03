@@ -1,14 +1,14 @@
 use rand::rngs::OsRng;
 use rand::{CryptoRng, Rng};
 
-use crate::bytes::StaticByteBuffer;
+use crate::bytes::FixedByteBuffer;
 
 pub trait SupportRng {
     fn random_byte_array<const T: usize>(&mut self) -> [u8; T];
 
-    fn random_byte_buffer<const T: usize>(&mut self) -> StaticByteBuffer;
+    fn random_byte_buffer<const T: usize>(&mut self) -> FixedByteBuffer<T>;
 
-    fn random_item<'a, T>(&mut self, vector: &'a Vec<T>) -> Option<&'a T>;
+    fn random_item<'a, T>(&mut self, slice: &'a [T]) -> Option<&'a T>;
 }
 
 impl SupportRng for OsRng {
@@ -18,15 +18,15 @@ impl SupportRng for OsRng {
         empty_buffer
     }
 
-    fn random_byte_buffer<const T: usize>(&mut self) -> StaticByteBuffer {
-        StaticByteBuffer::from_slice(self.random_byte_array::<T>().as_slice())
+    fn random_byte_buffer<const T: usize>(&mut self) -> FixedByteBuffer<T> {
+        FixedByteBuffer::from_array(self.random_byte_array::<T>())
     }
 
-    fn random_item<'a, T>(&mut self, vector: &'a Vec<T>) -> Option<&'a T> {
-        if vector.is_empty() {
+    fn random_item<'a, T>(&mut self, slice: &'a [T]) -> Option<&'a T> {
+        if slice.is_empty() {
             None
         } else {
-            Some(&vector[self.gen_range(0..vector.len())])
+            Some(&slice[self.gen_range(0..slice.len())])
         }
     }
 }

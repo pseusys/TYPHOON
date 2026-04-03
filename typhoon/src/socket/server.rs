@@ -1,7 +1,5 @@
 use std::collections::HashMap;
-use std::future::Future;
 use std::hash::Hash;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use crossbeam::queue::SegQueue;
@@ -212,14 +210,14 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 /// Server-side listener that manages flow managers and client sessions.
 pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: ServerConnectionHandler<T> + 'static> {
     flows: Vec<Arc<ServerFlowManager<T, AE, DP>>>,
-    sessions: RwLock<HashMap<T, Arc<ServerSessionManager<T, AE>>>>,
+    sessions: RwLock<HashMap<T, Arc<ServerSessionManager<T, AE, Listener<T, AE, DP, IG>>>>>,
     users: Mutex<SharedMap<T, UserServerState>>,
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     secret: ServerSecret<'static>,
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     secret: Arc<ServerSecret<'static>>,
     identity_generator: IG,
-    accept_queue: SegQueue<ClientHandle<T, AE>>,
+    accept_queue: SegQueue<ClientHandle<T, AE, Listener<T, AE, DP, IG>>>,
     accept_signal_tx: WatchSender<()>,
     accept_signal_rx: Mutex<WatchReceiver<()>>,
     /// Maximum user-data bytes per packet so the wire packet fits within MTU.
@@ -346,15 +344,14 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         }
 
         // Generate identity from decrypted client initial data and produce server initial data.
-        let identity = self.identity_generator.generate(&client_initial_data);
+        let identity = self.identity_generator.generate(client_initial_data.slice());
         let server_initial_data = self.identity_generator.initial_data(&identity);
 
         // Incoming data queue: session pushes decrypted packets, ClientHandle pops.
         let (incoming_tx, incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
 
-        // Create Weak<dyn OutgoingRouter<T>> for the session to send packets back.
-        let self_dyn: Arc<dyn OutgoingRouter<T>> = Arc::clone(self) as Arc<dyn OutgoingRouter<T>>;
-        let router_weak = Arc::downgrade(&self_dyn);
+        // Create Weak<Listener<...>> for the session to send packets back.
+        let router_weak = Arc::downgrade(self);
 
         // Create session manager from pre-decapsulated handshake data.
         // User is initially registered with the initial key so the handshake response
@@ -364,7 +361,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             match ServerSessionManager::from_handshake(
                 server_data,
                 initial_key,
-                &server_initial_data,
+                server_initial_data.slice(),
                 raw_packet.tailor,
                 identity.clone(),
                 &self.secret,
@@ -441,7 +438,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 
     /// Wait for the next client connection and return a handle to it.
-    pub async fn accept(&self) -> Result<ClientHandle<T, AE>, ServerSocketError> {
+    pub async fn accept(&self) -> Result<ClientHandle<T, AE, Listener<T, AE, DP, IG>>, ServerSocketError> {
         loop {
             if let Some(handle) = self.accept_queue.pop() {
                 return Ok(handle);
@@ -457,36 +454,32 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
 /// OutgoingRouter implementation: selects an active flow via the per-session bitmask and sends the packet.
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: ServerConnectionHandler<T> + 'static> OutgoingRouter<T> for Listener<T, AE, DP, IG> {
-    fn route_packet<'a>(&'a self, packet: DynamicByteBuffer, identity: &'a T) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
-        Box::pin(async move {
-            let session = {
-                let sessions = self.sessions.read().await;
-                sessions.get(identity).cloned()
-            };
-            let Some(session) = session else { return false; };
-            let flow_idx = session.select_active_flow(self.flows.len());
-            if flow_idx < self.flows.len() {
-                self.flows[flow_idx].send_packet(packet, false).await.is_ok()
-            } else {
-                false
-            }
-        })
+    async fn route_packet(&self, packet: DynamicByteBuffer, identity: &T) -> bool {
+        let session = {
+            let sessions = self.sessions.read().await;
+            sessions.get(identity).cloned()
+        };
+        let Some(session) = session else { return false; };
+        let flow_idx = session.select_active_flow(self.flows.len());
+        if flow_idx < self.flows.len() {
+            self.flows[flow_idx].send_packet(packet, false).await.is_ok()
+        } else {
+            false
+        }
     }
 }
 
 /// Handle to a connected client, providing send/receive operations.
 /// Not cloneable — only one handle per connection.
-/// Handle to a connected client, providing send/receive operations.
-/// Not cloneable — only one handle per connection.
-pub struct ClientHandle<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> {
-    session: Arc<ServerSessionManager<T, AE>>,
+pub struct ClientHandle<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, R: OutgoingRouter<T> + 'static> {
+    session: Arc<ServerSessionManager<T, AE, R>>,
     incoming_rx: Mutex<NotifyQueueReceiver<DynamicByteBuffer>>,
     /// Maximum user-data bytes per packet so the wire packet fits within MTU.
     max_data_payload: usize,
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> ClientHandle<T, AE> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> ClientHandle<T, AE, R> {
     /// Send a packet using a pre-allocated buffer.
     pub async fn send(&self, packet: DynamicByteBuffer) -> Result<(), ServerSocketError> {
         trace!("ClientHandle::send {} bytes", packet.len());

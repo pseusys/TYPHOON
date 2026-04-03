@@ -99,12 +99,12 @@ pub struct DebugResult {
 pub struct DebugClientConnectionHandler;
 
 impl ClientConnectionHandler for DebugClientConnectionHandler {
-    fn initial_data(&self) -> Vec<u8> {
-        Vec::new()
+    fn initial_data(&self) -> StaticByteBuffer {
+        StaticByteBuffer::from_slice(&[])
     }
 
-    fn version(&self, length: usize) -> Vec<u8> {
-        vec![0u8; length]
+    fn version(&self, length: usize) -> StaticByteBuffer {
+        StaticByteBuffer::empty(length)
     }
 }
 
@@ -120,13 +120,14 @@ pub struct DebugServerConnectionHandler;
 #[cfg(feature = "server")]
 impl crate::tailor::ServerConnectionHandler<StaticByteBuffer> for DebugServerConnectionHandler {
     fn generate(&self, _initial_data: &[u8]) -> StaticByteBuffer {
+        use crate::bytes::ByteBuffer;
         use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
         use crate::utils::random::{SupportRng, get_rng};
-        get_rng().random_byte_buffer::<DEFAULT_TYPHOON_ID_LENGTH>()
+        StaticByteBuffer::from_slice(get_rng().random_byte_buffer::<DEFAULT_TYPHOON_ID_LENGTH>().slice())
     }
 
-    fn initial_data(&self, _identity: &StaticByteBuffer) -> Vec<u8> {
-        Vec::new()
+    fn initial_data(&self, _identity: &StaticByteBuffer) -> StaticByteBuffer {
+        StaticByteBuffer::from_slice(&[])
     }
 
     fn verify_version(&self, _version_bytes: &[u8]) -> bool {
