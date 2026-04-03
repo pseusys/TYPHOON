@@ -2,6 +2,7 @@ use std::io::Error as IoError;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use cfg_if::cfg_if;
+use log::{debug, trace};
 use thiserror::Error;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
@@ -46,14 +47,8 @@ pub struct Socket {
 impl Socket {
     #[cfg(feature = "tokio")]
     pub async fn new(peer: SocketAddr, local: Option<SocketAddr>) -> Result<Self, SocketError> {
-        let local_addr = match local {
-            Some(res) => res,
-            None => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
-        };
-        let sock = match TokioSocket::bind(local_addr).await {
-            Ok(res) => res,
-            Err(err) => return Err(SocketError::new_socket_error(err)),
-        };
+        let local_addr = local.unwrap_or_else(|| SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)));
+        let sock = TokioSocket::bind(local_addr).await.map_err(SocketError::new_socket_error)?;
         if let Err(err) = sock.connect(peer).await {
             return Err(SocketError::new_socket_error(err));
         }
@@ -64,79 +59,123 @@ impl Socket {
 
     #[cfg(feature = "async-std")]
     pub async fn new(peer: SocketAddr, local: Option<SocketAddr>) -> Result<Self, SocketError> {
-        let local_addr = match local {
-            Some(res) => res,
-            None => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
-        };
-        let sock = match StdUdpSocket::bind(local_addr) {
-            Ok(res) => res,
-            Err(err) => return Err(SocketError::new_socket_error(err)),
-        };
+        let local_addr = local.unwrap_or_else(|| SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)));
+        let sock = StdUdpSocket::bind(local_addr).map_err(SocketError::new_socket_error)?;
         if let Err(err) = sock.connect(peer) {
             return Err(SocketError::new_socket_error(err));
         }
-        match Async::new(sock) {
-            Ok(res) => Ok(Self {
-                sock: res,
-            }),
-            Err(err) => Err(SocketError::new_socket_error(err)),
-        }
+        Ok(Self {
+            sock: Async::new(sock).map_err(SocketError::new_socket_error)?,
+        })
+    }
+
+    /// Bind a socket without connecting (for server use with multiple peers).
+    #[cfg(feature = "tokio")]
+    pub async fn bind(local: SocketAddr) -> Result<Self, SocketError> {
+        let sock = TokioSocket::bind(local).await.map_err(SocketError::new_socket_error)?;
+        Ok(Self { sock })
+    }
+
+    /// Bind a socket without connecting (for server use with multiple peers).
+    #[cfg(feature = "async-std")]
+    pub async fn bind(local: SocketAddr) -> Result<Self, SocketError> {
+        let sock = StdUdpSocket::bind(local).map_err(SocketError::new_socket_error)?;
+        Ok(Self {
+            sock: Async::new(sock).map_err(SocketError::new_socket_error)?,
+        })
     }
 
     /// Send to socket
 
     #[cfg(feature = "tokio")]
     pub async fn send(&self, data: DynamicByteBuffer) -> Result<usize, SocketError> {
-        match self.sock.send(data.slice()).await {
-            Ok(res) => Ok(res),
-            Err(err) => Err(SocketError::new_socket_error(err)),
-        }
+        self.sock.send(data.slice()).await.map_err(SocketError::new_socket_error)
     }
 
     #[cfg(feature = "async-std")]
     pub async fn send(&self, data: DynamicByteBuffer) -> Result<usize, SocketError> {
-        match self.sock.send(data.slice()).await {
-            Ok(res) => Ok(res),
-            Err(err) => Err(SocketError::new_socket_error(err)),
-        }
+        self.sock.send(data.slice()).await.map_err(SocketError::new_socket_error)
     }
 
     /// Receive from socket
 
     #[cfg(feature = "tokio")]
     pub async fn recv(&self, buf: DynamicByteBuffer) -> Result<DynamicByteBuffer, SocketError> {
-        match self.sock.recv(buf.slice_mut()).await {
-            Ok(res) => Ok(buf.rebuffer_end(res)),
-            Err(err) => Err(SocketError::new_socket_error(err)),
-        }
+        let res = self.sock.recv(buf.slice_mut()).await.map_err(SocketError::new_socket_error)?;
+        Ok(buf.rebuffer_end(res))
     }
 
     #[cfg(feature = "async-std")]
     pub async fn recv(&self, buf: DynamicByteBuffer) -> Result<DynamicByteBuffer, SocketError> {
-        match self.sock.recv(buf.slice_mut()).await {
-            Ok(res) => Ok(buf.rebuffer_end(res)),
-            Err(err) => Err(SocketError::new_socket_error(err)),
-        }
+        let res = self.sock.recv(buf.slice_mut()).await.map_err(SocketError::new_socket_error)?;
+        Ok(buf.rebuffer_end(res))
     }
 
-    /// Attempt best effort synchronous send a final message and close the socket
+    /// Send to a specific address (for unconnected sockets).
 
     #[cfg(feature = "tokio")]
-    fn close(self, data: DynamicByteBuffer) -> Result<usize, SocketError> {
-        match self.sock.try_send(data.slice()) {
-            Ok(res) => Ok(res),
-            Err(err) => Err(SocketError::new_socket_error(err)),
+    pub async fn send_to(&self, data: DynamicByteBuffer, target: SocketAddr) -> Result<usize, SocketError> {
+        let len = data.slice().len();
+        match self.sock.send_to(data.slice(), target).await {
+            Ok(sent) => {
+                if sent < len {
+                    debug!("socket: send_to partial write: {} of {} bytes sent to {}", sent, len, target);
+                }
+                trace!("socket: send_to {} bytes to {} → ok ({} sent)", len, target, sent);
+                Ok(sent)
+            }
+            Err(e) => {
+                debug!("socket: send_to {} bytes to {} → error: {}", len, target, e);
+                Err(SocketError::new_socket_error(e))
+            }
         }
     }
 
     #[cfg(feature = "async-std")]
-    fn close(self, data: DynamicByteBuffer) -> Result<usize, SocketError> {
-        match self.sock.into_inner() {
-            Ok(inner_sock) => match inner_sock.send(data.slice()) {
-                Ok(res) => Ok(res),
-                Err(err) => Err(SocketError::new_socket_error(err)),
-            },
-            Err(err) => Err(SocketError::new_socket_error(err)),
+    pub async fn send_to(&self, data: DynamicByteBuffer, target: SocketAddr) -> Result<usize, SocketError> {
+        let len = data.slice().len();
+        match self.sock.send_to(data.slice(), target).await {
+            Ok(sent) => {
+                if sent < len {
+                    debug!("socket: send_to partial write: {} of {} bytes sent to {}", sent, len, target);
+                }
+                trace!("socket: send_to {} bytes to {} → ok ({} sent)", len, target, sent);
+                Ok(sent)
+            }
+            Err(e) => {
+                debug!("socket: send_to {} bytes to {} → error: {}", len, target, e);
+                Err(SocketError::new_socket_error(e))
+            }
+        }
+    }
+
+    /// Receive from any peer, returning the data and source address.
+
+    #[cfg(feature = "tokio")]
+    pub async fn recv_from(&self, buf: DynamicByteBuffer) -> Result<(DynamicByteBuffer, SocketAddr), SocketError> {
+        match self.sock.recv_from(buf.slice_mut()).await {
+            Ok((res, addr)) => {
+                trace!("socket: recv_from {} bytes from {}", res, addr);
+                Ok((buf.rebuffer_end(res), addr))
+            }
+            Err(e) => {
+                debug!("socket: recv_from error: {}", e);
+                Err(SocketError::new_socket_error(e))
+            }
+        }
+    }
+
+    #[cfg(feature = "async-std")]
+    pub async fn recv_from(&self, buf: DynamicByteBuffer) -> Result<(DynamicByteBuffer, SocketAddr), SocketError> {
+        match self.sock.recv_from(buf.slice_mut()).await {
+            Ok((res, addr)) => {
+                trace!("socket: recv_from {} bytes from {}", res, addr);
+                Ok((buf.rebuffer_end(res), addr))
+            }
+            Err(e) => {
+                debug!("socket: recv_from error: {}", e);
+                Err(SocketError::new_socket_error(e))
+            }
         }
     }
 }

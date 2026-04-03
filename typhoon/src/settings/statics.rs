@@ -1,98 +1,7 @@
-use std::collections::HashMap;
-use std::env::var;
-use std::ops::{Add, Index};
-
-use log::warn;
-
-use crate::bytes::BytePool;
-
-/// A typed setting key that carries its value type at compile time.
-/// This ensures type-safe access to settings - you can only get/set
-/// values of the correct type for each key.
-pub struct Key<T> {
-    pub name: &'static str,
-    pub default: T,
-}
-
-impl<T> Key<T> {
-    pub const fn new(name: &'static str, default: T) -> Self {
-        Self {
-            name,
-            default,
-        }
-    }
-}
-
-/// Trait for types that can be stored in Settings.
-/// Provides conversion to/from the internal SettingValue representation.
-pub trait SettingType: Copy {
-    fn from_value(v: SettingValue) -> Self;
-    fn to_value(self) -> SettingValue;
-    fn try_parse(s: &str) -> Option<Self>;
-}
-
-impl SettingType for i64 {
-    #[inline]
-    fn from_value(v: SettingValue) -> Self {
-        match v {
-            SettingValue::Signed(x) => x,
-            _ => unreachable!("expected signed setting"),
-        }
-    }
-
-    #[inline]
-    fn to_value(self) -> SettingValue {
-        SettingValue::Signed(self)
-    }
-
-    #[inline]
-    fn try_parse(s: &str) -> Option<Self> {
-        s.parse().ok()
-    }
-}
-
-impl SettingType for u64 {
-    #[inline]
-    fn from_value(v: SettingValue) -> Self {
-        match v {
-            SettingValue::Unsigned(x) => x,
-            _ => unreachable!("expected unsigned setting"),
-        }
-    }
-
-    #[inline]
-    fn to_value(self) -> SettingValue {
-        SettingValue::Unsigned(self)
-    }
-
-    #[inline]
-    fn try_parse(s: &str) -> Option<Self> {
-        s.parse().ok()
-    }
-}
-
-impl SettingType for f64 {
-    #[inline]
-    fn from_value(v: SettingValue) -> Self {
-        match v {
-            SettingValue::Float(x) => x,
-            _ => unreachable!("expected float setting"),
-        }
-    }
-
-    #[inline]
-    fn to_value(self) -> SettingValue {
-        SettingValue::Float(self)
-    }
-
-    #[inline]
-    fn try_parse(s: &str) -> Option<Self> {
-        s.parse().ok()
-    }
-}
+//! Static setting keys and protocol constants.
 
 pub mod keys {
-    use super::Key;
+    use super::super::override_map::Key;
 
     // RTT settings
     pub const RTT_ALPHA: Key<f64> = Key::new("TYPHOON_RTT_ALPHA", 0.125);
@@ -112,6 +21,7 @@ pub mod keys {
     pub const HEALTH_CHECK_NEXT_IN_MAX: Key<u64> = Key::new("TYPHOON_HEALTH_CHECK_NEXT_IN_MAX", 256000);
     pub const HANDSHAKE_NEXT_IN_FACTOR: Key<f64> = Key::new("TYPHOON_HANDSHAKE_NEXT_IN_FACTOR", 0.02);
     pub const MAX_RETRIES: Key<u64> = Key::new("TYPHOON_MAX_RETRIES", 12);
+    pub const RECEIVE_BUFFER_SIZE: Key<u64> = Key::new("TYPHOON_RECEIVE_BUFFER_SIZE", 512);
 
     // Fake body/header settings
     pub const FAKE_BODY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_BODY_LENGTH_MIN", 0);
@@ -131,7 +41,6 @@ pub mod keys {
     pub const DECOY_REFERENCE_ALPHA: Key<f64> = Key::new("TYPHOON_DECOY_REFERENCE_ALPHA", 0.001);
     pub const DECOY_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_LENGTH_MAX", 1024);
     pub const DECOY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_LENGTH_MIN", 16);
-    pub const DECOY_REFERENCE_BURST_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_REFERENCE_BURST_FACTOR", 3.0);
     pub const DECOY_BASE_RATE_RND: Key<f64> = Key::new("TYPHOON_DECOY_BASE_RATE_RND", 0.25);
 
     // Decoy heavy settings
@@ -195,6 +104,19 @@ pub mod keys {
     // Decoy subheader settings
     pub const DECOY_SUBHEADER_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SUBHEADER_LENGTH_MIN", 4);
     pub const DECOY_SUBHEADER_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SUBHEADER_LENGTH_MAX", 16);
+
+    // Channel capacity settings
+    /// Capacity of the per-flow drain channel (packets buffered between drain task and route task).
+    /// Excess packets are dropped by the drain task to keep the socket buffer empty.
+    pub const DRAIN_CHANNEL_CAPACITY: Key<u64> = Key::new("TYPHOON_DRAIN_CHANNEL_CAPACITY", 512);
+
+    // Debug settings
+    /// Number of probes sent during the throughput phase.
+    pub const DEBUG_PROBE_COUNT: Key<u64> = Key::new("TYPHOON_DEBUG_PROBE_COUNT", 10);
+    /// Payload size in bytes of each throughput probe.
+    pub const DEBUG_PROBE_SIZE: Key<u64> = Key::new("TYPHOON_DEBUG_PROBE_SIZE", 65000);
+    /// Per-probe receive timeout in milliseconds.
+    pub const DEBUG_PROBE_TIMEOUT: Key<u64> = Key::new("TYPHOON_DEBUG_PROBE_TIMEOUT", 5000);
 }
 
 pub mod consts {
@@ -209,137 +131,4 @@ pub mod consts {
     pub const PN_OFFSET: usize = 6;
     pub const PL_OFFSET: usize = 14;
     pub const ID_OFFSET: usize = 16;
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum SettingValue {
-    Signed(i64),
-    Unsigned(u64),
-    Float(f64),
-}
-
-impl Add for SettingValue {
-    type Output = Self;
-
-    #[inline]
-    fn add(self, rhs: Self) -> Self::Output {
-        match (self, rhs) {
-            (SettingValue::Signed(a), SettingValue::Signed(b)) => SettingValue::Signed(a + b),
-            (SettingValue::Unsigned(a), SettingValue::Unsigned(b)) => SettingValue::Unsigned(a + b),
-            (SettingValue::Float(a), SettingValue::Float(b)) => SettingValue::Float(a + b),
-            (SettingValue::Signed(a), SettingValue::Unsigned(b)) => SettingValue::Float(a as f64 + b as f64),
-            (SettingValue::Unsigned(a), SettingValue::Signed(b)) => SettingValue::Float(a as f64 + b as f64),
-            (SettingValue::Signed(a), SettingValue::Float(b)) | (SettingValue::Float(b), SettingValue::Signed(a)) => SettingValue::Float(a as f64 + b),
-            (SettingValue::Unsigned(a), SettingValue::Float(b)) | (SettingValue::Float(b), SettingValue::Unsigned(a)) => SettingValue::Float(a as f64 + b),
-        }
-    }
-}
-
-type OverrideMap = HashMap<&'static str, SettingValue>;
-
-/// Try to read an environment variable and parse it as type T.
-/// Returns None if the variable is not set or cannot be parsed.
-fn try_env_override<T: SettingType>(key: &Key<T>) -> Option<T> {
-    let env_str = var(key.name).ok()?;
-    T::try_parse(&env_str).or_else(|| {
-        warn!("Environment variable '{}' set to '{}' cannot be parsed, using default", key.name, env_str);
-        None
-    })
-}
-
-/// Builder for creating Settings instances with custom overrides.
-#[derive(Default)]
-pub struct SettingsBuilder {
-    overrides: OverrideMap,
-    pool: Option<BytePool>,
-    skip_env: bool,
-}
-
-impl SettingsBuilder {
-    /// Create a new builder that will read environment variables.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Create a builder that ignores environment variables.
-    pub fn without_env(mut self) -> Self {
-        self.skip_env = false;
-        self
-    }
-
-    pub fn with_pool(mut self, pool: BytePool) -> Self {
-        self.pool = Some(pool);
-        self
-    }
-
-    /// Set a typed value for a key.
-    #[inline]
-    pub fn set<T: SettingType>(mut self, key: &Key<T>, value: T) -> Self {
-        self.overrides.insert(key.name, value.to_value());
-        self
-    }
-
-    /// Build the Settings instance.
-    pub fn build(self) -> Settings {
-        Settings {
-            overrides: self.overrides,
-            pool: match self.pool {
-                Some(res) => res,
-                None => {
-                    let capacity = consts::DEFAULT_TYPHOON_MTU_LENGTH / 2;
-                    BytePool::new(capacity, consts::DEFAULT_TYPHOON_MTU_LENGTH, capacity, consts::DEFAULT_POOL_INITIAL_SIZE, consts::DEFAULT_POOL_CAPACITY)
-                }
-            },
-        }
-    }
-}
-
-/// Configuration settings with type-safe access.
-///
-/// Values are resolved in this order:
-/// 1. Explicit overrides set via SettingsBuilder
-/// 2. Environment variables (if not disabled)
-/// 3. Default value from the Key definition
-pub struct Settings {
-    overrides: OverrideMap,
-    pool: BytePool,
-}
-
-impl Settings {
-    /// Get a setting value with compile-time type safety.
-    ///
-    /// Resolution order: override -> environment -> default
-    #[inline]
-    pub fn get<T: SettingType + Copy>(&self, key: &Key<T>) -> T {
-        // Check overrides first
-        if let Some(value) = self.overrides.get(key.name) {
-            return T::from_value(*value);
-        }
-
-        // Check environment variable
-        if let Some(value) = try_env_override(key) {
-            return value;
-        }
-
-        // Return default
-        key.default
-    }
-
-    /// Set a setting value with compile-time type safety.
-    #[inline]
-    pub fn set<T: SettingType>(&mut self, key: &Key<T>, value: T) {
-        self.overrides.insert(key.name, value.to_value());
-    }
-
-    #[inline]
-    pub fn pool(&self) -> &BytePool {
-        &self.pool
-    }
-}
-
-impl Default for Settings {
-    #[inline]
-    fn default() -> Self {
-        SettingsBuilder::new().build()
-    }
 }

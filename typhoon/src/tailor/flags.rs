@@ -60,6 +60,8 @@ impl PacketFlags {
 pub enum ReturnCode {
     /// No error (successful handshake or graceful termination).
     Success = 0,
+    /// Client and server major version numbers are incompatible.
+    VersionMismatch = 1,
     /// Unknown error.
     UnknownError = 101,
 }
@@ -68,6 +70,7 @@ impl From<u8> for ReturnCode {
     fn from(value: u8) -> Self {
         match value {
             0 => ReturnCode::Success,
+            1 => ReturnCode::VersionMismatch,
             _ => ReturnCode::UnknownError,
         }
     }

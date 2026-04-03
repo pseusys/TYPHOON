@@ -1,11 +1,12 @@
-#[cfg(feature = "full")]
+#[cfg(feature = "full_hardware")]
 use aes_gcm::aead::Error as AeadError;
-#[cfg(feature = "fast")]
+#[cfg(feature = "full_software")]
 use chacha20poly1305::aead::Error as AeadError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum CryptoError {
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     #[error("symmetric cryptography error at {specification}: {}", source.to_string())]
     EncryptionError {
         specification: String,
@@ -32,6 +33,7 @@ pub enum HandshakeError {
 }
 
 impl CryptoError {
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     #[inline]
     pub fn encryption_error(specification: &str, source: AeadError) -> Self {
         Self::EncryptionError {

@@ -80,6 +80,15 @@ impl BytePool {
         }
     }
 
+    /// Allocate a buffer sized for receiving raw packets from the network.
+    /// Uses the maximum available active view (size + after_cap) to accommodate
+    /// on-wire packets that are larger than the user-data MTU due to protocol overhead.
+    /// The before_cap headroom is preserved for subsequent send-path expand_start calls.
+    #[inline]
+    pub fn allocate_for_recv(&self) -> DynamicByteBuffer {
+        self.allocate_precise(self.size + self.after_cap, self.before_cap, 0)
+    }
+
     pub fn allocate_precise(&self, size: usize, before_cap: usize, after_cap: usize) -> DynamicByteBuffer {
         let requested_size = before_cap + size + after_cap;
         assert!(requested_size <= self.storage.capacity, "Requested size greater than pool capacity ({requested_size} > {})!", self.storage.capacity);

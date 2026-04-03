@@ -2,10 +2,10 @@
 #[path = "../../tests/bytes/static.rs"]
 mod tests;
 
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::bytes::DynamicByteBuffer;
 use crate::bytes::common::ByteBuffer;
 
 /// Immutable owned byte buffer with Arc-based sharing.
@@ -151,6 +151,24 @@ impl PartialEq for StaticByteBuffer {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.data == other.data
+    }
+}
+
+impl Eq for StaticByteBuffer {}
+
+impl Hash for StaticByteBuffer {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.data.hash(state);
+    }
+}
+
+impl Display for StaticByteBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for byte in self.data.iter() {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
     }
 }
 

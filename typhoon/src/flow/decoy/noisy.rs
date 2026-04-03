@@ -4,28 +4,28 @@ use std::time::Duration;
 
 use log::debug;
 
-use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyState, exponential_variance, random_gauss, random_uniform};
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::flow::common::FlowManager;
+use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyState, exponential_variance, maintenance_timer_task, random_gauss, random_uniform, try_replicate};
 use crate::settings::Settings;
 use crate::settings::keys::*;
-use crate::utils::sync::{RwLock, sleep, spawn};
+use crate::tailor::IdentityType;
+use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
 use crate::utils::time::unix_timestamp_ms;
 
 /// Noisy mode implements sending smaller decoy packets in bursts often.
-pub struct NoisyDecoyProvider<FM: FlowManager> {
+pub struct NoisyDecoyProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + 'static> {
     manager: Weak<FM>,
-    settings: Arc<Settings>,
-    state: Arc<RwLock<DecoyState>>,
+    state: Arc<RwLock<DecoyState<T, AE>>>,
 }
 
-impl<FM: FlowManager> NoisyDecoyProvider<FM> {
-    fn calculate_delay(state: &DecoyState, settings: &Settings) -> u64 {
-        let base_rate_rnd = settings.get(&DECOY_BASE_RATE_RND);
-        let noisy_base_rate = settings.get(&DECOY_NOISY_BASE_RATE);
-        let delay_min = settings.get(&DECOY_NOISY_DELAY_MIN);
-        let delay_max = settings.get(&DECOY_NOISY_DELAY_MAX);
-        let delay_default = settings.get(&DECOY_NOISY_DELAY_DEFAULT);
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync + 'static> NoisyDecoyProvider<T, AE, FM> {
+    fn calculate_delay(state: &DecoyState<T, AE>) -> u64 {
+        let base_rate_rnd = state.settings.get(&DECOY_BASE_RATE_RND);
+        let noisy_base_rate = state.settings.get(&DECOY_NOISY_BASE_RATE);
+        let delay_min = state.settings.get(&DECOY_NOISY_DELAY_MIN);
+        let delay_max = state.settings.get(&DECOY_NOISY_DELAY_MAX);
+        let delay_default = state.settings.get(&DECOY_NOISY_DELAY_DEFAULT);
 
         let base_rate = noisy_base_rate * random_uniform(1.0 - base_rate_rnd, 1.0 + base_rate_rnd);
         let quietness = state.quietness_index();
@@ -40,9 +40,9 @@ impl<FM: FlowManager> NoisyDecoyProvider<FM> {
         (delay as u64).clamp(delay_min, delay_max)
     }
 
-    fn calculate_length(state: &DecoyState, settings: &Settings) -> usize {
-        let length_min = settings.get(&DECOY_NOISY_DECOY_LENGTH_MIN) as usize;
-        let length_jitter = settings.get(&DECOY_NOISY_DECOY_LENGTH_JITTER);
+    fn calculate_length(state: &DecoyState<T, AE>) -> usize {
+        let length_min = state.settings.get(&DECOY_NOISY_DECOY_LENGTH_MIN) as usize;
+        let length_jitter = state.settings.get(&DECOY_NOISY_DECOY_LENGTH_JITTER);
 
         let quietness = state.quietness_index();
         let mean_length = (length_min as f64) + quietness * (-state.packet_rate / state.reference_rate).exp() * ((state.packet_length_cap - length_min) as f64);
@@ -51,7 +51,7 @@ impl<FM: FlowManager> NoisyDecoyProvider<FM> {
         (decoy_length as usize).clamp(length_min, state.packet_length_cap)
     }
 
-    async fn timer_task(manager: Weak<FM>, settings: Arc<Settings>, state: Arc<RwLock<DecoyState>>) {
+    async fn timer_task(manager: Weak<FM>, state: Arc<RwLock<DecoyState<T, AE>>>) {
         loop {
             let delay = {
                 let state_guard = state.read().await;
@@ -66,63 +66,76 @@ impl<FM: FlowManager> NoisyDecoyProvider<FM> {
                 break;
             };
 
-            let decoy_packet = {
+            {
                 let mut state_guard = state.write().await;
                 let decoy_length = state_guard.pending_length;
-                let decoy_packet = state_guard.create_decoy_packet(decoy_length);
 
-                let delay = Self::calculate_delay(&state_guard, &settings);
-                let length = Self::calculate_length(&state_guard, &settings);
+                if state_guard.try_spend_budget(decoy_length) {
+                    let decoy_packet = state_guard.create_decoy_packet(decoy_length, false);
+                    let body_bytes: Vec<u8> = decoy_packet.slice_end(decoy_length).to_vec();
+                    debug!("NoisyDecoyProvider: generated decoy packet (len={})", decoy_length);
+                    drop(state_guard);
+
+                    if let Err(err) = manager_arc.send_packet(decoy_packet, true).await {
+                        debug!("NoisyDecoyProvider: failed to send decoy packet: {:?}", err);
+                    } else {
+                        try_replicate(&state, &manager, false, &body_bytes).await;
+                    }
+                } else {
+                    debug!("NoisyDecoyProvider: insufficient byte budget for {} bytes, skipping", decoy_length);
+                }
+            }
+
+            {
+                let mut state_guard = state.write().await;
+                let delay = Self::calculate_delay(&state_guard);
+                let length = Self::calculate_length(&state_guard);
                 state_guard.schedule_next(delay, length);
-
-                debug!("NoisyDecoyProvider: generated decoy packet (len={}), next in {}ms", decoy_length, delay);
-                decoy_packet
-            };
-
-            if let Err(err) = manager_arc.send_packet(decoy_packet, true).await {
-                debug!("NoisyDecoyProvider: failed to send decoy packet: {:?}", err);
+                debug!("NoisyDecoyProvider: next in {}ms", delay);
             }
         }
     }
 }
 
-impl<FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode for NoisyDecoyProvider<FM> {
-    type FlowManagerT = FM;
-
-    fn new(manager: Weak<Self::FlowManagerT>, settings: Arc<Settings>, tailor: usize) -> Self {
-        let state = DecoyState::new(settings.clone(), tailor);
-        let delay = Self::calculate_delay(&state, &settings);
-        let length = Self::calculate_length(&state, &settings);
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync + 'static> DecoyCommunicationMode<T, AE, FM> for NoisyDecoyProvider<T, AE, FM> {
+    fn new(manager: Weak<FM>, settings: Arc<Settings<AE>>, identity: T) -> Self {
+        let state = DecoyState::new(settings.clone(), identity);
+        let delay = Self::calculate_delay(&state);
+        let length = Self::calculate_length(&state);
         let mut state = state;
         state.schedule_next(delay, length);
 
-        debug!("NoisyDecoyProvider initialized with delay={}ms, length={}", delay, length);
+        debug!("NoisyDecoyProvider initialized with delay ({delay} ms), length ({length} bytes)");
 
         Self {
             manager,
-            settings,
             state: Arc::new(RwLock::new(state)),
         }
     }
 
     async fn start(&mut self) {
+        let executor = {
+            let lock = self.state.read().await;
+            lock.settings.executor().clone()
+        };
+
         let manager = self.manager.clone();
-        let settings = self.settings.clone();
         let state = self.state.clone();
-        spawn(Self::timer_task(manager, settings, state));
-        debug!("NoisyDecoyProvider: background timer started");
+        executor.spawn(Self::timer_task(manager.clone(), state.clone()));
+        executor.spawn(maintenance_timer_task(manager, state));
+        debug!("NoisyDecoyProvider: background timers started");
     }
 
     async fn feed_input(&mut self, packet: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         let mut state = self.state.write().await;
-        state.update(packet.len(), &self.settings);
+        state.update(packet.len());
         Some(packet)
     }
 
     async fn feed_output(&mut self, packet: DynamicByteBuffer, generated: bool) -> Option<DynamicByteBuffer> {
         if !generated {
             let mut state = self.state.write().await;
-            state.update(packet.len(), &self.settings);
+            state.update(packet.len());
         }
         Some(packet)
     }

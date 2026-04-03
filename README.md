@@ -64,7 +64,7 @@ The tailor structure consists of the following fields:
 | **TM** | time | `4` | Delay before the next health check packet (milliseconds), unused for other packets | Packet sending timestamp |
 | **PN** | packet number | `8` | Combined packet number | - |
 | **PL** | payload length | `2` | Length of encrypted packet payload | - |
-| **ID** | identity | constant | Client version in client handshake, client identification number afterwards | - |
+| **ID** | identity | constant | Client [version](#version-checking) in client handshake, client identification number afterwards | - |
 
 > The **ID** field length is controlled by `TYPHOON_ID_LENGTH` constant and specifies the maximum number of simultaneous connections.
 > See [implementation advices](#sockets-and-listeners) for more information on client attribution.
@@ -128,11 +128,12 @@ During packet delivery, a random flow manager picks up the packet, where randomn
 
 On the server side, everything is a little more complex.
 The server keeps a set of clients mapped to their unique identifiers (**ID** tailor field), but it is never notified about client proxy selection.
-Whenever it receives a valid packet from a client, it [updates a set of packet source addresses for the client](#sockets-and-listeners), and whenever it wants to send a packet back, it selects the packet destination address from the set randomly (no weights are involved).
+Each server flow manager independently tracks the last known source address per client: whenever it receives a correctly-authenticated packet from a client, it [updates the stored source address for that client](#identification-and-rebinding).
+When a flow manager wants to send a packet back, it uses the last known source address it has for that client.
 
 Finally, since server IP addresses and port numbers are static, clients can just send packets to it directly.
 But it’s not the same for servers: according to UDP specification, the client IP address and port can change at any time.
-That is why the server flow managers should maintain client number to client address mapping and update it upon receiving every packet (and decrypting its header).
+That is why each server flow manager should maintain its own client-to-address mapping and update it upon receiving every authenticated packet.
 
 ### Data packets
 
@@ -261,7 +262,7 @@ The configuration includes:
 - Communication mode: defines general decoy packet sending behavior, possible values are: `heavy`, `noisy`, `sparse`, `smooth` (and also any other defined by user).
 - Maintenance mode: defines the way how maintenance packets would look like, possible values are: `none`, `random`, `timed`, `sized`, `both`.
 - Replication mode: defines what packets will be duplicated, possible values are: `none`, `maintenance`, `all`.
-- Subheader pattern: defines whether the maintenance packets should have their own fake header, boolean.
+- Subheader pattern: defines whether the decoy packets should have their own fake header, possible values are: `none`, `maintenance`, `all`.
 
 #### Communication mode
 
@@ -285,13 +286,7 @@ They are updated whenever a packet leaves from or arrives to the flow manager, u
   - `byte_rate = (1 - TYPHOON_DECOY_CURRENT_ALPHA) * byte_rate + TYPHOON_DECOY_CURRENT_ALPHA * packet_length`
   - `byte_budget = min(byte_budget + (current_packet_time - previous_packet_time) * TYPHOON_DECOY_BYTE_RATE_CAP, TYPHOON_DECOY_BYTE_RATE_CAP * TYPHOON_DECOY_BYTE_RATE_FACTOR)`
 
-Some other values used in computation are defined once during initialization or derived from the state:
-
-- `packet_length_cap`: maximum allowed length of the decoy packet, capped between `TYPHOON_DECOY_LENGTH_MAX` and `TYPHOON_DECOY_LENGTH_MIN` constants.
-- `quietness_index`: a value used for checking how busy the current traffic situation is, computed as `(reference_rate - packet_rate) / reference_rate`, clamped between `0` and `1`.
-- `burst_factor_threshold`: a packet rate value that is considered to be a traffic burst, computed as `reference_rate * TYPHOON_DECOY_REFERENCE_BURST_FACTOR`.
-
-Every mode defines its own equations for calculation of decoy packet length (`decoy_length`, in bytes), delay before the next decoy packet (`decoy_delay`) and decoy packet skipping probability (`decoy_skip_probability`).
+Every mode defines its own equations for calculation of decoy packet length (`decoy_length`, in bytes) and delay before the next decoy packet (`decoy_delay`).
 By default, communication mode is chosen with equal probability for every option.
 
 A TYPHOON implementation should provide an "interface" for supplying custom decoy communication modes.
@@ -335,7 +330,7 @@ The replication mode can have these values:
 - `maintenance`: Only maintenance packets can be replicated (just like in TYPHOON protocol).
 - `all`: All packets can be replicated.
 
-By default, replication mode is chosen with equal probability for every option except for `all`, which is `TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY` heavier than the others.
+By default, replication mode is chosen with equal probability for every option except for `none`, which is `TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY` heavier than the others.
 
 #### Subheader pattern
 
@@ -429,7 +424,7 @@ Client handshake packet encryption consists of the following steps:
 4. Client obfuscates `CliEphPubKey` and `Ciph` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `CliNnc`), producing `CliEphPubKeyObf` and `CiphObf`.
 5. Client encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with key derived by `BLAKE3` from concatenation of `CliShrSec`, `CliEphPubKeyObf` and `CliNnc`.
 6. Client encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm (NB! Here initial data encryption key is used for additional data instead of session key).
-7. Client constructs the handshake encrypted tailor by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and the encrypted tailor itself, encrypted initial data is passed in the handshake message body.
+7. Client constructs the handshake packet by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and encrypted initial data as the body. The handshake tailor is appended to the body and encrypted by the flow manager, as with all other packets.
 8. The payload is sent to the server inside of a handshake packet.
 
 After the client receives the encrypted handshake message from the server, it decrypts it using the following steps:
@@ -440,7 +435,8 @@ After the client receives the encrypted handshake message from the server, it de
 3. Client builds a transcript by applying `BLAKE3` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
 4. Client verifies server identity using `Ed25519` with `VPK`, applying it to `Trans` and `TransAuth`.
 5. Client computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
-6. Client decrypts the server initial data, verifying `Sess` correctness.
+6. Client extracts the server-generated identity from the server handshake tailor, adopting it for all subsequent communication.
+7. Client decrypts the server initial data using the initial data encryption key (derived by `BLAKE3` from `CliShrSec`, `CliEphPubKeyObf` and `CliNnc`).
 
 > In case of an authentication or initial data decryption failure, client should terminate connection silently.
 
@@ -465,10 +461,10 @@ After the server initiates the internal state for the user and waits for an appr
 5. Server builds a transcript by applying `BLAKE3` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
 6. Server authenticates `Trans` using `Ed25519` with `VSK`, producing `TransAuth`.
 7. Server computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
-8. Server encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm.
-9. Server encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with `Sess` as a key.
-10. Server constructs the handshake encrypted tailor by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and the encrypted tailor itself.
-11. The payload is sent to the client inside of a handshake packet.
+8. Server encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm (NB! Here initial data encryption key is used for additional data instead of session key, same as in the client handshake step 6). Server upgrades to the session key after sending the response.
+9. Server encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm using the same initial data encryption key (derived by `BLAKE3` from `CliShrSec`, `CliEphPubKeyObf` and `CliNnc`).
+10. Server constructs the handshake response by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and encrypted initial data as the body. The handshake tailor is appended to the body and encrypted by the flow manager, as with all other packets.
+11. The payload is sent to the client inside of a handshake packet. The server tailor contains the server-generated identity for the client to use in subsequent communication.
 
 ### Tailor encryption
 
@@ -487,7 +483,7 @@ Again, please note that `OBFS` is a shared symmetric key, which means that obfus
 
 > Please note, that this approach is not only faster, but also more extensible.
 > The packets going in both direction have uniform structure in this case and can be decrypted (but not authenticated) by any protocol-aware middleware.
-> That could allow extending protocol with [multi-hop or remote proxy](#future-work) capabilities.
+> That could allow extending protocol with [multi-hop or remote proxy](#multi-hop-proxies-benevolent-mitm) capabilities.
 
 #### Tailor encryption in `full` mode
 
@@ -540,7 +536,33 @@ Use of `anonymous` marshalling encryption mode is always marked specifically.
 
 ### Certificate structure
 
-TODO!
+A **server key pair** contains all secret key material the server needs to accept connections.
+It must never be distributed and should be stored securely on the server host.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `ESK` | [Classic McEliece](#handshake-encryption) secret key | Decapsulates the KEM ciphertext in the client handshake |
+| `VSK` | [Ed25519](#handshake-encryption) signing key | Signs the handshake transcript to authenticate the server |
+| `OBFS` _(fast mode)_ | 32-byte symmetric key | Pre-shared key used for [tailor obfuscation](#tailor-encryption) |
+| `OPK` _(full mode)_ | [X25519](#marshalling-encryption) public key | Long-term public key corresponding to `OSK` (also included in the certificate) |
+| `OSK` _(full mode)_ | [X25519](#marshalling-encryption) static secret | Decrypts client-to-server tailors via ephemeral X25519 exchange |
+
+A **client certificate** bundles the corresponding public material together with the server's network addresses.
+It is derived from the server key pair, distributed to clients out-of-band, and must be reissued whenever the server keys or flow manager addresses change.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `EPK` | [Classic McEliece](#handshake-encryption) public key | Encapsulates the client's KEM shared secret to the server |
+| `VPK` | [Ed25519](#handshake-encryption) verifying key | Verifies the server's handshake signature |
+| `OBFS` _(fast mode)_ | 32-byte symmetric key | Pre-shared [tailor obfuscation](#tailor-encryption) key (same value as in the server key pair) |
+| `OPK` _(full mode)_ | [X25519](#marshalling-encryption) public key | Server's long-term public key for encrypting client-to-server tailors |
+| Addresses | list of `host:port` pairs | Network addresses of the server flow managers the client connects to |
+
+The certificate is a complete, self-contained connection descriptor: a client needs nothing beyond it to establish a session.
+The cipher mode and symmetric cipher variant are also embedded in the certificate so that both sides always agree on algorithms without any additional negotiation.
+
+> The server key pair and the client certificates derived from it are tightly coupled: rotating either requires regenerating the other.
+> It is therefore recommended to treat the server key pair as a long-lived deployment identity, separate from any application-level credentials.
 
 ## Proposed implementation
 
@@ -555,8 +577,8 @@ The session manager keeps track of session health, encryption, and data transfer
 It is suggested that a flow manager would hold a UDP port, while the session manager would be purely virtual.
 
 On the client side, there is only one session manager that is tightly coupled with all the flow managers (normally they only have different ports but similar IP addresses).
-On the server side, they can be more loosely coupled: a flow manager can be connected to multiple clients at the same time, performing traffic demultiplexing (described below) and delivering packets to virtual session managers (one manager per user).
-Theoretically, different server flow managers can occupy different IP addresses, but if they [reside in separate processes](#future-work) (or on separate machines), their communication is out of scope of the TYPHOON protocol.
+On the server side, they can be more loosely coupled: a flow manager can be connected to multiple clients at the same time, performing traffic [demultiplexing](#identification-and-rebinding) and delivering packets to virtual session managers (one manager per user).
+Theoretically, different server flow managers can occupy different IP addresses, but if they [reside in separate processes](#isolated-flow-managers) (or on separate machines), their communication is out of scope of the TYPHOON protocol.
 
 The TYPHOON listener is a logical structure that keeps track of all flow managers (which are constant), spawns session managers for users, and recycles them when done.
 The listener should also be capable of producing client certificates that are guaranteed to be valid while the listener is alive (or restarted with a similar flow manager configuration).
@@ -592,18 +614,22 @@ By default, the **ID** field is `16` bytes ([UUID](https://en.wikipedia.org/wiki
 Alternatively, if there exists another way of identifying users (e.g. each of them gets unique access to a resource, like a server process or socket), the required **ID** field length can be different (it may be changed using the `TYPHOON_ID_LENGTH` constant).
 A scenario when an attacker impersonates a user, forging a fake packet on their behalf, should not be a concern, since [tailor structure is authenticated with user session key anyway](#tailor-encryption).
 
-The UDP source address rebinding happens only if a correctly-authenticated packet with incremental number higher than before arrives from a new source address.
-This approach allows verifying packet tailor identity, safe attribution, and rebinding.
+The UDP source address rebinding is performed independently by each server flow manager.
+A flow manager updates its [stored address for a client](#global-user-structures) only when a correctly-authenticated packet arrives from a new source address.
+This per-flow-manager approach ensures that each flow path maintains the correct return address, even when a client uses multiple flow managers with different source addresses (e.g. different network interfaces), or when a client's address changes mid-session due to NAT rebinding or network handover.
 
 #### Global user structures
 
 In order to maintain all the user sessions and decoy flows, it is proposed to maintain a global table in the listener, mapping user **ID**s to user information (including session manager, session key, connected flow managers, etc.).
 In addition to that, every flow manager keeps a table of all the connected user **ID**s mapped to the connected source address.
 
-Rebinding happens on the flow manager only, without the session manager or any other listener parts being involved.
+[Rebinding](#identification-and-rebinding) happens on the flow manager only, without the session manager or any other listener parts being involved.
 The only requirement for this is packet validation, which is [performed using the user session key](#tailor-encryption) — this key is pulled from the global user table.
 
 #### Initial data handling
+
+> The initial data structure is fully optional and implementation-specific.
+> The TYPHOON protocol does not define any particular format for initial data; the approaches described below are for reference only and can be adapted to suit specific deployment requirements.
 
 Initial data plays a crucial role in user identification.
 It is passed from client to server and from server to client during handshake, and it plays a different role in these cases.
@@ -625,10 +651,34 @@ Even though [suggested listener design](#sockets-and-listeners) outlines that th
 In that special case it might be inevitable to only embed the server address itself into certificates - and pass "proxy" addresses dynamically, after the handshake is established, in initial data.
 WARNING: this design comes with a significant limitation - since the client does not know any "proxy" addresses initially, every new handshake will inevitably go to the server address, which will create a clear pattern for an external observer.
 
+> The latter situation is not supported by the proposed implementation and can be developed further along with the [isolated flow managers](#isolated-flow-managers) proposal.
+
+#### Version checking
+
+The client embeds its application version into the **ID** field of the handshake tailor.
+The version string follows the format `major[.minor[.patch[-tag]]]`, stored as left-aligned ASCII and zero-padded to the **ID** field length.
+Only the first `TYPHOON_ID_LENGTH` bytes of the version string are used; longer strings are truncated.
+
+Upon receiving a handshake, the server reads the **ID** field and compares it to its own compile-time version:
+
+- **Patch mismatch** (same major and minor, different patch): the server logs a debug message and continues the handshake normally.
+- **Minor mismatch** (same major, different minor): the server logs a warning and continues the handshake normally.
+- **Major mismatch** (different major): the server rejects the handshake.
+  It sends a termination packet back to the client with the **CD** field set to `1` (`VersionMismatch`), then discards the handshake without creating a session.
+
+This mechanism allows the server to detect outdated clients in logs and enforce strict forward-compatibility at the major version boundary.
+The version checking logic can be overridden by providing a custom `ServerConnectionHandler` implementation.
+Likewise, a custom `ClientConnectionHandler` can supply a different version string (for example, an application-level version rather than the library version).
+
 ### Communication modes
 
 The following communication modes are proposed.
 They are designed to be general-purpose, suitable for most network environments, and not resource-demanding (only using basic maths and lightweight persistent states).
+
+Some values used in computation are defined once during initialization or derived from the state:
+
+- `packet_length_cap`: maximum allowed length of the decoy packet, capped between `TYPHOON_DECOY_LENGTH_MAX` and `TYPHOON_DECOY_LENGTH_MIN` constants.
+- `quietness_index`: a value used for checking how busy the current traffic situation is, computed as `(reference_rate - packet_rate) / reference_rate`, clamped between `0` and `1`.
 
 #### Heavy mode
 
@@ -714,9 +764,10 @@ However, in order to speed things up and improve logging, a few things are highl
 The sample valid **CD** values are given below:
 
 - `0`: No error (successful handshake or graceful termination).
+- `1`: [Version mismatch](#version-checking) (client major version differs from server major version).
 - `101`: Unknown error (some error happened indeed, but it is not clear which one exactly).
 
-TODO!
+TODO! Other proposed implementation details worth mentioning.
 
 ### Constants and defaults
 
@@ -760,7 +811,6 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_DECOY_REFERENCE_ALPHA` | Reference byte rate calculation multiplier (updates slowly) | `0.001` |
 | `TYPHOON_DECOY_LENGTH_MAX` | Maximum length of a decoy packet | `1024` |
 | `TYPHOON_DECOY_LENGTH_MIN` | Minimum length of a decoy packet | `16` |
-| `TYPHOON_DECOY_REFERENCE_BURST_FACTOR` | The factor of reference rate that is considered to be a burst | `3` |
 | `TYPHOON_DECOY_BASE_RATE_RND` | Randomization jitter for decoy modes | `0.25` |
 | `TYPHOON_DECOY_HEAVY_BASE_RATE` | Base rate of the heavy decoy mode | `0.05` |
 | `TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR` | Quietness score factor that is used for heavy decoy mode rate calculation | `3` |
@@ -810,6 +860,9 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY` | Probability multiplier for no decoy packets replication | `3` |
 | `TYPHOON_DECOY_SUBHEADER_LENGTH_MIN` | Minimum decoy packets subheader length | `4` |
 | `TYPHOON_DECOY_SUBHEADER_LENGTH_MAX` | Maximum decoy packets subheader length | `16` |
+| `TYPHOON_DEBUG_PROBE_COUNT` | Number of probes sent in the throughput phase | `10` |
+| `TYPHOON_DEBUG_PROBE_SIZE` | Payload size of each throughput probe in bytes | `65000` |
+| `TYPHOON_DEBUG_PROBE_TIMEOUT` | Per-probe receive timeout in milliseconds | `5000` |
 
 A protocol implementation should allow overriding these values at runtime.
 Still keep in mind that it might be dangerous because some of these constants affect both client and server behavior at the same time.
@@ -817,7 +870,26 @@ As a final attempt, an implementation should attempt to read these constants fro
 
 ### Debug mode
 
-TODO!
+Debug mode is a diagnostic facility for TYPHOON connection testing: it verifies flow reachability, measures round-trip time, and benchmarks throughput.
+It reinterprets three [tailor fields](#tailor-structure) to carry diagnostic metadata instead of their production meanings:
+
+| Field | Production meaning | Debug meaning |
+| --- | --- | --- |
+| **CD** | Client type / return code | Packet unique reference number (0–255, rolling) |
+| **TM** | Next-in delay (milliseconds) | Packet send timestamp (lower 32 bits of Unix time in milliseconds) |
+| **PN** | `unix_ts_s (32 bits) \|\| incremental (32 bits)` | `global_sequence (32 bits) \|\| phase_id (32 bits)` |
+
+`phase_id` encodes the active debug phase: `0` = reachability, `1` = return time, `2` = throughput.
+`global_sequence` is a monotonically increasing counter across all probes in the run, enabling the receiver to detect packet loss and reordering.
+
+Three phases are available, selected via `DebugMode`:
+
+- **Reachability** (`phase_id = 0`): Verifies that a full protocol handshake completes and one echo round-trip succeeds within `TYPHOON_DEBUG_PROBE_TIMEOUT` milliseconds.
+- **Return time** (`phase_id = 1`): Sends a single small probe and measures the round-trip time.
+- **Throughput** (`phase_id = 2`): Sends `TYPHOON_DEBUG_PROBE_COUNT` probes of `TYPHOON_DEBUG_PROBE_SIZE` bytes each, receives them back, and reports bytes per second and packet loss rate.
+
+Debug mode requires the server to echo all received data verbatim back to the sender.
+In the reference implementation debug functionality is available under the `debug` feature flag (see [Code and tests](#code-and-tests)).
 
 ### Supporting math
 
@@ -838,14 +910,17 @@ It is designed to be fast, modern and efficient.
 
 The crate defines the following features:
 
-- `hardware`: use `hardware` [symmetric cryptographic mode](#cryptography).
-- `software`: use `software` [symmetric cryptographic mode](#cryptography).
-- `fast`: use `fast` [asymmetric cryptographic mode](#cryptography).
-- `full`: use `full` [asymmetric cryptographic mode](#cryptography).
+- `fast_software`: use `fast` [asymmetric cryptographic mode](#cryptography) with `software` [symmetric cryptographic mode](#cryptography).
+- `fast_hardware`: use `fast` [asymmetric cryptographic mode](#cryptography) with `hardware` [symmetric cryptographic mode](#cryptography).
+- `full_software`: use `full` [asymmetric cryptographic mode](#cryptography) with `software` [symmetric cryptographic mode](#cryptography).
+- `full_hardware`: use `full` [asymmetric cryptographic mode](#cryptography) with `hardware` [symmetric cryptographic mode](#cryptography).
 - `server`: include TYPHOON server implementation.
 - `client`: include TYPHOON client implementation.
+- `debug`: include [debug diagnostic tools](#debug-mode) (`DebugMode`, `DebugResult`, `run_debug`, `DebugServerConnectionHandler`); requires `client` and `server`.
+- `tokio`: use [tokio](https://tokio.rs/) async runtime.
+- `async-std`: use [async-std](https://async.rs/) async runtime.
 
-The default features are: `software`, `fast`, `server`, `client`.
+The default features are: `fast_software`, `server`, `client`, `tokio`.
 
 ### Buffer Pool
 
@@ -876,7 +951,95 @@ Cipher modes:
 - `fast` feature: Symmetric key obfuscation with dual authentication (AEAD + BLAKE3)
 - `full` feature: Asymmetric key obfuscation using X25519 ephemeral exchange
 
-TODO!
+TODO! Other implementation details.
+
+### Certificate file format
+
+Every file produced by the certificate module begins with a fixed 10-byte header:
+
+| Offset | Size | Field | Values | Description |
+| --- | --- | --- | --- | --- |
+| 0 | 7 | Magic | `TYPHOON` | Fixed identifier |
+| 7 | 1 | Type | `S` / `C` | Server key pair or client certificate |
+| 8 | 1 | Mode | `F` / `U` | Cipher mode: fast or full |
+| 9 | 1 | Version | `1` | Format version (currently always `1`) |
+
+The payload immediately follows the header. Field sizes use these stable constants:
+
+| Constant | Value | Description |
+| --- | --- | --- |
+| `EPK_BYTES` | 261120 | [Classic McEliece](#handshake-encryption) 348864 public key |
+| `ESK_BYTES` | 6492 | [Classic McEliece](#handshake-encryption) 348864 secret key |
+| `ED25519_BYTES` | 32 | [Ed25519](#handshake-encryption) key (signing seed, verifying key, or OBFS key) |
+| `X25519_BYTES` | 32 | [X25519](#marshalling-encryption) key (public or static secret) |
+
+**Server key pair — fast mode (`SF1`):**
+
+| Offset | Size | Field | Description |
+| --- | --- | --- | --- |
+| 10 | 261120 | EPK | Classic McEliece 348864 public key |
+| 261130 | 6492 | ESK | Classic McEliece 348864 secret key |
+| 267622 | 32 | VSK | Ed25519 signing key seed |
+| 267654 | 32 | OBFS | Symmetric tailor obfuscation key |
+| **267686** | — | EOF | |
+
+**Server key pair — full mode (`SU1`):**
+
+| Offset | Size | Field | Description |
+| --- | --- | --- | --- |
+| 10 | 261120 | EPK | Classic McEliece 348864 public key |
+| 261130 | 6492 | ESK | Classic McEliece 348864 secret key |
+| 267622 | 32 | VSK | Ed25519 signing key seed |
+| 267654 | 32 | OPK | X25519 long-term public key |
+| 267686 | 32 | OSK | X25519 static secret key |
+| **267718** | — | EOF | |
+
+**Client certificate — fast mode (`CF1`):**
+
+| Offset | Size | Field | Description |
+| --- | --- | --- | --- |
+| 10 | 261120 | EPK | Classic McEliece 348864 public key |
+| 261130 | 32 | VPK | Ed25519 verifying key |
+| 261162 | 32 | OBFS | Symmetric tailor obfuscation key |
+| 261194 | 2 | ADDR_COUNT | Number of addresses (big-endian u16) |
+| 261196 | varies | ADDRS | Address list (see below) |
+
+**Client certificate — full mode (`CU1`):**
+
+| Offset | Size | Field | Description |
+| --- | --- | --- | --- |
+| 10 | 261120 | EPK | Classic McEliece 348864 public key |
+| 261130 | 32 | VPK | Ed25519 verifying key |
+| 261162 | 32 | OPK | X25519 long-term public key |
+| 261194 | 2 | ADDR_COUNT | Number of addresses (big-endian u16) |
+| 261196 | varies | ADDRS | Address list (see below) |
+
+**Address list encoding** (`ADDRS` field, repeated `ADDR_COUNT` times):
+
+| Size | Field | Description |
+| --- | --- | --- |
+| 1 | Family | `4` = IPv4, `6` = IPv6 |
+| 4 or 16 | IP | IPv4 or IPv6 address octets (network byte order) |
+| 2 | Port | Port number (big-endian u16) |
+
+> NB! In the proposed implementation every client certificate should have _at least_ one address in it, having 0 addresses will result in a `CertificateError::NoAddresses` at socket build time.
+> For address-less certificates, see [isolated flow managers](#isolated-flow-managers).
+
+### Certificate module
+
+The `certificate` module provides helpers for generating, persisting, and loading certificate material, separating I/O and address management from the low-level cryptographic operations in `crypto/asymmetric.rs`.
+
+**Server side**:
+
+- Generate a `ServerKeyPair` (McEliece + Ed25519 + mode-specific obfuscation key/pair) and write it to a file.
+- Call `to_client_certificate(addresses)` to produce a distributable `ClientCertificate` file.
+
+**Client side**:
+
+- Load a `ClientCertificate` from a file and pass it to `ClientSocketBuilder::new`.
+- Flow configs are auto-generated from the embedded addresses using `FlowConfig::random`; override individual addresses with `with_flow_config(addr, config)`.
+
+The binary file format is documented in [Certificate file format](#certificate-file-format) above.
 
 ## Development
 
@@ -900,4 +1063,82 @@ cargo fmt
 
 ## Future work
 
-TODO!
+Here are a few protocol extensions outlined that are not yet part of the standard but can be studied and explored further in the future:
+
+### Multi-hop proxies (benevolent MITM)
+
+An app can be configured as a lightweight multi-hop proxy (benevolent man-in-the-middle) by simply chaining a TYPHOON server and TYPHOON client together.
+The idea is simple: all packets received by the server part are directly forwarded to the next server through the client part.
+
+The packet payload never gets decrypted—only the tailor is parsed.
+Thus, the packet payloads are preserved, while decoy packets are dropped and regenerated.
+This allows fast and anonymous data transfer with different obfuscation patterns on both sides of the proxy, enabling the creation of multi-hop [TOR](https://www.torproject.org/)-like networks.
+
+**The challenge**:
+Configuration of this type of proxy would require changing how tailor encryption works, allowing packet data encryption and tailor obfuscation to use different keys (i.e., packet data is encrypted using the original end-to-end session key, while the packet tailor is authenticated using the session key of the last-hop proxy).
+In addition to that, extended delays of the packets going through the complex path would require a way of notifying the client that their original packet is not lost, but still haven't reached its destination: a special "wait more" tailor flag is suggested for adding, that would reset the client decay cycle, but not advance any counters or change any values.
+
+### Time-bounded address tracking
+
+Currently, each server flow manager stores a single source address per client, overwriting it on every authenticated packet (simple rebinding).
+This can be improved by maintaining a small time-bounded set of recently-seen addresses per (client, flow manager) pair instead.
+
+The idea is to keep up to a few (e.g. 4) source addresses per flow, each tagged with a last-seen timestamp.
+When a packet arrives, the address is either refreshed (if already known) or inserted, evicting the oldest entry if at capacity.
+When sending, only addresses seen within a configurable TTL are considered live; one is selected at random.
+If all entries are stale, the most-recently-seen address is used as a fallback.
+
+This naturally handles several scenarios: if a client alternates between two source addresses (e.g. dual-homed or NAT port rotation), both stay in the set and are used.
+If an address goes dead (NAT timeout, network handover), it ages out of the set without manual cleanup.
+
+**The challenge**:
+Choosing the right TTL value requires balancing responsiveness (short TTL drops stale addresses quickly) against tolerance for traffic bursts (long TTL keeps addresses alive through quiet periods).
+A reasonable default might be derived from health check timing (e.g. `2 × TYPHOON_HEALTH_CHECK_NEXT_IN_MAX`), but the optimal value is deployment-dependent and may warrant a dedicated configurable constant.
+
+### Path degrading
+
+In the current design, each client connects to each server through multiple paths (every server flow manager listed in the user certificate connects to every user flow manager).
+In more complex deployments - particularly those with remote server flow managers or multi-hop routes - some of these paths may degrade or become temporarily unavailable.
+
+To handle this gracefully, both client and server should track the availability of each path and adjust their selection strategies accordingly.
+Paths known to be active and responsive should be preferred, while stale paths should still be periodically tested to detect when they recover.
+This can be achieved by applying dynamic weight modifications to the random flow manager selection algorithm on both sides.
+
+For example, a path could accumulate a "health score" based on successful packet exchanges, with the score decaying over time without activity.
+Selectors would prefer paths with higher health scores, but always maintain a small probability of testing dormant paths to detect recovery.
+
+**The challenge**:
+Balancing two competing objectives is critical: aggressively favoring healthy paths reduces latency and improves reliability, but being too aggressive risks abandoning temporarily unavailable paths permanently.
+The health score decay rate, selection preference curve, and test probability must be calibrated carefully to ensure that brief network interruptions (e.g., temporary routing changes) do not permanently exclude viable paths, while actual permanent failures are deprioritized quickly.
+Furthermore, the algorithm should be resistant to adversarial path degradation patterns, where an attacker deliberately makes certain paths appear unhealthy to force all the traffic through observable channels.
+
+### Isolated flow managers
+
+TODO! Server could support other flow managers residing in other processes or on other devices even, in that case communication and synchronisation of the server with these managers should become the biggest concern. In a standard mode, their lifetime should match: flow managers should be guaranteed alive while server is alive, so that all user certificates are always valid. However, as an edge case for unreliable networks, the design with initial data carrying addresses of currently active flow managers (described in "Initial data handling") can be used; in that case a functionality of tuntime plugging/unplugging of the flow managers to a running server will have to be implemented.
+
+## Optimization Proposals
+
+This section documents potential performance improvements that are not yet implemented but have been identified during development.
+
+### Per-packet parallel processing on the server
+
+Currently the server's route task processes incoming packets from all flows sequentially in a single loop: it drains packets from the bounded queue one at a time, identifies the target session by the tailor identity, and dispatches to `process_incoming`.
+
+A straightforward optimization is to spawn a separate async task per packet (or per burst of packets for the same identity):
+
+```rust
+// Instead of:
+while let Some(raw_packet) = drain_rx.recv().await {
+    // ... process synchronously
+}
+
+// Spawn per packet:
+while let Some(raw_packet) = drain_rx.recv().await {
+    let session = /* look up session */;
+    settings.executor().spawn(async move {
+        session.process_incoming(incoming).await;
+    });
+}
+```
+
+This allows packets destined for different clients to be processed concurrently, which is especially beneficial when decryption is the bottleneck (e.g. full PQ mode) or when one client's processing stalls (e.g. a slow `incoming_tx` push).
