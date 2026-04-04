@@ -2,6 +2,7 @@ use std::io::Error as IoError;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use cfg_if::cfg_if;
+#[cfg(feature = "server")]
 use log::{debug, trace};
 use thiserror::Error;
 
@@ -70,14 +71,14 @@ impl Socket {
     }
 
     /// Bind a socket without connecting (for server use with multiple peers).
-    #[cfg(feature = "tokio")]
+    #[cfg(all(feature = "tokio", feature = "server"))]
     pub async fn bind(local: SocketAddr) -> Result<Self, SocketError> {
         let sock = TokioSocket::bind(local).await.map_err(SocketError::new_socket_error)?;
         Ok(Self { sock })
     }
 
     /// Bind a socket without connecting (for server use with multiple peers).
-    #[cfg(feature = "async-std")]
+    #[cfg(all(feature = "async-std", feature = "server"))]
     pub async fn bind(local: SocketAddr) -> Result<Self, SocketError> {
         let sock = StdUdpSocket::bind(local).map_err(SocketError::new_socket_error)?;
         Ok(Self {
@@ -113,7 +114,7 @@ impl Socket {
 
     /// Send to a specific address (for unconnected sockets).
 
-    #[cfg(feature = "tokio")]
+    #[cfg(all(feature = "tokio", feature = "server"))]
     pub async fn send_to(&self, data: DynamicByteBuffer, target: SocketAddr) -> Result<usize, SocketError> {
         let len = data.slice().len();
         match self.sock.send_to(data.slice(), target).await {
@@ -131,7 +132,7 @@ impl Socket {
         }
     }
 
-    #[cfg(feature = "async-std")]
+    #[cfg(all(feature = "async-std", feature = "server"))]
     pub async fn send_to(&self, data: DynamicByteBuffer, target: SocketAddr) -> Result<usize, SocketError> {
         let len = data.slice().len();
         match self.sock.send_to(data.slice(), target).await {
@@ -151,7 +152,7 @@ impl Socket {
 
     /// Receive from any peer, returning the data and source address.
 
-    #[cfg(feature = "tokio")]
+    #[cfg(all(feature = "tokio", feature = "server"))]
     pub async fn recv_from(&self, buf: DynamicByteBuffer) -> Result<(DynamicByteBuffer, SocketAddr), SocketError> {
         match self.sock.recv_from(buf.slice_mut()).await {
             Ok((res, addr)) => {
@@ -165,7 +166,7 @@ impl Socket {
         }
     }
 
-    #[cfg(feature = "async-std")]
+    #[cfg(all(feature = "async-std", feature = "server"))]
     pub async fn recv_from(&self, buf: DynamicByteBuffer) -> Result<(DynamicByteBuffer, SocketAddr), SocketError> {
         match self.sock.recv_from(buf.slice_mut()).await {
             Ok((res, addr)) => {

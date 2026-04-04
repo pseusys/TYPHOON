@@ -4,6 +4,15 @@ use crate::certificate::{CertificateError, ClientCertificate, ED25519_BYTES, EPK
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::certificate::X25519_BYTES;
 
+impl ClientCertificate {
+    pub(crate) fn epk_bytes(&self) -> &[u8] { self.epk.as_array() }
+    pub(crate) fn vpk_bytes(&self) -> [u8; 32] { self.vpk.to_bytes() }
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+    pub(crate) fn obfs_bytes(&self) -> &[u8] { self.obfs.as_ref() }
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+    pub(crate) fn opk_bytes(&self) -> &[u8] { self.opk.as_bytes() }
+}
+
 fn two_addrs() -> Vec<SocketAddr> {
     vec![
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 19999)),

@@ -8,7 +8,6 @@ use log::{debug, trace};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, FixedByteBuffer};
 use crate::cache::{CachedMapEntryTemplate, SharedMap};
-use crate::crypto::ServerData;
 use crate::crypto::{UserCryptoState, UserServerState};
 use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
@@ -49,17 +48,16 @@ pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToS
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> ServerSessionManager<T, AE, R> {
     /// Create a server session manager from pre-decapsulated handshake data.
     ///
-    /// The caller is responsible for decapsulating the client handshake (via `decapsulate_handshake_server`)
-    /// and generating the identity and server initial data before calling this method.
+    /// `response_body` must be pre-computed by calling `secret.encapsulate_handshake_server`
+    /// **before** acquiring the `users` lock, so that CPU-intensive crypto work is not
+    /// serialized through the shared-map mutex.
     ///
-    /// Returns `(Arc<Self>, response_packet, session_key)` where response_packet should be sent back
-    /// through a flow manager to complete the handshake. The caller must upgrade the user's crypto
-    /// state to `session_key` after sending the response.
+    /// Returns `(Arc<Self>, response_packet)`. The caller already holds `session_key` from
+    /// the encapsulation step and uses it to upgrade the user's crypto state after sending the response.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub async fn from_handshake(
-        server_data: ServerData,
+        response_body: DynamicByteBuffer,
         initial_key: FixedByteBuffer<32>,
-        server_initial_data: &[u8],
         handshake_tailor: Tailor<T>,
         identity: T,
         secret: &crate::certificate::ServerSecret<'_>,
@@ -68,13 +66,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         router: StdWeak<R>,
         num_flows: usize,
         settings: Arc<Settings<AE>>,
-    ) -> Result<(Arc<Self>, DynamicByteBuffer, FixedByteBuffer<32>), SessionControllerError> {
+    ) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
         use crate::certificate::ObfuscationBufferContainer;
-
-        let pool = settings.pool();
-
-        // Generate server handshake response (with encrypted server initial data) and derive session key.
-        let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool, server_initial_data, &initial_key);
 
         // Register user with initial key so that the handshake response tailor is
         // authenticated with the initial key (the client can verify before deriving session key).
@@ -115,29 +108,23 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
             settings,
         });
 
-        Ok((session, response_packet, session_key))
+        Ok((session, response_packet))
     }
 
     /// Create a server session manager from pre-decapsulated handshake data (full mode).
+    /// `response_body` must be pre-computed outside the `users` lock.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub async fn from_handshake(
-        server_data: ServerData,
+        response_body: DynamicByteBuffer,
         initial_key: FixedByteBuffer<32>,
-        server_initial_data: &[u8],
         handshake_tailor: Tailor<T>,
         identity: T,
-        secret: &crate::certificate::ServerSecret<'_>,
         users: &mut SharedMap<T, UserServerState>,
         incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
         router: StdWeak<R>,
         num_flows: usize,
         settings: Arc<Settings<AE>>,
-    ) -> Result<(Arc<Self>, DynamicByteBuffer, FixedByteBuffer<32>), SessionControllerError> {
-        let pool = settings.pool();
-
-        // Generate server handshake response (with encrypted server initial data) and derive session key.
-        let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool, server_initial_data, &initial_key);
-
+    ) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
         // Register user with initial key so that the handshake response tailor is
         // encrypted with the initial key (the client can decrypt before deriving session key).
         let crypto_state = UserCryptoState::new(&initial_key);
@@ -176,7 +163,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
             settings,
         });
 
-        Ok((session, response_packet, session_key))
+        Ok((session, response_packet))
     }
 
     /// Mark `flow_index` as active for this session (lock-free, no bounds limit).
@@ -199,7 +186,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
 
     /// Route a packet to the network via the outgoing router (Listener).
     async fn route_outgoing(&self, packet: DynamicByteBuffer) -> Result<(), SessionControllerError> {
-        let router = self.router.upgrade().ok_or(SessionControllerError::FlowError(
+        let router = self.router.upgrade().ok_or_else(|| SessionControllerError::FlowError(
             crate::flow::FlowControllerError::UserNotFound { identity: self.identity.to_string() },
         ))?;
         if !router.route_packet(packet, &self.identity).await {
@@ -265,9 +252,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
     /// Schedule a health check response.
     async fn schedule_health_response(&self, client_next_in: u32, _client_pn: u64) -> Result<(), SessionControllerError> {
         let pn = self.next_packet_number();
-        let identity = self.identity.clone();
         let buf = self.settings.pool().allocate(Some(T::length()));
-        let response_tailor = Tailor::health_check(buf, &identity, client_next_in, pn);
+        let response_tailor = Tailor::health_check(buf, &self.identity, client_next_in, pn);
 
         self.route_outgoing(response_tailor.into_buffer()).await
     }
@@ -300,6 +286,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         self.route_outgoing(full_packet).await
     }
 
+    #[cfg(feature = "client")]
     async fn receive_packet(&self) -> Result<DynamicByteBuffer, SessionControllerError> {
         // Not used directly — the Listener drives incoming packet processing.
         Err(SessionControllerError::HealthProviderDied)

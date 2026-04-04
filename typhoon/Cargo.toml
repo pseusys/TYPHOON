@@ -61,6 +61,7 @@ required-features = ["debug"]
 [[example]]
 name = "hello_world"
 path = "example/hello_world.rs"
+required-features = ["client", "server"]
 
 [[example]]
 name = "debug_probe"
@@ -70,11 +71,14 @@ required-features = ["debug"]
 [[example]]
 name = "multi_flow"
 path = "example/multi_flow.rs"
+required-features = ["client", "server"]
 
 [[example]]
 name = "long_session"
 path = "example/long_session.rs"
+required-features = ["client", "server"]
 
 [[example]]
 name = "multi_client"
 path = "example/multi_client.rs"
+required-features = ["client", "server"]

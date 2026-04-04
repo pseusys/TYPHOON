@@ -25,6 +25,7 @@ const _: () = assert!(ESK_BYTES == CRYPTO_SECRETKEYBYTES, "ESK_BYTES must match 
 // ── File header constants ────────────────────────────────────────────────────
 
 pub(crate) const MAGIC: &[u8; 7] = b"TYPHOON";
+#[cfg(feature = "server")]
 pub(crate) const TYPE_SERVER: u8 = b'S';
 pub(crate) const TYPE_CLIENT: u8 = b'C';
 pub(crate) const FORMAT_VERSION: u8 = 1;

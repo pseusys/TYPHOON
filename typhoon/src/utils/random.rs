@@ -8,6 +8,7 @@ pub trait SupportRng {
 
     fn random_byte_buffer<const T: usize>(&mut self) -> FixedByteBuffer<T>;
 
+    #[cfg(feature = "client")]
     fn random_item<'a, T>(&mut self, slice: &'a [T]) -> Option<&'a T>;
 }
 
@@ -22,6 +23,7 @@ impl SupportRng for OsRng {
         FixedByteBuffer::from_array(self.random_byte_array::<T>())
     }
 
+    #[cfg(feature = "client")]
     fn random_item<'a, T>(&mut self, slice: &'a [T]) -> Option<&'a T> {
         if slice.is_empty() {
             None

@@ -64,7 +64,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
         let mut lock = self.send_internal.lock().await;
         let full_packet = lock.prepare_outgoing(notified_packet.unwrap(), self.mtu, self.settings.pool()).await?;
         trace!("client flow: wire packet {} bytes", full_packet.len());
-        self.sock.send(full_packet.clone()).await.map_err(FlowControllerError::SocketError)?;
+        self.sock.send(full_packet).await.map_err(FlowControllerError::SocketError)?;
         Ok(())
     }
 
@@ -82,7 +82,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
             };
 
             let mut lock = self.receive_internal.lock().await;
-            match lock.process_incoming(notified_packet.unwrap()).await? {
+            match lock.process_incoming(notified_packet.unwrap(), self.settings.pool()).await? {
                 Some(result) => {
                     trace!("client flow: processed packet → {} bytes", result.len());
                     return Ok(result);

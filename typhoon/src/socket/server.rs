@@ -315,7 +315,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Handle a handshake from a new client: create session, send response, publish ClientHandle.
     async fn handle_new_client(self: &Arc<Self>, raw_packet: crate::flow::server::RawReceivedPacket<T>, flow_index: usize) {
         // Decapsulate client handshake to get server data, initial key, and client initial data.
-        let (server_data, initial_key, client_initial_data) = self.secret.decapsulate_handshake_server(raw_packet.body);
+        let (server_data, initial_key, client_initial_data) = self.secret.decapsulate_handshake_server(raw_packet.body, self.settings.pool());
 
         // Check client version from the handshake tailor ID field.
         let client_version_identity = raw_packet.tailor.identity();
@@ -353,15 +353,27 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         // Create Weak<Listener<...>> for the session to send packets back.
         let router_weak = Arc::downgrade(self);
 
-        // Create session manager from pre-decapsulated handshake data.
-        // User is initially registered with the initial key so the handshake response
-        // tailor can be verified by the client before it derives the session key.
-        let (session, response_packet, session_key) = {
+        // Perform crypto BEFORE acquiring the users lock: encapsulate_handshake_server is
+        // CPU-intensive (McEliece + ChaCha20) and does not need access to the shared user map.
+        let (response_body, session_key) = self.secret.encapsulate_handshake_server(
+            server_data, self.settings.pool(), server_initial_data.slice(), &initial_key);
+
+        // Lock scope limited to shared-map mutations + packet assembly only.
+        let (session, response_packet) = {
             let mut users = self.users.lock().await;
-            match ServerSessionManager::from_handshake(
-                server_data,
+            // Guard against TOCTOU: two concurrent handshakes for the same identity can
+            // both pass the read-lock check in route_incoming and reach this point.
+            // The second to acquire the users lock must abort — proceeding would
+            // overwrite the first session's user-state entry in the shared map,
+            // leaving the surviving session with the wrong crypto key.
+            if users.contains_key(&identity) {
+                debug!("concurrent handshake race for {}: aborting duplicate under users lock", identity.to_string());
+                return;
+            }
+            #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+            let result = ServerSessionManager::from_handshake(
+                response_body,
                 initial_key,
-                server_initial_data.slice(),
                 raw_packet.tailor,
                 identity.clone(),
                 &self.secret,
@@ -370,10 +382,21 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 router_weak,
                 self.flows.len(),
                 self.settings.clone(),
-            )
-            .await
-            {
-                Ok(result) => result,
+            ).await;
+            #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+            let result = ServerSessionManager::from_handshake(
+                response_body,
+                initial_key,
+                raw_packet.tailor,
+                identity.clone(),
+                &mut users,
+                incoming_tx,
+                router_weak,
+                self.flows.len(),
+                self.settings.clone(),
+            ).await;
+            match result {
+                Ok(r) => r,
                 Err(err) => {
                     debug!("handshake failed: {}", err);
                     return;
@@ -402,25 +425,38 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         }
 
         // Upgrade user crypto from initial key to session key.
-        // Re-insert propagates the change to all CachedMap instances via version bump.
+        // modify() mutates the local entry in place and bumps the shared-state version so all
+        // CachedMap instances re-fetch — saves one V clone and one K clone vs get+insert.
         {
             let mut users = self.users.lock().await;
-            if let Some(user_state) = users.get(&identity).cloned() {
-                let mut upgraded = user_state;
+            users.modify(&identity, |user_state| {
                 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-                upgraded.upgrade_crypto(&session_key, self.secret.obfuscation_buffer());
+                user_state.upgrade_crypto(&session_key, self.secret.obfuscation_buffer());
                 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-                upgraded.upgrade_crypto(&session_key);
-                users.insert(identity.clone(), upgraded).await;
-            }
+                user_state.upgrade_crypto(&session_key);
+            }).await;
         }
 
         // Mark the handshake flow as active for this session (lock-free, atomic bitmask).
         session.note_active_flow(flow_index);
 
-        // Store session.
+        // Store session — guard against the TOCTOU race where two concurrent
+        // handshake packets from the same client both pass the read-lock check
+        // in route_incoming and reach this point simultaneously.
         {
             let mut sessions = self.sessions.write().await;
+            if sessions.contains_key(&identity) {
+                debug!("concurrent handshake for {}: discarding duplicate", identity.to_string());
+                // Clean up: the user was already inserted into the shared map and all flow
+                // decoy providers above. Drop the sessions lock before acquiring users/flow locks
+                // to preserve lock order and avoid deadlock.
+                drop(sessions);
+                self.users.lock().await.remove(&identity).await;
+                for flow in &self.flows {
+                    flow.remove_user(&identity).await;
+                }
+                return;
+            }
             sessions.insert(identity.clone(), Arc::clone(&session));
         }
 

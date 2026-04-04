@@ -1,3 +1,4 @@
+#[cfg(feature = "server")]
 pub mod bitset;
 pub mod random;
 pub mod socket;

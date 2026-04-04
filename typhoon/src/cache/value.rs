@@ -35,13 +35,10 @@ impl<T: Clone + Send> SharedValue<T> {
 
     pub async fn get_mut(&mut self) -> &mut T {
         let guard = self.state.read().await;
-        let value = guard.value.clone();
-
         if guard.version != self.version {
-            self.local = value;
+            self.local = guard.value.clone();
             self.version = guard.version;
         }
-
         &mut self.local
     }
 
@@ -52,7 +49,7 @@ impl<T: Clone + Send> SharedValue<T> {
     pub async fn set(&mut self, value: T) {
         self.local = value.clone();
         *self.state.write().await = Versioned {
-            value: value.clone(),
+            value,
             version: get_rng().next_u64(),
         };
     }
@@ -60,12 +57,13 @@ impl<T: Clone + Send> SharedValue<T> {
     pub async fn create_sibling(&self) -> SharedValue<T> {
         let guard = self.state.read().await;
         let value = guard.value.clone();
+        let version = guard.version;
         drop(guard);
 
         SharedValue {
             state: self.state.clone(),
             local: value,
-            version: self.version,
+            version,
             _not_sync: PhantomData,
         }
     }

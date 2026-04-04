@@ -14,17 +14,20 @@
 //! The payload following the header depends on record type and cipher mode; see
 //! [`ServerKeyPair::save`] and [`ClientCertificate::save`] for exact field tables.
 
-#[cfg(test)]
+#[cfg(all(test, feature = "server"))]
 #[path = "../../tests/certificate/mod.rs"]
 mod tests;
 
 mod client;
+#[cfg(feature = "server")]
 mod server;
 mod utils;
 
 pub use client::ClientCertificate;
+#[cfg(feature = "server")]
 pub use server::ServerKeyPair;
 pub use utils::{CertificateError, ED25519_BYTES, EPK_BYTES, ESK_BYTES, X25519_BYTES};
 
+#[cfg(feature = "server")]
 pub(crate) use server::ServerSecret;
 pub(crate) use utils::ObfuscationBufferContainer;
