@@ -4,7 +4,7 @@ mod tests;
 
 use cfg_if::cfg_if;
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
 use crate::crypto::error::CryptoError;
 use crate::utils::random::{SupportRng, get_rng};
 
@@ -84,7 +84,8 @@ const ENCRYPTION_KEY_DERIVATION: &str = "encryption key derivation key";
 /// Transcript for delayed tailor verification (fast mode only).
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 pub struct ObfuscationTranscript {
-    pub(crate) ciphertext_copy: DynamicByteBuffer,
+    /// Active-range-only copy of the ciphertext (no pool-buffer headroom wasted).
+    pub(crate) ciphertext_copy: StaticByteBuffer,
     pub(crate) auth_transcript: DynamicByteBuffer,
 }
 
@@ -179,7 +180,8 @@ impl Symmetric {
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub fn decrypt_no_verify(&mut self, ciphertext_authenticated: DynamicByteBuffer) -> (DynamicByteBuffer, ObfuscationTranscript) {
         let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_ADDITIONAL_AUTH_LEN);
-        let ciphertext_copy = ciphertext_with_nonce.copy();
+        // Copy only the active bytes (not the full pool-buffer capacity).
+        let ciphertext_copy = ciphertext_with_nonce.to_owned();
         let plaintext = decrypt_anonymously(&self.encryption_key, &mut ciphertext_with_nonce);
         (
             plaintext,

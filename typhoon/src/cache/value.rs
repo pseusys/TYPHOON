@@ -57,12 +57,13 @@ impl<T: Clone + Send> SharedValue<T> {
     pub async fn create_sibling(&self) -> SharedValue<T> {
         let guard = self.state.read().await;
         let value = guard.value.clone();
+        let version = guard.version;
         drop(guard);
 
         SharedValue {
             state: self.state.clone(),
             local: value,
-            version: self.version,
+            version,
             _not_sync: PhantomData,
         }
     }

@@ -2,7 +2,7 @@ use std::future::Future;
 #[cfg(feature = "client")]
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use cfg_if::cfg_if;
@@ -36,6 +36,7 @@ pub trait AsyncExecutor: Clone + Send + Sync {
 struct WatchState<T> {
     value: std::sync::Mutex<Option<T>>,
     closed: AtomicBool,
+    receiver_count: AtomicUsize,
     #[cfg(feature = "tokio")]
     notify: tokio::sync::Notify,
     #[cfg(feature = "async-std")]
@@ -69,12 +70,13 @@ impl<T: Send> WatchSender<T> {
                 let _ = tx.try_send(());
             }
         }
-        !self.state.closed.load(Ordering::Relaxed)
+        self.state.receiver_count.load(Ordering::Relaxed) > 0
     }
 
     /// Create a new receiver watching the same sender.
     #[cfg(feature = "client")]
     pub fn subscribe(&self) -> WatchReceiver<T> {
+        self.state.receiver_count.fetch_add(1, Ordering::Relaxed);
         #[cfg(feature = "tokio")]
         return WatchReceiver { state: Arc::clone(&self.state) };
         #[cfg(feature = "async-std")]
@@ -88,7 +90,7 @@ impl<T: Send> WatchSender<T> {
 
 impl<T: Send> Drop for WatchSender<T> {
     fn drop(&mut self) {
-        self.state.closed.store(true, Ordering::Relaxed);
+        self.state.closed.store(true, Ordering::Release);
         #[cfg(feature = "tokio")]
         self.state.notify.notify_waiters();
         #[cfg(feature = "async-std")]
@@ -98,6 +100,12 @@ impl<T: Send> Drop for WatchSender<T> {
                 let _ = tx.try_send(());
             }
         }
+    }
+}
+
+impl<T> Drop for WatchReceiver<T> {
+    fn drop(&mut self) {
+        self.state.receiver_count.fetch_sub(1, Ordering::Release);
     }
 }
 
@@ -138,6 +146,7 @@ pub fn create_watch<T: Send>() -> (WatchSender<T>, WatchReceiver<T>) {
     let state = Arc::new(WatchState {
         value: std::sync::Mutex::new(None),
         closed: AtomicBool::new(false),
+        receiver_count: AtomicUsize::new(1),
         notify: tokio::sync::Notify::new(),
     });
     (WatchSender { state: Arc::clone(&state) }, WatchReceiver { state })
@@ -150,6 +159,7 @@ pub fn create_watch<T: Send>() -> (WatchSender<T>, WatchReceiver<T>) {
     let state = Arc::new(WatchState {
         value: std::sync::Mutex::new(None),
         closed: AtomicBool::new(false),
+        receiver_count: AtomicUsize::new(1),
         notifiers: std::sync::Mutex::new(vec![tx]),
     });
     (WatchSender { state: Arc::clone(&state) }, WatchReceiver { state, notify: rx })
