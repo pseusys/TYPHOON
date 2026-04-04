@@ -80,8 +80,21 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
     pub(crate) async fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &crate::bytes::BytePool) -> Result<DynamicByteBuffer, FlowControllerError> {
         let identity_len = <CP::Identity as IdentityType>::length();
         let full_tailor_len = TAILOR_LENGTH + identity_len;
+
+        // Ensure adequate before_capacity for the worst-case fake prefix (header + body padding)
+        // and after_capacity for tailor encryption overhead, both before the split and encrypt.
+        // This way expand_start always succeeds on the hot path and avoids a post-encrypt copy.
+        let max_prefix = self.config.max_overhead();
+        let packet = if packet.before_capacity() < max_prefix {
+            let staged = pool.allocate_precise(packet.len(), max_prefix, CP::tailor_overhead());
+            staged.slice_mut().copy_from_slice(packet.slice());
+            staged
+        } else {
+            packet
+        };
+
         let (packet_data, packet_tailor) = packet.split_buf(packet.len() - full_tailor_len);
-        let packet_flags = PacketFlags::from_bits_truncate(packet_tailor.get(0).clone());
+        let packet_flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
         let encrypted_packet = match self.provider.get_mut().await.map_err(FlowControllerError::MissingCache)?.obfuscate_tailor(packet_tailor, pool) {
             Ok(res) => packet_data.expand_end(res.len()),
             Err(err) => return Err(FlowControllerError::TailorEncryption(err)),
@@ -89,14 +102,8 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
 
         let fake_header_len = self.config.fake_header_mode.len();
         let full_packet_len = fake_header_len + self.config.fake_body_mode.get_length(mtu, fake_header_len + encrypted_packet.len(), packet_flags.is_service());
-        let full_packet = if full_packet_len <= encrypted_packet.before_capacity() {
-            encrypted_packet.expand_start(full_packet_len)
-        } else {
-            // Insufficient headroom — reallocate with the required before_capacity.
-            let staged = pool.allocate_precise(encrypted_packet.len(), full_packet_len, 0);
-            staged.slice_mut().copy_from_slice(encrypted_packet.slice());
-            staged.expand_start(full_packet_len)
-        };
+        // before_capacity >= max_overhead() >= full_packet_len, so expand_start always succeeds.
+        let full_packet = encrypted_packet.expand_start(full_packet_len);
 
         self.config.fake_header_mode.fill(full_packet.rebuffer_end(fake_header_len));
         get_rng().fill(&mut full_packet.rebuffer_both(fake_header_len, full_packet_len));

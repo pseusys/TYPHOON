@@ -43,7 +43,7 @@ const NONCE_LENGTH: usize = 32;
 const CLIENT_HANDSHAKE_HEADER_SIZE: usize = X25519_KEY_LENGTH + CRYPTO_CIPHERTEXTBYTES + 2 * ANONYMOUS_NONCE_LEN + NONCE_LENGTH;
 const SERVER_HANDSHAKE_HEADER_SIZE: usize = X25519_KEY_LENGTH + Signature::BYTE_SIZE + ANONYMOUS_NONCE_LEN + NONCE_LENGTH;
 
-const INITIAL_DATA_KEY: &str = "handshake client obfuscation key";
+const INITIAL_DATA_KEY: &str = "initial data obfuscation key";
 const CLIENT_HANDSHAKE_OBFUSCATION_KEY: &str = "handshake client obfuscation key";
 const SERVER_HANDSHAKE_OBFUSCATION_KEY: &str = "handshake server obfuscation key";
 const SESSION_KEY: &str = "session key";
@@ -125,7 +125,7 @@ impl ClientCertificate {
         let transcript_signed = Signature::from_bytes(&transcript_signed_bytes);
         let transcript = Hasher::new().update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(data.nonce.slice()).update(nonce.slice()).finalize();
         if let Err(err) = self.vpk.verify_strict(transcript.as_bytes(), &transcript_signed) {
-            return Err(HandshakeError::handshake_authentication_error(&format!("server identity verification error: {}", err.to_string())));
+            return Err(HandshakeError::handshake_authentication_error(&format!("server identity verification error: {err}")));
         };
 
         let session_key_hash = Hasher::new_keyed(&hash_derive_key_context(SESSION_KEY)).update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(transcript.as_bytes()).finalize();

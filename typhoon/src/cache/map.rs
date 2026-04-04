@@ -61,6 +61,17 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
         self.local.get_mut(key)
     }
 
+    /// Mutate an existing entry in place and propagate the change to all `CachedMap` instances
+    /// by bumping the shared-state version. Saves one `V` clone and one `K` clone compared to
+    /// the `get().cloned()` + `insert()` pattern.
+    pub async fn modify<F: FnOnce(&mut V)>(&mut self, key: &K, f: F) {
+        if let Some(local) = self.local.get_mut(key) {
+            f(local);
+            let versioned = Versioned { value: local.clone(), version: get_rng().next_u64() };
+            self.state.write().await.insert(key.clone(), versioned);
+        }
+    }
+
     pub fn keys(&self) -> impl Iterator<Item = &K> {
         self.local.keys()
     }

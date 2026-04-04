@@ -425,17 +425,16 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         }
 
         // Upgrade user crypto from initial key to session key.
-        // Re-insert propagates the change to all CachedMap instances via version bump.
+        // modify() mutates the local entry in place and bumps the shared-state version so all
+        // CachedMap instances re-fetch — saves one V clone and one K clone vs get+insert.
         {
             let mut users = self.users.lock().await;
-            if let Some(user_state) = users.get(&identity).cloned() {
-                let mut upgraded = user_state;
+            users.modify(&identity, |user_state| {
                 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-                upgraded.upgrade_crypto(&session_key, self.secret.obfuscation_buffer());
+                user_state.upgrade_crypto(&session_key, self.secret.obfuscation_buffer());
                 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-                upgraded.upgrade_crypto(&session_key);
-                users.insert(identity.clone(), upgraded).await;
-            }
+                user_state.upgrade_crypto(&session_key);
+            }).await;
         }
 
         // Mark the handshake flow as active for this session (lock-free, atomic bitmask).
@@ -448,6 +447,14 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             let mut sessions = self.sessions.write().await;
             if sessions.contains_key(&identity) {
                 debug!("concurrent handshake for {}: discarding duplicate", identity.to_string());
+                // Clean up: the user was already inserted into the shared map and all flow
+                // decoy providers above. Drop the sessions lock before acquiring users/flow locks
+                // to preserve lock order and avoid deadlock.
+                drop(sessions);
+                self.users.lock().await.remove(&identity).await;
+                for flow in &self.flows {
+                    flow.remove_user(&identity).await;
+                }
                 return;
             }
             sessions.insert(identity.clone(), Arc::clone(&session));
