@@ -315,9 +315,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
         get_rng().fill(packet.slice_end_mut(body_length));
 
         let pn = self.next_packet_number();
-        let tailor_buffer = self.settings.pool().allocate(Some(T::length() + TAILOR_LENGTH));
-        let tailor = Tailor::decoy(tailor_buffer, &self.identity, pn);
-        packet.slice_start_mut(body_length).copy_from_slice(tailor.buffer().slice());
+        Tailor::decoy(packet.rebuffer_start(body_length), &self.identity, pn);
 
         if subheader_len > 0 {
             let expanded = packet.expand_start(subheader_len);
@@ -340,9 +338,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
         packet.slice_end_mut(body_length).copy_from_slice(original_body);
 
         let pn = self.next_packet_number();
-        let tailor_buffer = self.settings.pool().allocate(Some(T::length() + TAILOR_LENGTH));
-        let tailor = Tailor::decoy(tailor_buffer, &self.identity, pn);
-        packet.slice_start_mut(body_length).copy_from_slice(tailor.buffer().slice());
+        Tailor::decoy(packet.rebuffer_start(body_length), &self.identity, pn);
 
         if subheader_len > 0 {
             let expanded = packet.expand_start(subheader_len);
