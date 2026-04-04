@@ -29,7 +29,7 @@ cfg_if! {
     }
 }
 
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+#[cfg(all(feature = "client", any(feature = "full_software", feature = "full_hardware")))]
 use x25519_dalek::StaticSecret;
 
 #[cfg(feature = "client")]

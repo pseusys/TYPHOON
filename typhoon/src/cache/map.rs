@@ -34,7 +34,6 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
     }
 
     pub async fn insert(&mut self, key: K, value: V) {
-        self.local.insert(key.clone(), value.clone());
         self.state.write().await.insert(
             key.clone(),
             Versioned {
@@ -42,6 +41,7 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
                 version: get_rng().next_u64(),
             },
         );
+        self.local.insert(key, value);
     }
 
     pub async fn remove(&mut self, key: &K) {

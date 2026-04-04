@@ -119,10 +119,9 @@ impl<T: Send> WatchReceiver<T> {
                 if let Some(v) = guard.take() {
                     return Some(v);
                 }
-            }
-
-            if self.state.closed.load(Ordering::Relaxed) {
-                return None;
+                if self.state.closed.load(Ordering::Acquire) {
+                    return None;
+                }
             }
 
             #[cfg(feature = "tokio")]

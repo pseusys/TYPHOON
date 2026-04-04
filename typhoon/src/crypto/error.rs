@@ -29,6 +29,7 @@ pub enum HandshakeError {
         source: CryptoError,
     },
 
+    #[cfg(feature = "client")]
     #[error("cryptography error during authenticating: {}", .0)]
     AuthenticationError(String),
 }
@@ -59,6 +60,7 @@ impl HandshakeError {
         }
     }
 
+    #[cfg(feature = "client")]
     #[inline]
     pub fn handshake_authentication_error(cause: &str) -> Self {
         Self::AuthenticationError(cause.to_string())
