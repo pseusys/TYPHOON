@@ -101,7 +101,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             // Deobfuscate tailor, verify immediately for non-handshake packets (single lock scope).
             let tailor = {
                 let mut crypto = self.crypto_recv.lock().await;
-                let (tailor_buf, transcript) = match crypto.deobfuscate_tailor(encrypted_tailor) {
+                let (tailor_buf, transcript) = match crypto.deobfuscate_tailor(encrypted_tailor, self.settings.pool()) {
                     Ok(result) => result,
                     Err(err) => {
                         debug!("error decrypting packet tailor: {}", err);
@@ -230,7 +230,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             // Deobfuscate, verify, and wrap as a tailor view.
             let tailor = {
                 let mut crypto = self.crypto_recv.lock().await;
-                let (tailor_buf, transcript) = match crypto.deobfuscate_tailor(encrypted_tailor) {
+                let (tailor_buf, transcript) = match crypto.deobfuscate_tailor(encrypted_tailor, self.settings.pool()) {
                     Ok(result) => result,
                     Err(err) => {
                         debug!("error decrypting packet tailor: {}", err);

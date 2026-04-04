@@ -52,7 +52,7 @@ pub trait FlowCryptoProvider: Clone + Send {
     fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<DynamicByteBuffer, CryptoError>;
 
     /// Decrypt received tailor bytes.
-    fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError>;
+    fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError>;
 
     /// Verify tailor authentication after deobfuscation.
     fn verify_tailor(&mut self, transcript: ObfuscationTranscript) -> Result<(), CryptoError>;
@@ -109,7 +109,7 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
 #[cfg(feature = "client")]
 impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
     /// Decrypt tailor, verify, check if discardable. Returns processed packet or None if decoy.
-    pub(crate) async fn process_incoming(&mut self, packet: DynamicByteBuffer) -> Result<Option<DynamicByteBuffer>, FlowControllerError> {
+    pub(crate) async fn process_incoming(&mut self, packet: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<Option<DynamicByteBuffer>, FlowControllerError> {
         let identity_len = <CP::Identity as IdentityType>::length();
         let full_tailor_len = TAILOR_LENGTH + identity_len;
         let encrypted_tailor_len = identity_len + CP::tailor_overhead();
@@ -118,7 +118,7 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
         // The decrypted tailor sits at the start of the encrypted_tailor region,
         // reachable via encrypted_packet.expand_end(full_tailor_len).
         let tailor = match self.provider.get_mut().await {
-            Ok(cipher) => match cipher.deobfuscate_tailor(encrypted_tailor) {
+            Ok(cipher) => match cipher.deobfuscate_tailor(encrypted_tailor, pool) {
                 Ok((tailor, transcript)) => {
                     match cipher.verify_tailor(transcript) {
                         Ok(_) => {}

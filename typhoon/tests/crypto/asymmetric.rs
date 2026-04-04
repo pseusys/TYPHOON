@@ -154,7 +154,7 @@ fn test_handshake_cycle() {
     let (client_data, client_handshake, _client_initial_key) = certificate.encapsulate_handshake_client(&TEST_POOL, client_initial_data);
 
     // Server decapsulates and receives decrypted client initial data.
-    let (server_data, server_initial_key, decrypted_client_initial_data) = server_secret.decapsulate_handshake_server(client_handshake);
+    let (server_data, server_initial_key, decrypted_client_initial_data) = server_secret.decapsulate_handshake_server(client_handshake, &TEST_POOL);
 
     assert_eq!(client_data.shared_secret, server_data.shared_secret, "client and server should derive the same shared secret");
     assert_eq!(client_initial_data.as_slice(), decrypted_client_initial_data.slice(), "server should receive the same client initial data");
@@ -163,7 +163,7 @@ fn test_handshake_cycle() {
     let (server_handshake, server_session_key) = server_secret.encapsulate_handshake_server(server_data, &TEST_POOL, server_initial_data, &server_initial_key);
 
     // Client decapsulates and receives session key + decrypted server initial data.
-    let (client_session_key, decrypted_server_initial_data) = certificate.decapsulate_handshake_client(client_data, server_handshake).expect("client handshake decapsulation failed");
+    let (client_session_key, decrypted_server_initial_data) = certificate.decapsulate_handshake_client(client_data, server_handshake, &TEST_POOL).expect("client handshake decapsulation failed");
 
     assert_eq!(server_initial_data.as_slice(), decrypted_server_initial_data.slice(), "client should receive the same server initial data");
 
@@ -196,7 +196,7 @@ fn test_handshake_tampered_ciphertext_fails() {
     let original = *client_handshake.get(tampered_byte_idx);
     client_handshake.set(tampered_byte_idx, original ^ 0xFF);
 
-    let (server_data, _server_initial_key, decrypted_client_initial_data) = server_secret.decapsulate_handshake_server(client_handshake);
+    let (server_data, _server_initial_key, decrypted_client_initial_data) = server_secret.decapsulate_handshake_server(client_handshake, &TEST_POOL);
 
     // Server should derive a different shared secret from tampered data.
     assert_ne!(client_data.shared_secret, server_data.shared_secret, "tampered handshake should produce different shared secrets");

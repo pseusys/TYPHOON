@@ -1,6 +1,6 @@
 use x25519_dalek::EphemeralSecret;
 
-use crate::bytes::{ByteBuffer, BytePool, DynamicByteBuffer, FixedByteBuffer, StaticByteBuffer};
+use crate::bytes::{ByteBuffer, BytePool, DynamicByteBuffer, FixedByteBuffer};
 use crate::certificate::ClientCertificate;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 use crate::certificate::ObfuscationBufferContainer;
@@ -77,8 +77,8 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
 
     /// Client handshake step 2: process server response, verify signature, derive session key.
     /// Returns (session_key, server_initial_data).
-    pub(crate) fn process_handshake_response(&self, data: ClientData, handshake_secret: DynamicByteBuffer) -> Result<(FixedByteBuffer<32>, StaticByteBuffer), HandshakeError> {
-        self.cert.decapsulate_handshake_client(data, handshake_secret)
+    pub(crate) fn process_handshake_response(&self, data: ClientData, handshake_secret: DynamicByteBuffer, pool: &BytePool) -> Result<(FixedByteBuffer<32>, DynamicByteBuffer), HandshakeError> {
+        self.cert.decapsulate_handshake_client(data, handshake_secret, pool)
     }
 
     /// Encrypt payload data with session key.
@@ -105,13 +105,13 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
 
     /// Deobfuscate (decrypt) received tailor bytes.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
-        Ok(self.obfuscation_key.decrypt_no_verify(ciphertext))
+    pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer, pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+        Ok(self.obfuscation_key.decrypt_no_verify(ciphertext, pool))
     }
 
     /// Deobfuscate (decrypt) received tailor bytes.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+    pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer, _pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
         self.key.decrypt_auth(ciphertext, None::<&DynamicByteBuffer>).map(|r| (r, ObfuscationTranscript {}))
     }
 
@@ -181,8 +181,8 @@ impl<T: IdentityType + Clone> FlowCryptoProvider for ClientCryptoTool<T> {
     }
 
     #[inline]
-    fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
-        self.deobfuscate_tailor(ciphertext)
+    fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer, pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+        self.deobfuscate_tailor(ciphertext, pool)
     }
 
     #[inline]

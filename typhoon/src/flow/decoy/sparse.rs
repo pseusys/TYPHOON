@@ -85,7 +85,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync +
                     if let Err(err) = manager_arc.send_packet(decoy_packet, true).await {
                         debug!("SparseDecoyProvider: failed to send decoy packet: {:?}", err);
                     } else if let Some(bytes) = body_bytes {
-                        try_replicate(&state, &manager, false, &bytes).await;
+                        try_replicate(&state, &manager, false, bytes).await;
                     }
                 } else {
                     debug!("SparseDecoyProvider: insufficient byte budget for {} bytes, skipping", decoy_length);

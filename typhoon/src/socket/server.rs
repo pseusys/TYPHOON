@@ -315,7 +315,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Handle a handshake from a new client: create session, send response, publish ClientHandle.
     async fn handle_new_client(self: &Arc<Self>, raw_packet: crate::flow::server::RawReceivedPacket<T>, flow_index: usize) {
         // Decapsulate client handshake to get server data, initial key, and client initial data.
-        let (server_data, initial_key, client_initial_data) = self.secret.decapsulate_handshake_server(raw_packet.body);
+        let (server_data, initial_key, client_initial_data) = self.secret.decapsulate_handshake_server(raw_packet.body, self.settings.pool());
 
         // Check client version from the handshake tailor ID field.
         let client_version_identity = raw_packet.tailor.identity();
