@@ -1,4 +1,4 @@
-#[cfg(test)]
+#[cfg(all(test, feature = "client", feature = "server"))]
 #[path = "../../tests/crypto/asymmetric.rs"]
 mod tests;
 

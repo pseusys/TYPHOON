@@ -4,7 +4,9 @@ mod tests;
 
 use cfg_if::cfg_if;
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+#[cfg(feature = "server")]
+use crate::bytes::StaticByteBuffer;
 use crate::crypto::error::CryptoError;
 use crate::utils::random::{SupportRng, get_rng};
 
