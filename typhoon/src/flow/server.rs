@@ -42,6 +42,9 @@ pub struct ServerFlowManager<T: IdentityType + Clone + Eq + Hash + Send + ToStri
     crypto_recv: Mutex<ServerCryptoTool<T>>,
     fake_body_mode: FakeBodyMode,
     fake_header_mode: Mutex<FakeHeaderConfig>,
+    /// Precomputed worst-case prefix length: fake_header.len() + fake_body.max_len().
+    /// Used to guard expand_start without locking fake_header_mode on every send.
+    max_overhead: usize,
     sock: Socket,
     mtu: usize,
     settings: Arc<Settings<AE>>,
@@ -52,6 +55,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// `crypto_send` and `crypto_recv` must be independent instances (e.g. two `create_cache()` calls
     /// on the same `SharedMap`) so their mutexes never contend between the send and receive paths.
     pub fn new(config: FlowConfig, crypto_send: ServerCryptoTool<T>, crypto_recv: ServerCryptoTool<T>, settings: Arc<Settings<AE>>, sock: Socket) -> Arc<Self> {
+        let max_overhead = config.max_overhead();
         Arc::new(ServerFlowManager {
             user_addrs: RwLock::new(HashMap::new()),
             decoy_providers: RwLock::new(HashMap::new()),
@@ -59,6 +63,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             crypto_recv: Mutex::new(crypto_recv),
             fake_body_mode: config.fake_body_mode,
             fake_header_mode: Mutex::new(config.fake_header_mode),
+            max_overhead,
             sock,
             mtu: settings.mtu(),
             settings,
@@ -131,8 +136,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
             // For non-handshake packets, update address and feed decoy providers.
             if !packet_flags.contains(PacketFlags::HANDSHAKE) {
-                // Update source address for this user (rebinding).
-                self.user_addrs.write().await.insert(identity.clone(), source_addr);
+                // Update source address only if changed (NAT rebinding). Read-first avoids a
+                // write lock on every packet, which would block concurrent send_packet reads.
+                if self.user_addrs.read().await.get(&identity).copied() != Some(source_addr) {
+                    self.user_addrs.write().await.insert(identity.clone(), source_addr);
+                }
 
                 // Feed the user's decoy provider (per-user lock, not global).
                 let dp = self.decoy_providers.read().await.get(&identity).cloned();
@@ -189,6 +197,17 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             *addrs.get(&identity).ok_or_else(|| FlowControllerError::UserNotFound {
                 identity: identity.to_string(),
             })?
+        };
+
+        // Ensure before_capacity for expand_start — same guard as prepare_outgoing in client flow.
+        // Decoy packets use allocate_precise with subheader_len before_capacity (can be 0).
+        let notified_packet = if notified_packet.before_capacity() < self.max_overhead {
+            let staged = self.settings.pool().allocate_precise(
+                notified_packet.len(), self.max_overhead, ServerCryptoTool::<T>::tailor_overhead());
+            staged.slice_mut().copy_from_slice(notified_packet.slice());
+            staged
+        } else {
+            notified_packet
         };
 
         // Split into data + tailor, encrypt tailor.

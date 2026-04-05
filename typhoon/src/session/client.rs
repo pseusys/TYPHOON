@@ -98,9 +98,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
             // User data: encrypt payload, create DATA tailor, check for shadowriding.
             let (encrypted_payload, payload_length, identity) = {
                 let mut send_lock = self.send_internal.lock().await;
-                let encrypted_payload = send_lock.cipher.get_mut().await.encrypt_payload(packet, None).map_err(SessionControllerError::CryptoError)?;
+                // Single get_mut() covers both encrypt_payload and identity() — one lock acquire.
+                let cipher = send_lock.cipher.get_mut().await;
+                let encrypted_payload = cipher.encrypt_payload(packet, None).map_err(SessionControllerError::CryptoError)?;
                 let payload_length = encrypted_payload.len() as u16;
-                let identity = send_lock.cipher.get().await.identity();
+                let identity = cipher.identity();
                 (encrypted_payload, payload_length, identity)
                 // send_lock released here
             };
