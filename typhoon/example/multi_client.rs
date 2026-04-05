@@ -3,6 +3,7 @@
 /// Tests independent session isolation and concurrent RwLock read access to the sessions map.
 use std::sync::Arc;
 
+use env_logger;
 use futures::future::join_all;
 
 use typhoon::bytes::StaticByteBuffer;
@@ -29,6 +30,8 @@ fn main() {
 }
 
 async fn run() {
+    env_logger::init();
+
     let settings = Arc::new(
         SettingsBuilder::<DefaultExecutor>::new()
             .build()

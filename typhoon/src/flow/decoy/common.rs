@@ -6,7 +6,7 @@ mod tests;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use log::debug;
+use log::warn;
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand_distr::{Distribution, Exp, Normal};
@@ -457,30 +457,27 @@ pub(super) async fn maintenance_timer_task<T, AE, FM>(
         sleep(delay).await;
 
         let Some(manager_arc) = manager.upgrade() else {
-            debug!("Maintenance timer: manager dropped, stopping");
+            warn!("Maintenance timer: manager dropped, stopping");
             break;
         };
 
-        let (packet, body_length, body_bytes) = {
+        let (packet, body_bytes) = {
             let mut guard = state.write().await;
             let length = guard.pending_maintenance_length;
 
             if !guard.try_spend_budget(length) {
                 guard.schedule_next_maintenance();
-                debug!("Maintenance: insufficient budget for {} bytes, skipping", length);
                 continue;
             }
 
             let packet = guard.create_decoy_packet(length, true);
             // Save body bytes for potential replication (before tailor).
             let body = packet.slice_end(length).to_vec();
-            (packet, length, body)
+            (packet, body)
         };
 
-        debug!("Maintenance: generated packet (len={})", body_length);
-
         if let Err(err) = manager_arc.send_packet(packet, true).await {
-            debug!("Maintenance: failed to send: {:?}", err);
+            warn!("Maintenance: failed to send: {:?}", err);
         } else {
             try_replicate(&state, &manager, true, &body_bytes).await;
         }
@@ -537,13 +534,11 @@ pub(super) async fn try_replicate<T, AE, FM>(
             let packet = {
                 let mut guard = state_clone.write().await;
                 if !guard.try_spend_budget(body_owned.len()) {
-                    debug!("Replication: insufficient budget, stopping cascade");
                     break;
                 }
                 guard.create_replica_packet(&body_owned, is_maintenance)
             };
 
-            debug!("Replication: sending replica (len={})", body_owned.len());
             if manager_arc.send_packet(packet, true).await.is_err() {
                 break;
             }

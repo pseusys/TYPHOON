@@ -3,6 +3,8 @@
 /// across them. All messages must arrive regardless of which flow handles each packet.
 use std::sync::Arc;
 
+use env_logger;
+
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
@@ -26,6 +28,8 @@ fn main() {
 }
 
 async fn run() {
+    env_logger::init();
+
     let settings = Arc::new(
         SettingsBuilder::<DefaultExecutor>::new()
             .build()

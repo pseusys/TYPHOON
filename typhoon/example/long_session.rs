@@ -4,6 +4,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use env_logger;
+
 use tokio::time::sleep;
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
@@ -28,6 +30,8 @@ fn main() {
 }
 
 async fn run() {
+    env_logger::init();
+
     let settings = Arc::new(
         SettingsBuilder::<DefaultExecutor>::new()
             .build()

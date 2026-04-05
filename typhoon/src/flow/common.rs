@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use log::{debug, info, trace};
+use log::warn;
 use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
@@ -88,7 +88,6 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
         self.config.fake_header_mode.fill(full_packet.rebuffer_end(fake_header_len));
         get_rng().fill(&mut full_packet.rebuffer_both(fake_header_len, full_packet_len));
 
-        trace!("prepare_outgoing: payload+tailor={}B → wire={}B (header={}B, body_pad={}B)", encrypted_packet.len(), full_packet.len(), fake_header_len, full_packet_len.saturating_sub(fake_header_len + encrypted_packet.len()));
         Ok(full_packet)
     }
 }
@@ -109,14 +108,14 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
                     match cipher.verify_tailor(transcript) {
                         Ok(_) => {}
                         Err(err) => {
-                            debug!("error verifying packet tailor: {}", err);
+                            warn!("client flow: tailor verification failed: {}", err);
                             return Ok(None);
                         }
                     }
                     tailor
                 }
                 Err(err) => {
-                    debug!("error decrypting packet tailor: {}", err);
+                    warn!("client flow: tailor decryption failed: {}", err);
                     return Ok(None);
                 }
             },
@@ -125,13 +124,12 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
 
         let tailor = Tailor::<CP::Identity>::new(tailor);
         if tailor.flags().is_discardable() {
-            info!("decoy packet received, skipping...");
             return Ok(None);
         }
 
         let payload_len = tailor.payload_length() as usize;
         let is_handshake = tailor.flags().contains(PacketFlags::HANDSHAKE);
-        trace!("process_incoming: wire={}B flags={:?} payload_len={} is_handshake={}", packet.len(), tailor.flags(), payload_len, is_handshake);
+        let _ = is_handshake; // used in prior trace, kept for potential future use
 
         // For all packets, use payload_length to strip fake body/header from the front.
         // Handshake packets encode the handshake body length in payload_length so that
