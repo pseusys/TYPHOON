@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use log::{debug, info, trace};
+use log::{debug, info};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::SharedValue;
@@ -117,7 +117,6 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
             loop {
                 match receive_session.receive_packet().await {
                     Ok(buffer) => {
-                        trace!("client bg-recv: pushing {} bytes to queue", buffer.len());
                         incoming_tx.push(buffer);
                     }
                     Err(err) => {
@@ -153,14 +152,11 @@ pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + '
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ClientFlowManager<T, AE, DP>> + 'static, CC: ClientConnectionHandler + 'static> ClientSocket<T, AE, DP, CC> {
     /// Send a packet using a pre-allocated buffer.
     pub async fn send(&self, packet: DynamicByteBuffer) -> Result<(), ClientSocketError> {
-        trace!("ClientSocket::send {} bytes", packet.len());
         self.session.send_packet(packet, false).await.map_err(ClientSocketError::SessionError)
     }
 
     /// Send a byte slice, splitting into payload-sized chunks so each wire packet fits within MTU.
     pub async fn send_bytes(&self, data: &[u8]) -> Result<(), ClientSocketError> {
-        let total = data.chunks(self.max_data_payload).count();
-        trace!("ClientSocket::send_bytes {} bytes → {} chunk(s) of max {}B", data.len(), total, self.max_data_payload);
         for chunk in data.chunks(self.max_data_payload) {
             let buffer = self.settings.pool().allocate(Some(chunk.len()));
             buffer.slice_mut().copy_from_slice(chunk);
@@ -177,7 +173,6 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
     /// Receive a packet, returning the decrypted payload as a buffer.
     pub async fn receive(&self) -> Result<DynamicByteBuffer, ClientSocketError> {
         let buf = self.incoming_rx.lock().await.recv().await.ok_or(ClientSocketError::ChannelClosed)?;
-        trace!("ClientSocket::receive {} bytes", buf.len());
         Ok(buf)
     }
 

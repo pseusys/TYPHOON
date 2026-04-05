@@ -2,7 +2,7 @@
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use log::debug;
+use log::warn;
 
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::flow::common::FlowManager;
@@ -64,7 +64,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync +
             sleep(delay).await;
 
             let Some(manager_arc) = manager.upgrade() else {
-                debug!("HeavyDecoyProvider: manager dropped, stopping timer");
+                warn!("HeavyDecoyProvider: manager dropped, stopping timer");
                 break;
             };
 
@@ -75,16 +75,13 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync +
                 if state_guard.try_spend_budget(decoy_length) {
                     let decoy_packet = state_guard.create_decoy_packet(decoy_length, false);
                     let body_bytes: Vec<u8> = decoy_packet.slice_end(decoy_length).to_vec();
-                    debug!("HeavyDecoyProvider: generated decoy packet (len={})", decoy_length);
                     drop(state_guard);
 
                     if let Err(err) = manager_arc.send_packet(decoy_packet, true).await {
-                        debug!("HeavyDecoyProvider: failed to send decoy packet: {:?}", err);
+                        warn!("HeavyDecoyProvider: failed to send decoy packet: {:?}", err);
                     } else {
                         try_replicate(&state, &manager, false, &body_bytes).await;
                     }
-                } else {
-                    debug!("HeavyDecoyProvider: insufficient byte budget for {} bytes, skipping", decoy_length);
                 }
             }
 
@@ -93,7 +90,6 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync +
                 let delay = Self::calculate_delay(&state_guard);
                 let length = Self::calculate_length(&state_guard);
                 state_guard.schedule_next(delay, length);
-                debug!("HeavyDecoyProvider: next in {}ms", delay);
             }
         }
     }
@@ -106,8 +102,6 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync +
         let length = Self::calculate_length(&state);
         let mut state = state;
         state.schedule_next(delay, length);
-
-        debug!("HeavyDecoyProvider initialized with delay ({delay} ms), length ({length} bytes)");
 
         Self {
             manager,
@@ -125,7 +119,6 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync +
         let state = self.state.clone();
         executor.spawn(Self::timer_task(manager.clone(), state.clone()));
         executor.spawn(maintenance_timer_task(manager, state));
-        debug!("HeavyDecoyProvider: background timers started");
     }
 
     async fn feed_input(&mut self, packet: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
