@@ -145,7 +145,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 // Feed the user's decoy provider (per-user lock, not global).
                 let dp = self.decoy_providers.read().await.get(&identity).cloned();
                 if let Some(dp) = dp {
-                    let notified = dp.lock().await.feed_input(tailor.buffer().clone()).await;
+                    let notified = dp.lock().await.feed_input(packet.clone()).await;
                     if notified.is_none() {
                         continue;
                     }

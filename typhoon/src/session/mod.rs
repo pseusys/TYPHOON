@@ -2,12 +2,14 @@
 mod common;
 mod error;
 #[cfg(feature = "client")]
-mod health;
+mod client_health;
 
 #[cfg(feature = "client")]
 mod client;
 #[cfg(feature = "server")]
 pub(crate) mod server;
+#[cfg(feature = "server")]
+mod server_health;
 
 #[cfg(feature = "client")]
 pub use client::ClientSessionManager;

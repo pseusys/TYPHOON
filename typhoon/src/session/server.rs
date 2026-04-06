@@ -5,16 +5,19 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak as StdWeak};
 
 use log::{debug, trace};
+use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, FixedByteBuffer};
 use crate::cache::{CachedMapEntryTemplate, SharedMap};
 use crate::crypto::{UserCryptoState, UserServerState};
 use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
-use crate::settings::Settings;
+use crate::session::server_health::ServerHealthProvider;
+use crate::settings::{Settings, keys};
 use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{IdentityType, PacketFlags, ReturnCode, Tailor};
 use crate::utils::bitset::AtomicBitSet;
+use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, NotifyQueueSender};
 use crate::utils::time::unix_timestamp_ms;
 
@@ -22,6 +25,8 @@ use crate::utils::time::unix_timestamp_ms;
 /// Implemented by the Listener, stored as `Weak<R>` in each session.
 pub trait OutgoingRouter<T>: Send + Sync {
     fn route_packet<'a>(&'a self, packet: DynamicByteBuffer, identity: &'a T) -> impl Future<Output = bool> + Send + 'a;
+    /// Remove all state associated with the given identity (session map, user crypto, decoy providers).
+    fn remove_session<'a>(&'a self, identity: &'a T) -> impl Future<Output = ()> + Send + 'a;
 }
 
 /// Incoming packet for the server session manager: body + tailor view.
@@ -43,6 +48,7 @@ pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToS
     incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
     router: StdWeak<R>,
     settings: Arc<Settings<AE>>,
+    health_provider: ServerHealthProvider,
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> ServerSessionManager<T, AE, R> {
@@ -82,20 +88,26 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         let crypto_send = users.create_cache_for(identity.clone());
         let crypto_recv = users.create_cache_for(identity.clone());
 
+        // Generate server's next_in for the handshake response (tells client when to send first health check).
+        let server_next_in = get_rng().gen_range(
+            settings.get(&keys::HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&keys::HEALTH_CHECK_NEXT_IN_MAX),
+        ) as u32;
+
         // Assemble response packet: response_body || tailor.
-        let next_in = handshake_tailor.time();
         let response_body_len = response_body.len();
         let tailor_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
         let _response_tailor = Tailor::handshake(
             tailor_buf,
             &identity,
             ReturnCode::Success.into(),
-            next_in,
+            server_next_in,
             handshake_tailor.packet_number(),
             response_body_len as u16,
         );
         // Include the response body in the packet: response_body || tailor (TAILOR_LENGTH + T::length() bytes).
         let response_packet = response_body.expand_end(TAILOR_LENGTH + T::length());
+
+        let health_provider = ServerHealthProvider::new(router.clone(), identity.clone(), settings.clone(), server_next_in);
 
         let session = Arc::new(Self {
             crypto_send,
@@ -106,6 +118,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
             incoming_tx,
             router,
             settings,
+            health_provider,
         });
 
         Ok((session, response_packet))
@@ -137,20 +150,26 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         let crypto_send = users.create_cache_for(identity.clone());
         let crypto_recv = users.create_cache_for(identity.clone());
 
+        // Generate server's next_in for the handshake response (tells client when to send first health check).
+        let server_next_in = get_rng().gen_range(
+            settings.get(&keys::HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&keys::HEALTH_CHECK_NEXT_IN_MAX),
+        ) as u32;
+
         // Assemble response packet: response_body || tailor.
-        let next_in = handshake_tailor.time();
         let response_body_len = response_body.len();
         let tailor_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
         let _response_tailor = Tailor::handshake(
             tailor_buf,
             &identity,
             ReturnCode::Success.into(),
-            next_in,
+            server_next_in,
             handshake_tailor.packet_number(),
             response_body_len as u16,
         );
         // Include the response body in the packet: response_body || tailor (TAILOR_LENGTH + T::length() bytes).
         let response_packet = response_body.expand_end(TAILOR_LENGTH + T::length());
+
+        let health_provider = ServerHealthProvider::new(router.clone(), identity.clone(), settings.clone(), server_next_in);
 
         let session = Arc::new(Self {
             crypto_send,
@@ -161,6 +180,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
             incoming_tx,
             router,
             settings,
+            health_provider,
         });
 
         Ok((session, response_packet))
@@ -175,6 +195,25 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
     /// Falls back to flow 0 if none have been seen yet.
     pub fn select_active_flow(&self, num_flows: usize) -> usize {
         self.active_flows.random_set_index(num_flows)
+    }
+
+    /// Spawn a cleanup task that notifies the client and removes this session from shared state.
+    /// Called from ClientHandle::Drop (server-side close). Sends TERMINATION while the session
+    /// is still in the router's sessions map (so route_packet can resolve the active flow),
+    /// then removes all associated state. All removes are no-ops if the client already sent
+    /// TERMINATION and route_incoming already called remove_session.
+    pub fn spawn_cleanup(&self, executor: &AE) {
+        let identity = self.identity.clone();
+        let router = self.router.clone();
+        let pn = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
+        let buf = self.settings.pool().allocate(Some(T::length()));
+        let termination = Tailor::termination(buf, &self.identity, ReturnCode::Success, pn).into_buffer();
+        executor.spawn(async move {
+            if let Some(router) = router.upgrade() {
+                router.route_packet(termination, &identity).await;
+                router.remove_session(&identity).await;
+            }
+        });
     }
 
     /// Get the next packet number: (unix_timestamp_seconds << 32) | incremental.
@@ -209,12 +248,12 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
             return Err(SessionControllerError::ConnectionTerminated(tailor.code()));
         }
 
-        // Handle health check: respond after the client's requested delay.
+        // Handle health check: forward to health provider.
         if tailor.flags().contains(PacketFlags::HEALTH_CHECK) && !tailor.flags().has_payload() {
             let next_in = tailor.time();
             let pn = tailor.packet_number();
             trace!("server session: standalone health check pn={} next_in={}", pn, next_in);
-            self.schedule_health_response(next_in, pn).await?;
+            self.health_provider.feed_health_check(next_in, pn);
         }
 
         // If there is data payload, decrypt and forward to ClientHandle.
@@ -234,9 +273,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
             match decrypt_result {
                 Ok(decrypted) => {
                     trace!("server session: decrypted {}B (encrypted payload was {}B), forwarding to client handle", decrypted.len(), payload_len);
-                    // If this is a shadowride (data + health check), respond to the health check.
+                    // If this is a shadowride (data + health check), forward to health provider.
                     if tailor.flags().contains(PacketFlags::HEALTH_CHECK) {
-                        self.schedule_health_response(tailor.time(), tailor.packet_number()).await?;
+                        self.health_provider.feed_health_check(tailor.time(), tailor.packet_number());
                     }
                     self.incoming_tx.push(decrypted);
                 }
@@ -249,14 +288,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         Ok(())
     }
 
-    /// Schedule a health check response.
-    async fn schedule_health_response(&self, client_next_in: u32, _client_pn: u64) -> Result<(), SessionControllerError> {
-        let pn = self.next_packet_number();
-        let buf = self.settings.pool().allocate(Some(T::length()));
-        let response_tailor = Tailor::health_check(buf, &self.identity, client_next_in, pn);
-
-        self.route_outgoing(response_tailor.into_buffer()).await
-    }
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> SessionManager for ServerSessionManager<T, AE, R> {
@@ -293,17 +324,3 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
     }
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> Drop for ServerSessionManager<T, AE, R> {
-    fn drop(&mut self) {
-        let identity = self.identity.clone();
-        let packet_number = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
-        let buf = self.settings.pool().allocate(Some(T::length()));
-        let tailor = Tailor::termination(buf, &identity, ReturnCode::Success, packet_number);
-        let router = self.router.clone();
-        self.settings.executor().spawn(async move {
-            if let Some(router) = router.upgrade() {
-                router.route_packet(tailor.into_buffer(), &identity).await;
-            }
-        });
-    }
-}

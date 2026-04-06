@@ -3,7 +3,7 @@ use std::mem::take;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use log::{debug, info, trace};
+use log::{debug, trace};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::SharedValue;
@@ -11,7 +11,7 @@ use crate::crypto::ClientCryptoTool;
 use crate::flow::FlowManager;
 use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
-use crate::session::health::HealthProvider;
+use crate::session::client_health::ClientHealthProvider;
 use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{ClientConnectionHandler, IdentityType, PacketFlags, Tailor};
@@ -28,7 +28,7 @@ struct ClientSessionManagerInternalReceive<T: IdentityType + Clone> {
 
 /// Client-side session manager that encrypts data and manages health checking.
 pub struct ClientSessionManager<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> {
-    health_provider: HealthProvider<T, AE, Self, CC>,
+    health_provider: ClientHealthProvider<T, AE, Self, CC>,
     send_internal: Mutex<ClientSessionManagerInternalSend<T>>,
     receive_internal: Mutex<ClientSessionManagerInternalReceive<T>>,
     incremental_counter: AtomicU32,
@@ -49,7 +49,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
         let (shadowride_tx, _) = create_watch();
 
         let value = Arc::new_cyclic(|weak| {
-            let health_provider = HealthProvider::new(weak.clone(), settings.clone(), health_state_crypto, response_tx, shadowride_tx, response_rx, initial_data_generator);
+            let health_provider = ClientHealthProvider::new(weak.clone(), settings.clone(), health_state_crypto, response_tx, shadowride_tx, response_rx, initial_data_generator);
 
             ClientSessionManager {
                 health_provider,
@@ -179,7 +179,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
             }
 
             // Pure health check with no data: loop back.
-            info!("standalone health check processed, waiting for next packet");
+            trace!("standalone health check processed, waiting for next packet");
         }
     }
 }

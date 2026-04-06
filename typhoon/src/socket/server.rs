@@ -278,14 +278,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         // Check if this is a handshake packet from a new client.
         if raw_packet.tailor.flags().contains(PacketFlags::HANDSHAKE) {
-            {
-                let sessions = self.sessions.read().await;
-                if sessions.contains_key(&identity) {
-                    debug!("duplicate handshake from known client, ignoring");
-                    return;
-                }
-            }
-
             self.handle_new_client(raw_packet, flow_index).await;
             return;
         }
@@ -306,6 +298,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             };
             if let Err(err) = session.process_incoming(incoming).await {
                 debug!("session processing error for {}: {}", identity.to_string(), err);
+                if matches!(err, crate::session::SessionControllerError::ConnectionTerminated(_)) {
+                    self.remove_session(&identity).await;
+                }
             }
         } else {
             debug!("packet from unknown identity {}, dropping", identity.to_string());
@@ -359,16 +354,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             server_data, self.settings.pool(), server_initial_data.slice(), &initial_key);
 
         // Lock scope limited to shared-map mutations + packet assembly only.
-        let (session, response_packet) = {
+        let (session, response_packet, replacing) = {
             let mut users = self.users.lock().await;
-            // Guard against TOCTOU: two concurrent handshakes for the same identity can
-            // both pass the read-lock check in route_incoming and reach this point.
-            // The second to acquire the users lock must abort — proceeding would
-            // overwrite the first session's user-state entry in the shared map,
-            // leaving the surviving session with the wrong crypto key.
-            if users.contains_key(&identity) {
-                debug!("concurrent handshake race for {}: aborting duplicate under users lock", identity.to_string());
-                return;
+            // "Last wins": if a session already exists for this identity (client crash-and-
+            // reconnect, or a concurrent in-flight retransmission), remove the old user state
+            // and proceed. Sessions + decoy cleanup happens below (lock order: users → sessions).
+            let replacing = users.contains_key(&identity);
+            if replacing {
+                debug!("re-handshake for {}: replacing existing session (last wins)", identity.to_string());
+                users.remove(&identity).await;
             }
             #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
             let result = ServerSessionManager::from_handshake(
@@ -396,13 +390,22 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 self.settings.clone(),
             ).await;
             match result {
-                Ok(r) => r,
+                Ok((session, response_packet)) => (session, response_packet, replacing),
                 Err(err) => {
                     debug!("handshake failed: {}", err);
                     return;
                 }
             }
         };
+
+        // If we replaced an existing session, remove its sessions entry and decoy providers
+        // before re-registering. Lock order preserved: users released above.
+        if replacing {
+            self.sessions.write().await.remove(&identity);
+            for flow in &self.flows {
+                flow.remove_user(&identity).await;
+            }
+        }
 
         // Register initial source address on the handshake flow manager.
         self.flows[flow_index].register_user_addr(identity.clone(), raw_packet.source_addr).await;
@@ -440,22 +443,13 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         // Mark the handshake flow as active for this session (lock-free, atomic bitmask).
         session.note_active_flow(flow_index);
 
-        // Store session — guard against the TOCTOU race where two concurrent
-        // handshake packets from the same client both pass the read-lock check
-        // in route_incoming and reach this point simultaneously.
+        // Store session — last wins: a concurrent handshake that arrived between our
+        // users-lock release and now is simply displaced. Its session Arc is dropped,
+        // and its ClientHandle (if already published) will error out on the next send.
         {
             let mut sessions = self.sessions.write().await;
             if sessions.contains_key(&identity) {
-                debug!("concurrent handshake for {}: discarding duplicate", identity.to_string());
-                // Clean up: the user was already inserted into the shared map and all flow
-                // decoy providers above. Drop the sessions lock before acquiring users/flow locks
-                // to preserve lock order and avoid deadlock.
-                drop(sessions);
-                self.users.lock().await.remove(&identity).await;
-                for flow in &self.flows {
-                    flow.remove_user(&identity).await;
-                }
-                return;
+                debug!("concurrent handshake for {}: last wins, displacing earlier session", identity.to_string());
             }
             sessions.insert(identity.clone(), Arc::clone(&session));
         }
@@ -479,6 +473,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             if let Some(handle) = self.accept_queue.pop() {
                 return Ok(handle);
             }
+            // Mutex<WatchReceiver> intentionally serializes concurrent accept() callers:
+            // only one waiter at a time, so no thundering herd on a burst of new connections.
             match self.accept_signal_rx.lock().await.recv().await {
                 Some(()) => continue,
                 None => return Err(ServerSocketError::ListenerStopped),
@@ -502,6 +498,19 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         } else {
             false
         }
+    }
+
+    async fn remove_session(&self, identity: &T) {
+        // Short-circuit if the session was already removed (e.g. both TERMINATION received and
+        // ClientHandle dropped concurrently). Avoids acquiring users + N flow locks on a no-op.
+        if self.sessions.write().await.remove(identity).is_none() {
+            return;
+        }
+        self.users.lock().await.remove(identity).await;
+        for flow in &self.flows {
+            flow.remove_user(identity).await;
+        }
+        info!("client session removed: {}", identity.to_string());
     }
 }
 
@@ -550,5 +559,14 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
     pub async fn receive_bytes(&self) -> Result<Vec<u8>, ServerSocketError> {
         let buffer = self.receive().await?;
         Ok(buffer.slice().to_vec())
+    }
+}
+
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, R: OutgoingRouter<T> + 'static> Drop for ClientHandle<T, AE, R> {
+    fn drop(&mut self) {
+        // Spawn async cleanup so that dropping a ClientHandle removes the session from shared state
+        // even if the client never sent a TERMINATION packet.
+        // All removes are no-ops if route_incoming already cleaned up on receipt of TERMINATION.
+        self.session.spawn_cleanup(self.settings.executor());
     }
 }
