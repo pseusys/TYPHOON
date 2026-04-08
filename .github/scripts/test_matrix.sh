@@ -15,6 +15,27 @@ PROTOCOL_PARTS=(server client "server,client")
 ASYNC_LIBS=(async-std tokio)
 DEBUG_IMPLS=(debug "")
 
+# ── Pre-generate server key pairs (McEliece keygen is expensive) ──────────────
+# One key per cipher-mode family (fast / full).  Tests load via
+# TYPHOON_TEST_SERVER_KEY_FAST / TYPHOON_TEST_SERVER_KEY_FULL instead of
+# calling ServerKeyPair::generate() on every test-binary invocation.
+KEY_DIR="$(pwd)/.test_keys"
+mkdir -p "${KEY_DIR}"
+export TYPHOON_TEST_SERVER_KEY_FAST="${KEY_DIR}/server_fast.key"
+export TYPHOON_TEST_SERVER_KEY_FULL="${KEY_DIR}/server_full.key"
+
+generate_key_if_missing() {
+    local key_file="$1" features="$2"
+    [[ -f "${key_file}" ]] && return
+    echo "::group::KeyGen [${features}] → ${key_file}"
+    cargo run --quiet --example gen_test_key \
+        --no-default-features --features "${features}" -- "${key_file}"
+    echo "::endgroup::"
+}
+
+generate_key_if_missing "${TYPHOON_TEST_SERVER_KEY_FAST}" "fast_software,server,tokio"
+generate_key_if_missing "${TYPHOON_TEST_SERVER_KEY_FULL}" "full_software,server,tokio"
+
 failures=()
 passes=()
 

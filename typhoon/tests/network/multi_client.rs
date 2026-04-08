@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use futures::future::join_all;
 
-use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
 use typhoon::flow::decoy::SimpleDecoyProvider;
 use typhoon::bytes::StaticByteBuffer;
@@ -20,7 +19,7 @@ const MSGS: usize = 5;
 async fn test_multi_client_isolated_sessions() {
     let settings = default_settings();
     let addr = free_addr();
-    let key_pair = ServerKeyPair::generate();
+    let key_pair = super::common::server_key_pair();
 
     // Build certificates before consuming key_pair into the listener.
     let certs: Vec<_> = (0..CLIENTS)

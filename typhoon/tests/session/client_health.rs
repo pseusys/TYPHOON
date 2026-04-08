@@ -1,15 +1,12 @@
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
-use classic_mceliece_rust::{CRYPTO_PUBLICKEYBYTES, keypair_boxed};
-use ed25519_dalek::{SecretKey as Ed25519SecretKey, SigningKey};
 use lazy_static::lazy_static;
 
 use crate::bytes::{DynamicByteBuffer, StaticByteBuffer};
 use crate::cache::SharedValue;
-use crate::certificate::ClientCertificate;
 use crate::bytes::FixedByteBuffer;
-use crate::certificate::ED25519_BYTES;
+use crate::certificate::ServerKeyPair;
 use crate::crypto::ClientCryptoTool;
 use crate::defaults::{DefaultClientConnectionHandler, DefaultExecutor};
 use crate::session::SessionControllerError;
@@ -17,7 +14,6 @@ use crate::session::common::SessionManager;
 use crate::settings::{Settings, SettingsBuilder, keys};
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 use crate::tailor::{PacketFlags, Tailor};
-use crate::utils::random::get_rng;
 use crate::utils::sync::{create_watch, WatchReceiver};
 
 use super::{ClientHealthProvider, HealthState};
@@ -25,14 +21,7 @@ use super::{ClientHealthProvider, HealthState};
 // ── Cached test key material (McEliece keygen is expensive) ──────────────────
 
 lazy_static! {
-    static ref MCELIECE_PK_BYTES: Box<[u8; CRYPTO_PUBLICKEYBYTES]> = {
-        let (pk, _sk) = keypair_boxed(&mut get_rng());
-        Box::new(*pk.as_array())
-    };
-    static ref ED25519_VK: ed25519_dalek::VerifyingKey = {
-        let sk: Ed25519SecretKey = [0u8; 32];
-        SigningKey::from_bytes(&sk).verifying_key()
-    };
+    static ref TEST_KEY_PAIR: ServerKeyPair = ServerKeyPair::for_tests();
 }
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
@@ -41,21 +30,10 @@ fn test_identity() -> StaticByteBuffer {
     StaticByteBuffer::from_slice(&[0u8; DEFAULT_TYPHOON_ID_LENGTH])
 }
 
-#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-fn make_test_cert() -> ClientCertificate {
-    use classic_mceliece_rust::PublicKey as McEliecePublicKey;
-    ClientCertificate {
-        epk: Arc::new(McEliecePublicKey::from(Box::new(**MCELIECE_PK_BYTES))),
-        vpk: *ED25519_VK,
-        obfs: FixedByteBuffer::from([0u8; ED25519_BYTES]),
-        addresses: vec![],
-    }
-}
-
 fn make_test_crypto_tool() -> SharedValue<ClientCryptoTool<StaticByteBuffer>> {
     let identity = test_identity();
     let initial_key = FixedByteBuffer::<32>::from([0u8; 32]);
-    let cert = make_test_cert();
+    let cert = TEST_KEY_PAIR.to_client_certificate(vec![]);
     SharedValue::new(ClientCryptoTool::new(cert, identity, &initial_key))
 }
 

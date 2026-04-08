@@ -271,10 +271,37 @@ impl std::fmt::Debug for ServerKeyPair {
     }
 }
 
-// ── Test accessors ────────────────────────────────────────────────────────────
+// ── Test helpers ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 impl ServerKeyPair {
+    /// Load from the mode-appropriate env var path when set; otherwise generate (and save).
+    ///
+    /// Set `TYPHOON_TEST_SERVER_KEY_FAST` (fast_software/fast_hardware) or
+    /// `TYPHOON_TEST_SERVER_KEY_FULL` (full_software/full_hardware) to a file path before
+    /// running tests to skip expensive McEliece key generation.
+    pub fn for_tests() -> Self {
+        #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+        let env_var = "TYPHOON_TEST_SERVER_KEY_FAST";
+        #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+        let env_var = "TYPHOON_TEST_SERVER_KEY_FULL";
+
+        if let Ok(path) = std::env::var(env_var) {
+            let p = std::path::Path::new(&path);
+            if p.exists() {
+                if let Ok(kp) = Self::load(p) {
+                    return kp;
+                }
+            }
+            // File missing or corrupt: generate, save for next run, and continue.
+            let kp = Self::generate();
+            let _ = kp.save(p);
+            kp
+        } else {
+            Self::generate()
+        }
+    }
+
     pub(crate) fn epk_bytes(&self) -> &[u8] { self.epk.as_array() }
     pub(crate) fn esk_bytes(&self) -> &[u8] { self.esk.as_array() }
     pub(crate) fn vsk_bytes(&self) -> [u8; 32] { self.vsk.to_bytes() }

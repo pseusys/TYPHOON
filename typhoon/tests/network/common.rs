@@ -34,6 +34,33 @@ pub fn empty_flow_config() -> FlowConfig {
     FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![]))
 }
 
+/// Load a server key pair from the env-var-pointed file when available,
+/// otherwise generate a fresh one (and save it for subsequent runs).
+///
+/// Integration tests cannot access `#[cfg(test)]` items in the library,
+/// so the load-or-generate logic is inlined here.
+pub fn server_key_pair() -> ServerKeyPair {
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+    let env_var = "TYPHOON_TEST_SERVER_KEY_FAST";
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+    let env_var = "TYPHOON_TEST_SERVER_KEY_FULL";
+
+    if let Ok(path) = std::env::var(env_var) {
+        let p = std::path::Path::new(&path);
+        if p.exists() {
+            if let Ok(kp) = ServerKeyPair::load(p) {
+                return kp;
+            }
+        }
+        let kp = ServerKeyPair::generate();
+        let _ = kp.save(p);
+        kp
+    } else {
+        ServerKeyPair::generate()
+    }
+}
+
+
 /// Build a listener with a caller-supplied key pair (so we can also derive a certificate).
 pub async fn listener_with_key(
     addrs: Vec<SocketAddr>,
@@ -78,7 +105,7 @@ pub async fn setup_server(
     Arc<typhoon::socket::Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>>,
     typhoon::certificate::ClientCertificate,
 ) {
-    let key_pair = ServerKeyPair::generate();
+    let key_pair = server_key_pair();
     let certificate = key_pair.to_client_certificate(vec![addr]);
     let listener = simple_listener_with_key(addr, settings, key_pair).await;
     (listener, certificate)
@@ -92,7 +119,7 @@ pub async fn setup_server_multi(
     Arc<typhoon::socket::Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>>,
     typhoon::certificate::ClientCertificate,
 ) {
-    let key_pair = ServerKeyPair::generate();
+    let key_pair = server_key_pair();
     let certificate = key_pair.to_client_certificate(addrs.clone());
     let listener = listener_with_key(addrs, settings, key_pair).await;
     (listener, certificate)

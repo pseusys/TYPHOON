@@ -64,6 +64,11 @@ path = "src/bin/typhoon_debug.rs"
 required-features = ["debug"]
 
 [[example]]
+name = "gen_test_key"
+path = "example/gen_test_key.rs"
+required-features = ["server"]
+
+[[example]]
 name = "hello_world"
 path = "example/hello_world.rs"
 required-features = ["client", "server"]
