@@ -325,7 +325,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 users.insert(client_version_identity.clone(), UserServerState::new(crypto_state)).await;
             }
             self.flows[flow_index].register_user_addr(client_version_identity.clone(), raw_packet.source_addr).await;
-            let pn = ((crate::utils::time::unix_timestamp_ms() / 1000) as u64) << 32;
+            let pn = ((crate::utils::unix_timestamp_ms() / 1000) as u64) << 32;
             let buf = self.settings.pool().allocate(Some(T::length()));
             let tailor = Tailor::termination(buf, &client_version_identity, ReturnCode::VersionMismatch, pn);
             if let Err(err) = self.flows[flow_index].send_packet(tailor.into_buffer(), true).await {

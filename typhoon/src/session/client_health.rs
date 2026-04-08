@@ -20,7 +20,7 @@ use crate::settings::keys::*;
 use crate::tailor::{ClientConnectionHandler, IdentityType, PacketFlags, ReturnCode, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, FuturePool, Mutex, WatchReceiver, WatchSender, sleep};
-use crate::utils::time::unix_timestamp_ms;
+use crate::utils::unix_timestamp_ms;
 
 /// Response type for the health check channel: (server_next_in, receive_time, optional handshake body, optional server identity).
 type HealthResponse<T> = (u32, u128, Option<DynamicByteBuffer>, Option<T>);

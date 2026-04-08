@@ -27,7 +27,7 @@ use crate::settings::keys;
 use crate::socket::{ClientSocket, ClientSocketBuilder};
 use crate::tailor::ClientConnectionHandler;
 use crate::utils::sync::sleep;
-use crate::utils::time::unix_timestamp_ms;
+use crate::utils::unix_timestamp_ms;
 
 /// Phase identifier constants embedded in the lower 32 bits of the debug PN field.
 pub const PHASE_REACHABILITY: u32 = 0;

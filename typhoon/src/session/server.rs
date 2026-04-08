@@ -19,7 +19,7 @@ use crate::tailor::{IdentityType, PacketFlags, ReturnCode, Tailor};
 use crate::utils::bitset::AtomicBitSet;
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, NotifyQueueSender};
-use crate::utils::time::unix_timestamp_ms;
+use crate::utils::unix_timestamp_ms;
 
 /// Trait for routing outgoing packets from a session back to the network.
 /// Implemented by the Listener, stored as `Weak<R>` in each session.

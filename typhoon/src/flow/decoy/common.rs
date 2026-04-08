@@ -23,7 +23,7 @@ use crate::settings::keys::*;
 use crate::tailor::{IdentityType, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
-use crate::utils::time::unix_timestamp_ms;
+use crate::utils::unix_timestamp_ms;
 
 // ── Mode enums ──────────────────────────────────────────────────────────────
 

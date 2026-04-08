@@ -83,7 +83,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
 
     fn next_packet_number(&self) -> u64 {
         let counter = self.incremental_counter.fetch_add(1, Ordering::Relaxed) + 1;
-        let timestamp = (crate::utils::time::unix_timestamp_ms() / 1000) as u32;
+        let timestamp = (crate::utils::unix_timestamp_ms() / 1000) as u32;
         ((timestamp as u64) << 32) | (counter as u64)
     }
 }
