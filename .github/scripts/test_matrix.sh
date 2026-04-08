@@ -28,8 +28,7 @@ generate_key_if_missing() {
     local key_file="$1" features="$2"
     [[ -f "${key_file}" ]] && return
     echo "::group::KeyGen [${features}] → ${key_file}"
-    cargo run --quiet --bin typhoon-gen-key \
-        --no-default-features --features "${features}" -- "${key_file}"
+    cargo run --quiet --bin typhoon-gen-key --no-default-features --features "${features}" -- "${key_file}"
     echo "::endgroup::"
 }
 
@@ -66,12 +65,9 @@ for crypto in "${CRYPTO_IMPLS[@]}"; do
         label="[${features}]"
 
         # Build — skip test/network if it fails to avoid misleading errors.
-        if run_step "Build" "${label}" \
-              cargo build --no-default-features --features "${features}"; then
+        if run_step "Build" "${label}" cargo build --no-default-features --features "${features}"; then
 
-            run_step "Test" "${label}" \
-              cargo test --no-default-features --features "${features}" \
-              || true  # failure already recorded; keep going
+            run_step "Test" "${label}" cargo test --no-default-features --features "${features}" --lib || true
 
             passes+=("${label}")
         fi

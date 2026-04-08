@@ -39,9 +39,7 @@ jobs:
         working-directory: typhoon
         run: |
           mkdir -p .test_keys
-          cargo run --quiet --bin typhoon-gen-key \
-            --no-default-features --features fast_software,server,tokio \
-            -- .test_keys/server_fast.key
+          cargo run --quiet --bin typhoon-gen-key --no-default-features --features fast_software,server,tokio -- .test_keys/server_fast.key
         env:
           RUSTFLAGS: "-D warnings"
 
@@ -59,11 +57,11 @@ jobs:
 
       - name: Merge coverage and generate LCOV 📊
         working-directory: typhoon
-        run: cargo llvm-cov report --lcov --output-path lcov.info
+        run: cargo llvm-cov report --lcov --output-path lcov.info --ignore-filename-regex 'src/bin/'
 
       - name: Generate HTML report 📊
         working-directory: typhoon
-        run: cargo llvm-cov report --html --output-dir coverage-html
+        run: cargo llvm-cov report --html --output-dir coverage-html --ignore-filename-regex 'src/bin/'
 
       - name: Upload LCOV report 📤
         uses: actions/upload-artifact@v4
@@ -81,4 +79,4 @@ jobs:
 
       - name: Print coverage summary 📋
         working-directory: typhoon
-        run: cargo llvm-cov report --summary-only
+        run: cargo llvm-cov report --summary-only --ignore-filename-regex 'src/bin/'

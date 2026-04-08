@@ -5,7 +5,7 @@ use std::sync::Arc;
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{DefaultExecutor, DefaultServerConnectionHandler};
-use typhoon::flow::decoy::SimpleDecoyProvider;
+use typhoon::flow::decoy::{DecoyCommunicationMode, SimpleDecoyProvider};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::{Settings, SettingsBuilder};
 use typhoon::socket::{ClientSocket, ClientSocketBuilder, ClientConnectionHandler, ListenerBuilder, ServerFlowConfiguration};
@@ -123,6 +123,23 @@ pub async fn setup_server_multi(
     let certificate = key_pair.to_client_certificate(addrs.clone());
     let listener = listener_with_key(addrs, settings, key_pair).await;
     (listener, certificate)
+}
+
+/// Build a `ClientSocket<DP>` using any `DecoyCommunicationMode` provider.
+pub async fn connect_with_decoy<DP, CC>(
+    certificate: typhoon::certificate::ClientCertificate,
+    settings: Arc<Settings<DefaultExecutor>>,
+    handler: CC,
+) -> ClientSocket<StaticByteBuffer, DefaultExecutor, DP, CC>
+where
+    DP: DecoyCommunicationMode<StaticByteBuffer, DefaultExecutor> + Send + Sync + 'static,
+    CC: ClientConnectionHandler + 'static,
+{
+    ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DP, CC>::new(certificate, handler)
+        .with_settings(settings)
+        .build()
+        .await
+        .expect("client socket should build")
 }
 
 /// Build a `ClientSocket<SimpleDecoyProvider>` using the given certificate and settings.

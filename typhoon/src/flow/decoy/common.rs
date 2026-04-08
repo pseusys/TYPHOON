@@ -3,6 +3,8 @@
 mod tests;
 
 /// Shared state and utilities for decoy traffic communication modes.
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -14,6 +16,7 @@ use rand_distr::{Distribution, Exp, Normal};
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::flow::common::FlowManager;
 use crate::flow::config::{FakeHeaderConfig, FieldType, FieldTypeHolder};
+use crate::flow::error::FlowControllerError;
 use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
 use crate::settings::keys::*;
@@ -186,10 +189,29 @@ where
 
 // ── Trait ────────────────────────────────────────────────────────────────────
 
+/// Object-safe interface used by decoy providers to dispatch generated packets.
+/// Implemented automatically for every `FlowManager + Send + Sync` type.
+pub trait DecoyFlowSender: Send + Sync {
+    /// Send a generated decoy packet through the flow manager.
+    fn send_decoy_packet<'a>(
+        &'a self,
+        packet: DynamicByteBuffer,
+    ) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>>;
+}
+
+impl<T: FlowManager + Send + Sync> DecoyFlowSender for T {
+    fn send_decoy_packet<'a>(
+        &'a self,
+        packet: DynamicByteBuffer,
+    ) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>> {
+        Box::pin(self.send_packet(packet, true))
+    }
+}
+
 /// Trait for implementing decoy traffic communication modes.
-pub trait DecoyCommunicationMode<T: IdentityType + Clone, AE: AsyncExecutor, FM: Send + Sync + 'static>: Sized + Send + Sync {
+pub trait DecoyCommunicationMode<T: IdentityType + Clone, AE: AsyncExecutor>: Sized + Send + Sync {
     /// Create a new decoy provider with the given manager, settings, and identity.
-    fn new(manager: Weak<FM>, settings: Arc<Settings<AE>>, identity: T) -> Self;
+    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T) -> Self;
 
     /// Start the background decoy generation timer.
     fn start(&mut self) -> impl Future<Output = ()> + Send;
@@ -428,13 +450,12 @@ fn maintenance_length_for<AE: AsyncExecutor>(mode: &MaintenanceMode, settings: &
 
 /// Background maintenance timer task. Runs independently of the communication mode timer.
 /// Returns immediately if maintenance mode is `None`.
-pub(super) async fn maintenance_timer_task<T, AE, FM>(
-    manager: Weak<FM>,
+pub(super) async fn maintenance_timer_task<T, AE>(
+    manager: Weak<dyn DecoyFlowSender>,
     state: Arc<RwLock<DecoyState<T, AE>>>,
 ) where
     T: IdentityType + Clone + 'static,
     AE: AsyncExecutor + 'static,
-    FM: FlowManager + Send + Sync + 'static,
 {
     {
         let guard = state.read().await;
@@ -477,7 +498,7 @@ pub(super) async fn maintenance_timer_task<T, AE, FM>(
 
         debug!("Maintenance: generated packet (len={})", body_length);
 
-        if let Err(err) = manager_arc.send_packet(packet, true).await {
+        if let Err(err) = manager_arc.send_decoy_packet(packet).await {
             debug!("Maintenance: failed to send: {:?}", err);
         } else if let Some(bytes) = body_bytes {
             try_replicate(&state, &manager, true, bytes).await;
@@ -492,15 +513,14 @@ pub(super) async fn maintenance_timer_task<T, AE, FM>(
 
 /// Attempt replication of a decoy packet. If replication mode applies, spawns a cascading
 /// task that re-sends the packet body with diminishing probability.
-pub(super) async fn try_replicate<T, AE, FM>(
+pub(super) async fn try_replicate<T, AE>(
     state: &Arc<RwLock<DecoyState<T, AE>>>,
-    manager: &Weak<FM>,
+    manager: &Weak<dyn DecoyFlowSender>,
     is_maintenance: bool,
     body_bytes: Vec<u8>,
 ) where
     T: IdentityType + Clone + 'static,
     AE: AsyncExecutor + 'static,
-    FM: FlowManager + Send + Sync + 'static,
 {
     let (probability, delay_min, delay_max, reduce, executor) = {
         let guard = state.read().await;
@@ -541,7 +561,7 @@ pub(super) async fn try_replicate<T, AE, FM>(
             };
 
             debug!("Replication: sending replica (len={})", body_bytes.len());
-            if manager_arc.send_packet(packet, true).await.is_err() {
+            if manager_arc.send_decoy_packet(packet).await.is_err() {
                 break;
             }
 

@@ -11,7 +11,7 @@ use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::crypto::ServerCryptoTool;
 use crate::flow::common::FlowManager;
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
-use crate::flow::decoy::DecoyCommunicationMode;
+use crate::flow::decoy::{DecoyFlowSender, DecoyCommunicationMode};
 use crate::flow::error::FlowControllerError;
 use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
@@ -50,7 +50,7 @@ pub struct ServerFlowManager<T: IdentityType + Clone + Eq + Hash + Send + ToStri
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, Self> + 'static> ServerFlowManager<T, AE, DP> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static> ServerFlowManager<T, AE, DP> {
     /// Create a new server flow manager.
     /// `crypto_send` and `crypto_recv` must be independent instances (e.g. two `create_cache()` calls
     /// on the same `SharedMap`) so their mutexes never contend between the send and receive paths.
@@ -78,8 +78,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Register a per-user decoy provider and start its background timer.
     /// The user's crypto state must already be in the global SharedMap.
     pub async fn register_user(self: &Arc<Self>, id: T) {
-        let weak = Arc::downgrade(self);
-        let mut dp = DP::new(weak, self.settings.clone(), id.clone());
+        let weak: std::sync::Weak<Self> = Arc::downgrade(self);
+        let mgr: std::sync::Weak<dyn DecoyFlowSender> = weak;
+        let mut dp = DP::new(mgr, self.settings.clone(), id.clone());
         dp.start().await;
         self.decoy_providers.write().await.insert(id, Arc::new(Mutex::new(dp)));
     }
@@ -169,7 +170,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, Self> + 'static> FlowManager for ServerFlowManager<T, AE, DP> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static> FlowManager for ServerFlowManager<T, AE, DP> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {
         let identity_len = T::length();
 

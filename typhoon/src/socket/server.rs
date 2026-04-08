@@ -62,7 +62,7 @@ pub struct ListenerBuilder<T: IdentityType + Clone + Eq + Hash + Send + ToString
     _phantom: std::marker::PhantomData<(T, DP)>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: ServerConnectionHandler<T> + 'static> ListenerBuilder<T, AE, DP, IG> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static, IG: ServerConnectionHandler<T> + 'static> ListenerBuilder<T, AE, DP, IG> {
     /// Create a new builder with the given server key pair and identity generator.
     pub fn new(key_pair: ServerKeyPair, identity_generator: IG) -> Self {
         Self {
@@ -208,7 +208,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 }
 
 /// Server-side listener that manages flow managers and client sessions.
-pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: ServerConnectionHandler<T> + 'static> {
+pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static, IG: ServerConnectionHandler<T> + 'static> {
     flows: Vec<Arc<ServerFlowManager<T, AE, DP>>>,
     sessions: RwLock<HashMap<T, Arc<ServerSessionManager<T, AE, Listener<T, AE, DP, IG>>>>>,
     users: Mutex<SharedMap<T, UserServerState>>,
@@ -225,7 +225,7 @@ pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'sta
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: ServerConnectionHandler<T> + 'static> Listener<T, AE, DP, IG> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static, IG: ServerConnectionHandler<T> + 'static> Listener<T, AE, DP, IG> {
     /// Start the listener's background receive loops.
     /// Must be called after build() to begin processing incoming packets.
     ///
@@ -485,7 +485,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 }
 
 /// OutgoingRouter implementation: selects an active flow via the per-session bitmask and sends the packet.
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ServerFlowManager<T, AE, DP>> + 'static, IG: ServerConnectionHandler<T> + 'static> OutgoingRouter<T> for Listener<T, AE, DP, IG> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static, IG: ServerConnectionHandler<T> + 'static> OutgoingRouter<T> for Listener<T, AE, DP, IG> {
     async fn route_packet(&self, packet: DynamicByteBuffer, identity: &T) -> bool {
         let session = {
             let sessions = self.sessions.read().await;
