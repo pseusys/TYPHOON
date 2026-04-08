@@ -1,4 +1,4 @@
-#[cfg(test)]
+#[cfg(all(test, feature = "tokio"))]
 #[path = "../../tests/session/server_health.rs"]
 mod tests;
 

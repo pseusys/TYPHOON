@@ -1,4 +1,4 @@
-#[cfg(test)]
+#[cfg(all(test, feature = "tokio"))]
 #[path = "../../tests/utils/sync.rs"]
 mod tests;
 

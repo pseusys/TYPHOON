@@ -33,14 +33,14 @@ async fn test_shared_value_sibling_sees_set() {
 
 #[tokio::test]
 async fn test_shared_value_create_sibling_initially_same() {
-    let mut sv = SharedValue::new(55u32);
+    let sv = SharedValue::new(55u32);
     let mut sibling = sv.create_sibling().await;
     assert_eq!(*sibling.get().await, 55);
 }
 
 #[tokio::test]
 async fn test_shared_value_create_cache_initially_same() {
-    let mut sv = SharedValue::new(33u32);
+    let sv = SharedValue::new(33u32);
     let mut cache = sv.create_cache().await;
     assert_eq!(*cache.get().await.unwrap(), 33);
 }
@@ -65,7 +65,7 @@ async fn test_cached_value_source_dropped_returns_error() {
 
 #[tokio::test]
 async fn test_cached_value_get_mut() {
-    let mut sv = SharedValue::new(5u32);
+    let sv = SharedValue::new(5u32);
     let mut cache = sv.create_cache().await;
     *cache.get_mut().await.unwrap() += 3;
     // local mutation is visible within this cache instance.
@@ -74,7 +74,7 @@ async fn test_cached_value_get_mut() {
 
 #[tokio::test]
 async fn test_cached_value_create_sibling() {
-    let mut sv = SharedValue::new(42u32);
+    let sv = SharedValue::new(42u32);
     let cache = sv.create_cache().await;
     let mut sibling = cache.create_sibling().await.unwrap();
     assert_eq!(*sibling.get().await.unwrap(), 42);

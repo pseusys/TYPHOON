@@ -66,6 +66,6 @@ jobs:
         run: cargo test --no-default-features --features ${{ matrix.crypto-impl }},${{ matrix.protocol-part }},${{ matrix.asynchronous-lib }},${{ matrix.debug-impl }}
 
       - name: Run network integration tests 🌐
-        if: contains(matrix.protocol-part, 'server') && contains(matrix.protocol-part, 'client')
+        if: contains(matrix.protocol-part, 'server') && contains(matrix.protocol-part, 'client') && matrix.asynchronous-lib == 'tokio'
         working-directory: typhoon
         run: cargo test --no-default-features --features ${{ matrix.crypto-impl }},${{ matrix.protocol-part }},${{ matrix.asynchronous-lib }},${{ matrix.debug-impl }} --test network -- --test-threads=1
