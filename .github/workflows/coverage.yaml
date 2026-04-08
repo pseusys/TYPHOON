@@ -35,12 +35,26 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
+      - name: Pre-generate server key pair 🔑
+        working-directory: typhoon
+        run: |
+          mkdir -p .test_keys
+          cargo run --quiet --bin typhoon-gen-key \
+            --no-default-features --features fast_software,server,tokio \
+            -- .test_keys/server_fast.key
+        env:
+          RUSTFLAGS: "-D warnings"
+
       - name: Run unit tests with coverage 🧪
         working-directory: typhoon
+        env:
+          TYPHOON_TEST_SERVER_KEY_FAST: .test_keys/server_fast.key
         run: cargo llvm-cov --no-report
 
       - name: Run network integration tests with coverage 🌐
         working-directory: typhoon
+        env:
+          TYPHOON_TEST_SERVER_KEY_FAST: .test_keys/server_fast.key
         run: cargo llvm-cov --no-report --test network -- --test-threads=1
 
       - name: Merge coverage and generate LCOV 📊

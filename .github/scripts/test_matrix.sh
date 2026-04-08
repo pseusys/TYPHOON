@@ -28,7 +28,7 @@ generate_key_if_missing() {
     local key_file="$1" features="$2"
     [[ -f "${key_file}" ]] && return
     echo "::group::KeyGen [${features}] → ${key_file}"
-    cargo run --quiet --example gen_test_key \
+    cargo run --quiet --bin typhoon-gen-key \
         --no-default-features --features "${features}" -- "${key_file}"
     echo "::endgroup::"
 }
@@ -72,15 +72,6 @@ for crypto in "${CRYPTO_IMPLS[@]}"; do
             run_step "Test" "${label}" \
               cargo test --no-default-features --features "${features}" \
               || true  # failure already recorded; keep going
-
-            # Network tests require both server+client and the tokio runtime.
-            if [[ "${proto}" == *"server"* && "${proto}" == *"client"* \
-                  && "${async_lib}" == "tokio" ]]; then
-                run_step "Network" "${label}" \
-                  cargo test --no-default-features --features "${features}" \
-                    --test network -- --test-threads=1 \
-                  || true
-            fi
 
             passes+=("${label}")
         fi
