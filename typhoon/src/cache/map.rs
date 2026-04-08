@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../../tests/cache/map.rs"]
+mod tests;
+
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::Hash;

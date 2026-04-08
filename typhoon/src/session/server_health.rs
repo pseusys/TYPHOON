@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../../tests/session/server_health.rs"]
+mod tests;
+
 /// Server-side health check provider implementing the decay cycle.
 use std::sync::{Arc, Weak};
 use std::time::Duration;

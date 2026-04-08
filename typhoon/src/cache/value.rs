@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../../tests/cache/value.rs"]
+mod tests;
+
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::sync::{Arc, Weak};

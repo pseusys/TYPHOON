@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../../tests/utils/sync.rs"]
+mod tests;
+
 use std::future::Future;
 #[cfg(feature = "client")]
 use std::pin::Pin;

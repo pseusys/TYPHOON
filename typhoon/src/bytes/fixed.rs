@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../../tests/bytes/fixed.rs"]
+mod tests;
+
 /// Stack-allocated fixed-size byte buffer for compile-time-known sizes (e.g. cryptographic keys).
 /// Zero heap allocation; `Copy` semantics — 32-byte copies are cheaper than atomic Arc ops.
 use std::fmt::{Debug, Display};

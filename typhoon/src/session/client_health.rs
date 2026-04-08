@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../../tests/session/client_health.rs"]
+mod tests;
+
 /// Health check provider implementing the decay cycle for connection liveness tracking.
 use std::sync::{Arc, Weak};
 use std::time::Duration;
