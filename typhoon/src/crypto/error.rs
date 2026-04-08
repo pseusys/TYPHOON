@@ -20,6 +20,7 @@ pub enum CryptoError {
     UnknownError,
 }
 
+#[cfg(any(feature = "client", feature = "full_software", feature = "full_hardware"))]
 #[derive(Error, Debug)]
 pub enum HandshakeError {
     #[error("cryptography error during {cause}: {}", source.to_string())]
@@ -28,6 +29,7 @@ pub enum HandshakeError {
         source: CryptoError,
     },
 
+    #[cfg(feature = "client")]
     #[error("cryptography error during authenticating: {}", .0)]
     AuthenticationError(String),
 }
@@ -48,6 +50,7 @@ impl CryptoError {
     }
 }
 
+#[cfg(any(feature = "client", feature = "full_software", feature = "full_hardware"))]
 impl HandshakeError {
     #[inline]
     pub fn handshake_crypto_error(cause: &str, source: CryptoError) -> Self {
@@ -57,6 +60,7 @@ impl HandshakeError {
         }
     }
 
+    #[cfg(feature = "client")]
     #[inline]
     pub fn handshake_authentication_error(cause: &str) -> Self {
         Self::AuthenticationError(cause.to_string())

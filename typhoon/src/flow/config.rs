@@ -128,7 +128,7 @@ impl<L: Copy + AddAssign<L> + From<u8>> FieldType<L> {
                 switch_timeout,
             } => {
                 if unix_timestamp_ms() > *next_switch {
-                    *next_switch = *switch_timeout as u128;
+                    *next_switch = unix_timestamp_ms() + *switch_timeout as u128;
                     *value = get_rng().r#gen::<L>();
                 }
                 *value

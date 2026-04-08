@@ -4,6 +4,15 @@ use crate::certificate::{CertificateError, ClientCertificate, ED25519_BYTES, EPK
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::certificate::X25519_BYTES;
 
+impl ClientCertificate {
+    pub(crate) fn epk_bytes(&self) -> &[u8] { self.epk.as_array() }
+    pub(crate) fn vpk_bytes(&self) -> [u8; 32] { self.vpk.to_bytes() }
+    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+    pub(crate) fn obfs_bytes(&self) -> &[u8] { self.obfs.as_ref() }
+    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+    pub(crate) fn opk_bytes(&self) -> &[u8] { self.opk.as_bytes() }
+}
+
 fn two_addrs() -> Vec<SocketAddr> {
     vec![
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 19999)),
@@ -17,7 +26,7 @@ fn two_addrs() -> Vec<SocketAddr> {
 #[test]
 fn test_server_key_pair_save_load_roundtrip() {
     let path = tempfile::NamedTempFile::new().expect("tempfile").into_temp_path();
-    let original = ServerKeyPair::generate();
+    let original = ServerKeyPair::for_tests();
     original.save(&path).expect("save should succeed");
     let loaded = ServerKeyPair::load(&path).expect("load should succeed");
 
@@ -32,7 +41,7 @@ fn test_server_key_pair_save_load_roundtrip() {
 #[test]
 fn test_server_key_pair_file_layout_fast() {
     let path = tempfile::NamedTempFile::new().expect("tempfile").into_temp_path();
-    let kp = ServerKeyPair::generate();
+    let kp = ServerKeyPair::for_tests();
     kp.save(&path).expect("save should succeed");
     let bytes = std::fs::read(&path).expect("read file");
 
@@ -56,7 +65,7 @@ fn test_server_key_pair_file_layout_fast() {
 #[test]
 fn test_server_key_pair_file_layout_full() {
     let path = tempfile::NamedTempFile::new().expect("tempfile").into_temp_path();
-    let kp = ServerKeyPair::generate();
+    let kp = ServerKeyPair::for_tests();
     kp.save(&path).expect("save should succeed");
     let bytes = std::fs::read(&path).expect("read file");
 
@@ -81,7 +90,7 @@ fn test_server_key_pair_file_layout_full() {
 #[test]
 fn test_server_key_pair_bad_magic() {
     let path = tempfile::NamedTempFile::new().expect("tempfile").into_temp_path();
-    ServerKeyPair::generate().save(&path).expect("save should succeed");
+    ServerKeyPair::for_tests().save(&path).expect("save should succeed");
     let mut bytes = std::fs::read(&path).expect("read file");
     bytes[0] = b'X';
     std::fs::write(&path, &bytes).expect("write tampered file");
@@ -94,7 +103,7 @@ fn test_server_key_pair_bad_magic() {
 #[test]
 fn test_server_key_pair_wrong_type() {
     let path = tempfile::NamedTempFile::new().expect("tempfile").into_temp_path();
-    ServerKeyPair::generate().to_client_certificate(vec![]).save(&path).expect("save should succeed");
+    ServerKeyPair::for_tests().to_client_certificate(vec![]).save(&path).expect("save should succeed");
 
     let err = ServerKeyPair::load(&path).expect_err("should fail");
     assert!(matches!(err, CertificateError::InvalidType { .. }), "expected InvalidType, got {:?}", err);
@@ -104,7 +113,7 @@ fn test_server_key_pair_wrong_type() {
 #[test]
 fn test_server_key_pair_unsupported_version() {
     let path = tempfile::NamedTempFile::new().expect("tempfile").into_temp_path();
-    ServerKeyPair::generate().save(&path).expect("save should succeed");
+    ServerKeyPair::for_tests().save(&path).expect("save should succeed");
     let mut bytes = std::fs::read(&path).expect("read file");
     bytes[9] = 99;
     std::fs::write(&path, &bytes).expect("write tampered file");
@@ -120,7 +129,7 @@ fn test_server_key_pair_unsupported_version() {
 fn test_client_certificate_save_load_roundtrip() {
     let path = tempfile::NamedTempFile::new().expect("tempfile").into_temp_path();
     let addrs = two_addrs();
-    let cert = ServerKeyPair::generate().to_client_certificate(addrs.clone());
+    let cert = ServerKeyPair::for_tests().to_client_certificate(addrs.clone());
     cert.save(&path).expect("save should succeed");
     let loaded = ClientCertificate::load(&path).expect("load should succeed");
 
@@ -135,7 +144,7 @@ fn test_client_certificate_save_load_roundtrip() {
 fn test_client_certificate_file_layout_fast() {
     let path = tempfile::NamedTempFile::new().expect("tempfile").into_temp_path();
     let addrs = two_addrs();
-    let cert = ServerKeyPair::generate().to_client_certificate(addrs);
+    let cert = ServerKeyPair::for_tests().to_client_certificate(addrs);
     cert.save(&path).expect("save should succeed");
     let bytes = std::fs::read(&path).expect("read file");
 
@@ -173,7 +182,7 @@ fn test_client_certificate_file_layout_fast() {
 #[test]
 fn test_client_certificate_file_layout_full() {
     let path = tempfile::NamedTempFile::new().expect("tempfile").into_temp_path();
-    let cert = ServerKeyPair::generate().to_client_certificate(two_addrs());
+    let cert = ServerKeyPair::for_tests().to_client_certificate(two_addrs());
     cert.save(&path).expect("save should succeed");
     let bytes = std::fs::read(&path).expect("read file");
 
@@ -196,7 +205,7 @@ fn test_client_certificate_file_layout_full() {
 #[test]
 fn test_client_certificate_empty_addresses() {
     let path = tempfile::NamedTempFile::new().expect("tempfile").into_temp_path();
-    let cert = ServerKeyPair::generate().to_client_certificate(vec![]);
+    let cert = ServerKeyPair::for_tests().to_client_certificate(vec![]);
     cert.save(&path).expect("save should succeed");
     let loaded = ClientCertificate::load(&path).expect("load should succeed");
     assert!(loaded.addresses().is_empty(), "addresses should be empty");
@@ -206,7 +215,7 @@ fn test_client_certificate_empty_addresses() {
 #[test]
 fn test_client_certificate_wrong_type() {
     let path = tempfile::NamedTempFile::new().expect("tempfile").into_temp_path();
-    ServerKeyPair::generate().save(&path).expect("save should succeed");
+    ServerKeyPair::for_tests().save(&path).expect("save should succeed");
 
     let err = ClientCertificate::load(&path).expect_err("should fail");
     assert!(matches!(err, CertificateError::InvalidType { .. }), "expected InvalidType, got {:?}", err);
@@ -216,7 +225,7 @@ fn test_client_certificate_wrong_type() {
 #[test]
 fn test_client_certificate_unsupported_version() {
     let path = tempfile::NamedTempFile::new().expect("tempfile").into_temp_path();
-    ServerKeyPair::generate().to_client_certificate(vec![]).save(&path).expect("save should succeed");
+    ServerKeyPair::for_tests().to_client_certificate(vec![]).save(&path).expect("save should succeed");
     let mut bytes = std::fs::read(&path).expect("read file");
     bytes[9] = 42;
     std::fs::write(&path, &bytes).expect("write tampered file");
@@ -228,7 +237,7 @@ fn test_client_certificate_unsupported_version() {
 // Test: two certificates derived from the same key pair contain identical public material.
 #[test]
 fn test_to_client_certificate_consistency() {
-    let kp = ServerKeyPair::generate();
+    let kp = ServerKeyPair::for_tests();
     let addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
     let cert1 = kp.to_client_certificate(vec![addr]);
     let cert2 = kp.to_client_certificate(vec![addr]);

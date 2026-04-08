@@ -1,16 +1,26 @@
 use std::future::Future;
 use std::sync::Arc;
 
+#[cfg(feature = "client")]
 use log::{debug, info, trace};
+#[cfg(feature = "client")]
 use rand::Rng;
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+use crate::bytes::DynamicByteBuffer;
+#[cfg(feature = "client")]
+use crate::bytes::{ByteBuffer, ByteBufferMut};
+#[cfg(feature = "client")]
 use crate::cache::CachedValue;
 use crate::crypto::{CryptoError, ObfuscationTranscript};
+#[cfg(feature = "client")]
 use crate::flow::config::FlowConfig;
 use crate::flow::error::FlowControllerError;
+#[cfg(feature = "client")]
 use crate::settings::consts::TAILOR_LENGTH;
-use crate::tailor::{IdentityType, PacketFlags, Tailor};
+use crate::tailor::IdentityType;
+#[cfg(feature = "client")]
+use crate::tailor::{PacketFlags, Tailor};
+#[cfg(feature = "client")]
 use crate::utils::random::get_rng;
 
 /// Trait for managing packet flow with encryption and decoy traffic.
@@ -42,7 +52,7 @@ pub trait FlowCryptoProvider: Clone + Send {
     fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<DynamicByteBuffer, CryptoError>;
 
     /// Decrypt received tailor bytes.
-    fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError>;
+    fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError>;
 
     /// Verify tailor authentication after deobfuscation.
     fn verify_tailor(&mut self, transcript: ObfuscationTranscript) -> Result<(), CryptoError>;
@@ -52,23 +62,39 @@ pub trait FlowCryptoProvider: Clone + Send {
 }
 
 /// Shared send-side state for flow managers.
+#[cfg(feature = "client")]
 pub(crate) struct FlowSendInternal<CP: FlowCryptoProvider> {
     pub(crate) provider: CachedValue<CP>,
     pub(crate) config: FlowConfig,
 }
 
 /// Shared receive-side state for flow managers.
+#[cfg(feature = "client")]
 pub(crate) struct FlowReceiveInternal<CP: FlowCryptoProvider> {
     pub(crate) provider: CachedValue<CP>,
 }
 
+#[cfg(feature = "client")]
 impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
     /// Encrypt tailor, add fake header and body, return assembled packet ready for socket send.
     pub(crate) async fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &crate::bytes::BytePool) -> Result<DynamicByteBuffer, FlowControllerError> {
         let identity_len = <CP::Identity as IdentityType>::length();
         let full_tailor_len = TAILOR_LENGTH + identity_len;
+
+        // Ensure adequate before_capacity for the worst-case fake prefix (header + body padding)
+        // and after_capacity for tailor encryption overhead, both before the split and encrypt.
+        // This way expand_start always succeeds on the hot path and avoids a post-encrypt copy.
+        let max_prefix = self.config.max_overhead();
+        let packet = if packet.before_capacity() < max_prefix {
+            let staged = pool.allocate_precise(packet.len(), max_prefix, CP::tailor_overhead());
+            staged.slice_mut().copy_from_slice(packet.slice());
+            staged
+        } else {
+            packet
+        };
+
         let (packet_data, packet_tailor) = packet.split_buf(packet.len() - full_tailor_len);
-        let packet_flags = PacketFlags::from_bits_truncate(packet_tailor.get(0).clone());
+        let packet_flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
         let encrypted_packet = match self.provider.get_mut().await.map_err(FlowControllerError::MissingCache)?.obfuscate_tailor(packet_tailor, pool) {
             Ok(res) => packet_data.expand_end(res.len()),
             Err(err) => return Err(FlowControllerError::TailorEncryption(err)),
@@ -76,14 +102,8 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
 
         let fake_header_len = self.config.fake_header_mode.len();
         let full_packet_len = fake_header_len + self.config.fake_body_mode.get_length(mtu, fake_header_len + encrypted_packet.len(), packet_flags.is_service());
-        let full_packet = if full_packet_len <= encrypted_packet.before_capacity() {
-            encrypted_packet.expand_start(full_packet_len)
-        } else {
-            // Insufficient headroom — reallocate with the required before_capacity.
-            let staged = pool.allocate_precise(encrypted_packet.len(), full_packet_len, 0);
-            staged.slice_mut().copy_from_slice(encrypted_packet.slice());
-            staged.expand_start(full_packet_len)
-        };
+        // before_capacity >= max_overhead() >= full_packet_len, so expand_start always succeeds.
+        let full_packet = encrypted_packet.expand_start(full_packet_len);
 
         self.config.fake_header_mode.fill(full_packet.rebuffer_end(fake_header_len));
         get_rng().fill(&mut full_packet.rebuffer_both(fake_header_len, full_packet_len));
@@ -93,9 +113,10 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
     }
 }
 
+#[cfg(feature = "client")]
 impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
     /// Decrypt tailor, verify, check if discardable. Returns processed packet or None if decoy.
-    pub(crate) async fn process_incoming(&mut self, packet: DynamicByteBuffer) -> Result<Option<DynamicByteBuffer>, FlowControllerError> {
+    pub(crate) async fn process_incoming(&mut self, packet: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<Option<DynamicByteBuffer>, FlowControllerError> {
         let identity_len = <CP::Identity as IdentityType>::length();
         let full_tailor_len = TAILOR_LENGTH + identity_len;
         let encrypted_tailor_len = identity_len + CP::tailor_overhead();
@@ -104,7 +125,7 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
         // The decrypted tailor sits at the start of the encrypted_tailor region,
         // reachable via encrypted_packet.expand_end(full_tailor_len).
         let tailor = match self.provider.get_mut().await {
-            Ok(cipher) => match cipher.deobfuscate_tailor(encrypted_tailor) {
+            Ok(cipher) => match cipher.deobfuscate_tailor(encrypted_tailor, pool) {
                 Ok((tailor, transcript)) => {
                     match cipher.verify_tailor(transcript) {
                         Ok(_) => {}

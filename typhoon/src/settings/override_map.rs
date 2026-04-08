@@ -1,5 +1,9 @@
 //! Override map types for type-safe settings storage.
 
+#[cfg(test)]
+#[path = "../../tests/settings/override_map.rs"]
+mod tests;
+
 use std::collections::HashMap;
 use std::ops::Add;
 

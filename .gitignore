@@ -6,3 +6,7 @@
 
 typhoon/Cargo.lock
 typhoon/target
+
+# Tests:
+
+typhoon/.test_keys

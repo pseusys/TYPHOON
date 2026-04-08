@@ -345,6 +345,14 @@ impl Debug for DynamicByteBuffer {
 }
 
 impl Clone for DynamicByteBuffer {
+    /// Zero-copy clone: increments the `Arc<BufferHolder>` refcount and produces a second
+    /// view into the **same** backing allocation.
+    ///
+    /// # Aliasing invariant
+    /// Both the original and the clone share the same raw memory.  The caller must ensure that
+    /// no two live mutable views (via `slice_mut`, `set`, etc.) to **overlapping** byte ranges
+    /// are used concurrently — including across threads, since `DynamicByteBuffer: Send`.
+    /// Non-overlapping views (e.g. produced by `split_buf`) may be used independently.
     #[inline]
     fn clone(&self) -> Self {
         DynamicByteBuffer {

@@ -4,7 +4,7 @@ mod tests;
 
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::utils::time::unix_timestamp_ms;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
 use crate::settings::consts::{CD_OFFSET, FG_OFFSET, ID_OFFSET, PL_OFFSET, PN_OFFSET, TAILOR_LENGTH, TM_OFFSET};
@@ -282,7 +282,7 @@ impl<T: IdentityType> Tailor<T> {
 
     /// Set packet number using current timestamp and given incremental.
     pub fn set_packet_number_now(&self, incremental: u32) {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as u32).unwrap_or(0);
+        let timestamp = (unix_timestamp_ms() / 1000) as u32;
         self.set_packet_number(timestamp, incremental);
     }
 

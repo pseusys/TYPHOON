@@ -7,7 +7,8 @@ on:
   push:
     paths:
       - 'typhoon/**'
-      - '.github/workflows/rust.yaml'
+      - '.github/workflows/features.yaml'
+      - '.github/scripts/test_matrix.sh'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,26 +16,11 @@ concurrency:
 
 jobs:
   typhoon-crate-build:
-    name: Build and Test TYPHOON Rust Crate
+    name: Build and Test TYPHOON Rust Crate (${{ matrix.architecture.image }})
     runs-on: ${{ matrix.architecture.image }}
     strategy:
       fail-fast: false
       matrix:
-        crypto-impl:
-          - fast_software
-          - fast_hardware
-          - full_software
-          - full_hardware
-        protocol-part:
-          - server
-          - client
-          - server,client
-        asynchronous-lib:
-          - async-std
-          - tokio
-        debug-impl:
-          - 'debug'
-          - ''
         architecture:
           - image: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
@@ -57,10 +43,7 @@ jobs:
           rust-src-dir: typhoon
           override: true
 
-      - name: Build TYPHOON Crate 🏗️
+      - name: Run all feature combinations 🧪
         working-directory: typhoon
-        run: cargo build --no-default-features --features ${{ matrix.crypto-impl }},${{ matrix.protocol-part }},${{ matrix.asynchronous-lib }},${{ matrix.debug-impl }}
-
-      - name: Test TYPHOON Crate 🧪
-        working-directory: typhoon
-        run: cargo test --no-default-features --features ${{ matrix.crypto-impl }},${{ matrix.protocol-part }},${{ matrix.asynchronous-lib }},${{ matrix.debug-impl }}
+        shell: bash
+        run: bash ../.github/scripts/test_matrix.sh

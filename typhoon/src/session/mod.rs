@@ -1,12 +1,15 @@
 /// Session management: encryption, health checking, and flow manager coordination.
 mod common;
 mod error;
-mod health;
+#[cfg(feature = "client")]
+mod client_health;
 
 #[cfg(feature = "client")]
 mod client;
 #[cfg(feature = "server")]
 pub(crate) mod server;
+#[cfg(feature = "server")]
+mod server_health;
 
 #[cfg(feature = "client")]
 pub use client::ClientSessionManager;

@@ -4,7 +4,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::time::sleep;
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
@@ -25,6 +24,16 @@ fn main() {
 #[cfg(not(feature = "tokio"))]
 fn main() {
     futures::executor::block_on(run());
+}
+
+#[cfg(feature = "tokio")]
+pub async fn sleep(duration: Duration) {
+    tokio::time::sleep(duration).await;
+}
+
+#[cfg(feature = "async-std")]
+pub async fn sleep(duration: Duration) {
+    async_io::Timer::after(duration).await;
 }
 
 async fn run() {

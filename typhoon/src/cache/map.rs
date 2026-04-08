@@ -1,3 +1,7 @@
+#[cfg(all(test, feature = "tokio"))]
+#[path = "../../tests/cache/map.rs"]
+mod tests;
+
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -34,7 +38,6 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
     }
 
     pub async fn insert(&mut self, key: K, value: V) {
-        self.local.insert(key.clone(), value.clone());
         self.state.write().await.insert(
             key.clone(),
             Versioned {
@@ -42,6 +45,7 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
                 version: get_rng().next_u64(),
             },
         );
+        self.local.insert(key, value);
     }
 
     pub async fn remove(&mut self, key: &K) {
@@ -59,6 +63,17 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
 
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         self.local.get_mut(key)
+    }
+
+    /// Mutate an existing entry in place and propagate the change to all `CachedMap` instances
+    /// by bumping the shared-state version. Saves one `V` clone and one `K` clone compared to
+    /// the `get().cloned()` + `insert()` pattern.
+    pub async fn modify<F: FnOnce(&mut V)>(&mut self, key: &K, f: F) {
+        if let Some(local) = self.local.get_mut(key) {
+            f(local);
+            let versioned = Versioned { value: local.clone(), version: get_rng().next_u64() };
+            self.state.write().await.insert(key.clone(), versioned);
+        }
     }
 
     pub fn keys(&self) -> impl Iterator<Item = &K> {

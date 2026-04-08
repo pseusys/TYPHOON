@@ -1,3 +1,7 @@
+#[cfg(all(test, feature = "tokio", feature = "server"))]
+#[path = "../../tests/session/client_health.rs"]
+mod tests;
+
 /// Health check provider implementing the decay cycle for connection liveness tracking.
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -5,7 +9,7 @@ use std::time::Duration;
 use log::debug;
 use rand::Rng;
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, FixedByteBuffer, StaticByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, FixedByteBuffer};
 use crate::cache::SharedValue;
 use crate::crypto::{ClientCryptoTool, ClientData};
 use crate::session::SessionControllerError;
@@ -174,29 +178,32 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
     }
 
     /// Create a handshake packet with encryption: handshake_secret || tailor.
-    /// Returns the packet and the initial data encryption key.
-    async fn create_handshake_packet(&mut self, pn: u64, next_in: u32) -> (DynamicByteBuffer, FixedByteBuffer<32>) {
+    /// Also advances the crypto tool to the initial key so callers need not do it separately.
+    async fn create_handshake_packet(&mut self, pn: u64, next_in: u32) -> DynamicByteBuffer {
         let settings = self.settings.clone();
         let initial_data = self.initial_data_generator.initial_data();
-        let (client_data, handshake_secret, initial_key) = self.crypto_tool.get().await.create_handshake(settings.pool(), initial_data.slice());
+        // Single get(): extract identity, create handshake, and derive the updated tool all at once.
+        let crypto = self.crypto_tool.get().await;
+        let identity = crypto.identity();
+        let (client_data, handshake_secret, initial_key) = crypto.create_handshake(settings.pool(), initial_data.slice());
+        let updated_tool = crypto.with_key(&initial_key);
+        // crypto borrow ends here (NLL); safe to write other fields and call set().
         self.client_data = Some(client_data);
+        self.crypto_tool.set(updated_tool).await;
 
-        let identity = self.identity_value().await;
         let tailor_buffer = settings.pool().allocate(Some(T::length() + TAILOR_LENGTH));
         let tailor = Tailor::handshake(tailor_buffer, &identity, 0, next_in, pn, handshake_secret.len() as u16);
-
-        let packet = handshake_secret.append(tailor.buffer().slice());
-        (packet, initial_key)
+        handshake_secret.append(tailor.buffer().slice())
     }
 
     /// Process the server handshake response and derive the session key.
     /// Returns (session_key, server_initial_data).
-    async fn process_handshake_response(&mut self, handshake_body: DynamicByteBuffer) -> Option<(FixedByteBuffer<32>, StaticByteBuffer)> {
+    async fn process_handshake_response(&mut self, handshake_body: DynamicByteBuffer) -> Option<(FixedByteBuffer<32>, DynamicByteBuffer)> {
         let client_data = self.client_data.take()?;
-        match self.crypto_tool.get().await.process_handshake_response(client_data, handshake_body) {
+        match self.crypto_tool.get().await.process_handshake_response(client_data, handshake_body, self.settings.pool()) {
             Ok((session_key, server_initial_data)) => Some((session_key, server_initial_data)),
             Err(err) => {
-                debug!("HealthProvider: handshake response decryption failed: {}", err);
+                debug!("ClientHealthProvider: handshake response decryption failed: {}", err);
                 None
             }
         }
@@ -225,7 +232,7 @@ async fn wait_for_response<T: IdentityType + Clone>(timeout_ms: u64, response_rx
 }
 
 /// Health check provider for client-side decay cycle management.
-pub struct HealthProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, SM: SessionManager + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> {
+pub struct ClientHealthProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, SM: SessionManager + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> {
     manager: Weak<SM>,
     state: Arc<Mutex<HealthState<T, AE, CC>>>,
     settings: Arc<Settings<AE>>,
@@ -233,7 +240,7 @@ pub struct HealthProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor +
     shadowride_tx: WatchSender<()>,
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync, CC: ClientConnectionHandler + 'static> HealthProvider<T, AE, SM, CC> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync, CC: ClientConnectionHandler + 'static> ClientHealthProvider<T, AE, SM, CC> {
     /// Create a new health provider with pre-created channel senders.
     pub fn new(manager: Weak<SM>, settings: Arc<Settings<AE>>, state_crypto: SharedValue<ClientCryptoTool<T>>, response_tx: WatchSender<HealthResponse<T>>, shadowride_tx: WatchSender<()>, response_rx: WatchReceiver<HealthResponse<T>>, initial_data_generator: CC) -> Self {
         let state = Arc::new(Mutex::new(HealthState::new(settings.clone(), state_crypto, initial_data_generator, response_rx)));
@@ -260,7 +267,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         let state = self.state.clone();
         let executor = self.settings.executor().clone();
         executor.spawn(Self::timer_task(manager, state, timer_response_rx, timer_shadowride_rx, initial_server_next_in));
-        debug!("HealthProvider: decay cycle started");
+        debug!("ClientHealthProvider: decay cycle started");
     }
 
     /// Called when a packet with HEALTH_CHECK flag is received.
@@ -271,7 +278,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         let state = self.state.lock().await;
 
         if pn != state.current_pn {
-            debug!("HealthProvider: discarding health check with unexpected PN (got {}, expected {})", pn, state.current_pn);
+            debug!("ClientHealthProvider: discarding health check with unexpected PN (got {}, expected {})", pn, state.current_pn);
             return Ok(());
         }
 
@@ -294,7 +301,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         let state = self.state.lock().await;
 
         if pn != state.current_pn {
-            debug!("HealthProvider: discarding handshake with unexpected PN (got {}, expected {})", pn, state.current_pn);
+            debug!("ClientHealthProvider: discarding handshake with unexpected PN (got {}, expected {})", pn, state.current_pn);
             return Ok(());
         }
 
@@ -323,7 +330,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                 tailor.set_time(next_in);
                 tailor.set_packet_number_raw(pn);
                 state.last_sent_time = unix_timestamp_ms();
-                debug!("HealthProvider: shadowride attached (PN={}, next_in={}ms)", pn, next_in);
+                debug!("ClientHealthProvider: shadowride attached (PN={}, next_in={}ms)", pn, next_in);
                 true
             } else {
                 false
@@ -347,17 +354,17 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     /// Static version of try_send for use in spawned background tasks.
     async fn try_send_static(manager: &Weak<SM>, packet: DynamicByteBuffer, state: &Arc<Mutex<HealthState<T, AE, CC>>>) -> SendOutcome {
         let Some(mgr) = manager.upgrade() else {
-            debug!("HealthProvider: session manager dropped");
+            debug!("ClientHealthProvider: session manager dropped");
             return SendOutcome::Stop;
         };
         if let Err(err) = mgr.send_packet(packet, true).await {
-            debug!("HealthProvider: failed to send packet: {:?}", err);
+            debug!("ClientHealthProvider: failed to send packet: {:?}", err);
             let mut st = state.lock().await;
             if st.increment_retry() {
-                debug!("HealthProvider: retry {}/{}", st.retry_count, st.settings.get(&MAX_RETRIES));
+                debug!("ClientHealthProvider: retry {}/{}", st.retry_count, st.settings.get(&MAX_RETRIES));
                 return SendOutcome::Retry;
             }
-            debug!("HealthProvider: max retries reached after {}", st.retry_count);
+            debug!("ClientHealthProvider: max retries reached after {}", st.retry_count);
             return SendOutcome::Stop;
         }
         SendOutcome::Sent
@@ -377,10 +384,8 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                 st.current_pn = pn;
                 st.last_sent_time = unix_timestamp_ms();
 
-                let (packet, initial_key) = st.create_handshake_packet(pn, next_in).await;
-                let updated_tool = st.crypto_tool.get().await.with_key(&initial_key);
-                st.crypto_tool.set(updated_tool).await;
-
+                // create_handshake_packet now also advances crypto_tool to the initial key.
+                let packet = st.create_handshake_packet(pn, next_in).await;
                 (packet, next_in)
             };
 
@@ -402,14 +407,14 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                     debug!("do_handshake: TIMEOUT");
                     let mut st = self.state.lock().await;
                     if st.increment_retry() {
-                        debug!("HealthProvider: handshake timeout, retry {}/{}", st.retry_count, st.settings.get(&MAX_RETRIES));
+                        debug!("ClientHealthProvider: handshake timeout, retry {}/{}", st.retry_count, st.settings.get(&MAX_RETRIES));
                         continue;
                     }
-                    debug!("HealthProvider: handshake failed after {} retries", st.retry_count);
+                    debug!("ClientHealthProvider: handshake failed after {} retries", st.retry_count);
                     return None;
                 }
                 DecaySleepEvent::Terminated => {
-                    debug!("HealthProvider: channel closed during handshake");
+                    debug!("ClientHealthProvider: channel closed during handshake");
                     return None;
                 }
                 DecaySleepEvent::ResponseReceived {
@@ -424,10 +429,12 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                     if let Some(body) = handshake_body {
                         match st.process_handshake_response(body).await {
                             Some((session_key, _server_initial_data)) => {
+                                // Single get() shared by both branches.
+                                let tool = st.crypto_tool.get().await;
                                 let updated_tool = if let Some(new_identity) = server_identity {
-                                    st.crypto_tool.get().await.with_key_and_identity(&session_key, new_identity)
+                                    tool.with_key_and_identity(&session_key, new_identity)
                                 } else {
-                                    st.crypto_tool.get().await.with_key(&session_key)
+                                    tool.with_key(&session_key)
                                 };
                                 st.crypto_tool.set(updated_tool).await;
                             }
@@ -435,7 +442,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                         }
                     }
 
-                    debug!("HealthProvider: handshake completed successfully");
+                    debug!("ClientHealthProvider: handshake completed successfully");
                     return Some(server_next_in);
                 }
             }
@@ -480,11 +487,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                     Self::try_send_static(manager, packet, state).await
                 }
                 DecayShadowrideEvent::Terminated => {
-                    debug!("HealthProvider: shadowride channel closed, stopping");
+                    debug!("ClientHealthProvider: shadowride channel closed, stopping");
                     SendOutcome::Stop
                 }
                 DecayShadowrideEvent::Shadowridden => {
-                    debug!("HealthProvider: health check shadowridden");
+                    debug!("ClientHealthProvider: health check shadowridden");
                     SendOutcome::Sent
                 }
             }
@@ -530,15 +537,15 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                 DecaySleepEvent::Timeout => {
                     let mut st = state.lock().await;
                     if st.increment_retry() {
-                        debug!("HealthProvider: response timeout, retry {}/{}", st.retry_count, st.settings.get(&MAX_RETRIES));
+                        debug!("ClientHealthProvider: response timeout, retry {}/{}", st.retry_count, st.settings.get(&MAX_RETRIES));
                         server_next_in = None;
                         continue;
                     }
-                    debug!("HealthProvider: connection decayed after {} retries", st.retry_count);
+                    debug!("ClientHealthProvider: connection decayed after {} retries", st.retry_count);
                     break;
                 }
                 DecaySleepEvent::Terminated => {
-                    debug!("HealthProvider: response channel closed, stopping");
+                    debug!("ClientHealthProvider: response channel closed, stopping");
                     break;
                 }
                 DecaySleepEvent::ResponseReceived {
@@ -550,14 +557,14 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                     st.update_rtt(receive_time);
                     st.retry_count = 0;
                     server_next_in = Some(srv_ni);
-                    debug!("HealthProvider: response received, server_next_in={}ms", srv_ni);
+                    debug!("ClientHealthProvider: response received, server_next_in={}ms", srv_ni);
                 }
             }
         }
     }
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync, CC: ClientConnectionHandler> Drop for HealthProvider<T, AE, SM, CC> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync, CC: ClientConnectionHandler> Drop for ClientHealthProvider<T, AE, SM, CC> {
     /// NB! There's no need for synchronization: even if a couple of packets slip through after termination, they will just get discarded.
     fn drop(&mut self) {
         let manager = self.manager.clone();
@@ -571,8 +578,8 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
 
             if let Some(mgr) = manager.upgrade() {
                 match mgr.send_packet(tailor.into_buffer(), true).await {
-                    Ok(()) => debug!("HealthProvider: termination packet sent"),
-                    Err(err) => debug!("HealthProvider: failed to send termination packet: {err}"),
+                    Ok(()) => debug!("ClientHealthProvider: termination packet sent"),
+                    Err(err) => debug!("ClientHealthProvider: failed to send termination packet: {err}"),
                 }
             }
         });

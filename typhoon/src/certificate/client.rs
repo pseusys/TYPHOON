@@ -157,15 +157,3 @@ impl ObfuscationBufferContainer for ClientCertificate {
         self.obfs
     }
 }
-
-// ── Test accessors ────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-impl ClientCertificate {
-    pub(crate) fn epk_bytes(&self) -> &[u8] { self.epk.as_array() }
-    pub(crate) fn vpk_bytes(&self) -> [u8; 32] { self.vpk.to_bytes() }
-    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub(crate) fn obfs_bytes(&self) -> &[u8] { self.obfs.as_ref() }
-    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub(crate) fn opk_bytes(&self) -> &[u8] { self.opk.as_bytes() }
-}

@@ -1,5 +1,9 @@
 //! Builder pattern for constructing Settings instances.
 
+#[cfg(test)]
+#[path = "../../tests/settings/builder.rs"]
+mod tests;
+
 use super::error::SettingsError;
 use super::override_map::{Key, OverrideMap, SettingType};
 use super::settings::Settings;
