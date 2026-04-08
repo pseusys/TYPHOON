@@ -13,5 +13,6 @@ pub trait SessionManager {
 
     /// Receive user data from the session manager.
     /// Health check packets are processed internally by the health provider and not returned.
+    #[cfg(feature = "client")]
     fn receive_packet(&self) -> impl Future<Output = Result<DynamicByteBuffer, SessionControllerError>> + Send;
 }

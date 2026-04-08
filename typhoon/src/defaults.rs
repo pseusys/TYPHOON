@@ -146,9 +146,10 @@ impl ClientConnectionHandler for DefaultClientConnectionHandler {
 
     fn version(&self, length: usize) -> StaticByteBuffer {
         let ver = env!("CARGO_PKG_VERSION").as_bytes();
-        let mut buf = vec![0u8; length];
         let copy_len = ver.len().min(length);
+        let mut buf = vec![0u8; length];
         buf[..copy_len].copy_from_slice(&ver[..copy_len]);
-        StaticByteBuffer::from_slice(&buf)
+        // Pass Vec by value so Arc::from can consume it rather than borrowing a reference.
+        StaticByteBuffer::from(buf)
     }
 }

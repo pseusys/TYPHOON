@@ -164,13 +164,13 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
 
     /// Deobfuscate received tailor (fast mode: decrypt with shared OBFS key, defer verification).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
-        Ok(self.shared_obfs_decryptor.decrypt_no_verify(ciphertext))
+    pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer, pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+        Ok(self.shared_obfs_decryptor.decrypt_no_verify(ciphertext, pool))
     }
 
     /// Deobfuscate received tailor (full mode: decrypt with server's X25519 secret).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+    pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer, _pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
         self.secret.decrypt_deobfuscate(ciphertext).map(|r| (r, ObfuscationTranscript {})).map_err(|e| CryptoError::authentication_error(&e.to_string()))
     }
 

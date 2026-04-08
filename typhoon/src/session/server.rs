@@ -5,17 +5,19 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak as StdWeak};
 
 use log::{debug, warn};
+use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, FixedByteBuffer};
 use crate::cache::{CachedMapEntryTemplate, SharedMap};
-use crate::crypto::ServerData;
 use crate::crypto::{UserCryptoState, UserServerState};
 use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
-use crate::settings::Settings;
+use crate::session::server_health::ServerHealthProvider;
+use crate::settings::{Settings, keys};
 use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{IdentityType, PacketFlags, ReturnCode, Tailor};
 use crate::utils::bitset::AtomicBitSet;
+use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, NotifyQueueSender};
 use crate::utils::time::unix_timestamp_ms;
 
@@ -23,6 +25,8 @@ use crate::utils::time::unix_timestamp_ms;
 /// Implemented by the Listener, stored as `Weak<R>` in each session.
 pub trait OutgoingRouter<T>: Send + Sync {
     fn route_packet<'a>(&'a self, packet: DynamicByteBuffer, identity: &'a T) -> impl Future<Output = bool> + Send + 'a;
+    /// Remove all state associated with the given identity (session map, user crypto, decoy providers).
+    fn remove_session<'a>(&'a self, identity: &'a T) -> impl Future<Output = ()> + Send + 'a;
 }
 
 /// Incoming packet for the server session manager: body + tailor view.
@@ -44,22 +48,22 @@ pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToS
     incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
     router: StdWeak<R>,
     settings: Arc<Settings<AE>>,
+    health_provider: ServerHealthProvider,
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> ServerSessionManager<T, AE, R> {
     /// Create a server session manager from pre-decapsulated handshake data.
     ///
-    /// The caller is responsible for decapsulating the client handshake (via `decapsulate_handshake_server`)
-    /// and generating the identity and server initial data before calling this method.
+    /// `response_body` must be pre-computed by calling `secret.encapsulate_handshake_server`
+    /// **before** acquiring the `users` lock, so that CPU-intensive crypto work is not
+    /// serialized through the shared-map mutex.
     ///
-    /// Returns `(Arc<Self>, response_packet, session_key)` where response_packet should be sent back
-    /// through a flow manager to complete the handshake. The caller must upgrade the user's crypto
-    /// state to `session_key` after sending the response.
+    /// Returns `(Arc<Self>, response_packet)`. The caller already holds `session_key` from
+    /// the encapsulation step and uses it to upgrade the user's crypto state after sending the response.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub async fn from_handshake(
-        server_data: ServerData,
+        response_body: DynamicByteBuffer,
         initial_key: FixedByteBuffer<32>,
-        server_initial_data: &[u8],
         handshake_tailor: Tailor<T>,
         identity: T,
         secret: &crate::certificate::ServerSecret<'_>,
@@ -68,13 +72,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         router: StdWeak<R>,
         num_flows: usize,
         settings: Arc<Settings<AE>>,
-    ) -> Result<(Arc<Self>, DynamicByteBuffer, FixedByteBuffer<32>), SessionControllerError> {
+    ) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
         use crate::certificate::ObfuscationBufferContainer;
-
-        let pool = settings.pool();
-
-        // Generate server handshake response (with encrypted server initial data) and derive session key.
-        let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool, server_initial_data, &initial_key);
 
         // Register user with initial key so that the handshake response tailor is
         // authenticated with the initial key (the client can verify before deriving session key).
@@ -89,20 +88,26 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         let crypto_send = users.create_cache_for(identity.clone());
         let crypto_recv = users.create_cache_for(identity.clone());
 
+        // Generate server's next_in for the handshake response (tells client when to send first health check).
+        let server_next_in = get_rng().gen_range(
+            settings.get(&keys::HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&keys::HEALTH_CHECK_NEXT_IN_MAX),
+        ) as u32;
+
         // Assemble response packet: response_body || tailor.
-        let next_in = handshake_tailor.time();
         let response_body_len = response_body.len();
         let tailor_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
         let _response_tailor = Tailor::handshake(
             tailor_buf,
             &identity,
             ReturnCode::Success.into(),
-            next_in,
+            server_next_in,
             handshake_tailor.packet_number(),
             response_body_len as u16,
         );
         // Include the response body in the packet: response_body || tailor (TAILOR_LENGTH + T::length() bytes).
         let response_packet = response_body.expand_end(TAILOR_LENGTH + T::length());
+
+        let health_provider = ServerHealthProvider::new(router.clone(), identity.clone(), settings.clone(), server_next_in);
 
         let session = Arc::new(Self {
             crypto_send,
@@ -113,31 +118,26 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
             incoming_tx,
             router,
             settings,
+            health_provider,
         });
 
-        Ok((session, response_packet, session_key))
+        Ok((session, response_packet))
     }
 
     /// Create a server session manager from pre-decapsulated handshake data (full mode).
+    /// `response_body` must be pre-computed outside the `users` lock.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub async fn from_handshake(
-        server_data: ServerData,
+        response_body: DynamicByteBuffer,
         initial_key: FixedByteBuffer<32>,
-        server_initial_data: &[u8],
         handshake_tailor: Tailor<T>,
         identity: T,
-        secret: &crate::certificate::ServerSecret<'_>,
         users: &mut SharedMap<T, UserServerState>,
         incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
         router: StdWeak<R>,
         num_flows: usize,
         settings: Arc<Settings<AE>>,
-    ) -> Result<(Arc<Self>, DynamicByteBuffer, FixedByteBuffer<32>), SessionControllerError> {
-        let pool = settings.pool();
-
-        // Generate server handshake response (with encrypted server initial data) and derive session key.
-        let (response_body, session_key) = secret.encapsulate_handshake_server(server_data, pool, server_initial_data, &initial_key);
-
+    ) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
         // Register user with initial key so that the handshake response tailor is
         // encrypted with the initial key (the client can decrypt before deriving session key).
         let crypto_state = UserCryptoState::new(&initial_key);
@@ -150,20 +150,26 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         let crypto_send = users.create_cache_for(identity.clone());
         let crypto_recv = users.create_cache_for(identity.clone());
 
+        // Generate server's next_in for the handshake response (tells client when to send first health check).
+        let server_next_in = get_rng().gen_range(
+            settings.get(&keys::HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&keys::HEALTH_CHECK_NEXT_IN_MAX),
+        ) as u32;
+
         // Assemble response packet: response_body || tailor.
-        let next_in = handshake_tailor.time();
         let response_body_len = response_body.len();
         let tailor_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
         let _response_tailor = Tailor::handshake(
             tailor_buf,
             &identity,
             ReturnCode::Success.into(),
-            next_in,
+            server_next_in,
             handshake_tailor.packet_number(),
             response_body_len as u16,
         );
         // Include the response body in the packet: response_body || tailor (TAILOR_LENGTH + T::length() bytes).
         let response_packet = response_body.expand_end(TAILOR_LENGTH + T::length());
+
+        let health_provider = ServerHealthProvider::new(router.clone(), identity.clone(), settings.clone(), server_next_in);
 
         let session = Arc::new(Self {
             crypto_send,
@@ -174,9 +180,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
             incoming_tx,
             router,
             settings,
+            health_provider,
         });
 
-        Ok((session, response_packet, session_key))
+        Ok((session, response_packet))
     }
 
     /// Mark `flow_index` as active for this session (lock-free, no bounds limit).
@@ -190,6 +197,25 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         self.active_flows.random_set_index(num_flows)
     }
 
+    /// Spawn a cleanup task that notifies the client and removes this session from shared state.
+    /// Called from ClientHandle::Drop (server-side close). Sends TERMINATION while the session
+    /// is still in the router's sessions map (so route_packet can resolve the active flow),
+    /// then removes all associated state. All removes are no-ops if the client already sent
+    /// TERMINATION and route_incoming already called remove_session.
+    pub fn spawn_cleanup(&self, executor: &AE) {
+        let identity = self.identity.clone();
+        let router = self.router.clone();
+        let pn = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
+        let buf = self.settings.pool().allocate(Some(T::length()));
+        let termination = Tailor::termination(buf, &self.identity, ReturnCode::Success, pn).into_buffer();
+        executor.spawn(async move {
+            if let Some(router) = router.upgrade() {
+                router.route_packet(termination, &identity).await;
+                router.remove_session(&identity).await;
+            }
+        });
+    }
+
     /// Get the next packet number: (unix_timestamp_seconds << 32) | incremental.
     fn next_packet_number(&self) -> u64 {
         let counter = self.incremental_counter.fetch_add(1, Ordering::Relaxed) + 1;
@@ -199,7 +225,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
 
     /// Route a packet to the network via the outgoing router (Listener).
     async fn route_outgoing(&self, packet: DynamicByteBuffer) -> Result<(), SessionControllerError> {
-        let router = self.router.upgrade().ok_or(SessionControllerError::FlowError(
+        let router = self.router.upgrade().ok_or_else(|| SessionControllerError::FlowError(
             crate::flow::FlowControllerError::UserNotFound { identity: self.identity.to_string() },
         ))?;
         if !router.route_packet(packet, &self.identity).await {
@@ -222,9 +248,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
             return Err(SessionControllerError::ConnectionTerminated(tailor.code()));
         }
 
-        // Handle health check: respond after the client's requested delay.
+        // Handle health check: forward to health provider.
         if tailor.flags().contains(PacketFlags::HEALTH_CHECK) && !tailor.flags().has_payload() {
-            self.schedule_health_response(tailor.time(), tailor.packet_number()).await?;
+            self.health_provider.feed_health_check(tailor.packet_number());
         }
 
         // If there is data payload, decrypt and forward to ClientHandle.
@@ -245,7 +271,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
                 Ok(decrypted) => {
                     // If this is a shadowride (data + health check), respond to the health check.
                     if tailor.flags().contains(PacketFlags::HEALTH_CHECK) {
-                        self.schedule_health_response(tailor.time(), tailor.packet_number()).await?;
+                        self.health_provider.feed_health_check(tailor.time(), tailor.packet_number());
                     }
                     self.incoming_tx.push(decrypted);
                 }
@@ -258,15 +284,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         Ok(())
     }
 
-    /// Schedule a health check response.
-    async fn schedule_health_response(&self, client_next_in: u32, _client_pn: u64) -> Result<(), SessionControllerError> {
-        let pn = self.next_packet_number();
-        let identity = self.identity.clone();
-        let buf = self.settings.pool().allocate(Some(T::length()));
-        let response_tailor = Tailor::health_check(buf, &identity, client_next_in, pn);
-
-        self.route_outgoing(response_tailor.into_buffer()).await
-    }
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> SessionManager for ServerSessionManager<T, AE, R> {
@@ -297,23 +314,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         self.route_outgoing(full_packet).await
     }
 
+    #[cfg(feature = "client")]
     async fn receive_packet(&self) -> Result<DynamicByteBuffer, SessionControllerError> {
         // Not used directly — the Listener drives incoming packet processing.
         Err(SessionControllerError::HealthProviderDied)
     }
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> Drop for ServerSessionManager<T, AE, R> {
-    fn drop(&mut self) {
-        let identity = self.identity.clone();
-        let packet_number = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
-        let buf = self.settings.pool().allocate(Some(T::length()));
-        let tailor = Tailor::termination(buf, &identity, ReturnCode::Success, packet_number);
-        let router = self.router.clone();
-        self.settings.executor().spawn(async move {
-            if let Some(router) = router.upgrade() {
-                router.route_packet(tailor.into_buffer(), &identity).await;
-            }
-        });
-    }
-}

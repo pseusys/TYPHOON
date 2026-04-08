@@ -5,6 +5,8 @@ mod tests;
 use cfg_if::cfg_if;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+use crate::bytes::BytePool;
 use crate::crypto::error::CryptoError;
 use crate::utils::random::{SupportRng, get_rng};
 
@@ -84,6 +86,7 @@ const ENCRYPTION_KEY_DERIVATION: &str = "encryption key derivation key";
 /// Transcript for delayed tailor verification (fast mode only).
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 pub struct ObfuscationTranscript {
+    /// Pool-backed copy of the ciphertext for deferred BLAKE3 MAC verification.
     pub(crate) ciphertext_copy: DynamicByteBuffer,
     pub(crate) auth_transcript: DynamicByteBuffer,
 }
@@ -177,9 +180,9 @@ impl Symmetric {
     }
 
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn decrypt_no_verify(&mut self, ciphertext_authenticated: DynamicByteBuffer) -> (DynamicByteBuffer, ObfuscationTranscript) {
+    pub fn decrypt_no_verify(&mut self, ciphertext_authenticated: DynamicByteBuffer, pool: &BytePool) -> (DynamicByteBuffer, ObfuscationTranscript) {
         let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_ADDITIONAL_AUTH_LEN);
-        let ciphertext_copy = ciphertext_with_nonce.copy();
+        let ciphertext_copy = pool.allocate_precise_from_slice_with_capacity(ciphertext_with_nonce.slice(), 0, 0);
         let plaintext = decrypt_anonymously(&self.encryption_key, &mut ciphertext_with_nonce);
         (
             plaintext,
@@ -203,10 +206,18 @@ impl Symmetric {
     }
 
     /// Decrypt and verify authentication tag. Args: nonce || ciphertext || tag. Returns: plaintext.
+    /// Verifies MAC over the ciphertext before decrypting; no copy or pool allocation needed.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub fn decrypt_auth<A: ByteBuffer>(&mut self, ciphertext_authenticated: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
-        let (plaintext, transcript) = self.decrypt_no_verify(ciphertext_authenticated);
-        self.verify_decrypted(transcript, additional_data).map(|_| plaintext)
+        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_ADDITIONAL_AUTH_LEN);
+        let hash = match additional_data {
+            Some(res) => Hasher::new_keyed(&self.verification_key).update(ciphertext_with_nonce.slice()).update(res.slice()).finalize(),
+            None => keyed_hash(&self.verification_key, ciphertext_with_nonce.slice()),
+        };
+        if hash.as_bytes().ct_eq(authentication.slice()).unwrap_u8() == 0 {
+            return Err(CryptoError::authentication_error("authentication error (hashes not equal)"));
+        }
+        Ok(decrypt_anonymously(&self.encryption_key, &mut ciphertext_with_nonce))
     }
 
     /// Decrypt and verify authentication tag. Args: nonce || ciphertext || tag. Returns: plaintext.

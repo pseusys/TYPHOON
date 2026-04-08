@@ -31,7 +31,7 @@ pub struct ClientSocketBuilder<T: IdentityType + Clone, AE: AsyncExecutor + 'sta
     _phantom: PhantomData<(T, DP)>,
 }
 
-impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ClientFlowManager<T, AE, DP>> + 'static, CC: ClientConnectionHandler + 'static> ClientSocketBuilder<T, AE, DP, CC> {
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static, CC: ClientConnectionHandler + 'static> ClientSocketBuilder<T, AE, DP, CC> {
     /// Create a new builder with the given certificate and client connection handler.
     ///
     /// The certificate must contain at least one server address; otherwise `build` will return
@@ -141,7 +141,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 }
 
 /// Client-side TYPHOON socket providing send/receive operations.
-pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ClientFlowManager<T, AE, DP>> + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> {
+pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> {
     session: Arc<ClientSessionManager<T, AE, Arc<ClientFlowManager<T, AE, DP>>, CC>>,
     incoming_rx: Mutex<NotifyQueueReceiver<DynamicByteBuffer>>,
     /// Maximum user-data bytes per packet so the wire packet fits within MTU.
@@ -149,7 +149,7 @@ pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + '
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, ClientFlowManager<T, AE, DP>> + 'static, CC: ClientConnectionHandler + 'static> ClientSocket<T, AE, DP, CC> {
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static, CC: ClientConnectionHandler + 'static> ClientSocket<T, AE, DP, CC> {
     /// Send a packet using a pre-allocated buffer.
     pub async fn send(&self, packet: DynamicByteBuffer) -> Result<(), ClientSocketError> {
         self.session.send_packet(packet, false).await.map_err(ClientSocketError::SessionError)

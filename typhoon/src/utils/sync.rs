@@ -1,12 +1,21 @@
+#[cfg(all(test, feature = "tokio"))]
+#[path = "../../tests/utils/sync.rs"]
+mod tests;
+
 use std::future::Future;
+#[cfg(feature = "client")]
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use cfg_if::cfg_if;
-use crossbeam::queue::{ArrayQueue, SegQueue};
+use crossbeam::queue::SegQueue;
+#[cfg(feature = "server")]
+use crossbeam::queue::ArrayQueue;
+#[cfg(feature = "client")]
 use futures::stream::{FuturesUnordered, StreamExt};
+#[cfg(feature = "server")]
 use log::debug;
 
 cfg_if! {
@@ -31,6 +40,7 @@ pub trait AsyncExecutor: Clone + Send + Sync {
 struct WatchState<T> {
     value: std::sync::Mutex<Option<T>>,
     closed: AtomicBool,
+    receiver_count: AtomicUsize,
     #[cfg(feature = "tokio")]
     notify: tokio::sync::Notify,
     #[cfg(feature = "async-std")]
@@ -64,11 +74,13 @@ impl<T: Send> WatchSender<T> {
                 let _ = tx.try_send(());
             }
         }
-        !self.state.closed.load(Ordering::Relaxed)
+        self.state.receiver_count.load(Ordering::Relaxed) > 0
     }
 
     /// Create a new receiver watching the same sender.
+    #[cfg(feature = "client")]
     pub fn subscribe(&self) -> WatchReceiver<T> {
+        self.state.receiver_count.fetch_add(1, Ordering::Relaxed);
         #[cfg(feature = "tokio")]
         return WatchReceiver { state: Arc::clone(&self.state) };
         #[cfg(feature = "async-std")]
@@ -82,7 +94,7 @@ impl<T: Send> WatchSender<T> {
 
 impl<T: Send> Drop for WatchSender<T> {
     fn drop(&mut self) {
-        self.state.closed.store(true, Ordering::Relaxed);
+        self.state.closed.store(true, Ordering::Release);
         #[cfg(feature = "tokio")]
         self.state.notify.notify_waiters();
         #[cfg(feature = "async-std")]
@@ -95,22 +107,33 @@ impl<T: Send> Drop for WatchSender<T> {
     }
 }
 
+impl<T> Drop for WatchReceiver<T> {
+    fn drop(&mut self) {
+        self.state.receiver_count.fetch_sub(1, Ordering::Release);
+    }
+}
+
 impl<T: Send> WatchReceiver<T> {
     /// Wait for the next value change and return it, or None if the sender is dropped.
     pub async fn recv(&mut self) -> Option<T> {
         loop {
+            // `enable()` pre-registers the waiter before we check the value.
+            // Without it, a `notify_waiters()` call between `notified()` creation
+            // and `notified.await` (i.e. before the first poll) would be lost,
+            // because Tokio only wakes already-registered waiters.
             #[cfg(feature = "tokio")]
-            let notified = self.state.notify.notified();
+            let mut notified = std::pin::pin!(self.state.notify.notified());
+            #[cfg(feature = "tokio")]
+            notified.as_mut().enable();
 
             {
                 let mut guard = self.state.value.lock().unwrap();
                 if let Some(v) = guard.take() {
                     return Some(v);
                 }
-            }
-
-            if self.state.closed.load(Ordering::Relaxed) {
-                return None;
+                if self.state.closed.load(Ordering::Acquire) {
+                    return None;
+                }
             }
 
             #[cfg(feature = "tokio")]
@@ -127,6 +150,7 @@ pub fn create_watch<T: Send>() -> (WatchSender<T>, WatchReceiver<T>) {
     let state = Arc::new(WatchState {
         value: std::sync::Mutex::new(None),
         closed: AtomicBool::new(false),
+        receiver_count: AtomicUsize::new(1),
         notify: tokio::sync::Notify::new(),
     });
     (WatchSender { state: Arc::clone(&state) }, WatchReceiver { state })
@@ -139,6 +163,7 @@ pub fn create_watch<T: Send>() -> (WatchSender<T>, WatchReceiver<T>) {
     let state = Arc::new(WatchState {
         value: std::sync::Mutex::new(None),
         closed: AtomicBool::new(false),
+        receiver_count: AtomicUsize::new(1),
         notifiers: std::sync::Mutex::new(vec![tx]),
     });
     (WatchSender { state: Arc::clone(&state) }, WatchReceiver { state, notify: rx })
@@ -193,17 +218,20 @@ pub fn create_notify_queue<T: Send>() -> (NotifyQueueSender<T>, NotifyQueueRecei
 
 /// Push side of a bounded notifying queue.
 /// If the queue is full, the item is dropped and a warning is logged.
+#[cfg(feature = "server")]
 pub struct BoundedNotifyQueueSender<T: Send> {
     queue: Arc<ArrayQueue<T>>,
     wake: WatchSender<()>,
 }
 
 /// Pop side of a bounded notifying queue.
+#[cfg(feature = "server")]
 pub struct BoundedNotifyQueueReceiver<T: Send> {
     queue: Arc<ArrayQueue<T>>,
     wake: WatchReceiver<()>,
 }
 
+#[cfg(feature = "server")]
 impl<T: Send> BoundedNotifyQueueSender<T> {
     /// Push an item; silently drops it (with a debug log) if the queue is full.
     pub fn push(&self, item: T) {
@@ -215,6 +243,7 @@ impl<T: Send> BoundedNotifyQueueSender<T> {
     }
 }
 
+#[cfg(feature = "server")]
 impl<T: Send> BoundedNotifyQueueReceiver<T> {
     /// Pop the next item immediately if available, otherwise wait until one is pushed.
     /// Returns `None` if the sender has been dropped and the queue is empty.
@@ -229,6 +258,7 @@ impl<T: Send> BoundedNotifyQueueReceiver<T> {
 }
 
 /// Create a bounded notifying queue with the given capacity.
+#[cfg(feature = "server")]
 pub fn create_bounded_notify_queue<T: Send>(cap: usize) -> (BoundedNotifyQueueSender<T>, BoundedNotifyQueueReceiver<T>) {
     let queue = Arc::new(ArrayQueue::new(cap));
     let (wake_tx, wake_rx) = create_watch::<()>();
@@ -239,10 +269,12 @@ pub fn create_bounded_notify_queue<T: Send>(cap: usize) -> (BoundedNotifyQueueSe
 }
 
 /// Pool of concurrent futures that resolves them as they complete.
+#[cfg(feature = "client")]
 pub struct FuturePool<'f, T> {
     tasks: FuturesUnordered<Pin<Box<dyn Future<Output = T> + Send + 'f>>>,
 }
 
+#[cfg(feature = "client")]
 impl<'f, T> FuturePool<'f, T> {
     pub fn new() -> Self {
         Self {

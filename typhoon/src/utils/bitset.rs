@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../../tests/utils/bitset.rs"]
+mod tests;
+
 /// Lock-free atomic bitset of arbitrary width, backed by a `Box<[AtomicU64]>`.
 use std::sync::atomic::{AtomicU64, Ordering};
 

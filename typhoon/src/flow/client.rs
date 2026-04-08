@@ -6,7 +6,7 @@ use crate::cache::CachedValue;
 use crate::crypto::ClientCryptoTool;
 use crate::flow::common::{FlowManager, FlowReceiveInternal, FlowSendInternal};
 use crate::flow::config::FlowConfig;
-use crate::flow::decoy::DecoyCommunicationMode;
+use crate::flow::decoy::{DecoyFlowSender, DecoyCommunicationMode};
 use crate::flow::error::FlowControllerError;
 use crate::settings::Settings;
 use crate::tailor::IdentityType;
@@ -23,31 +23,34 @@ pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor, DP: Sen
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, Self> + 'static> ClientFlowManager<T, AE, DP> {
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static> ClientFlowManager<T, AE, DP> {
     /// Create a new client flow manager.
     pub(crate) async fn new(config: FlowConfig, mut cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, sock: Socket) -> Result<Arc<Self>, FlowControllerError> {
         let identity = cipher.get_mut().await.map_err(FlowControllerError::MissingCache)?.identity();
         let send_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
         let receive_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
-        let value = Arc::new_cyclic(|m| ClientFlowManager {
-            decoy_provider: Mutex::new(DP::new(m.clone(), settings.clone(), identity)),
-            send_internal: Mutex::new(FlowSendInternal {
-                provider: send_provider,
-                config,
-            }),
-            receive_internal: Mutex::new(FlowReceiveInternal {
-                provider: receive_provider,
-            }),
-            sock,
-            mtu: settings.mtu(),
-            settings,
+        let value = Arc::new_cyclic(|m: &std::sync::Weak<Self>| {
+            let mgr: std::sync::Weak<dyn DecoyFlowSender> = m.clone();
+            ClientFlowManager {
+                decoy_provider: Mutex::new(DP::new(mgr, settings.clone(), identity)),
+                send_internal: Mutex::new(FlowSendInternal {
+                    provider: send_provider,
+                    config,
+                }),
+                receive_internal: Mutex::new(FlowReceiveInternal {
+                    provider: receive_provider,
+                }),
+                sock,
+                mtu: settings.mtu(),
+                settings,
+            }
         });
         value.decoy_provider.lock().await.start().await;
         Ok(value)
     }
 }
 
-impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE, Self> + 'static> FlowManager for ClientFlowManager<T, AE, DP> {
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static> FlowManager for ClientFlowManager<T, AE, DP> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {
         let notified_packet = {
             let mut lock = self.decoy_provider.lock().await;

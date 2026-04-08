@@ -62,6 +62,10 @@ async fn run() {
     println!("Server: listening on {} and {}", flow1_addr, flow2_addr);
 
     let (done_tx, done_rx) = futures::channel::oneshot::channel::<usize>();
+    // The server holds `client` alive until the client signals it has finished
+    // receiving all echoes.  Dropping `client` earlier triggers a TERMINATION
+    // packet that races with in-flight echo responses and causes ChannelClosed.
+    let (ack_tx, ack_rx) = futures::channel::oneshot::channel::<()>();
     let listener_handle = listener.clone();
     settings.executor().spawn(async move {
         let client = listener_handle.accept().await.expect("accept should succeed");
@@ -74,6 +78,8 @@ async fn run() {
         }
         println!("Server: echoed {} messages", echoed);
         let _ = done_tx.send(echoed);
+        // Keep `client` alive until the client confirms receipt.
+        let _ = ack_rx.await;
     });
 
     // --- Build the client — flows are auto-created from both certificate addresses ---
@@ -102,6 +108,8 @@ async fn run() {
     }
 
     let server_count = done_rx.await.expect("server task should complete");
+    // All messages received — release the server so it can close the connection.
+    let _ = ack_tx.send(());
     assert_eq!(server_count, MESSAGE_COUNT, "server echoed wrong count");
     assert_eq!(received, MESSAGE_COUNT, "client received wrong count");
     println!("Success! All {} messages round-tripped across 2 flows.", MESSAGE_COUNT);

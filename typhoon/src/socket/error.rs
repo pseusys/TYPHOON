@@ -1,12 +1,15 @@
+#[cfg(feature = "client")]
 use std::net::SocketAddr;
 
 use thiserror::Error;
 
+#[cfg(feature = "client")]
 use crate::certificate::CertificateError;
 use crate::flow::FlowControllerError;
 use crate::session::SessionControllerError;
 use crate::utils::socket::SocketError;
 
+#[cfg(feature = "client")]
 #[derive(Error, Debug)]
 pub enum ClientSocketError {
     #[error("flow controller error: {}", .0.to_string())]
@@ -28,6 +31,7 @@ pub enum ClientSocketError {
     ChannelClosed,
 }
 
+#[cfg(feature = "server")]
 #[derive(Error, Debug)]
 pub enum ServerSocketError {
     #[error("flow controller error: {}", .0.to_string())]

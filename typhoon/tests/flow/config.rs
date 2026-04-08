@@ -359,3 +359,51 @@ fn test_flow_config_assert_random_body_equal_bounds() {
     );
     assert!(config.assert(1500).is_ok());
 }
+
+// Test: after the first switch triggers, the field must NOT switch again on the very next call.
+// Regression for: `*next_switch = *switch_timeout` instead of `unix_timestamp_ms() + switch_timeout`,
+// which set next_switch far in the past, causing a switch on every subsequent apply().
+#[test]
+fn test_field_type_switching_no_thrash_after_first_switch() {
+    let switch_timeout_ms: u64 = 500;
+    // Set next_switch in the past so the first apply() triggers a switch.
+    let mut field: FieldType<u8> = FieldType::Switching {
+        value: 0u8,
+        next_switch: unix_timestamp_ms() - 1,
+        switch_timeout: switch_timeout_ms,
+    };
+
+    // First apply: timer has expired → switch fires, next_switch reset to now + timeout.
+    let first = field.apply();
+    // Second apply immediately: timer should NOT have expired yet.
+    let second = field.apply();
+
+    assert_eq!(
+        first, second,
+        "field switched twice within a single millisecond — next_switch reset is broken"
+    );
+}
+
+// Test: after the timeout elapses the field switches again (positive case).
+#[test]
+fn test_field_type_switching_switches_again_after_timeout() {
+    let switch_timeout_ms: u64 = 50; // 50 ms — short enough for a test
+    let mut field: FieldType<u8> = FieldType::Switching {
+        value: 0u8,
+        next_switch: unix_timestamp_ms() - 1,
+        switch_timeout: switch_timeout_ms,
+    };
+
+    // First apply fires the switch, next_switch now = now + 50ms.
+    let _ = field.apply();
+
+    // Wait past the timeout.
+    std::thread::sleep(std::time::Duration::from_millis(switch_timeout_ms + 10));
+
+    // A switch can now occur — call apply() once (may or may not switch depending on rng).
+    let _after = field.apply();
+    // Immediately applying again must NOT switch a second time in the same call.
+    let immediate = field.apply();
+    let immediate2 = field.apply();
+    assert_eq!(immediate, immediate2, "double switch within 1ms — timer reset broken after second trigger");
+}
