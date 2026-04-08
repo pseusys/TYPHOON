@@ -35,9 +35,17 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      - name: Run tests with coverage 🧪
+      - name: Run unit tests with coverage 🧪
         working-directory: typhoon
-        run: cargo llvm-cov --lcov --output-path lcov.info
+        run: cargo llvm-cov --no-report
+
+      - name: Run network integration tests with coverage 🌐
+        working-directory: typhoon
+        run: cargo llvm-cov --no-report --test network -- --test-threads=1
+
+      - name: Merge coverage and generate LCOV 📊
+        working-directory: typhoon
+        run: cargo llvm-cov report --lcov --output-path lcov.info
 
       - name: Generate HTML report 📊
         working-directory: typhoon

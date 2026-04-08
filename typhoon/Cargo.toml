@@ -53,6 +53,11 @@ env_logger = "^0.11"
 tempfile = "^3.15"
 
 
+[[test]]
+name = "network"
+path = "tests/network/main.rs"
+required-features = ["client", "server"]
+
 [[bin]]
 name = "typhoon-debug"
 path = "src/bin/typhoon_debug.rs"
