@@ -26,6 +26,7 @@ Always compare your implementation to [README.md](./README.md) file, the code sh
 - Prefer direct imports over fully-qualified ones: `use foo::bar::Type; Type...` instead of just `foo::bar::Type`.
 - Prefer simpler synchronization primitives to channels: `Arc`/`Weak` pairs + function invocations for data transferring, lock-free dequeues for async event processing, etc.
 - When gating code, prefer applying `#[cfg(...)]` to imports, types, fields and functions, but not to the code (inside of a function).
+- All the test-related code (marked with `#[cfg(test)]`) should reside in `typhoon/tests` directory, the directory structure should match the `typhoon/src` source code structure, the test-related code should not be placed into sources.
 
 ### Formatting
 
