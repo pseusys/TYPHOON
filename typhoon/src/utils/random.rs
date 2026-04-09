@@ -1,6 +1,8 @@
 use rand::RngCore;
 use rand::rngs::OsRng;
 use rand::CryptoRng;
+#[cfg(feature = "client")]
+use rand::Rng;
 #[cfg(test)]
 use rand::SeedableRng;
 
