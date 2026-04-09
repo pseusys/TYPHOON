@@ -8,7 +8,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use log::warn;
+use log::{debug, warn};
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand_distr::{Distribution, Exp, Normal};

@@ -250,7 +250,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
 
         // Handle health check: forward to health provider.
         if tailor.flags().contains(PacketFlags::HEALTH_CHECK) && !tailor.flags().has_payload() {
-            self.health_provider.feed_health_check(tailor.packet_number());
+            self.health_provider.feed_health_check(tailor.time(), tailor.packet_number());
         }
 
         // If there is data payload, decrypt and forward to ClientHandle.
