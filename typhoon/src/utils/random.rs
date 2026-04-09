@@ -1,6 +1,6 @@
 use rand::RngCore;
 use rand::rngs::OsRng;
-use rand::{CryptoRng, Rng};
+use rand::CryptoRng;
 #[cfg(test)]
 use rand::SeedableRng;
 
