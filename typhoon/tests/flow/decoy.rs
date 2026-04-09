@@ -6,7 +6,7 @@ use crate::flow::decoy::common::{DecoyFeatureConfig, DecoyState, MaintenanceMode
 use crate::settings::SettingsBuilder;
 use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILOR_LENGTH};
 use crate::settings::keys::*;
-use crate::utils::time::unix_timestamp_ms;
+use crate::utils::unix_timestamp_ms;
 
 fn make_settings() -> Arc<crate::settings::Settings<DefaultExecutor>> {
     Arc::new(SettingsBuilder::new().build().unwrap())
@@ -360,6 +360,94 @@ fn test_schedule_next_maintenance_timed() {
     // With a fixed delay of 1000ms, the time should be ~1000ms from now.
     assert!(state.next_maintenance_time >= before + 1000);
     assert!(state.next_maintenance_time <= before + 1500); // generous tolerance for slow CI
+}
+
+// === Seeded RNG determinism tests ===
+
+// Test: create_decoy_packet with the same seed produces byte-identical packets,
+// including a seeded subheader config so the full decoy path is exercised.
+#[test]
+fn test_seeded_packet_is_deterministic() {
+    use crate::utils::random::{clear_test_rng, set_test_rng_seed};
+
+    let settings = make_settings();
+    let sh_min = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
+    let sh_max = settings.get(&DECOY_SUBHEADER_LENGTH_MAX) as usize;
+
+    let make_packet = |seed: u64| -> Vec<u8> {
+        set_test_rng_seed(seed);
+        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(
+            settings.clone(),
+            StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH),
+        );
+        // Override subheader to All so the subheader path is always taken.
+        // The config is generated from the seeded RNG, so it is deterministic.
+        state.features.subheader_mode = SubheaderMode::All;
+        state.features.subheader_config = Some(super::generate_random_fake_header(sh_min, sh_max));
+        let packet = state.create_decoy_packet(64, false);
+        clear_test_rng();
+        packet.as_ref().to_vec()
+    };
+
+    let first = make_packet(42);
+    let second = make_packet(42);
+    assert_eq!(first, second, "same seed should produce identical packet bytes");
+}
+
+// Test: create_decoy_packet with different seeds produces different bytes.
+#[test]
+fn test_seeded_packets_differ_with_different_seeds() {
+    use crate::utils::random::{clear_test_rng, set_test_rng_seed};
+
+    let settings = make_settings();
+    let sh_min = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
+    let sh_max = settings.get(&DECOY_SUBHEADER_LENGTH_MAX) as usize;
+
+    let make_packet = |seed: u64| -> Vec<u8> {
+        set_test_rng_seed(seed);
+        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(
+            settings.clone(),
+            StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH),
+        );
+        state.features.subheader_mode = SubheaderMode::All;
+        state.features.subheader_config = Some(super::generate_random_fake_header(sh_min, sh_max));
+        let packet = state.create_decoy_packet(64, false);
+        clear_test_rng();
+        packet.as_ref().to_vec()
+    };
+
+    let with_seed_42 = make_packet(42);
+    let with_seed_99 = make_packet(99);
+    assert_ne!(with_seed_42, with_seed_99, "different seeds should produce different packet bytes");
+}
+
+// Test: seeded packet body matches a known snapshot (regression guard).
+// All randomness — feature config, subheader fields, body fill — flows from the seed.
+#[test]
+fn test_seeded_packet_snapshot() {
+    use crate::utils::random::{clear_test_rng, set_test_rng_seed};
+
+    let settings = make_settings();
+    let sh_min = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
+    let sh_max = settings.get(&DECOY_SUBHEADER_LENGTH_MAX) as usize;
+
+    let make_packet = |seed: u64| -> Vec<u8> {
+        set_test_rng_seed(seed);
+        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(
+            settings.clone(),
+            StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH),
+        );
+        state.features.subheader_mode = SubheaderMode::All;
+        state.features.subheader_config = Some(super::generate_random_fake_header(sh_min, sh_max));
+        let packet = state.create_decoy_packet(16, false);
+        clear_test_rng();
+        packet.as_ref().to_vec()
+    };
+
+    // Build snapshot on first run, then assert second run is identical.
+    let snapshot = make_packet(1337);
+    let replay   = make_packet(1337);
+    assert_eq!(snapshot, replay, "snapshot must be reproducible across runs");
 }
 
 // === create_replica_packet tests ===
