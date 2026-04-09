@@ -28,9 +28,9 @@ pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor, DP: Sen
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static> ClientFlowManager<T, AE, DP> {
     /// Create a new client flow manager.
     pub(crate) async fn new(config: FlowConfig, mut cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, sock: Socket) -> Result<Arc<Self>, FlowControllerError> {
-        let identity = cipher.get_mut().await.map_err(FlowControllerError::MissingCache)?.identity();
-        let send_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
-        let receive_provider = cipher.create_sibling().await.map_err(FlowControllerError::MissingCache)?;
+        let identity = cipher.get_mut().map_err(FlowControllerError::MissingCache)?.identity();
+        let send_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
+        let receive_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
         let value = Arc::new_cyclic(|m: &std::sync::Weak<Self>| {
             let mgr: std::sync::Weak<dyn DecoyFlowSender> = m.clone();
             ClientFlowManager {
@@ -65,7 +65,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
         };
 
         let mut lock = self.send_internal.lock().await;
-        let full_packet = lock.prepare_outgoing(notified_packet.unwrap(), self.mtu, self.settings.pool()).await?;
+        let full_packet = lock.prepare_outgoing(notified_packet.unwrap(), self.mtu, self.settings.pool())?;
         trace!("client flow: wire packet {} bytes", full_packet.len());
         self.sock.send(full_packet).await.map_err(FlowControllerError::SocketError)?;
         Ok(())
@@ -85,7 +85,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
             };
 
             let mut lock = self.receive_internal.lock().await;
-            match lock.process_incoming(notified_packet.unwrap(), self.settings.pool()).await? {
+            match lock.process_incoming(notified_packet.unwrap(), self.settings.pool())? {
                 Some(result) => {
                     trace!("client flow: processed packet → {} bytes", result.len());
                     return Ok(result);

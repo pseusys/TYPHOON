@@ -99,14 +99,14 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
             max_data_payload = max_data_payload.min(settings.mtu().saturating_sub(flow_overhead));
 
             let sock = Socket::new(addr, None).await.map_err(ClientSocketError::SocketError)?;
-            let cipher_cache = cipher.create_cache().await;
+            let cipher_cache = cipher.create_cache();
             let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock).await.map_err(ClientSocketError::FlowError)?;
             flows.push(flow);
         }
         let max_data_payload = if max_data_payload == usize::MAX { settings.mtu() } else { max_data_payload };
         info!("client socket built: max_data_payload={}B (mtu={}B, {} flow(s))", max_data_payload, settings.mtu(), flows.len());
 
-        let session = ClientSessionManager::new(cipher, flows, settings.clone(), self.initial_data_generator).await.map_err(ClientSocketError::SessionError)?;
+        let session = ClientSessionManager::new(cipher, flows, settings.clone(), self.initial_data_generator).map_err(ClientSocketError::SessionError)?;
 
         let (incoming_tx, incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
 

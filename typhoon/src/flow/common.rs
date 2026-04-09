@@ -44,7 +44,7 @@ impl<T: FlowManager + Send + Sync> FlowManager for Arc<T> {
 }
 
 /// Trait for tailor-level cryptographic operations used by flow managers.
-pub trait FlowCryptoProvider: Clone + Send {
+pub trait FlowCryptoProvider: Clone + Send + Sync {
     /// The identity type used in tailors.
     type Identity: IdentityType + Clone;
 
@@ -77,7 +77,7 @@ pub(crate) struct FlowReceiveInternal<CP: FlowCryptoProvider> {
 #[cfg(feature = "client")]
 impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
     /// Encrypt tailor, add fake header and body, return assembled packet ready for socket send.
-    pub(crate) async fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &crate::bytes::BytePool) -> Result<DynamicByteBuffer, FlowControllerError> {
+    pub(crate) fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &crate::bytes::BytePool) -> Result<DynamicByteBuffer, FlowControllerError> {
         let identity_len = <CP::Identity as IdentityType>::length();
         let full_tailor_len = TAILOR_LENGTH + identity_len;
 
@@ -95,7 +95,7 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
 
         let (packet_data, packet_tailor) = packet.split_buf(packet.len() - full_tailor_len);
         let packet_flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
-        let encrypted_packet = match self.provider.get_mut().await.map_err(FlowControllerError::MissingCache)?.obfuscate_tailor(packet_tailor, pool) {
+        let encrypted_packet = match self.provider.get_mut().map_err(FlowControllerError::MissingCache)?.obfuscate_tailor(packet_tailor, pool) {
             Ok(res) => packet_data.expand_end(res.len()),
             Err(err) => return Err(FlowControllerError::TailorEncryption(err)),
         };
@@ -116,7 +116,7 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
 #[cfg(feature = "client")]
 impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
     /// Decrypt tailor, verify, check if discardable. Returns processed packet or None if decoy.
-    pub(crate) async fn process_incoming(&mut self, packet: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<Option<DynamicByteBuffer>, FlowControllerError> {
+    pub(crate) fn process_incoming(&mut self, packet: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<Option<DynamicByteBuffer>, FlowControllerError> {
         let identity_len = <CP::Identity as IdentityType>::length();
         let full_tailor_len = TAILOR_LENGTH + identity_len;
         let encrypted_tailor_len = identity_len + CP::tailor_overhead();
@@ -124,7 +124,7 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
         // Deobfuscation decrypts in-place on the shared underlying buffer.
         // The decrypted tailor sits at the start of the encrypted_tailor region,
         // reachable via encrypted_packet.expand_end(full_tailor_len).
-        let tailor = match self.provider.get_mut().await {
+        let tailor = match self.provider.get_mut() {
             Ok(cipher) => match cipher.deobfuscate_tailor(encrypted_tailor, pool) {
                 Ok((tailor, transcript)) => {
                     match cipher.verify_tailor(transcript) {
