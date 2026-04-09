@@ -4,7 +4,7 @@ use std::hash::Hash;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak as StdWeak};
 
-use log::{debug, trace};
+use log::{debug, warn};
 use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, FixedByteBuffer};
@@ -240,20 +240,17 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
     /// Decrypted data is sent to the ClientHandle via user_data_tx.
     pub async fn process_incoming(&self, incoming: IncomingPacket<T>) -> Result<(), SessionControllerError> {
         let IncomingPacket { body, tailor } = incoming;
-        debug!("server session: process_incoming flags={:?} cd={} pn={:#018x} payload_len={}", tailor.flags(), tailor.code(), tailor.packet_number(), tailor.payload_length());
+        debug!("server session [{}]: received {:?} packet", self.identity.to_string(), tailor.flags());
 
         // Handle termination.
         if tailor.flags().is_termination() {
-            debug!("server session: connection terminated by client (code={:?})", tailor.code());
+            debug!("server session [{}]: connection terminated by client (code={})", self.identity.to_string(), tailor.code());
             return Err(SessionControllerError::ConnectionTerminated(tailor.code()));
         }
 
         // Handle health check: forward to health provider.
         if tailor.flags().contains(PacketFlags::HEALTH_CHECK) && !tailor.flags().has_payload() {
-            let next_in = tailor.time();
-            let pn = tailor.packet_number();
-            trace!("server session: standalone health check pn={} next_in={}", pn, next_in);
-            self.health_provider.feed_health_check(next_in, pn);
+            self.health_provider.feed_health_check(tailor.time(), tailor.packet_number());
         }
 
         // If there is data payload, decrypt and forward to ClientHandle.
@@ -272,15 +269,14 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
 
             match decrypt_result {
                 Ok(decrypted) => {
-                    trace!("server session: decrypted {}B (encrypted payload was {}B), forwarding to client handle", decrypted.len(), payload_len);
-                    // If this is a shadowride (data + health check), forward to health provider.
+                    // If this is a shadowride (data + health check), respond to the health check.
                     if tailor.flags().contains(PacketFlags::HEALTH_CHECK) {
                         self.health_provider.feed_health_check(tailor.time(), tailor.packet_number());
                     }
                     self.incoming_tx.push(decrypted);
                 }
                 Err(err) => {
-                    debug!("server session: decrypt error: {}", err);
+                    warn!("server session [{}]: payload decryption failed: {}", self.identity.to_string(), err);
                 }
             }
         }
@@ -292,7 +288,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> SessionManager for ServerSessionManager<T, AE, R> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), SessionControllerError> {
-        trace!("server session: send_packet {} bytes (generated={})", packet.len(), generated);
         let full_packet = if generated {
             // Already assembled (tailor included), pass through.
             packet
@@ -311,7 +306,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
             let tailor_buf = encrypted_payload.expand_end(T::length()).rebuffer_start(encrypted_payload_len);
             let _tailor = Tailor::data(tailor_buf, &self.identity, payload_length, packet_number);
             // Include encrypted payload: encrypted_payload || tailor (TAILOR_LENGTH + T::length() bytes).
-            encrypted_payload.expand_end(TAILOR_LENGTH + T::length())
+            let assembled = encrypted_payload.expand_end(TAILOR_LENGTH + T::length());
+            debug!("server session [{}]: sending data packet", self.identity.to_string());
+            assembled
         };
 
         self.route_outgoing(full_packet).await

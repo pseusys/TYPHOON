@@ -3,7 +3,7 @@ use std::mem::take;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use log::{debug, trace};
+use log::{debug, warn};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::SharedValue;
@@ -90,7 +90,6 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, CC: ClientConnectionHandler + 'static> SessionManager for ClientSessionManager<T, AE, FM, CC> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), SessionControllerError> {
-        trace!("client session: send_packet {} bytes (generated={})", packet.len(), generated);
         let full_packet = if generated {
             // Health provider already assembled (body + tailor), pass through directly.
             packet
@@ -143,23 +142,22 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
             // The flow manager returns: encrypted_payload || plaintext_tailor (full TAILOR_LENGTH + T::length() bytes).
             let (payload_part, tailor_part) = packet.split_buf(packet.len() - T::length() - TAILOR_LENGTH);
             let tailor = Tailor::<T>::new(tailor_part);
-            debug!("client session: recv flags={:?} cd={} pn={:#018x} payload_len={} has_payload={}", tailor.flags(), tailor.code(), tailor.packet_number(), tailor.payload_length(), tailor.flags().has_payload());
+
+            debug!("client session: received {:?} packet", tailor.flags());
 
             // Handle termination.
             if tailor.flags().is_termination() {
-                debug!("client session: connection terminated by server (code={:?})", tailor.code());
+                debug!("client session: connection terminated by server (code={})", tailor.code());
                 return Err(SessionControllerError::ConnectionTerminated(tailor.code()));
             }
 
             // Handle handshake response.
             if tailor.flags().contains(PacketFlags::HANDSHAKE) {
-                debug!("client session: routing handshake response to health provider");
                 self.health_provider.feed_handshake_input(tailor.clone(), payload_part.clone()).await?;
             }
 
             // Handle health check (standalone or shadowride).
             if tailor.flags().contains(PacketFlags::HEALTH_CHECK) {
-                trace!("client session: routing health check to health provider");
                 self.health_provider.feed_input(tailor.clone()).await?;
             }
 
@@ -167,19 +165,13 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
             if tailor.flags().has_payload() {
                 let mut recv_lock = self.receive_internal.lock().await;
                 match recv_lock.cipher.get_mut().await.decrypt_payload(payload_part, None) {
-                    Ok(decrypted) => {
-                        trace!("client session: decrypted {}B (encrypted payload was {}B)", decrypted.len(), tailor.payload_length());
-                        return Ok(decrypted);
-                    }
+                    Ok(decrypted) => return Ok(decrypted),
                     Err(err) => {
-                        debug!("client session: decrypt error: {}", err);
+                        warn!("client session: payload decryption failed: {}", err);
                         continue;
                     }
                 }
             }
-
-            // Pure health check with no data: loop back.
-            trace!("standalone health check processed, waiting for next packet");
         }
     }
 }

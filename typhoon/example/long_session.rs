@@ -37,6 +37,8 @@ pub async fn sleep(duration: Duration) {
 }
 
 async fn run() {
+    env_logger::init();
+
     let settings = Arc::new(
         SettingsBuilder::<DefaultExecutor>::new()
             .build()

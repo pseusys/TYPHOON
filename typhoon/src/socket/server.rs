@@ -3,7 +3,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use crossbeam::queue::SegQueue;
-use log::{debug, info, trace};
+use log::{debug, info, warn};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::SharedMap;
@@ -254,7 +254,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     match flow_drain.receive_raw(recv_buf).await {
                         Ok(raw_packet) => drain_tx.push(raw_packet),
                         Err(err) => {
-                            debug!("flow manager {} receive error: {}", index, err);
+                            warn!("flow manager {}: receive error: {}", index, err);
                             break;
                         }
                     }
@@ -329,7 +329,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             let buf = self.settings.pool().allocate(Some(T::length()));
             let tailor = Tailor::termination(buf, &client_version_identity, ReturnCode::VersionMismatch, pn);
             if let Err(err) = self.flows[flow_index].send_packet(tailor.into_buffer(), true).await {
-                debug!("failed to send version mismatch rejection: {}", err);
+                warn!("failed to send version mismatch rejection: {}", err);
             }
             {
                 let mut users = self.users.lock().await;
@@ -392,7 +392,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             match result {
                 Ok((session, response_packet)) => (session, response_packet, replacing),
                 Err(err) => {
-                    debug!("handshake failed: {}", err);
+                    warn!("handshake failed: {}", err);
                     return;
                 }
             }
@@ -418,7 +418,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         // Send handshake response through the flow that received the handshake.
         // At this point the tailor is encrypted/authenticated with the initial key.
         if let Err(err) = self.flows[flow_index].send_packet(response_packet, false).await {
-            debug!("failed to send handshake response: {}", err);
+            warn!("failed to send handshake response: {}", err);
             // Clean up: remove user from shared map and all flow decoy providers.
             self.users.lock().await.remove(&identity).await;
             for flow in &self.flows {
@@ -527,14 +527,11 @@ pub struct ClientHandle<T: IdentityType + Clone + Eq + Hash + Send + ToString + 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> ClientHandle<T, AE, R> {
     /// Send a packet using a pre-allocated buffer.
     pub async fn send(&self, packet: DynamicByteBuffer) -> Result<(), ServerSocketError> {
-        trace!("ClientHandle::send {} bytes", packet.len());
         self.session.send_packet(packet, false).await.map_err(ServerSocketError::SessionError)
     }
 
     /// Send a byte slice, splitting into payload-sized chunks so each wire packet fits within MTU.
     pub async fn send_bytes(&self, data: &[u8]) -> Result<(), ServerSocketError> {
-        let total = data.chunks(self.max_data_payload).count();
-        trace!("ClientHandle::send_bytes {} bytes → {} chunk(s) of max {}B", data.len(), total, self.max_data_payload);
         for chunk in data.chunks(self.max_data_payload) {
             let buffer = self.settings.pool().allocate(Some(chunk.len()));
             buffer.slice_mut().copy_from_slice(chunk);
@@ -551,7 +548,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
     /// Receive a packet, returning the decrypted payload as a buffer.
     pub async fn receive(&self) -> Result<DynamicByteBuffer, ServerSocketError> {
         let buf = self.incoming_rx.lock().await.recv().await.ok_or(ServerSocketError::ChannelClosed)?;
-        trace!("ClientHandle::receive {} bytes", buf.len());
         Ok(buf)
     }
 

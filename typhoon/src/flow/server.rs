@@ -4,7 +4,7 @@ use std::hash::Hash;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use log::{debug, info, trace};
+use log::{debug, warn};
 use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
@@ -99,7 +99,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         loop {
             let (packet, source_addr) = self.sock.recv_from(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
-            trace!("server flow: recv_raw {} bytes from {}", packet.len(), source_addr);
 
             // Strip encrypted tailor from the end.
             let (encrypted_packet, encrypted_tailor) = packet.split_buf(packet.len() - identity_len - tailor_overhead);
@@ -110,7 +109,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 let (tailor_buf, transcript) = match crypto.deobfuscate_tailor(encrypted_tailor, self.settings.pool()) {
                     Ok(result) => result,
                     Err(err) => {
-                        debug!("error decrypting packet tailor: {}", err);
+                        warn!("server flow: tailor decryption failed from {}: {}", source_addr, err);
                         continue;
                     }
                 };
@@ -129,7 +128,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
             // Decoy packets are always discarded at flow level.
             if packet_flags.is_discardable() {
-                info!("decoy packet received, skipping...");
                 continue;
             }
 
@@ -161,6 +159,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             } else {
                 encrypted_packet
             };
+
+            debug!("server flow: received {:?} packet from {}", packet_flags, source_addr);
             return Ok(RawReceivedPacket {
                 body,
                 tailor,
@@ -232,7 +232,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             full_packet
         };
 
-        trace!("server flow: send_to {} bytes → {}", full_packet.len(), addr);
+        debug!("server flow: sending {:?} packet to {}", packet_flags, addr);
         self.sock.send_to(full_packet, addr).await.map_err(FlowControllerError::SocketError)?;
         Ok(())
     }
