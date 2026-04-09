@@ -8,7 +8,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use log::debug;
+use log::{debug, warn};
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand_distr::{Distribution, Exp, Normal};
@@ -474,7 +474,7 @@ pub(super) async fn maintenance_timer_task<T, AE>(
         sleep(delay).await;
 
         let Some(manager_arc) = manager.upgrade() else {
-            debug!("Maintenance timer: manager dropped, stopping");
+            warn!("Maintenance timer: manager dropped, stopping");
             break;
         };
 
@@ -484,7 +484,6 @@ pub(super) async fn maintenance_timer_task<T, AE>(
 
             if !guard.try_spend_budget(length) {
                 guard.schedule_next_maintenance();
-                debug!("Maintenance: insufficient budget for {} bytes, skipping", length);
                 continue;
             }
 
@@ -499,7 +498,7 @@ pub(super) async fn maintenance_timer_task<T, AE>(
         debug!("Maintenance: generated packet (len={})", body_length);
 
         if let Err(err) = manager_arc.send_decoy_packet(packet).await {
-            debug!("Maintenance: failed to send: {:?}", err);
+            warn!("Maintenance: failed to send: {:?}", err);
         } else if let Some(bytes) = body_bytes {
             try_replicate(&state, &manager, true, bytes).await;
         }
@@ -554,13 +553,11 @@ pub(super) async fn try_replicate<T, AE>(
             let packet = {
                 let mut guard = state_clone.write().await;
                 if !guard.try_spend_budget(body_bytes.len()) {
-                    debug!("Replication: insufficient budget, stopping cascade");
                     break;
                 }
                 guard.create_replica_packet(&body_bytes, is_maintenance)
             };
 
-            debug!("Replication: sending replica (len={})", body_bytes.len());
             if manager_arc.send_decoy_packet(packet).await.is_err() {
                 break;
             }
