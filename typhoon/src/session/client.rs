@@ -165,7 +165,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
             if tailor.flags().has_payload() {
                 let mut recv_lock = self.receive_internal.lock().await;
                 match recv_lock.cipher.get_mut().decrypt_payload(payload_part, None) {
-                    Ok(decrypted) => return Ok(decrypted);
+                    Ok(decrypted) => return Ok(decrypted),
                     Err(err) => {
                         warn!("client session: payload decryption failed: {}", err);
                         continue;
