@@ -44,7 +44,6 @@ pub struct Socket {
     sock: Async<StdUdpSocket>,
 }
 
-// TODO: consider using DO_REUSEPORT
 impl Socket {
     #[cfg(feature = "tokio")]
     pub async fn new(peer: SocketAddr, local: Option<SocketAddr>) -> Result<Self, SocketError> {
@@ -84,6 +83,68 @@ impl Socket {
         Ok(Self {
             sock: Async::new(sock).map_err(SocketError::new_socket_error)?,
         })
+    }
+
+    /// Bind `count` sockets to the same address using `SO_REUSEPORT`.
+    /// The kernel distributes incoming datagrams across all sockets by 4-tuple hash,
+    /// enabling N concurrent `recv_from` calls with no locking.
+    /// `local.port()` must be > 0.
+    #[cfg(all(target_os = "linux", feature = "server", feature = "tokio"))]
+    pub fn bind_reuse_port(local: SocketAddr, count: usize) -> Result<Vec<Self>, SocketError> {
+        use std::io::ErrorKind;
+        use socket2::{Domain, Protocol, Socket as S2Socket, Type};
+
+        if local.port() == 0 {
+            return Err(SocketError::new_socket_error(IoError::new(
+                ErrorKind::InvalidInput,
+                "SO_REUSEPORT requires port > 0",
+            )));
+        }
+
+        let domain = if local.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
+        let mut sockets = Vec::with_capacity(count);
+        for _ in 0..count {
+            let s2 = S2Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))
+                .map_err(SocketError::new_socket_error)?;
+            s2.set_reuse_port(true).map_err(SocketError::new_socket_error)?;
+            s2.bind(&local.into()).map_err(SocketError::new_socket_error)?;
+            s2.set_nonblocking(true).map_err(SocketError::new_socket_error)?;
+            let std_sock: std::net::UdpSocket = s2.into();
+            let tok_sock = TokioSocket::from_std(std_sock).map_err(SocketError::new_socket_error)?;
+            sockets.push(Socket { sock: tok_sock });
+        }
+        Ok(sockets)
+    }
+
+    /// Bind `count` sockets to the same address using `SO_REUSEPORT`.
+    /// The kernel distributes incoming datagrams across all sockets by 4-tuple hash,
+    /// enabling N concurrent `recv_from` calls with no locking.
+    /// `local.port()` must be > 0.
+    #[cfg(all(target_os = "linux", feature = "server", feature = "async-std"))]
+    pub fn bind_reuse_port(local: SocketAddr, count: usize) -> Result<Vec<Self>, SocketError> {
+        use std::io::ErrorKind;
+        use socket2::{Domain, Protocol, Socket as S2Socket, Type};
+
+        if local.port() == 0 {
+            return Err(SocketError::new_socket_error(IoError::new(
+                ErrorKind::InvalidInput,
+                "SO_REUSEPORT requires port > 0",
+            )));
+        }
+
+        let domain = if local.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
+        let mut sockets = Vec::with_capacity(count);
+        for _ in 0..count {
+            let s2 = S2Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))
+                .map_err(SocketError::new_socket_error)?;
+            s2.set_reuse_port(true).map_err(SocketError::new_socket_error)?;
+            s2.bind(&local.into()).map_err(SocketError::new_socket_error)?;
+            let std_sock: std::net::UdpSocket = s2.into();
+            sockets.push(Socket {
+                sock: Async::new(std_sock).map_err(SocketError::new_socket_error)?,
+            });
+        }
+        Ok(sockets)
     }
 
     /// Send to socket

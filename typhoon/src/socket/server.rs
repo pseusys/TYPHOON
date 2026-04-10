@@ -31,6 +31,9 @@ pub struct ServerFlowConfiguration {
     socket: Option<Socket>,
     address: Option<std::net::SocketAddr>,
     config: FlowConfig,
+    /// Number of SO_REUSEPORT reader sockets to create (Linux only; default 1).
+    /// Values > 1 are silently clamped to 1 on non-Linux platforms.
+    reader_count: usize,
 }
 
 impl ServerFlowConfiguration {
@@ -40,6 +43,7 @@ impl ServerFlowConfiguration {
             socket: Some(socket),
             address: None,
             config,
+            reader_count: 1,
         }
     }
 
@@ -49,7 +53,17 @@ impl ServerFlowConfiguration {
             socket: None,
             address: Some(address),
             config,
+            reader_count: 1,
         }
+    }
+
+    /// Set the number of SO_REUSEPORT reader sockets (Linux only).
+    /// The kernel distributes incoming datagrams across all sockets by 4-tuple hash,
+    /// enabling N concurrent `recv_from` drain tasks with no per-packet locking.
+    /// Has no effect (silently clamped to 1) on non-Linux platforms.
+    pub fn with_reader_count(mut self, count: usize) -> Self {
+        self.reader_count = count.max(1);
+        self
     }
 }
 
@@ -116,17 +130,29 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 + tailor_wire_len;
             max_data_payload = max_data_payload.min(settings.mtu().saturating_sub(flow_overhead));
 
-            let sock = match flow_config.socket {
-                Some(socket) => socket,
+            let socks: Vec<Arc<Socket>> = match flow_config.socket {
+                Some(socket) => vec![Arc::new(socket)],
                 None => {
                     let address = flow_config.address.expect("ServerFlowConfiguration must have either socket or address");
-                    Socket::bind(address).await.map_err(ServerSocketError::SocketError)?
+                    cfg_if::cfg_if! {
+                        if #[cfg(target_os = "linux")] {
+                            if flow_config.reader_count > 1 {
+                                Socket::bind_reuse_port(address, flow_config.reader_count)
+                                    .map_err(ServerSocketError::SocketError)?
+                                    .into_iter().map(Arc::new).collect()
+                            } else {
+                                vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
+                            }
+                        } else {
+                            vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
+                        }
+                    }
                 }
             };
 
             let crypto_send = crate::crypto::ServerCryptoTool::new(users.create_cache(), obfs_buffer.clone());
             let crypto_recv = crate::crypto::ServerCryptoTool::new(users.create_cache(), obfs_buffer.clone());
-            let flow = ServerFlowManager::new(flow_config.config, crypto_send, crypto_recv, settings.clone(), sock);
+            let flow = ServerFlowManager::new(flow_config.config, crypto_send, crypto_recv, settings.clone(), socks);
             flows.push(flow);
         }
         let max_data_payload = if max_data_payload == usize::MAX { settings.mtu() } else { max_data_payload };
@@ -173,17 +199,29 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 + tailor_wire_len;
             max_data_payload = max_data_payload.min(settings.mtu().saturating_sub(flow_overhead));
 
-            let sock = match flow_config.socket {
-                Some(socket) => socket,
+            let socks: Vec<Arc<Socket>> = match flow_config.socket {
+                Some(socket) => vec![Arc::new(socket)],
                 None => {
                     let address = flow_config.address.expect("ServerFlowConfiguration must have either socket or address");
-                    Socket::bind(address).await.map_err(ServerSocketError::SocketError)?
+                    cfg_if::cfg_if! {
+                        if #[cfg(target_os = "linux")] {
+                            if flow_config.reader_count > 1 {
+                                Socket::bind_reuse_port(address, flow_config.reader_count)
+                                    .map_err(ServerSocketError::SocketError)?
+                                    .into_iter().map(Arc::new).collect()
+                            } else {
+                                vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
+                            }
+                        } else {
+                            vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
+                        }
+                    }
                 }
             };
 
             let crypto_send = crate::crypto::ServerCryptoTool::new(users.create_cache(), Arc::clone(&secret_arc));
             let crypto_recv = crate::crypto::ServerCryptoTool::new(users.create_cache(), Arc::clone(&secret_arc));
-            let flow = ServerFlowManager::new(flow_config.config, crypto_send, crypto_recv, settings.clone(), sock);
+            let flow = ServerFlowManager::new(flow_config.config, crypto_send, crypto_recv, settings.clone(), socks);
             flows.push(flow);
         }
         let max_data_payload = if max_data_payload == usize::MAX { settings.mtu() } else { max_data_payload };
@@ -229,40 +267,48 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Start the listener's background receive loops.
     /// Must be called after build() to begin processing incoming packets.
     ///
-    /// Each flow gets two tasks:
-    /// - A fast **drain task** that calls `receive_raw` and immediately pushes
-    ///   raw packets into a channel via `try_send`, then loops back. If the
-    ///   route task is slow and the channel is full the packet is dropped, keeping
-    ///   the OS socket buffer empty at all times.
-    /// - A **route task** that pulls from the channel and calls `route_incoming`.
+    /// Each flow gets N+1 tasks (where N = number of SO_REUSEPORT sockets, normally 1):
+    /// - N **drain tasks**, one per socket, each calling `receive_raw` and immediately pushing
+    ///   raw packets into a shared bounded channel. If the route task is slow and the channel is
+    ///   full the packet is dropped, keeping the OS socket buffer empty at all times.
+    ///   When all N drain tasks exit the `Arc<BoundedNotifyQueueSender>` refcount reaches 0,
+    ///   dropping the sender and closing the channel so the route task terminates.
+    /// - A **route task** that pulls from the shared channel and calls `route_incoming`.
     pub async fn start(self: &Arc<Self>) {
         let drain_capacity = self.settings.get(&keys::DRAIN_CHANNEL_CAPACITY) as usize;
 
         for (index, flow) in self.flows.iter().enumerate() {
             let (drain_tx, mut drain_rx) = create_bounded_notify_queue(drain_capacity);
+            // Wrap in Arc so all N drain tasks share ownership; the last one to exit drops the sender.
+            let drain_tx = Arc::new(drain_tx);
 
-            // Drain task: only reads from the socket and pushes to the bounded queue immediately.
-            // Packets are dropped (with a log) if the route task falls behind.
-            let flow_drain = Arc::clone(flow);
-            let settings_drain = Arc::clone(&self.settings);
-            self.settings.executor().spawn(async move {
-                loop {
-                    // Allocate a fresh buffer each iteration: the decrypted payload view
-                    // shares backing memory with recv_buf, so reusing it across iterations
-                    // would corrupt queue items that haven't been consumed yet.
-                    let recv_buf = settings_drain.pool().allocate_for_recv();
-                    match flow_drain.receive_raw(recv_buf).await {
-                        Ok(raw_packet) => drain_tx.push(raw_packet),
-                        Err(err) => {
-                            warn!("flow manager {}: receive error: {}", index, err);
-                            break;
+            // Spawn one drain task per socket.
+            for (sock_index, sock) in flow.recv_socks().iter().enumerate() {
+                let drain_tx = Arc::clone(&drain_tx);
+                let sock = Arc::clone(sock);
+                let flow_drain = Arc::clone(flow);
+                let settings_drain = Arc::clone(&self.settings);
+                self.settings.executor().spawn(async move {
+                    loop {
+                        // Allocate a fresh buffer each iteration: the decrypted payload view
+                        // shares backing memory with recv_buf, so reusing it across iterations
+                        // would corrupt queue items that haven't been consumed yet.
+                        let recv_buf = settings_drain.pool().allocate_for_recv();
+                        match flow_drain.receive_raw(recv_buf, &sock).await {
+                            Ok(raw_packet) => drain_tx.push(raw_packet),
+                            Err(err) => {
+                                warn!("flow manager {} socket {}: receive error: {}", index, sock_index, err);
+                                break;
+                            }
                         }
                     }
-                }
-                // drain_tx dropped here — route task will see None from drain_rx.recv() and exit.
-            });
+                    // drain_tx Arc clone dropped here; when all N drain tasks exit the sender drops.
+                });
+            }
+            // Drop the local Arc so only the spawned task clones remain.
+            drop(drain_tx);
 
-            // Route task: processes packets delivered by the drain task.
+            // Route task: processes packets delivered by the drain tasks.
             let listener = Arc::clone(self);
             self.settings.executor().spawn(async move {
                 while let Some(raw_packet) = drain_rx.recv().await {

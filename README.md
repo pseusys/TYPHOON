@@ -583,6 +583,18 @@ Theoretically, different server flow managers can occupy different IP addresses,
 The TYPHOON listener is a logical structure that keeps track of all flow managers (which are constant), spawns session managers for users, and recycles them when done.
 The listener should also be capable of producing client certificates that are guaranteed to be valid while the listener is alive (or restarted with a similar flow manager configuration).
 
+#### Parallel socket readers with `SO_REUSEPORT`
+
+On Linux, each server flow manager can be configured to bind multiple UDP sockets to the same address using the `SO_REUSEPORT` socket option.
+The Linux kernel distributes incoming datagrams across all sockets by a 4-tuple hash (source IP, source port, destination IP, destination port), so each socket receives a disjoint subset of the traffic.
+
+The listener spawns one independent drain task per socket.
+All drain tasks push received packets into a single bounded channel that feeds the shared route task, so packet ordering per-client is preserved while multiple clients can be drained concurrently without any per-packet locking.
+
+The number of reader sockets is set per-flow via `ServerFlowConfiguration::with_reader_count(N)`.
+With `N = 1` (the default) a single ordinary socket is created and the behavior is identical to a non-SO_REUSEPORT setup.
+With `N > 1` on Linux, `N` SO_REUSEPORT sockets are created; on non-Linux platforms the value is silently clamped to 1.
+
 #### Insertion and processing
 
 It is suggested that every "manager" is divided into two parts:
@@ -1116,29 +1128,3 @@ Furthermore, the algorithm should be resistant to adversarial path degradation p
 
 TODO! Server could support other flow managers residing in other processes or on other devices even, in that case communication and synchronisation of the server with these managers should become the biggest concern. In a standard mode, their lifetime should match: flow managers should be guaranteed alive while server is alive, so that all user certificates are always valid. However, as an edge case for unreliable networks, the design with initial data carrying addresses of currently active flow managers (described in "Initial data handling") can be used; in that case a functionality of tuntime plugging/unplugging of the flow managers to a running server will have to be implemented.
 
-## Optimization Proposals
-
-This section documents potential performance improvements that are not yet implemented but have been identified during development.
-
-### Per-packet parallel processing on the server
-
-Currently the server's route task processes incoming packets from all flows sequentially in a single loop: it drains packets from the bounded queue one at a time, identifies the target session by the tailor identity, and dispatches to `process_incoming`.
-
-A straightforward optimization is to spawn a separate async task per packet (or per burst of packets for the same identity):
-
-```rust
-// Instead of:
-while let Some(raw_packet) = drain_rx.recv().await {
-    // ... process synchronously
-}
-
-// Spawn per packet:
-while let Some(raw_packet) = drain_rx.recv().await {
-    let session = /* look up session */;
-    settings.executor().spawn(async move {
-        session.process_incoming(incoming).await;
-    });
-}
-```
-
-This allows packets destined for different clients to be processed concurrently, which is especially beneficial when decryption is the bottleneck (e.g. full PQ mode) or when one client's processing stalls (e.g. a slow `incoming_tx` push).
