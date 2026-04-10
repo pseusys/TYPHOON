@@ -79,49 +79,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         // authenticated with the initial key (the client can verify before deriving session key).
         let obfuscation_buffer = secret.obfuscation_buffer();
         let crypto_state = UserCryptoState::new(&initial_key, obfuscation_buffer);
-        let user_state = UserServerState::new(crypto_state);
-
-        // Insert user into shared map under server-generated identity.
-        users.insert(identity.clone(), user_state).await;
-
-        // Create independent send/receive templates from the shared map.
-        let crypto_send = users.create_cache_for(identity.clone());
-        let crypto_recv = users.create_cache_for(identity.clone());
-
-        // Generate server's next_in for the handshake response (tells client when to send first health check).
-        let server_next_in = get_rng().gen_range(
-            settings.get(&keys::HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&keys::HEALTH_CHECK_NEXT_IN_MAX),
-        ) as u32;
-
-        // Assemble response packet: response_body || tailor.
-        let response_body_len = response_body.len();
-        let tailor_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
-        let _response_tailor = Tailor::handshake(
-            tailor_buf,
-            &identity,
-            ReturnCode::Success.into(),
-            server_next_in,
-            handshake_tailor.packet_number(),
-            response_body_len as u16,
-        );
-        // Include the response body in the packet: response_body || tailor (TAILOR_LENGTH + T::length() bytes).
-        let response_packet = response_body.expand_end(TAILOR_LENGTH + T::length());
-
-        let health_provider = ServerHealthProvider::new(router.clone(), identity.clone(), settings.clone(), server_next_in);
-
-        let session = Arc::new(Self {
-            crypto_send,
-            crypto_recv,
-            identity,
-            active_flows: AtomicBitSet::new(num_flows),
-            incremental_counter: AtomicU32::new(0),
-            incoming_tx,
-            router,
-            settings,
-            health_provider,
-        });
-
-        Ok((session, response_packet))
+        Self::assemble_session(crypto_state, response_body, handshake_tailor, identity, users, incoming_tx, router, num_flows, settings).await
     }
 
     /// Create a server session manager from pre-decapsulated handshake data (full mode).
@@ -141,6 +99,23 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         // Register user with initial key so that the handshake response tailor is
         // encrypted with the initial key (the client can decrypt before deriving session key).
         let crypto_state = UserCryptoState::new(&initial_key);
+        Self::assemble_session(crypto_state, response_body, handshake_tailor, identity, users, incoming_tx, router, num_flows, settings).await
+    }
+
+    /// Common session assembly shared by both `from_handshake` variants.
+    /// Inserts `crypto_state` into the shared map, assembles the response packet, creates the
+    /// health provider, and returns the new session + response packet.
+    async fn assemble_session(
+        crypto_state: UserCryptoState,
+        response_body: DynamicByteBuffer,
+        handshake_tailor: Tailor<T>,
+        identity: T,
+        users: &mut SharedMap<T, UserServerState>,
+        incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
+        router: StdWeak<R>,
+        num_flows: usize,
+        settings: Arc<Settings<AE>>,
+    ) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
         let user_state = UserServerState::new(crypto_state);
 
         // Insert user into shared map under server-generated identity.
@@ -158,6 +133,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         // Assemble response packet: response_body || tailor.
         let response_body_len = response_body.len();
         let tailor_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
+        // Tailor writes to the shared buffer in-place via Arc; _response_tailor is dropped but
+        // its bytes are included in response_packet via expand_end below.
         let _response_tailor = Tailor::handshake(
             tailor_buf,
             &identity,

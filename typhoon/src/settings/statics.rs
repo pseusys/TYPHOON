@@ -7,7 +7,7 @@ pub mod keys {
     pub const RTT_ALPHA: Key<f64> = Key::new("TYPHOON_RTT_ALPHA", 0.125);
     pub const RTT_BETA: Key<f64> = Key::new("TYPHOON_RTT_BETA", 0.25);
     pub const RTT_DEFAULT: Key<u64> = Key::new("TYPHOON_RTT_DEFAULT", 5000);
-    pub const RTT_MIN: Key<u64> = Key::new("TYPHOON_RTT_MIN", 1000);
+    pub const RTT_MIN: Key<u64> = Key::new("TYPHOON_RTT_MIN", 200);
     pub const RTT_MAX: Key<u64> = Key::new("TYPHOON_RTT_MAX", 8000);
 
     // Timeout settings

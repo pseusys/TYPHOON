@@ -62,6 +62,8 @@ pub enum ReturnCode {
     Success = 0,
     /// Client and server major version numbers are incompatible.
     VersionMismatch = 1,
+    /// Connection decayed: health check exchange timed out after all retries.
+    ConnectionDecayed = 2,
     /// Unknown error.
     UnknownError = 101,
 }
@@ -71,6 +73,7 @@ impl From<u8> for ReturnCode {
         match value {
             0 => ReturnCode::Success,
             1 => ReturnCode::VersionMismatch,
+            2 => ReturnCode::ConnectionDecayed,
             _ => ReturnCode::UnknownError,
         }
     }

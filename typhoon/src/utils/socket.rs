@@ -44,7 +44,6 @@ pub struct Socket {
     sock: Async<StdUdpSocket>,
 }
 
-// TODO: consider using DO_REUSEPORT
 impl Socket {
     #[cfg(feature = "tokio")]
     pub async fn new(peer: SocketAddr, local: Option<SocketAddr>) -> Result<Self, SocketError> {

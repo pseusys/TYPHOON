@@ -281,10 +281,11 @@ impl ServerKeyPair {
     /// `TYPHOON_TEST_SERVER_KEY_FULL` (full_software/full_hardware) to a file path before
     /// running tests to skip expensive McEliece key generation.
     pub fn for_tests() -> Self {
-        #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-        let env_var = "TYPHOON_TEST_SERVER_KEY_FAST";
-        #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-        let env_var = "TYPHOON_TEST_SERVER_KEY_FULL";
+        let env_var = if cfg!(any(feature = "fast_software", feature = "fast_hardware")) {
+            "TYPHOON_TEST_SERVER_KEY_FAST"
+        } else {
+            "TYPHOON_TEST_SERVER_KEY_FULL"
+        };
 
         if let Ok(path) = std::env::var(env_var) {
             let p = std::path::Path::new(&path);
@@ -300,6 +301,16 @@ impl ServerKeyPair {
         } else {
             Self::generate()
         }
+    }
+
+    /// Create a matched (ClientCertificate, ServerSecret) pair for use in tests.
+    /// Calls `for_tests()` once so both sides share the same key material.
+    #[cfg(feature = "server")]
+    pub(crate) fn for_tests_pair() -> (ClientCertificate, ServerSecret<'static>) {
+        let kp = Self::for_tests();
+        let cert = kp.to_client_certificate(vec![]);
+        let secret = kp.into_server_secret();
+        (cert, secret)
     }
 
     pub(crate) fn epk_bytes(&self) -> &[u8] { self.epk.as_array() }

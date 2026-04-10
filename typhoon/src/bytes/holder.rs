@@ -1,16 +1,15 @@
 use crate::bytes::pool::PoolReturn;
-use crate::bytes::utils::{allocate_ptr, free_ptr};
 
 /// Owns buffer memory and manages its lifecycle.
 pub struct BufferHolder {
     pub data: *mut u8,
     pub capacity: usize,
-    pool_handle: Option<PoolReturn>,
+    pool_handle: PoolReturn,
 }
 
 impl BufferHolder {
     #[inline]
-    pub fn new(data: *mut u8, capacity: usize, return_tx: Option<PoolReturn>) -> Self {
+    pub fn new(data: *mut u8, capacity: usize, return_tx: PoolReturn) -> Self {
         Self {
             data,
             capacity,
@@ -20,17 +19,14 @@ impl BufferHolder {
 
     #[inline]
     pub fn copy(&self) -> Self {
-        let (new_ptr, pool_handle) = match &self.pool_handle {
-            Some(res) => (res.try_take(self.capacity), Some(res.clone())),
-            None => (allocate_ptr(self.capacity), None),
-        };
+        let new_ptr = self.pool_handle.try_take(self.capacity);
         unsafe {
             std::ptr::copy_nonoverlapping(self.data, new_ptr, self.capacity);
         }
         Self {
             data: new_ptr,
             capacity: self.capacity,
-            pool_handle,
+            pool_handle: self.pool_handle.clone(),
         }
     }
 }
@@ -47,9 +43,6 @@ unsafe impl Sync for BufferHolder {}
 
 impl Drop for BufferHolder {
     fn drop(&mut self) {
-        match self.pool_handle.take() {
-            Some(res) => res.try_return(self.data),
-            None => free_ptr(self.data, self.capacity),
-        }
+        self.pool_handle.try_return(self.data);
     }
 }

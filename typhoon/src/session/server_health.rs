@@ -1,4 +1,4 @@
-#[cfg(all(test, feature = "tokio"))]
+#[cfg(all(test, any(feature = "tokio", feature = "async-std")))]
 #[path = "../../tests/session/server_health.rs"]
 mod tests;
 
@@ -84,31 +84,49 @@ impl ServerHealthProvider {
         let mut current_timeout = initial_server_next_in as u64 + timeout;
         let mut retry_count: u64 = 0;
 
-        loop {
+        'outer: loop {
             match wait_for_trigger(current_timeout, &mut trigger_rx).await {
                 ServerDecayEvent::Triggered(client_next_in, client_pn) => {
                     retry_count = 0;
 
-                    // Clamp client's requested delay to our configured bounds.
-                    let client_next_in = (client_next_in as u64).clamp(
+                    // Track the latest health check to respond to. If a newer HC arrives
+                    // during the response delay, adopt its PN and delay and restart — the
+                    // client has moved on and no longer expects the earlier response.
+                    let mut response_pn = client_pn;
+                    let mut delay_ms = (client_next_in as u64).clamp(
                         settings.get(&HEALTH_CHECK_NEXT_IN_MIN),
                         settings.get(&HEALTH_CHECK_NEXT_IN_MAX),
-                    ) as u32;
+                    );
 
-                    // Wait the client's requested delay (shadowride window).
-                    sleep(Duration::from_millis(client_next_in as u64)).await;
+                    loop {
+                        match wait_for_trigger(delay_ms, &mut trigger_rx).await {
+                            ServerDecayEvent::Triggered(new_next_in, new_pn) => {
+                                // Newer HC supersedes the pending one — restart delay.
+                                response_pn = new_pn;
+                                delay_ms = (new_next_in as u64).clamp(
+                                    settings.get(&HEALTH_CHECK_NEXT_IN_MIN),
+                                    settings.get(&HEALTH_CHECK_NEXT_IN_MAX),
+                                );
+                            }
+                            ServerDecayEvent::Timeout => break,
+                            ServerDecayEvent::Terminated => {
+                                debug!("ServerHealthProvider: trigger channel closed, stopping");
+                                break 'outer;
+                            }
+                        }
+                    }
 
-                    // Generate our next_in and send the response: PN = client_pn (echoed), TM = server_next_in.
+                    // Generate our next_in and send the response: PN = response_pn (echoed), TM = server_next_in.
                     let server_next_in = get_rng().gen_range(
                         settings.get(&HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&HEALTH_CHECK_NEXT_IN_MAX),
                     ) as u32;
 
                     let buf = settings.pool().allocate(Some(T::length()));
-                    let response = Tailor::health_check(buf, &identity, server_next_in, client_pn).into_buffer();
+                    let response = Tailor::health_check(buf, &identity, server_next_in, response_pn).into_buffer();
 
                     let Some(r) = router.upgrade() else {
                         debug!("ServerHealthProvider: router dropped, stopping");
-                        break;
+                        break 'outer;
                     };
                     r.route_packet(response, &identity).await;
 
@@ -126,15 +144,15 @@ impl ServerHealthProvider {
                     if let Some(r) = router.upgrade() {
                         let pn = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
                         let buf = settings.pool().allocate(Some(T::length()));
-                        let termination = Tailor::termination(buf, &identity, ReturnCode::Success, pn).into_buffer();
+                        let termination = Tailor::termination(buf, &identity, ReturnCode::ConnectionDecayed, pn).into_buffer();
                         r.route_packet(termination, &identity).await;
                         r.remove_session(&identity).await;
                     }
-                    break;
+                    break 'outer;
                 }
                 ServerDecayEvent::Terminated => {
                     debug!("ServerHealthProvider: trigger channel closed, stopping");
-                    break;
+                    break 'outer;
                 }
             }
         }
