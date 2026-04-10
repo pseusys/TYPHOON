@@ -3,6 +3,7 @@
 use futures::channel::oneshot;
 
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler};
+use typhoon::socket::ClientSocketError;
 
 use super::common::{connect_simple, default_settings, free_addr, setup_server_multi};
 
@@ -32,10 +33,16 @@ async fn test_multi_flow_echo() {
     for i in 0..COUNT {
         let msg = format!("flow-{:03}", i);
         socket.send_bytes(msg.as_bytes()).await.expect("send");
-        let resp = socket.receive_bytes().await.expect("recv");
-        assert_eq!(resp, msg.as_bytes());
+        // ChannelClosed is acceptable: TERMINATION from the server can race the last
+        // echo on a different UDP flow, which is normal behaviour for multi-flow UDP.
+        match socket.receive_bytes().await {
+            Ok(resp) => assert_eq!(resp, msg.as_bytes()),
+            Err(ClientSocketError::ChannelClosed) => break,
+            Err(e) => panic!("recv #{i}: unexpected error: {e}"),
+        }
     }
 
+    // The server always completes all COUNT echoes before dropping the handle.
     assert_eq!(rx.await.expect("server task"), COUNT);
 }
 
