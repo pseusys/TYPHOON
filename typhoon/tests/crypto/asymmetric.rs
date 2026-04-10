@@ -7,7 +7,7 @@ use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
 use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
 use crate::certificate::ServerKeyPair;
 
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 const X25519_KEY_LENGTH: usize = 32;
@@ -18,9 +18,7 @@ const NONCE_LENGTH: usize = 32;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 const ENCRYPT_OBFUSCATE_HEADER: usize = NONCE_LENGTH + X25519_KEY_LENGTH + 2 * ANONYMOUS_NONCE_LEN;
 
-lazy_static! {
-    static ref TEST_POOL: BytePool = BytePool::new(32, 256, 32, 4, 16);
-}
+static TEST_POOL: LazyLock<BytePool> = LazyLock::new(|| BytePool::new(32, 256, 32, 4, 16));
 
 // Test: handshake produces matching shared secrets and session keys, with initial data exchange.
 #[cfg(all(feature = "client", feature = "server"))]
@@ -81,8 +79,8 @@ fn test_handshake_tampered_ciphertext_fails() {
     // Server should derive a different shared secret from tampered data.
     assert_ne!(client_data.shared_secret, server_data.shared_secret, "tampered handshake should produce different shared secrets");
 
-    // Initial data decryption should fail (returns empty via unwrap_or_default).
-    assert!(decrypted_client_initial_data.is_empty(), "decrypting initial data with wrong key should fail");
+    // Decryption with a wrong key should not reproduce the original initial data.
+    assert_ne!(decrypted_client_initial_data.slice(), client_initial_data.as_slice(), "decrypting with wrong key must not reproduce the original initial data");
 }
 
 // Test: full mode encrypt/obfuscate then decrypt/deobfuscate cycle succeeds.

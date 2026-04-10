@@ -1,12 +1,10 @@
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 
 use crate::bytes::{ByteBuffer, BytePool};
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FieldType, FieldTypeHolder, FlowConfig};
 use crate::utils::unix_timestamp_ms;
 
-lazy_static! {
-    static ref TEST_POOL: BytePool = BytePool::new(32, 256, 32, 4, 16);
-}
+static TEST_POOL: LazyLock<BytePool> = LazyLock::new(|| BytePool::new(32, 256, 32, 4, 16));
 
 // === FakeBodyMode tests ===
 

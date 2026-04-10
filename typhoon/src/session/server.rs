@@ -1,3 +1,7 @@
+#[cfg(all(test, feature = "tokio", feature = "server", feature = "client"))]
+#[path = "../../tests/session/server.rs"]
+mod tests;
+
 /// Server-side session manager implementation.
 use std::future::Future;
 use std::hash::Hash;

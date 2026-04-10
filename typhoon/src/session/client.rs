@@ -1,3 +1,7 @@
+#[cfg(all(test, feature = "tokio", feature = "client"))]
+#[path = "../../tests/session/client.rs"]
+mod tests;
+
 /// Client-side session manager implementation.
 use std::mem::take;
 use std::sync::Arc;

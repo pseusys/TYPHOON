@@ -1,3 +1,9 @@
+// Speed tip: set TYPHOON_TEST_SERVER_KEY_FAST (fast_software/fast_hardware) or
+// TYPHOON_TEST_SERVER_KEY_FULL (full_software/full_hardware) to a file path before running
+// these tests. ServerKeyPair::for_tests() will load the key from that file on the first call
+// and save it there if absent, skipping expensive McEliece key generation on every test run.
+// Example: export TYPHOON_TEST_SERVER_KEY_FAST=/tmp/typhoon_test.key && cargo test
+
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use crate::certificate::{CertificateError, ClientCertificate, ED25519_BYTES, EPK_BYTES, ESK_BYTES, ServerKeyPair};

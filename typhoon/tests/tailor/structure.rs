@@ -1,13 +1,11 @@
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 
 use crate::bytes::{ByteBuffer, BytePool, DynamicByteBuffer, StaticByteBuffer};
 use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILOR_LENGTH};
 use crate::tailor::flags::{PacketFlags, ReturnCode};
 use crate::tailor::structure::Tailor;
 
-lazy_static! {
-    static ref TEST_POOL: BytePool = BytePool::new(32, 256, 32, 4, 16);
-}
+static TEST_POOL: LazyLock<BytePool> = LazyLock::new(|| BytePool::new(32, 256, 32, 4, 16));
 
 /// Allocate an empty buffer from pool.
 fn pool_empty(pool: &BytePool, size: usize) -> DynamicByteBuffer {
