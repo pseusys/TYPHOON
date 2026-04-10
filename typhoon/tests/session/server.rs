@@ -1,9 +1,11 @@
 use std::sync::Arc;
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::bytes::{DynamicByteBuffer, StaticByteBuffer};
 use crate::cache::SharedMap;
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 use crate::certificate::ServerKeyPair;
 use crate::crypto::UserServerState;
 use crate::defaults::DefaultExecutor;
