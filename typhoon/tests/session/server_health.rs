@@ -15,11 +15,13 @@ use super::ServerHealthProvider;
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
 
+#[cfg(feature = "tokio")]
 struct CapturingRouter {
     packets: Mutex<Vec<DynamicByteBuffer>>,
     remove_count: AtomicUsize,
 }
 
+#[cfg(feature = "tokio")]
 impl CapturingRouter {
     fn new() -> Arc<Self> {
         Arc::new(Self {
@@ -29,6 +31,7 @@ impl CapturingRouter {
     }
 }
 
+#[cfg(feature = "tokio")]
 impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
     async fn route_packet(&self, packet: DynamicByteBuffer, _identity: &StaticByteBuffer) -> bool {
         self.packets.lock().await.push(packet);
@@ -40,6 +43,7 @@ impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
     }
 }
 
+#[cfg(feature = "tokio")]
 fn test_identity() -> StaticByteBuffer {
     StaticByteBuffer::from_slice(&[0u8; DEFAULT_TYPHOON_ID_LENGTH])
 }
@@ -49,6 +53,7 @@ fn test_identity() -> StaticByteBuffer {
 ///   TIMEOUT_MIN(5) ≤ TIMEOUT_DEFAULT(10) ≤ TIMEOUT_MAX(20)
 ///   HEALTH_CHECK_NEXT_IN_MIN(21) > TIMEOUT_MAX(20)
 ///   HEALTH_CHECK_NEXT_IN_MIN(21) ≤ HEALTH_CHECK_NEXT_IN_MAX(100)
+#[cfg(feature = "tokio")]
 fn fast_settings() -> Arc<Settings<DefaultExecutor>> {
     Arc::new(
         SettingsBuilder::new()
@@ -65,6 +70,7 @@ fn fast_settings() -> Arc<Settings<DefaultExecutor>> {
 
 /// Parse PN, TM and flags from the raw buffer emitted by ServerHealthProvider.
 /// A health-check response has no body, so the whole buffer is the tailor.
+#[cfg(feature = "tokio")]
 fn parse_response(packet: &DynamicByteBuffer) -> (u64, u32, PacketFlags) {
     let tailor_size = TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH;
     assert!(
