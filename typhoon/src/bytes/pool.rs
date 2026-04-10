@@ -95,7 +95,7 @@ impl BytePool {
         let actual_after_cap = self.storage.capacity + after_cap - requested_size;
 
         let data = self.storage.try_take(self.storage.capacity);
-        DynamicByteBuffer::new(data, self.storage.capacity, before_cap, size, actual_after_cap, Some(Arc::clone(&self.storage)))
+        DynamicByteBuffer::new(data, self.storage.capacity, before_cap, size, actual_after_cap, Arc::clone(&self.storage))
     }
 
     #[inline]

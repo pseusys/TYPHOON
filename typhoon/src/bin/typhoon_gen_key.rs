@@ -21,10 +21,6 @@ struct Args {
     #[arg(long, value_name = "IP:PORT")]
     addr: Vec<SocketAddr>,
 
-    /// Override the default MTU in bytes.
-    #[arg(long, value_name = "BYTES")]
-    mtu: Option<usize>,
-
     /// Set a TYPHOON_* setting override as KEY=VALUE (repeatable).
     #[arg(long = "set", value_name = "KEY=VALUE")]
     overrides: Vec<String>,
@@ -48,21 +44,31 @@ fn main() {
         unsafe { std::env::set_var(key, value); }
     }
 
-    let _ = args.mtu; // noted; future SettingsBuilder integration point.
-
     println!("Generating server key pair (this may take a few seconds)...");
     let key_pair = ServerKeyPair::generate();
 
+    if let Some(parent) = std::path::Path::new(&args.server_key).parent() {
+        std::fs::create_dir_all(parent).unwrap_or_else(|e| {
+            eprintln!("Failed to create directories for '{}': {e}", args.server_key.display());
+            std::process::exit(1);
+        });
+    }
     key_pair.save(&args.server_key).unwrap_or_else(|e| {
-        eprintln!("error: failed to save server key to '{}': {e}", args.server_key.display());
+        eprintln!("Failed to save server key to '{}': {e}", args.server_key.display());
         std::process::exit(1);
     });
     println!("Server key pair written to: {}", args.server_key.display());
 
-    if let Some(cert_out) = args.cert {
+    if let Some(ref cert_out) = args.cert {
+        if let Some(parent) = std::path::Path::new(cert_out).parent() {
+            std::fs::create_dir_all(parent).unwrap_or_else(|e| {
+                eprintln!("Failed to create directories for '{}': {e}", cert_out.display());
+                std::process::exit(1);
+            });
+        }
         let cert = key_pair.to_client_certificate(args.addr.clone());
-        cert.save(&cert_out).unwrap_or_else(|e| {
-            eprintln!("error: failed to save client certificate to '{}': {e}", cert_out.display());
+        cert.save(cert_out).unwrap_or_else(|e| {
+            eprintln!("Failed to save client certificate to '{}': {e}", cert_out.display());
             std::process::exit(1);
         });
         println!("Client certificate written to: {}", cert_out.display());

@@ -1,10 +1,8 @@
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, DynamicByteBuffer};
 
-lazy_static! {
-    static ref TEST_POOL: BytePool = BytePool::new(32, 256, 32, 4, 16);
-}
+static TEST_POOL: LazyLock<BytePool> = LazyLock::new(|| BytePool::new(32, 256, 32, 4, 16));
 
 /// Allocate a buffer from pool and copy data into it.
 fn pool_buf(pool: &BytePool, data: &[u8]) -> DynamicByteBuffer {

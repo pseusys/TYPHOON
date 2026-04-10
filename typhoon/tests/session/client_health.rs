@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 
 use crate::bytes::{DynamicByteBuffer, StaticByteBuffer};
 use crate::cache::SharedValue;
@@ -20,9 +20,7 @@ use super::{ClientHealthProvider, HealthState};
 
 // ── Cached test key material (McEliece keygen is expensive) ──────────────────
 
-lazy_static! {
-    static ref TEST_KEY_PAIR: ServerKeyPair = ServerKeyPair::for_tests();
-}
+static TEST_KEY_PAIR: LazyLock<ServerKeyPair> = LazyLock::new(ServerKeyPair::for_tests);
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
 

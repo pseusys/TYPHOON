@@ -189,8 +189,10 @@ Whenever it receives a new health check message from client (either during waiti
 
 Client receives the server response, waits for **TM** milliseconds (maybe [not exactly](#packet-shadowriding)), and starts the health checking over.
 
-If client receives a valid response while sleeping or if a server receives any response while sleeping, they wake up (at some point) and restart their part of decay.
-If they do not, they increase an internal counter until `TYPHOON_MAX_RETRIES` is reached, which means that one of the parties has most likely disappeared.
+If client receives a valid response while sleeping, it wakes up and restarts its part of decay.
+If server receives a new health check at any point — whether waiting for the first one or already counting down the response delay — it immediately adopts the new health check's packet number and delay, discarding the pending response.
+The server always responds to the most recently received health check; any earlier request the client has moved past is silently dropped rather than answered.
+If neither party hears from the other, they increase an internal counter until `TYPHOON_MAX_RETRIES` is reached, which means that one of the parties has most likely disappeared.
 In that case the connection eventually decays completely with an error.
 
 #### Packet shadowriding
@@ -284,7 +286,7 @@ They are updated whenever a packet leaves from or arrives to the flow manager, u
   - `reference_rate = (1 - TYPHOON_DECOY_REFERENCE_ALPHA) * reference_rate + TYPHOON_DECOY_REFERENCE_ALPHA * (current_packet_time - previous_packet_time)`
   - `packet_rate = (1 - TYPHOON_DECOY_CURRENT_ALPHA) * packet_rate + TYPHOON_DECOY_CURRENT_ALPHA * (current_packet_time - previous_packet_time)`
   - `byte_rate = (1 - TYPHOON_DECOY_CURRENT_ALPHA) * byte_rate + TYPHOON_DECOY_CURRENT_ALPHA * packet_length`
-  - `byte_budget = min(byte_budget + (current_packet_time - previous_packet_time) * TYPHOON_DECOY_BYTE_RATE_CAP, TYPHOON_DECOY_BYTE_RATE_CAP * TYPHOON_DECOY_BYTE_RATE_FACTOR)`
+  - `byte_budget = min(byte_budget + (current_packet_time - previous_packet_time) * TYPHOON_DECOY_BYTE_RATE_CAP / 1000, TYPHOON_DECOY_BYTE_RATE_CAP * TYPHOON_DECOY_BYTE_RATE_FACTOR)`
 
 Every mode defines its own equations for calculation of decoy packet length (`decoy_length`, in bytes) and delay before the next decoy packet (`decoy_delay`).
 By default, communication mode is chosen with equal probability for every option.
@@ -364,7 +366,7 @@ Indeed, if an external observer knows that a certain IP address and port number 
 Taking this consideration into account, two different asymmetric cryptographic modes are proposed:
 
 1. `fast` mode relies on global public static symmetrical encryption cipher keys used for obfuscation embedded in certificates, naturally whoever owns the certificate can access normally obfuscated packet values.
-2. `full` mode relies on global public static asymmetrical encryption cipher keys used for obfuscation embedded in certificates, providing no way to break obfuscation if a certificate leaks for _significant_ runtime encryption cost (also post-quantum cryptography is not available in this mode).
+2. `full` mode relies on global public static asymmetrical encryption cipher keys used for obfuscation embedded in certificates, providing no way to break obfuscation if a certificate leaks for _significant_ runtime encryption cost (note: this asymmetric obfuscation layer uses X25519 and is therefore not post-quantum; however the session key itself remains post-quantum in both modes).
 
 > Since there is no ciphersuite negotiation phase, its selection is dictated by server and all the users have to follow it.
 > There is no way to circumvent it, since the handshake packets are encrypted as well.
@@ -380,7 +382,7 @@ These values are pre-defined and shared via third channels:
 For `fast` mode:
 
 - For `ESK` and `EPK` [Classic McEliece](https://classic.mceliece.org/) algorithm is used.
-- For `VSK` and `VPK` [Ed25519](https://ed25519.cr.yp.to/) algorithm is used (even though it's not post-quantum, it's not too bad, since even if it's broken the handshake will not succeed after all).
+- For `VSK` and `VPK` [Ed25519](https://ed25519.cr.yp.to/) algorithm is used.
 - `OBFS` consists of just random bytes.
 
 For `full` mode:
@@ -396,6 +398,24 @@ The length of the public key (as it was already mentioned above) does not really
 Theoretically, `VSK` and `VPK` can be omitted altogether, as knowledge of `ESK` already implicitly verifies the server identity.
 However, `VPK` can still be used for public server verification, meaning that it can be provided by an external certificate authority.
 In that case it can be safely omitted from the TYPHOON certificate (otherwise it still should be embedded).
+
+### Session key security and threat model
+
+The session key is a hybrid of two independent shared secrets:
+
+```text
+Sess = BLAKE3("session key", CliShrSec ∥ SrvShrSec ∥ Trans)
+```
+
+where `CliShrSec` comes from Classic McEliece KEM (post-quantum) and `SrvShrSec` from an ephemeral-ephemeral X25519 Diffie-Hellman exchange (classical).
+Both must be compromised simultaneously to derive the session key.
+This means a quantum adversary who can break X25519 (for instance via Shor's algorithm) still cannot read the session without also breaking McEliece, and a classical adversary who somehow breaks McEliece still cannot read the session without also solving the X25519 discrete-log problem.
+
+Two threat models are relevant when considering the role of `VSK`/`VPK` (Ed25519):
+
+- **Passive eavesdropping**: an attacker who only observes the wire cannot derive the session key without breaking both McEliece and X25519. Breaking Ed25519 is irrelevant for this model, since the certificate is never transmitted on the wire — it is distributed out-of-band. The session key is therefore PQ-resistant against a passive adversary.
+
+- **Active man-in-the-middle (certificate substitution)**: an attacker who can intercept the out-of-band certificate delivery channel may substitute a forged certificate containing their own `EPK'` with an Ed25519 signature forged using a broken `VSK`. If the client accepts this certificate, the attacker can decapsulate the McEliece KEM with their own `ESK'`, conduct their own X25519 exchange, and derive the session key. This attack requires both control over certificate delivery **and** a broken Ed25519. Pre-sharing certificates through a trusted channel (e.g., compiled into the client binary or delivered out-of-band) prevents this entirely, since the client already holds the correct `EPK`.
 
 Symmetric encryption in TYPHOON protocol also comes in two modes.
 Since it is used for the majority of all data transferred, the requirements for its performance are the most critical.
@@ -777,6 +797,7 @@ The sample valid **CD** values are given below:
 
 - `0`: No error (successful handshake or graceful termination).
 - `1`: [Version mismatch](#version-checking) (client major version differs from server major version).
+- `2`: Connection decayed (health check exchange timed out after all retries).
 - `101`: Unknown error (some error happened indeed, but it is not clear which one exactly).
 
 TODO! Other proposed implementation details worth mentioning.
@@ -805,15 +826,15 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_HEALTH_CHECK_NEXT_IN_MAX` | Maximum delay between health checking packets | `256000` |
 | `TYPHOON_HANDSHAKE_NEXT_IN_FACTOR` | During handshake, next in values will be multiplied by this number | `0.02` |
 | `TYPHOON_MAX_RETRIES` | Maximum number of decay cycle iterations before protocol failure is registered | `12` |
-| `TYPHOON_TIMEOUT_DEFAULT` | Default decay timeout value, used in cases when RTT is not available | `30000` |
-| `TYPHOON_TIMEOUT_MIN` | Minimum decay timeout value | `4000` |
-| `TYPHOON_TIMEOUT_MAX` | Maximum decay timeout value | `32000` |
+| `TYPHOON_TIMEOUT_DEFAULT` | Default decay timeout value, used in cases when RTT is not available (in milliseconds) | `30000` |
+| `TYPHOON_TIMEOUT_MIN` | Minimum decay timeout value (in milliseconds) | `4000` |
+| `TYPHOON_TIMEOUT_MAX` | Maximum decay timeout value (in milliseconds) | `32000` |
 | `TYPHOON_TIMEOUT_RTT_FACTOR` | If RTT is available, it will be multiplied by this value in order to receive timeout | `5` |
 | `TYPHOON_RTT_ALPHA` | Alpha constant for SRTT algorithm | `0.125` |
 | `TYPHOON_RTT_BETA` | Beta constant for SRTT algorithm | `0.25` |
-| `TYPHOON_RTT_DEFAULT` | Default RTT value, used in cases when no packet roundtrip was registered yet | `5` |
-| `TYPHOON_RTT_MIN` | Minimum RTT value | `1000` |
-| `TYPHOON_RTT_MAX` | Maximum RTT value | `8000` |
+| `TYPHOON_RTT_DEFAULT` | Default RTT value, used in cases when no packet roundtrip was registered yet (in milliseconds) | `5000` |
+| `TYPHOON_RTT_MIN` | Minimum RTT value (in milliseconds) | `200` |
+| `TYPHOON_RTT_MAX` | Maximum RTT value (in milliseconds) | `8000` |
 | `TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT` | Default reference packet rate (in milliseconds) | `200` |
 | `TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT` | Default current packet rate (in milliseconds) | `200` |
 | `TYPHOON_DECOY_CURRENT_BYTE_RATE_DEFAULT` | Default reference byte rate (in bytes) | `5000` |

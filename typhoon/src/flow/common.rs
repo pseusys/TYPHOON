@@ -149,8 +149,6 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
         }
 
         let payload_len = tailor.payload_length() as usize;
-        let is_handshake = tailor.flags().contains(PacketFlags::HANDSHAKE);
-        let _ = is_handshake; // used in prior trace, kept for potential future use
 
         // For all packets, use payload_length to strip fake body/header from the front.
         // Handshake packets encode the handshake body length in payload_length so that

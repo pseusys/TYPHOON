@@ -9,7 +9,7 @@ use crate::settings::{Settings, SettingsBuilder, keys};
 use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILOR_LENGTH};
 use crate::tailor::{PacketFlags, Tailor};
 use crate::bytes::StaticByteBuffer;
-use crate::utils::sync::Mutex;
+use crate::utils::sync::{Mutex, sleep};
 
 use super::ServerHealthProvider;
 
@@ -96,12 +96,12 @@ async fn test_server_health_response_echoes_client_pn() {
 
     let client_pn: u64 = 0xDEAD_BEEF_0000_0001;
     provider.feed_health_check(10u32, client_pn);
-    // Drop provider so trigger_tx closes; after the response the task sees Terminated and stops,
-    // preventing decay retries from adding extra packets within the observation window.
+    // Wait past the clamped 21 ms response delay, then drop so the task sees Terminated
+    // while waiting for the *next* HC (outer loop), not during the inner delay — this
+    // prevents decay retries from adding extra packets within the observation window.
+    sleep(Duration::from_millis(50)).await;
     drop(provider);
-
-    // Wait for the clamped 21 ms response delay plus processing headroom.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(150)).await;
 
     let packets = router.packets.lock().await;
     assert_eq!(packets.len(), 1, "expected exactly one response");
@@ -123,9 +123,9 @@ async fn test_server_health_response_own_tm_in_range() {
     );
 
     provider.feed_health_check(10u32, 0x1234_5678_0000_0001);
+    sleep(Duration::from_millis(50)).await;
     drop(provider);
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(150)).await;
 
     let packets = router.packets.lock().await;
     assert_eq!(packets.len(), 1);
@@ -149,9 +149,9 @@ async fn test_server_health_response_has_health_check_flag() {
         60_000u32,
     );
     provider.feed_health_check(10u32, 0xABCD);
+    sleep(Duration::from_millis(50)).await;
     drop(provider);
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(150)).await;
 
     let packets = router.packets.lock().await;
     assert_eq!(packets.len(), 1);
@@ -172,19 +172,23 @@ async fn test_server_health_response_delayed() {
         60_000u32,
     );
 
-    // Request a 100 ms delay; drop so the task exits after one response.
+    // Request a 100 ms delay (clamped to MAX=100ms).
     provider.feed_health_check(100u32, 0x9999);
-    drop(provider);
 
     // After 40 ms the response must NOT have arrived yet.
-    tokio::time::sleep(Duration::from_millis(40)).await;
+    sleep(Duration::from_millis(40)).await;
     assert_eq!(
         router.packets.lock().await.len(), 0,
         "response must not arrive before client_next_in delay"
     );
 
-    // After another 150 ms (190 ms total) it must have arrived.
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    // After another 110 ms (150 ms total) the response has been sent; drop provider
+    // now so the task exits cleanly without entering decay retries.
+    sleep(Duration::from_millis(110)).await;
+    drop(provider);
+
+    // After another 40 ms (190 ms total) the packet must be in the router.
+    sleep(Duration::from_millis(40)).await;
     assert_eq!(router.packets.lock().await.len(), 1, "response must arrive after delay");
 }
 
@@ -203,7 +207,7 @@ async fn test_server_health_timer_removes_session_after_max_retries() {
     );
 
     // Never call feed_health_check — let the timer expire MAX_RETRIES times.
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(500)).await;
 
     assert!(
         router.remove_count.load(Ordering::Relaxed) > 0,
@@ -224,7 +228,7 @@ async fn test_server_health_sends_termination_before_remove() {
         1u32,
     );
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(500)).await;
 
     assert!(
         !router.packets.lock().await.is_empty(),
@@ -254,5 +258,5 @@ async fn test_server_health_stops_when_router_dropped() {
     provider.feed_health_check(10u32, 0x1111);
 
     // Task detects dropped router and exits — no panic expected.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(100)).await;
 }

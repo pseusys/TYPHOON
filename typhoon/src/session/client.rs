@@ -1,3 +1,7 @@
+#[cfg(all(test, feature = "tokio", feature = "client", feature = "server"))]
+#[path = "../../tests/session/client.rs"]
+mod tests;
+
 /// Client-side session manager implementation.
 use std::mem::take;
 use std::sync::Arc;
@@ -76,7 +80,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
         Ok(())
     }
 
-    /// Select a flow manager (currently uses the first one).
+    /// Select a random flow manager.
     fn select_flow(&self) -> &FM {
         get_rng().random_item(&self.flows).expect("at least one flow manager required")
     }

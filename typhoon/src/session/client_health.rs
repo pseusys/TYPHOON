@@ -79,6 +79,8 @@ pub(super) struct HealthState<T: IdentityType + Clone, AE: AsyncExecutor, CC: Cl
     /// Watch receiver for health check responses.
     /// Consumed once by `perform_handshake()` (taken out via `Option::take`).
     response_rx: Option<WatchReceiver<HealthResponse<T>>>,
+    /// Return code to use in the termination packet sent on drop.
+    termination_code: ReturnCode,
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> HealthState<T, AE, CC> {
@@ -97,6 +99,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
             client_data: None,
             initial_data_generator,
             response_rx: Some(response_rx),
+            termination_code: ReturnCode::Success,
         }
     }
 
@@ -539,6 +542,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                         continue;
                     }
                     warn!("health provider: connection decayed after {} retries", st.retry_count);
+                    st.termination_code = ReturnCode::ConnectionDecayed;
                     break;
                 }
                 DecaySleepEvent::Terminated => {
@@ -569,9 +573,12 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         let packet = self.settings.pool().allocate(Some(T::length()));
 
         self.settings.executor().spawn(async move {
-            let identity = state.lock().await.crypto_tool.get().identity();
+            let (identity, termination_code) = {
+                let mut st = state.lock().await;
+                (st.crypto_tool.get().identity(), st.termination_code)
+            };
             let packet_number = ((unix_timestamp_ms() / 1000) as u64) << 32;
-            let tailor = Tailor::termination(packet, &identity, ReturnCode::Success, packet_number);
+            let tailor = Tailor::termination(packet, &identity, termination_code, packet_number);
 
             if let Some(mgr) = manager.upgrade() {
                 match mgr.send_packet(tailor.into_buffer(), true).await {

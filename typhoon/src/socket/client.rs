@@ -4,6 +4,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use log::{debug, info};
+use rand::Rng;
+use rand::seq::SliceRandom;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::SharedValue;
@@ -24,8 +26,14 @@ use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, create_notif
 /// Builder for constructing a `ClientSocket`.
 pub struct ClientSocketBuilder<T: IdentityType + Clone, AE: AsyncExecutor + 'static, DP, CC: ClientConnectionHandler> {
     settings: Option<Arc<Settings<AE>>>,
-    /// Per-address flow config overrides. Addresses not present here get a random default config.
+    /// Per-address flow config overrides. Only populated when the caller adds at least one
+    /// explicit flow config via [`with_flow_config`](Self::with_flow_config).
     flow_overrides: HashMap<SocketAddr, FlowConfig>,
+    /// When `true` (the default), a random subset of the certificate's addresses is chosen
+    /// automatically and each gets a random [`FlowConfig`].  Set to `false` the first time
+    /// [`with_flow_config`](Self::with_flow_config) is called, after which only the explicitly
+    /// configured addresses are used.
+    auto_fill_flows: bool,
     certificate: ClientCertificate,
     initial_data_generator: CC,
     _phantom: PhantomData<(T, DP)>,
@@ -36,12 +44,16 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
     ///
     /// The certificate must contain at least one server address; otherwise `build` will return
     /// [`CertificateError::NoAddresses`](crate::certificate::CertificateError::NoAddresses).
-    /// A random [`FlowConfig`] is generated for each address in the certificate unless overridden
-    /// with [`with_flow_config`](Self::with_flow_config).
+    ///
+    /// By default, a random number of addresses (1 to the total in the certificate) is selected
+    /// automatically, each with a random [`FlowConfig`].  Call
+    /// [`with_flow_config`](Self::with_flow_config) one or more times to opt out of
+    /// auto-selection and configure exactly which flows to open.
     pub fn new(certificate: ClientCertificate, initial_data_generator: CC) -> Self {
         Self {
             settings: None,
             flow_overrides: HashMap::new(),
+            auto_fill_flows: true,
             certificate,
             initial_data_generator,
             _phantom: PhantomData,
@@ -54,11 +66,14 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
         self
     }
 
-    /// Override the [`FlowConfig`] for a specific server address.
+    /// Set an explicit [`FlowConfig`] for a specific server address.
     ///
-    /// The address must be present in the certificate; otherwise `build` will return
+    /// Calling this method at least once disables auto-flow-selection: only the addresses
+    /// configured via this method will be connected.  The address must be present in the
+    /// certificate; otherwise `build` will return
     /// [`ClientSocketError::AddressNotInCertificate`].
     pub fn with_flow_config(mut self, addr: SocketAddr, config: FlowConfig) -> Self {
+        self.auto_fill_flows = false;
         self.flow_overrides.insert(addr, config);
         self
     }
@@ -79,6 +94,18 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
             }
         }
 
+        // Determine which (address, config) pairs to connect to.
+        // Auto-fill: pick a random number of addresses (1..=total) with random configs.
+        // Manual: use exactly the addresses that were passed to with_flow_config.
+        let addr_configs: Vec<(SocketAddr, FlowConfig)> = if self.auto_fill_flows {
+            let mut rng = get_rng();
+            let n = rng.gen_range(1..=cert_addrs.len());
+            let chosen: Vec<SocketAddr> = cert_addrs.choose_multiple(&mut rng, n).copied().collect();
+            chosen.into_iter().map(|addr| (addr, FlowConfig::random(&settings))).collect()
+        } else {
+            self.flow_overrides.drain().collect()
+        };
+
         let identity_bytes = T::from_bytes(self.initial_data_generator.version(T::length()).slice());
         let static_key = get_rng().random_byte_buffer::<KEY_LENGTH>();
         let cipher = SharedValue::new(ClientCryptoTool::new(self.certificate.clone(), identity_bytes, &static_key));
@@ -86,11 +113,8 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
         let tailor_wire_len = T::length() + ClientCryptoTool::<T>::tailor_overhead();
         let mut max_data_payload = usize::MAX;
 
-        let mut flows = Vec::with_capacity(cert_addrs.len());
-        for &addr in cert_addrs {
-            let config = self.flow_overrides.remove(&addr)
-                .unwrap_or_else(|| FlowConfig::random(&settings));
-
+        let mut flows = Vec::with_capacity(addr_configs.len());
+        for (addr, config) in addr_configs {
             config.assert(settings.mtu()).map_err(ClientSocketError::FlowError)?;
 
             let flow_overhead = config.max_overhead()
