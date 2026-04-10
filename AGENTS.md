@@ -23,7 +23,7 @@ Always compare your implementation to [README.md](./README.md) file, the code sh
 - As a general rule, in every case, where an object is constructed, that is meant to *intercept*, *send* or *receive* some data flow, the data flow (including all the queues, background tasks, etc.) should be constructed in advance, ideally - in the same construction method as the object itself, and then returned as a tuple.
 - In the concurrent environment, excessive locking (even the critical sections) should be avoided, as the protocol is designed for transferring large data payloads; non-locking types (atomics or the ones from `crossbeam` library) should be preferred over `RwLock`s, while `RwLock`s should be preferred over `Mutex`es.
 - Template types should be preferred over dynamically-sized types (`dyn`-prefixed), for reducing heap allocations.
-- Prefer direct imports over fully-qualified ones: `use foo::bar::Type; Type...` instead of just `foo::bar::Type`.
+- Prefer direct imports over fully-qualified ones: `use foo::bar::Type; Type...` instead of just `foo::bar::Type`, placing them at the top of the file (not inline).
 - Prefer simpler synchronization primitives to channels: `Arc`/`Weak` pairs + function invocations for data transferring, lock-free dequeues for async event processing, etc.
 - When gating code, prefer applying `#[cfg(...)]` to imports, types, fields and functions, but not to the code (inside of a function).
 - All the test-related code (marked with `#[cfg(test)]`) should reside in `typhoon/tests` directory, the directory structure should match the `typhoon/src` source code structure, the test-related code should not be placed into sources.

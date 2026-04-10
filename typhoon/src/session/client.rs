@@ -40,10 +40,10 @@ pub struct ClientSessionManager<T: IdentityType + Clone + 'static, AE: AsyncExec
 impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, CC: ClientConnectionHandler + 'static> ClientSessionManager<T, AE, FM, CC> {
     /// Create a new client session manager without starting the handshake.
     /// Call `start()` after the background receive loop is running.
-    pub async fn new(cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>, initial_data_generator: CC) -> Result<Arc<Self>, SessionControllerError> {
-        let send_cipher = cipher.create_sibling().await;
-        let receive_cipher = cipher.create_sibling().await;
-        let health_state_crypto = cipher.create_sibling().await;
+    pub fn new(cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>, initial_data_generator: CC) -> Result<Arc<Self>, SessionControllerError> {
+        let send_cipher = cipher.create_sibling();
+        let receive_cipher = cipher.create_sibling();
+        let health_state_crypto = cipher.create_sibling();
 
         let (response_tx, response_rx) = create_watch();
         let (shadowride_tx, _) = create_watch();
@@ -83,7 +83,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
 
     fn next_packet_number(&self) -> u64 {
         let counter = self.incremental_counter.fetch_add(1, Ordering::Relaxed) + 1;
-        let timestamp = (crate::utils::time::unix_timestamp_ms() / 1000) as u32;
+        let timestamp = (crate::utils::unix_timestamp_ms() / 1000) as u32;
         ((timestamp as u64) << 32) | (counter as u64)
     }
 }
@@ -98,7 +98,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
             let (encrypted_payload, payload_length, identity) = {
                 let mut send_lock = self.send_internal.lock().await;
                 // Single get_mut() covers both encrypt_payload and identity() — one lock acquire.
-                let cipher = send_lock.cipher.get_mut().await;
+                let cipher = send_lock.cipher.get_mut();
                 let encrypted_payload = cipher.encrypt_payload(packet, None).map_err(SessionControllerError::CryptoError)?;
                 let payload_length = encrypted_payload.len() as u16;
                 let identity = cipher.identity();
@@ -164,7 +164,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
             // If there is data payload, decrypt and return.
             if tailor.flags().has_payload() {
                 let mut recv_lock = self.receive_internal.lock().await;
-                match recv_lock.cipher.get_mut().await.decrypt_payload(payload_part, None) {
+                match recv_lock.cipher.get_mut().decrypt_payload(payload_part, None) {
                     Ok(decrypted) => return Ok(decrypted),
                     Err(err) => {
                         warn!("client session: payload decryption failed: {}", err);

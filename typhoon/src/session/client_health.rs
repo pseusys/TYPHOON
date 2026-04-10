@@ -20,7 +20,7 @@ use crate::settings::keys::*;
 use crate::tailor::{ClientConnectionHandler, IdentityType, PacketFlags, ReturnCode, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, FuturePool, Mutex, WatchReceiver, WatchSender, sleep};
-use crate::utils::time::unix_timestamp_ms;
+use crate::utils::unix_timestamp_ms;
 
 /// Response type for the health check channel: (server_next_in, receive_time, optional handshake body, optional server identity).
 type HealthResponse<T> = (u32, u128, Option<DynamicByteBuffer>, Option<T>);
@@ -167,30 +167,32 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
     }
 
     /// Build identity value for tailor construction.
-    async fn identity_value(&mut self) -> T {
-        self.crypto_tool.get().await.identity()
+    fn identity_value(&mut self) -> T {
+        self.crypto_tool.get().identity()
     }
 
     /// Create a health check packet (empty body + tailor).
-    async fn create_health_check_packet(&mut self, pn: u64, next_in: u32) -> DynamicByteBuffer {
-        let identity = self.identity_value().await;
+    fn create_health_check_packet(&mut self, pn: u64, next_in: u32) -> DynamicByteBuffer {
+        let identity = self.identity_value();
         let buf = self.settings.pool().allocate(Some(T::length()));
         Tailor::health_check(buf, &identity, next_in, pn).into_buffer()
     }
 
     /// Create a handshake packet with encryption: handshake_secret || tailor.
     /// Also advances the crypto tool to the initial key so callers need not do it separately.
-    async fn create_handshake_packet(&mut self, pn: u64, next_in: u32) -> DynamicByteBuffer {
+    fn create_handshake_packet(&mut self, pn: u64, next_in: u32) -> DynamicByteBuffer {
         let settings = self.settings.clone();
         let initial_data = self.initial_data_generator.initial_data();
-        // Single get(): extract identity, create handshake, and derive the updated tool all at once.
-        let crypto = self.crypto_tool.get().await;
-        let identity = crypto.identity();
-        let (client_data, handshake_secret, initial_key) = crypto.create_handshake(settings.pool(), initial_data.slice());
-        let updated_tool = crypto.with_key(&initial_key);
-        // crypto borrow ends here (NLL); safe to write other fields and call set().
+        // Extract what we need from crypto, then drop the borrow before calling set().
+        let (identity, client_data, handshake_secret, updated_tool) = {
+            let crypto = self.crypto_tool.get();
+            let identity = crypto.identity();
+            let (client_data, handshake_secret, initial_key) = crypto.create_handshake(settings.pool(), initial_data.slice());
+            let updated_tool = crypto.with_key(&initial_key);
+            (identity, client_data, handshake_secret, updated_tool)
+        };
         self.client_data = Some(client_data);
-        self.crypto_tool.set(updated_tool).await;
+        self.crypto_tool.set(updated_tool);
 
         let tailor_buffer = settings.pool().allocate(Some(T::length() + TAILOR_LENGTH));
         let tailor = Tailor::handshake(tailor_buffer, &identity, 0, next_in, pn, handshake_secret.len() as u16);
@@ -199,9 +201,9 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
 
     /// Process the server handshake response and derive the session key.
     /// Returns (session_key, server_initial_data).
-    async fn process_handshake_response(&mut self, handshake_body: DynamicByteBuffer) -> Option<(FixedByteBuffer<32>, DynamicByteBuffer)> {
+    fn process_handshake_response(&mut self, handshake_body: DynamicByteBuffer) -> Option<(FixedByteBuffer<32>, DynamicByteBuffer)> {
         let client_data = self.client_data.take()?;
-        match self.crypto_tool.get().await.process_handshake_response(client_data, handshake_body, self.settings.pool()) {
+        match self.crypto_tool.get().process_handshake_response(client_data, handshake_body, self.settings.pool()) {
             Ok((session_key, server_initial_data)) => Some((session_key, server_initial_data)),
             Err(err) => {
                 warn!("health provider: handshake response decryption failed: {}", err);
@@ -386,7 +388,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                 st.last_sent_time = unix_timestamp_ms();
 
                 // create_handshake_packet now also advances crypto_tool to the initial key.
-                let packet = st.create_handshake_packet(pn, next_in).await;
+                let packet = st.create_handshake_packet(pn, next_in);
                 (packet, next_in)
             };
 
@@ -427,16 +429,17 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                     st.retry_count = 0;
 
                     if let Some(body) = handshake_body {
-                        match st.process_handshake_response(body).await {
+                        match st.process_handshake_response(body) {
                             Some((session_key, _server_initial_data)) => {
-                                // Single get() shared by both branches.
-                                let tool = st.crypto_tool.get().await;
-                                let updated_tool = if let Some(new_identity) = server_identity {
-                                    tool.with_key_and_identity(&session_key, new_identity)
-                                } else {
-                                    tool.with_key(&session_key)
+                                let updated_tool = {
+                                    let tool = st.crypto_tool.get();
+                                    if let Some(new_identity) = server_identity {
+                                        tool.with_key_and_identity(&session_key, new_identity)
+                                    } else {
+                                        tool.with_key(&session_key)
+                                    }
                                 };
-                                st.crypto_tool.set(updated_tool).await;
+                                st.crypto_tool.set(updated_tool);
                             }
                             None => return None,
                         }
@@ -482,7 +485,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                     let mut st = state.lock().await;
                     st.shadowride_pending = None;
                     st.last_sent_time = unix_timestamp_ms();
-                    let packet = st.create_health_check_packet(pn, next_in).await;
+                    let packet = st.create_health_check_packet(pn, next_in);
                     drop(st);
                     Self::try_send_static(manager, packet, state).await
                 }
@@ -496,7 +499,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
             let packet = {
                 let mut st = state.lock().await;
                 st.last_sent_time = unix_timestamp_ms();
-                st.create_health_check_packet(pn, next_in).await
+                st.create_health_check_packet(pn, next_in)
             };
             Self::try_send_static(manager, packet, state).await
         }

@@ -20,6 +20,7 @@ use crate::utils::random::get_rng;
 use crate::utils::socket::Socket;
 use crate::utils::sync::{AsyncExecutor, Mutex, RwLock};
 
+
 /// Raw received packet from the server flow manager before session-level processing.
 pub struct RawReceivedPacket<T: IdentityType> {
     /// The encrypted payload portion of the packet.
@@ -34,6 +35,8 @@ pub struct RawReceivedPacket<T: IdentityType> {
 /// Per-user crypto state is in the global SharedMap (accessed via ServerCryptoTool).
 /// Send and receive crypto are split into independent instances so their locks never contend.
 /// Per-user source addresses and decoy providers are local to each flow manager instance.
+/// When built with multiple sockets (SO_REUSEPORT on Linux), each socket is polled by its own
+/// drain task in the listener; the kernel distributes incoming datagrams across all sockets.
 pub struct ServerFlowManager<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, DP: Send + Sync> {
     user_addrs: RwLock<HashMap<T, SocketAddr>>,
     /// Per-user decoy providers behind individual locks so concurrent users don't contend.
@@ -45,7 +48,7 @@ pub struct ServerFlowManager<T: IdentityType + Clone + Eq + Hash + Send + ToStri
     /// Precomputed worst-case prefix length: fake_header.len() + fake_body.max_len().
     /// Used to guard expand_start without locking fake_header_mode on every send.
     max_overhead: usize,
-    sock: Socket,
+    socks: Vec<Arc<Socket>>,
     mtu: usize,
     settings: Arc<Settings<AE>>,
 }
@@ -54,7 +57,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Create a new server flow manager.
     /// `crypto_send` and `crypto_recv` must be independent instances (e.g. two `create_cache()` calls
     /// on the same `SharedMap`) so their mutexes never contend between the send and receive paths.
-    pub fn new(config: FlowConfig, crypto_send: ServerCryptoTool<T>, crypto_recv: ServerCryptoTool<T>, settings: Arc<Settings<AE>>, sock: Socket) -> Arc<Self> {
+    /// `socks` must contain at least one socket; on Linux with SO_REUSEPORT multiple sockets may be
+    /// supplied so that the listener can spawn one drain task per socket.
+    pub fn new(config: FlowConfig, crypto_send: ServerCryptoTool<T>, crypto_recv: ServerCryptoTool<T>, settings: Arc<Settings<AE>>, socks: Vec<Arc<Socket>>) -> Arc<Self> {
         let max_overhead = config.max_overhead();
         Arc::new(ServerFlowManager {
             user_addrs: RwLock::new(HashMap::new()),
@@ -64,10 +69,16 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             fake_body_mode: config.fake_body_mode,
             fake_header_mode: Mutex::new(config.fake_header_mode),
             max_overhead,
-            sock,
+            socks,
             mtu: settings.mtu(),
             settings,
         })
+    }
+
+    /// Return the slice of sockets owned by this flow manager.
+    /// The listener spawns one drain task per socket so that all sockets are polled concurrently.
+    pub(crate) fn recv_socks(&self) -> &[Arc<Socket>] {
+        &self.socks
     }
 
     /// Register a user's source address for this flow manager.
@@ -93,12 +104,13 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Receive a raw packet, deobfuscating the tailor but returning the full body + tailor view.
     /// For handshake packets, per-user verification is skipped (user not registered yet).
     /// Decoy packets are filtered. Non-handshake packets are verified per-user and fed to decoy providers.
-    pub async fn receive_raw(&self, packet: DynamicByteBuffer) -> Result<RawReceivedPacket<T>, FlowControllerError> {
+    /// `sock` is the specific socket to read from; the caller (drain task) owns one socket per task.
+    pub async fn receive_raw(&self, packet: DynamicByteBuffer, sock: &Socket) -> Result<RawReceivedPacket<T>, FlowControllerError> {
         let identity_len = T::length();
         let tailor_overhead = ServerCryptoTool::<T>::tailor_overhead();
 
         loop {
-            let (packet, source_addr) = self.sock.recv_from(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
+            let (packet, source_addr) = sock.recv_from(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
 
             // Strip encrypted tailor from the end.
             let (encrypted_packet, encrypted_tailor) = packet.split_buf(packet.len() - identity_len - tailor_overhead);
@@ -233,7 +245,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         };
 
         debug!("server flow: sending {:?} packet to {}", packet_flags, addr);
-        self.sock.send_to(full_packet, addr).await.map_err(FlowControllerError::SocketError)?;
+        self.socks[0].send_to(full_packet, addr).await.map_err(FlowControllerError::SocketError)?;
         Ok(())
     }
 
@@ -242,7 +254,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         // receive_raw handles decoy filtering, tailor verification, source-address updates,
         // and decoy-provider feeding. Loop only to skip the unlikely handshake case.
         loop {
-            let raw = self.receive_raw(packet.clone()).await?;
+            let raw = self.receive_raw(packet.clone(), &self.socks[0]).await?;
             if raw.tailor.flags().contains(PacketFlags::HANDSHAKE) {
                 continue;
             }
