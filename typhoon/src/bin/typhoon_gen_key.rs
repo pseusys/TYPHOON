@@ -47,28 +47,28 @@ fn main() {
     println!("Generating server key pair (this may take a few seconds)...");
     let key_pair = ServerKeyPair::generate();
 
-    if let Some(parent) = std::path::Path::new(&server_key_path).parent() {
+    if let Some(parent) = std::path::Path::new(&args.server_key).parent() {
         std::fs::create_dir_all(parent).unwrap_or_else(|e| {
-            eprintln!("Failed to create directories for '{server_key_path}': {e}");
+            eprintln!("Failed to create directories for '{}': {e}", args.server_key.display());
             std::process::exit(1);
         });
     }
-    key_pair.save(&server_key_path).unwrap_or_else(|e| {
-        eprintln!("Failed to save server key to '{server_key_path}': {e}");
+    key_pair.save(&args.server_key).unwrap_or_else(|e| {
+        eprintln!("Failed to save server key to '{}': {e}", args.server_key.display());
         std::process::exit(1);
     });
     println!("Server key pair written to: {}", args.server_key.display());
 
-    if let Some(ref cert_out) = cert_path {
+    if let Some(ref cert_out) = args.cert {
         if let Some(parent) = std::path::Path::new(cert_out).parent() {
             std::fs::create_dir_all(parent).unwrap_or_else(|e| {
-                eprintln!("Failed to create directories for '{cert_out}': {e}");
+                eprintln!("Failed to create directories for '{}': {e}", cert_out.display());
                 std::process::exit(1);
             });
         }
-        let cert = key_pair.to_client_certificate(addrs.clone());
+        let cert = key_pair.to_client_certificate(args.addr.clone());
         cert.save(cert_out).unwrap_or_else(|e| {
-            eprintln!("Failed to save client certificate to '{cert_out}': {e}");
+            eprintln!("Failed to save client certificate to '{}': {e}", cert_out.display());
             std::process::exit(1);
         });
         println!("Client certificate written to: {}", cert_out.display());
