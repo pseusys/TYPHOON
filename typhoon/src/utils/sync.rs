@@ -10,8 +10,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use cfg_if::cfg_if;
+#[cfg(feature = "tokio")]
 use crossbeam::queue::SegQueue;
-#[cfg(feature = "server")]
+#[cfg(all(feature = "server", feature = "tokio"))]
 use crossbeam::queue::ArrayQueue;
 #[cfg(feature = "server")]
 use log::debug;
