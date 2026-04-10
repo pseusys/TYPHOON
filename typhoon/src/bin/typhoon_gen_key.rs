@@ -21,10 +21,6 @@ struct Args {
     #[arg(long, value_name = "IP:PORT")]
     addr: Vec<SocketAddr>,
 
-    /// Override the default MTU in bytes.
-    #[arg(long, value_name = "BYTES")]
-    mtu: Option<usize>,
-
     /// Set a TYPHOON_* setting override as KEY=VALUE (repeatable).
     #[arg(long = "set", value_name = "KEY=VALUE")]
     overrides: Vec<String>,
@@ -47,8 +43,6 @@ fn main() {
         // Safety: single-threaded at this point.
         unsafe { std::env::set_var(key, value); }
     }
-
-    let _ = args.mtu; // noted; future SettingsBuilder integration point.
 
     println!("Generating server key pair (this may take a few seconds)...");
     let key_pair = ServerKeyPair::generate();
