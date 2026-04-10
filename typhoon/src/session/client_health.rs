@@ -575,7 +575,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         self.settings.executor().spawn(async move {
             let (identity, termination_code) = {
                 let mut st = state.lock().await;
-                (st.crypto_tool.get().await.identity(), st.termination_code)
+                (st.crypto_tool.get().identity(), st.termination_code)
             };
             let packet_number = ((unix_timestamp_ms() / 1000) as u64) << 32;
             let tailor = Tailor::termination(packet, &identity, termination_code, packet_number);
