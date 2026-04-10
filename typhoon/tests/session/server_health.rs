@@ -15,13 +15,11 @@ use super::ServerHealthProvider;
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
 
-#[cfg(feature = "tokio")]
 struct CapturingRouter {
     packets: Mutex<Vec<DynamicByteBuffer>>,
     remove_count: AtomicUsize,
 }
 
-#[cfg(feature = "tokio")]
 impl CapturingRouter {
     fn new() -> Arc<Self> {
         Arc::new(Self {
@@ -31,7 +29,6 @@ impl CapturingRouter {
     }
 }
 
-#[cfg(feature = "tokio")]
 impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
     async fn route_packet(&self, packet: DynamicByteBuffer, _identity: &StaticByteBuffer) -> bool {
         self.packets.lock().await.push(packet);
@@ -43,7 +40,6 @@ impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
     }
 }
 
-#[cfg(feature = "tokio")]
 fn test_identity() -> StaticByteBuffer {
     StaticByteBuffer::from_slice(&[0u8; DEFAULT_TYPHOON_ID_LENGTH])
 }
@@ -53,7 +49,6 @@ fn test_identity() -> StaticByteBuffer {
 ///   TIMEOUT_MIN(5) ≤ TIMEOUT_DEFAULT(10) ≤ TIMEOUT_MAX(20)
 ///   HEALTH_CHECK_NEXT_IN_MIN(21) > TIMEOUT_MAX(20)
 ///   HEALTH_CHECK_NEXT_IN_MIN(21) ≤ HEALTH_CHECK_NEXT_IN_MAX(100)
-#[cfg(feature = "tokio")]
 fn fast_settings() -> Arc<Settings<DefaultExecutor>> {
     Arc::new(
         SettingsBuilder::new()
@@ -70,7 +65,6 @@ fn fast_settings() -> Arc<Settings<DefaultExecutor>> {
 
 /// Parse PN, TM and flags from the raw buffer emitted by ServerHealthProvider.
 /// A health-check response has no body, so the whole buffer is the tailor.
-#[cfg(feature = "tokio")]
 fn parse_response(packet: &DynamicByteBuffer) -> (u64, u32, PacketFlags) {
     let tailor_size = TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH;
     assert!(
@@ -87,7 +81,7 @@ fn parse_response(packet: &DynamicByteBuffer) -> (u64, u32, PacketFlags) {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 // Test: server echoes the client PN in the health-check response. (Bug 1 regression)
-#[cfg_attr(feature = "tokio", tokio::test)]
+#[tokio::test]
 async fn test_server_health_response_echoes_client_pn() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
@@ -116,7 +110,7 @@ async fn test_server_health_response_echoes_client_pn() {
 }
 
 // Test: server uses its own randomly generated TM, not the client's value. (Bug 2 regression)
-#[cfg_attr(feature = "tokio", tokio::test)]
+#[tokio::test]
 async fn test_server_health_response_own_tm_in_range() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
@@ -143,7 +137,7 @@ async fn test_server_health_response_own_tm_in_range() {
 }
 
 // Test: response carries the HEALTH_CHECK flag.
-#[cfg_attr(feature = "tokio", tokio::test)]
+#[tokio::test]
 async fn test_server_health_response_has_health_check_flag() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
@@ -166,7 +160,7 @@ async fn test_server_health_response_has_health_check_flag() {
 }
 
 // Test: response is not sent before the client's requested delay elapses.
-#[cfg_attr(feature = "tokio", tokio::test)]
+#[tokio::test]
 async fn test_server_health_response_delayed() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
@@ -199,7 +193,7 @@ async fn test_server_health_response_delayed() {
 }
 
 // Test: timer retries on silence and eventually calls remove_session.
-#[cfg_attr(feature = "tokio", tokio::test)]
+#[tokio::test]
 async fn test_server_health_timer_removes_session_after_max_retries() {
     let router = CapturingRouter::new();
     let settings = fast_settings(); // MAX_RETRIES=2, TIMEOUT_DEFAULT=10ms
@@ -222,7 +216,7 @@ async fn test_server_health_timer_removes_session_after_max_retries() {
 }
 
 // Test: termination packet is routed before remove_session is called on decay.
-#[cfg_attr(feature = "tokio", tokio::test)]
+#[tokio::test]
 async fn test_server_health_sends_termination_before_remove() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
@@ -247,7 +241,7 @@ async fn test_server_health_sends_termination_before_remove() {
 }
 
 // Test: dropping the router Arc causes the timer task to stop cleanly.
-#[cfg_attr(feature = "tokio", tokio::test)]
+#[tokio::test]
 async fn test_server_health_stops_when_router_dropped() {
     let router = CapturingRouter::new();
     let settings = fast_settings();

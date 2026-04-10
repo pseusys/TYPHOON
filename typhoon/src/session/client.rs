@@ -1,4 +1,4 @@
-#[cfg(all(test, feature = "tokio", feature = "client"))]
+#[cfg(all(test, feature = "tokio", feature = "client", feature = "server"))]
 #[path = "../../tests/session/client.rs"]
 mod tests;
 
