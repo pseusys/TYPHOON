@@ -305,7 +305,7 @@ impl ServerKeyPair {
 
     /// Create a matched (ClientCertificate, ServerSecret) pair for use in tests.
     /// Calls `for_tests()` once so both sides share the same key material.
-    #[cfg(feature = "server")]
+    #[cfg(all(feature = "client", feature = "server"))]
     pub(crate) fn for_tests_pair() -> (ClientCertificate, ServerSecret<'static>) {
         let kp = Self::for_tests();
         let cert = kp.to_client_certificate(vec![]);
