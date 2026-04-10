@@ -10,7 +10,7 @@ use crate::settings::Settings;
 use crate::settings::keys::*;
 use crate::tailor::IdentityType;
 use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
-use crate::utils::time::unix_timestamp_ms;
+use crate::utils::unix_timestamp_ms;
 
 /// Sparse mode implements sending average decoy packets sparsely distributed in time.
 pub struct SparseDecoyProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> {

@@ -39,7 +39,7 @@ jobs:
         working-directory: typhoon
         run: |
           mkdir -p .test_keys
-          cargo run --quiet --bin typhoon-gen-key --no-default-features --features fast_software,server,tokio -- .test_keys/server_fast.key
+          cargo run --quiet --bin typhoon-gen-key --no-default-features --features fast_software,server,tokio,clap -- .test_keys/server_fast.key
         env:
           RUSTFLAGS: "-D warnings"
 

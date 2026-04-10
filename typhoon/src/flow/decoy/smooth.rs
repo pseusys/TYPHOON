@@ -10,7 +10,7 @@ use crate::settings::Settings;
 use crate::settings::keys::*;
 use crate::tailor::IdentityType;
 use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
-use crate::utils::time::unix_timestamp_ms;
+use crate::utils::unix_timestamp_ms;
 
 /// Smooth mode implements sending few average decoy packets during quiet periods.
 pub struct SmoothDecoyProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> {

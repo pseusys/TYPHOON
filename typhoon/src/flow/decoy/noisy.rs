@@ -10,7 +10,7 @@ use crate::settings::Settings;
 use crate::settings::keys::*;
 use crate::tailor::IdentityType;
 use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
-use crate::utils::time::unix_timestamp_ms;
+use crate::utils::unix_timestamp_ms;
 
 /// Noisy mode implements sending smaller decoy packets in bursts often.
 pub struct NoisyDecoyProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> {
