@@ -20,7 +20,6 @@ DEBUG_IMPLS=(debug "")
 # TYPHOON_TEST_SERVER_KEY_FAST / TYPHOON_TEST_SERVER_KEY_FULL instead of
 # calling ServerKeyPair::generate() on every test-binary invocation.
 KEY_DIR="$(pwd)/.test_keys"
-mkdir -p "${KEY_DIR}"
 export TYPHOON_TEST_SERVER_KEY_FAST="${KEY_DIR}/server_fast.key"
 export TYPHOON_TEST_SERVER_KEY_FULL="${KEY_DIR}/server_full.key"
 

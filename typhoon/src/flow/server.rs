@@ -239,6 +239,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         Ok(())
     }
 
+    #[cfg(feature = "client")]
     async fn receive_packet(&self, packet: DynamicByteBuffer) -> Result<DynamicByteBuffer, FlowControllerError> {
         let identity_len = T::length();
         // receive_raw handles decoy filtering, tailor verification, source-address updates,

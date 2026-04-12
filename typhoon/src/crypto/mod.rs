@@ -15,4 +15,8 @@ pub(crate) use error::CryptoError;
 pub(crate) use server::ServerData;
 #[cfg(feature = "server")]
 pub(crate) use server::{ServerCryptoTool, UserCryptoState, UserServerState};
-pub(crate) use symmetric::{ObfuscationTranscript, PAYLOAD_CRYPTO_OVERHEAD, SYMMETRIC_KEY_LENGTH as KEY_LENGTH};
+#[cfg(feature = "client")]
+pub(crate) use symmetric::ObfuscationTranscript;
+pub(crate) use symmetric::PAYLOAD_CRYPTO_OVERHEAD;
+#[cfg(feature = "client")]
+pub(crate) use symmetric::SYMMETRIC_KEY_LENGTH as KEY_LENGTH;

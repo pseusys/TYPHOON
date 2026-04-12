@@ -11,12 +11,14 @@ use crate::bytes::DynamicByteBuffer;
 use crate::bytes::{ByteBuffer, ByteBufferMut};
 #[cfg(feature = "client")]
 use crate::cache::CachedValue;
+#[cfg(feature = "client")]
 use crate::crypto::{CryptoError, ObfuscationTranscript};
 #[cfg(feature = "client")]
 use crate::flow::config::FlowConfig;
 use crate::flow::error::FlowControllerError;
 #[cfg(feature = "client")]
 use crate::settings::consts::TAILOR_LENGTH;
+#[cfg(feature = "client")]
 use crate::tailor::IdentityType;
 #[cfg(feature = "client")]
 use crate::tailor::{PacketFlags, Tailor};
@@ -30,6 +32,7 @@ pub(crate) trait FlowManager {
     fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> impl Future<Output = Result<(), FlowControllerError>> + Send;
 
     /// Receive a packet from the flow manager.
+    #[cfg(feature = "client")]
     fn receive_packet(&self, packet: DynamicByteBuffer) -> impl Future<Output = Result<DynamicByteBuffer, FlowControllerError>> + Send;
 }
 
@@ -38,12 +41,14 @@ impl<T: FlowManager + Send + Sync> FlowManager for Arc<T> {
         (**self).send_packet(packet, generated)
     }
 
+    #[cfg(feature = "client")]
     fn receive_packet(&self, packet: DynamicByteBuffer) -> impl Future<Output = Result<DynamicByteBuffer, FlowControllerError>> + Send {
         (**self).receive_packet(packet)
     }
 }
 
 /// Trait for tailor-level cryptographic operations used by flow managers.
+#[cfg(feature = "client")]
 pub(crate) trait FlowCryptoProvider: Clone + Send + Sync {
     /// The identity type used in tailors.
     type Identity: IdentityType + Clone;
