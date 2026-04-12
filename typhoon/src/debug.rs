@@ -1,7 +1,3 @@
-#[cfg(test)]
-#[path = "../tests/debug/mod.rs"]
-mod tests;
-
 //! Debug diagnostic tools: flow reachability, round-trip time, and throughput measurement.
 //!
 //! Available with the `debug` feature flag.
@@ -14,6 +10,10 @@ mod tests;
 //! | 4      | 4    | phase_id  | Debug phase: 0=reachability, 1=rtt, 2=throughput (big-endian u32) |
 //! | 8      | 8    | send_time | Send timestamp in milliseconds (big-endian u64) |
 //! | 16     | …    | padding   | Random-length zero padding (throughput phase only) |
+
+#[cfg(test)]
+#[path = "../tests/debug/mod.rs"]
+mod tests;
 
 use std::pin::pin;
 use std::sync::Arc;
