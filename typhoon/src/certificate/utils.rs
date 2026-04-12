@@ -45,7 +45,10 @@ pub enum CertificateError {
     #[error("invalid file: bad magic bytes")]
     InvalidMagic,
     #[error("invalid file type: expected '{expected}', got '{got}'")]
-    InvalidType { expected: char, got: char },
+    InvalidType {
+        expected: char,
+        got: char,
+    },
     #[error("mode mismatch: file was written for a different crypto mode")]
     ModeMismatch,
     #[error("unsupported format version: {0}")]
@@ -73,7 +76,10 @@ pub(crate) fn read_header(r: &mut impl Read, expected_type: u8) -> Result<(), Ce
     r.read_exact(&mut header)?;
     let [record_type, mode, version] = header;
     if record_type != expected_type {
-        return Err(CertificateError::InvalidType { expected: expected_type as char, got: record_type as char });
+        return Err(CertificateError::InvalidType {
+            expected: expected_type as char,
+            got: record_type as char,
+        });
     }
     if mode != MODE_BYTE {
         return Err(CertificateError::ModeMismatch);

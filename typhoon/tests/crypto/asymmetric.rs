@@ -1,13 +1,13 @@
+use std::sync::LazyLock;
+
 use crate::bytes::BytePool;
 #[cfg(all(feature = "client", feature = "server"))]
 use crate::bytes::{ByteBuffer, ByteBufferMut, StaticByteBuffer};
+use crate::certificate::ServerKeyPair;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
 #[cfg(all(feature = "client", feature = "server"))]
 use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
-use crate::certificate::ServerKeyPair;
-
-use std::sync::LazyLock;
 
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 const X25519_KEY_LENGTH: usize = 32;

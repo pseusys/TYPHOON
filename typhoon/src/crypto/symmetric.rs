@@ -4,9 +4,9 @@ mod tests;
 
 use cfg_if::cfg_if;
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 use crate::bytes::BytePool;
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::crypto::error::CryptoError;
 use crate::utils::random::{SupportRng, get_rng};
 
@@ -53,29 +53,29 @@ cfg_if! {
     }
 }
 
-pub const SYMMETRIC_KEY_LENGTH: usize = 32;
-pub const SYMMETRIC_BUILT_IN_AUTH_LEN: usize = 16;
-pub const SYMMETRIC_ADDITIONAL_AUTH_LEN: usize = 32;
+pub(crate) const SYMMETRIC_KEY_LENGTH: usize = 32;
+pub(crate) const SYMMETRIC_BUILT_IN_AUTH_LEN: usize = 16;
+pub(crate) const SYMMETRIC_ADDITIONAL_AUTH_LEN: usize = 32;
 
 /// Bytes added to a payload by `encrypt_auth` (nonce + authentication tag).
 /// Used to compute the maximum user-data that fits within MTU.
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-pub const PAYLOAD_CRYPTO_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN;
+pub(crate) const PAYLOAD_CRYPTO_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN;
 
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-pub const PAYLOAD_CRYPTO_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN;
+pub(crate) const PAYLOAD_CRYPTO_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN;
 
 #[cfg(any(feature = "fast_software", feature = "full_software"))]
-pub const NONCE_LEN: usize = 24;
+pub(crate) const NONCE_LEN: usize = 24;
 
 #[cfg(any(feature = "fast_software", feature = "full_software"))]
-pub const ANONYMOUS_NONCE_LEN: usize = 24;
+pub(crate) const ANONYMOUS_NONCE_LEN: usize = 24;
 
 #[cfg(any(feature = "fast_hardware", feature = "full_hardware"))]
-pub const NONCE_LEN: usize = 12;
+pub(crate) const NONCE_LEN: usize = 12;
 
 #[cfg(any(feature = "fast_hardware", feature = "full_hardware"))]
-pub const ANONYMOUS_NONCE_LEN: usize = 16;
+pub(crate) const ANONYMOUS_NONCE_LEN: usize = 16;
 
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 const VERIFICATION_KEY_DERIVATION: &str = "obfuscation key derivation key";
@@ -85,7 +85,7 @@ const ENCRYPTION_KEY_DERIVATION: &str = "encryption key derivation key";
 
 /// Transcript for delayed tailor verification (fast mode only).
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-pub struct ObfuscationTranscript {
+pub(crate) struct ObfuscationTranscript {
     /// Pool-backed copy of the ciphertext for deferred BLAKE3 MAC verification.
     pub(crate) ciphertext_copy: DynamicByteBuffer,
     pub(crate) auth_transcript: DynamicByteBuffer,
@@ -93,12 +93,12 @@ pub struct ObfuscationTranscript {
 
 /// Transcript placeholder (full mode).
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-pub struct ObfuscationTranscript {}
+pub(crate) struct ObfuscationTranscript {}
 
 /// Encrypt plaintext using unauthenticated stream cipher. Appends nonce to output.
 /// Args: key (32-byte slice), plaintext (modified in-place). Returns: ciphertext with nonce.
 #[inline]
-pub fn encrypt_anonymously(key: &[u8], plaintext: &mut DynamicByteBuffer) -> DynamicByteBuffer {
+pub(crate) fn encrypt_anonymously(key: &[u8], plaintext: &mut DynamicByteBuffer) -> DynamicByteBuffer {
     let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = key.try_into().expect("key must be 32 bytes");
     let nonce = get_rng().random_byte_array::<ANONYMOUS_NONCE_LEN>();
     AnonymousCipher::new(&key_bytes.into(), &nonce.into()).apply_keystream(&mut plaintext.slice_mut());
@@ -108,7 +108,7 @@ pub fn encrypt_anonymously(key: &[u8], plaintext: &mut DynamicByteBuffer) -> Dyn
 /// Decrypt ciphertext using unauthenticated stream cipher. Extracts nonce from end.
 /// Args: key (32-byte slice), ciphertext_with_nonce. Returns: plaintext.
 #[inline]
-pub fn decrypt_anonymously(key: &[u8], ciphertext_with_nonce: &mut DynamicByteBuffer) -> DynamicByteBuffer {
+pub(crate) fn decrypt_anonymously(key: &[u8], ciphertext_with_nonce: &mut DynamicByteBuffer) -> DynamicByteBuffer {
     let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf(ciphertext_with_nonce.len() - ANONYMOUS_NONCE_LEN);
     let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = key.try_into().expect("key must be 32 bytes");
     let nonce: [u8; ANONYMOUS_NONCE_LEN] = nonce_bytes.slice().try_into().expect("nonce must be ANONYMOUS_NONCE_LEN bytes");
@@ -118,7 +118,7 @@ pub fn decrypt_anonymously(key: &[u8], ciphertext_with_nonce: &mut DynamicByteBu
 
 /// Authenticated symmetric cipher for marshalling encryption (XChaCha20-Poly1305 or AES-GCM).
 #[derive(Clone)]
-pub struct Symmetric {
+pub(crate) struct Symmetric {
     /// Encryption key derived from the session key (fast mode).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     encryption_key: [u8; SYMMETRIC_KEY_LENGTH],
@@ -132,7 +132,7 @@ pub struct Symmetric {
 impl Symmetric {
     /// Create cipher from two raw 32-byte keys (fast mode: encryption + verification split).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn new_split(encryption_key: &impl ByteBuffer, verification_key: &impl ByteBuffer) -> Self {
+    pub(crate) fn new_split(encryption_key: &impl ByteBuffer, verification_key: &impl ByteBuffer) -> Self {
         Self {
             encryption_key: encryption_key.slice().try_into().expect("encryption key must be 32 bytes"),
             verification_key: verification_key.slice().try_into().expect("verification key must be 32 bytes"),
@@ -141,7 +141,7 @@ impl Symmetric {
 
     /// Create cipher from 32-byte key, deriving encryption and verification sub-keys. Returns: Symmetric instance.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn new(key: &impl ByteBuffer) -> Self {
+    pub(crate) fn new(key: &impl ByteBuffer) -> Self {
         Self {
             encryption_key: derive_key(ENCRYPTION_KEY_DERIVATION, key.slice()),
             verification_key: derive_key(VERIFICATION_KEY_DERIVATION, key.slice()),
@@ -150,15 +150,17 @@ impl Symmetric {
 
     /// Create cipher from 32-byte key. Returns: Symmetric instance.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn new(key: &impl ByteBuffer) -> Self {
+    pub(crate) fn new(key: &impl ByteBuffer) -> Self {
         let private_bytes: [u8; SYMMETRIC_KEY_LENGTH] = key.slice().try_into().expect("key must be 32 bytes");
         let cipher = Cipher::new(CipherKey::from_slice(&private_bytes));
-        Self { cipher }
+        Self {
+            cipher,
+        }
     }
 
     /// Encrypt with authentication. Returns: nonce || ciphertext || 32-byte tag.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn encrypt_auth<A: ByteBuffer>(&mut self, mut plaintext: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
+    pub(crate) fn encrypt_auth<A: ByteBuffer>(&mut self, mut plaintext: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
         let ciphertext = encrypt_anonymously(&self.encryption_key, &mut plaintext);
         let hash = match additional_data {
             Some(res) => Hasher::new_keyed(&self.verification_key).update(ciphertext.slice()).update(res.slice()).finalize(),
@@ -169,7 +171,7 @@ impl Symmetric {
 
     /// Encrypt with authentication. Returns: nonce || ciphertext || 16-byte tag.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn encrypt_auth<A: ByteBuffer>(&mut self, plaintext: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
+    pub(crate) fn encrypt_auth<A: ByteBuffer>(&mut self, plaintext: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
         let nonce = Cipher::generate_nonce(get_rng());
         let result = match additional_data {
             Some(res) => self.cipher.encrypt_in_place_detached(&nonce, res.slice(), &mut plaintext.slice_mut()),
@@ -180,7 +182,7 @@ impl Symmetric {
     }
 
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn decrypt_no_verify(&mut self, ciphertext_authenticated: DynamicByteBuffer, pool: &BytePool) -> (DynamicByteBuffer, ObfuscationTranscript) {
+    pub(crate) fn decrypt_no_verify(&mut self, ciphertext_authenticated: DynamicByteBuffer, pool: &BytePool) -> (DynamicByteBuffer, ObfuscationTranscript) {
         let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_ADDITIONAL_AUTH_LEN);
         let ciphertext_copy = pool.allocate_precise_from_slice_with_capacity(ciphertext_with_nonce.slice(), 0, 0);
         let plaintext = decrypt_anonymously(&self.encryption_key, &mut ciphertext_with_nonce);
@@ -194,7 +196,7 @@ impl Symmetric {
     }
 
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn verify_decrypted<A: ByteBuffer>(&mut self, obfuscation_transcript: ObfuscationTranscript, additional_data: Option<&A>) -> Result<(), CryptoError> {
+    pub(crate) fn verify_decrypted<A: ByteBuffer>(&mut self, obfuscation_transcript: ObfuscationTranscript, additional_data: Option<&A>) -> Result<(), CryptoError> {
         let hash = match additional_data {
             Some(res) => Hasher::new_keyed(&self.verification_key).update(obfuscation_transcript.ciphertext_copy.slice()).update(res.slice()).finalize(),
             None => keyed_hash(&self.verification_key, obfuscation_transcript.ciphertext_copy.slice()),
@@ -208,7 +210,7 @@ impl Symmetric {
     /// Decrypt and verify authentication tag. Args: nonce || ciphertext || tag. Returns: plaintext.
     /// Verifies MAC over the ciphertext before decrypting; no copy or pool allocation needed.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn decrypt_auth<A: ByteBuffer>(&mut self, ciphertext_authenticated: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
+    pub(crate) fn decrypt_auth<A: ByteBuffer>(&mut self, ciphertext_authenticated: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
         let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_ADDITIONAL_AUTH_LEN);
         let hash = match additional_data {
             Some(res) => Hasher::new_keyed(&self.verification_key).update(ciphertext_with_nonce.slice()).update(res.slice()).finalize(),
@@ -222,7 +224,7 @@ impl Symmetric {
 
     /// Decrypt and verify authentication tag. Args: nonce || ciphertext || tag. Returns: plaintext.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn decrypt_auth<A: ByteBuffer>(&mut self, ciphertext_authenticated: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
+    pub(crate) fn decrypt_auth<A: ByteBuffer>(&mut self, ciphertext_authenticated: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
         let (ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_BUILT_IN_AUTH_LEN);
         let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf(ciphertext_with_nonce.len() - NONCE_LEN);
         let nonce_slice = nonce_bytes.slice();

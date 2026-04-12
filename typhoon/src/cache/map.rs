@@ -22,14 +22,14 @@ struct LocalEntry<V> {
 }
 
 /// Change once this is implemented: https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html
-pub struct SharedMap<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
+pub(crate) struct SharedMap<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
     state: Arc<SharedState<K, V>>,
     local: HashMap<K, V>,
     _not_sync: PhantomData<UnsafeCell<()>>,
 }
 
 impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         SharedMap {
             state: Arc::new(RwLock::new(HashMap::new())),
             local: HashMap::new(),
@@ -37,7 +37,7 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
         }
     }
 
-    pub async fn insert(&mut self, key: K, value: V) {
+    pub(crate) async fn insert(&mut self, key: K, value: V) {
         self.state.write().await.insert(
             key.clone(),
             Versioned {
@@ -48,39 +48,42 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
         self.local.insert(key, value);
     }
 
-    pub async fn remove(&mut self, key: &K) {
+    pub(crate) async fn remove(&mut self, key: &K) {
         self.local.remove(key);
         self.state.write().await.remove(key);
     }
 
-    pub fn contains_key(&self, key: &K) -> bool {
+    pub(crate) fn contains_key(&self, key: &K) -> bool {
         self.local.contains_key(key)
     }
 
-    pub fn get(&self, key: &K) -> Option<&V> {
+    pub(crate) fn get(&self, key: &K) -> Option<&V> {
         self.local.get(key)
     }
 
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+    pub(crate) fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         self.local.get_mut(key)
     }
 
     /// Mutate an existing entry in place and propagate the change to all `CachedMap` instances
     /// by bumping the shared-state version. Saves one `V` clone and one `K` clone compared to
     /// the `get().cloned()` + `insert()` pattern.
-    pub async fn modify<F: FnOnce(&mut V)>(&mut self, key: &K, f: F) {
+    pub(crate) async fn modify<F: FnOnce(&mut V)>(&mut self, key: &K, f: F) {
         if let Some(local) = self.local.get_mut(key) {
             f(local);
-            let versioned = Versioned { value: local.clone(), version: get_rng().next_u64() };
+            let versioned = Versioned {
+                value: local.clone(),
+                version: get_rng().next_u64(),
+            };
             self.state.write().await.insert(key.clone(), versioned);
         }
     }
 
-    pub fn keys(&self) -> impl Iterator<Item = &K> {
+    pub(crate) fn keys(&self) -> impl Iterator<Item = &K> {
         self.local.keys()
     }
 
-    pub fn create_cache(&self) -> CachedMap<K, V> {
+    pub(crate) fn create_cache(&self) -> CachedMap<K, V> {
         CachedMap {
             source: Arc::downgrade(&self.state),
             local: HashMap::new(),
@@ -91,7 +94,7 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
     /// Create a `Sync` template that watches one specific key.
     /// Call `CachedMapEntryTemplate::create_entry()` on the returned value to get a
     /// working `CachedMapEntry` with a local cache (one per task, no `Mutex` needed).
-    pub fn create_cache_for(&self, key: K) -> CachedMapEntryTemplate<K, V> {
+    pub(crate) fn create_cache_for(&self, key: K) -> CachedMapEntryTemplate<K, V> {
         CachedMapEntryTemplate {
             source: Arc::downgrade(&self.state),
             key,
@@ -106,7 +109,7 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> Default for Shared
 }
 
 /// Change once this is implemented: https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html
-pub struct CachedMap<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
+pub(crate) struct CachedMap<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
     source: Weak<SharedState<K, V>>,
     local: HashMap<K, LocalEntry<V>>,
     _not_sync: PhantomData<UnsafeCell<()>>,
@@ -140,15 +143,15 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMap<K, V> {
         }
     }
 
-    pub async fn get(&mut self, key: &K) -> Result<&V, CacheError> {
+    pub(crate) async fn get(&mut self, key: &K) -> Result<&V, CacheError> {
         Ok(&self.fetch(key).await?.value)
     }
 
-    pub async fn get_mut(&mut self, key: &K) -> Result<&mut V, CacheError> {
+    pub(crate) async fn get_mut(&mut self, key: &K) -> Result<&mut V, CacheError> {
         Ok(&mut self.fetch(key).await?.value)
     }
 
-    pub fn create_sibling(&self) -> Result<CachedMap<K, V>, CacheError> {
+    pub(crate) fn create_sibling(&self) -> Result<CachedMap<K, V>, CacheError> {
         if self.source.strong_count() == 0 {
             return Err(CacheError::SourceDropped);
         }
@@ -165,7 +168,7 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMap<K, V> {
 /// Stores a `Weak` reference to the shared map plus the key.
 /// Has no local cache of its own — call `create_entry()` to get a `CachedMapEntry`
 /// with a local cache suitable for use within one task (no `Mutex` required at the call site).
-pub struct CachedMapEntryTemplate<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
+pub(crate) struct CachedMapEntryTemplate<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
     source: Weak<SharedState<K, V>>,
     key: K,
 }
@@ -173,7 +176,7 @@ pub struct CachedMapEntryTemplate<K: Clone + Eq + Hash + Send + ToString, V: Clo
 impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMapEntryTemplate<K, V> {
     /// Create a working `CachedMapEntry` with an empty local cache.
     /// Intended to be created once per task invocation and used locally (not shared).
-    pub fn create_entry(&self) -> CachedMapEntry<K, V> {
+    pub(crate) fn create_entry(&self) -> CachedMapEntry<K, V> {
         CachedMapEntry {
             source: self.source.clone(),
             key: self.key.clone(),
@@ -185,7 +188,7 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMapEntryTemp
 
 /// Single-entry cache connected to a `SharedMap`, watching one specific key.
 /// Change once this is implemented: https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html
-pub struct CachedMapEntry<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
+pub(crate) struct CachedMapEntry<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
     source: Weak<SharedState<K, V>>,
     key: K,
     local: Option<LocalEntry<V>>,
@@ -217,11 +220,11 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMapEntry<K, 
         }
     }
 
-    pub async fn get(&mut self) -> Result<&V, CacheError> {
+    pub(crate) async fn get(&mut self) -> Result<&V, CacheError> {
         Ok(&self.fetch().await?.value)
     }
 
-    pub async fn get_mut(&mut self) -> Result<&mut V, CacheError> {
+    pub(crate) async fn get_mut(&mut self) -> Result<&mut V, CacheError> {
         Ok(&mut self.fetch().await?.value)
     }
 }

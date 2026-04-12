@@ -12,6 +12,7 @@ pub use error::ClientSocketError;
 pub use error::ServerSocketError;
 #[cfg(feature = "server")]
 pub use server::{ClientHandle, Listener, ListenerBuilder, ServerFlowConfiguration};
+
 #[cfg(feature = "client")]
 pub use crate::certificate::ClientCertificate;
 #[cfg(feature = "server")]

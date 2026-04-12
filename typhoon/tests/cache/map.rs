@@ -105,10 +105,7 @@ async fn test_cached_map_entry_source_dropped() {
         // map drops here, Arc<SharedState> strong count → 0
     };
 
-    assert!(
-        entry.get().await.is_err(),
-        "entry must return error after source SharedMap is dropped"
-    );
+    assert!(entry.get().await.is_err(), "entry must return error after source SharedMap is dropped");
 }
 
 // ── SharedMap::create_cache (CachedMap) ──────────────────────────────────────

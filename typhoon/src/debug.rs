@@ -11,21 +11,29 @@
 //! | 8      | 8    | send_time | Send timestamp in milliseconds (big-endian u64) |
 //! | 16     | …    | padding   | Random-length zero padding (throughput phase only) |
 
+use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures::future::{Either, select};
 use log::{debug, info, trace};
-use std::pin::pin;
 
+#[cfg(feature = "server")]
+use crate::bytes::ByteBuffer;
 use crate::bytes::StaticByteBuffer;
 use crate::certificate::ClientCertificate;
 use crate::defaults::{DefaultExecutor, DefaultSettings};
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use crate::flow::decoy::SimpleDecoyProvider;
+#[cfg(feature = "server")]
+use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 use crate::settings::keys;
 use crate::socket::{ClientSocket, ClientSocketBuilder};
 use crate::tailor::ClientConnectionHandler;
+#[cfg(feature = "server")]
+use crate::tailor::ServerConnectionHandler;
+#[cfg(feature = "server")]
+use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::sleep;
 use crate::utils::unix_timestamp_ms;
 
@@ -118,11 +126,8 @@ impl ClientConnectionHandler for DebugClientConnectionHandler {
 pub struct DebugServerConnectionHandler;
 
 #[cfg(feature = "server")]
-impl crate::tailor::ServerConnectionHandler<StaticByteBuffer> for DebugServerConnectionHandler {
+impl ServerConnectionHandler<StaticByteBuffer> for DebugServerConnectionHandler {
     fn generate(&self, _initial_data: &[u8]) -> StaticByteBuffer {
-        use crate::bytes::ByteBuffer;
-        use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
-        use crate::utils::random::{SupportRng, get_rng};
         StaticByteBuffer::from_slice(get_rng().random_byte_buffer::<DEFAULT_TYPHOON_ID_LENGTH>().slice())
     }
 
@@ -192,11 +197,7 @@ pub async fn run_debug(certificate: ClientCertificate, mode: DebugMode, settings
     // Use empty flow config for all addresses: fake body/header would prepend bytes that the
     // server's handshake parser cannot strip, causing a crypto overflow on decapsulation.
     let empty_config = FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![]));
-    let mut builder = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DebugClientConnectionHandler>::new(
-        certificate.clone(),
-        DebugClientConnectionHandler,
-    )
-    .with_settings(settings.clone());
+    let mut builder = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DebugClientConnectionHandler>::new(certificate.clone(), DebugClientConnectionHandler).with_settings(settings.clone());
     for &addr in certificate.addresses() {
         builder = builder.with_flow_config(addr, empty_config.clone());
     }
@@ -261,8 +262,7 @@ pub async fn run_debug(certificate: ClientCertificate, mode: DebugMode, settings
         let chunks_per_probe = probe_payload_size.div_ceil(max_data_payload);
         let total_echo_packets = probe_count * chunks_per_probe;
 
-        info!("debug probe: throughput phase — {} probe(s) × {}B payload, max_data_payload={}B → {} echo packet(s) expected",
-            probe_count, probe_payload_size, max_data_payload, total_echo_packets);
+        info!("debug probe: throughput phase — {} probe(s) × {}B payload, max_data_payload={}B → {} echo packet(s) expected", probe_count, probe_payload_size, max_data_payload, total_echo_packets);
 
         let mut probe_buf = make_probe(PHASE_THROUGHPUT, 0, probe_size);
         let start_ms = unix_timestamp_ms();
@@ -291,9 +291,7 @@ pub async fn run_debug(certificate: ClientCertificate, mode: DebugMode, settings
         }
 
         let elapsed_ms = unix_timestamp_ms().saturating_sub(start_ms);
-        info!("debug probe: throughput summary — sent {} UDP packet(s), received {} / {} echo(s) ({:.1}% delivery)",
-            result.packets_sent, result.packets_received, total_echo_packets,
-            100.0 * result.packets_received as f64 / total_echo_packets as f64);
+        info!("debug probe: throughput summary — sent {} UDP packet(s), received {} / {} echo(s) ({:.1}% delivery)", result.packets_sent, result.packets_received, total_echo_packets, 100.0 * result.packets_received as f64 / total_echo_packets as f64);
         if elapsed_ms > 0 && received_bytes > 0 {
             let bps = received_bytes as f64 / (elapsed_ms as f64 / 1000.0);
             result.throughput_bps = Some(bps);

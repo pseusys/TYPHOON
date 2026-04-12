@@ -6,8 +6,7 @@ mod simple;
 mod smooth;
 mod sparse;
 
-pub use common::DecoyFlowSender;
-pub use common::DecoyCommunicationMode;
+pub use common::{DecoyCommunicationMode, DecoyFlowSender};
 pub use heavy::HeavyDecoyProvider;
 pub use noisy::NoisyDecoyProvider;
 pub use simple::SimpleDecoyProvider;

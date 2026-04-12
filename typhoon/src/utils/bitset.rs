@@ -19,11 +19,10 @@ impl AtomicBitSet {
     /// Create a new bitset capable of holding `num_bits` bits, all initially clear.
     pub fn new(num_bits: usize) -> Self {
         let num_words = (num_bits + 63) / 64;
-        let words = (0..num_words)
-            .map(|_| AtomicU64::new(0))
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-        Self { words }
+        let words = (0..num_words).map(|_| AtomicU64::new(0)).collect::<Vec<_>>().into_boxed_slice();
+        Self {
+            words,
+        }
     }
 
     /// Atomically set bit `bit`. No-op if `bit` is out of range.

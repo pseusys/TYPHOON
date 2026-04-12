@@ -20,11 +20,11 @@ compile_error!("feature 'fast_software' and feature 'fast_hardware' cannot be en
 compile_error!("one of the features 'server' and 'client' should be selected");
 
 pub mod bytes;
-pub mod cache;
+pub(crate) mod cache;
+pub mod certificate;
+pub(crate) mod crypto;
 #[cfg(feature = "debug")]
 pub mod debug;
-pub mod certificate;
-pub mod crypto;
 pub mod defaults;
 pub mod flow;
 mod session;

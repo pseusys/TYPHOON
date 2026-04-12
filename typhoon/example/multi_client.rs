@@ -3,9 +3,13 @@
 /// Tests independent session isolation and concurrent RwLock read access to the sessions map.
 use std::sync::Arc;
 
-use env_logger;
+use env_logger::init;
+use futures::channel::oneshot::channel;
+#[cfg(not(feature = "tokio"))]
+use futures::executor::block_on;
 use futures::future::join_all;
-
+#[cfg(feature = "tokio")]
+use tokio::runtime::Runtime;
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
@@ -19,55 +23,36 @@ const MESSAGES_PER_CLIENT: usize = 10;
 
 #[cfg(feature = "tokio")]
 fn main() {
-    tokio::runtime::Runtime::new()
-        .expect("failed to create tokio runtime")
-        .block_on(run());
+    Runtime::new().expect("failed to create tokio runtime").block_on(run());
 }
 
 #[cfg(not(feature = "tokio"))]
 fn main() {
-    futures::executor::block_on(run());
+    block_on(run());
 }
 
 async fn run() {
-    env_logger::init();
+    init();
 
-    let settings = Arc::new(
-        SettingsBuilder::<DefaultExecutor>::new()
-            .build()
-            .expect("default settings should be valid"),
-    );
-
+    let settings = Arc::new(SettingsBuilder::<DefaultExecutor>::new().build().expect("default settings should be valid"));
     let server_addr = "127.0.0.1:19992".parse().expect("valid address");
 
     let key_pair = ServerKeyPair::generate();
 
     // Generate all client certificates before consuming key_pair into the listener builder.
-    let certificates: Vec<_> = (0..CLIENT_COUNT)
-        .map(|_| key_pair.to_client_certificate(vec![server_addr]))
-        .collect();
+    let certificates: Vec<_> = (0..CLIENT_COUNT).map(|_| key_pair.to_client_certificate(vec![server_addr])).collect();
 
     let flow_config = FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![]));
 
     // --- Build and start the server ---
-    let listener: Arc<_> = Arc::new(
-        ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>::new(
-            key_pair,
-            DefaultServerConnectionHandler,
-        )
-        .add_flow(ServerFlowConfiguration::with_address(flow_config, server_addr))
-        .with_settings(settings.clone())
-        .build()
-        .await
-        .expect("listener should build"),
-    );
+    let listener: Arc<_> = Arc::new(ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(flow_config, server_addr)).with_settings(settings.clone()).build().await.expect("listener should build"));
     listener.start().await;
     println!("Server: listening on {}", server_addr);
 
     // Spawn one echo task per expected client (accepted in order of handshake arrival).
     let mut server_done_rxs = Vec::with_capacity(CLIENT_COUNT);
     for client_id in 0..CLIENT_COUNT {
-        let (done_tx, done_rx) = futures::channel::oneshot::channel::<usize>();
+        let (done_tx, done_rx) = channel::<usize>();
         server_done_rxs.push(done_rx);
 
         let listener_handle = listener.clone();
@@ -86,22 +71,10 @@ async fn run() {
     }
 
     // --- Connect all clients concurrently ---
-    let client_futs: Vec<_> = certificates
-        .into_iter()
-        .enumerate()
-        .map(|(client_id, certificate)| {
+    let client_futs: Vec<_> = certificates.into_iter().enumerate().map(|(client_id, certificate)| {
             let settings = settings.clone();
             async move {
-                let socket = ClientSocketBuilder::<
-                    StaticByteBuffer,
-                    DefaultExecutor,
-                    SimpleDecoyProvider,
-                    DefaultClientConnectionHandler,
-                >::new(certificate, DefaultClientConnectionHandler)
-                .with_settings(settings.clone())
-                .build()
-                .await
-                .expect("client socket should build");
+                let socket = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultClientConnectionHandler>::new(certificate, DefaultClientConnectionHandler).with_settings(settings.clone()).build().await.expect("client socket should build");
 
                 println!("Client {}: connected", client_id);
 
@@ -134,8 +107,5 @@ async fn run() {
         assert_eq!(count, MESSAGES_PER_CLIENT, "server echoed wrong count for client {}", id);
     }
 
-    println!(
-        "Success! {} clients × {} messages all round-tripped correctly.",
-        CLIENT_COUNT, MESSAGES_PER_CLIENT
-    );
+    println!("Success! {} clients × {} messages all round-tripped correctly.", CLIENT_COUNT, MESSAGES_PER_CLIENT);
 }

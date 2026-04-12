@@ -11,14 +11,15 @@ use std::sync::{Arc, Weak as StdWeak};
 use log::{debug, warn};
 use rand::Rng;
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, FixedByteBuffer};
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::{CachedMapEntryTemplate, SharedMap};
 use crate::crypto::{UserCryptoState, UserServerState};
+use crate::flow::FlowControllerError;
 use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
 use crate::session::server_health::ServerHealthProvider;
-use crate::settings::{Settings, keys};
 use crate::settings::consts::TAILOR_LENGTH;
+use crate::settings::{Settings, keys};
 use crate::tailor::{IdentityType, PacketFlags, ReturnCode, Tailor};
 use crate::utils::bitset::AtomicBitSet;
 use crate::utils::random::get_rng;
@@ -56,98 +57,30 @@ pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToS
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> ServerSessionManager<T, AE, R> {
-    /// Create a server session manager from pre-decapsulated handshake data.
+    /// Assemble a new server session from a pre-decapsulated handshake.
     ///
-    /// `response_body` must be pre-computed by calling `secret.encapsulate_handshake_server`
-    /// **before** acquiring the `users` lock, so that CPU-intensive crypto work is not
-    /// serialized through the shared-map mutex.
+    /// `crypto_state` must be constructed with the initial handshake key **before** calling
+    /// this function (the caller uses its `Listener::make_initial_crypto_state` helper).
+    /// `response_body` must also be pre-computed outside the `users` lock so that
+    /// CPU-intensive McEliece work is not serialized through the shared-map mutex.
     ///
-    /// Returns `(Arc<Self>, response_packet)`. The caller already holds `session_key` from
-    /// the encapsulation step and uses it to upgrade the user's crypto state after sending the response.
-    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub async fn from_handshake(
-        response_body: DynamicByteBuffer,
-        initial_key: FixedByteBuffer<32>,
-        handshake_tailor: Tailor<T>,
-        identity: T,
-        secret: &crate::certificate::ServerSecret<'_>,
-        users: &mut SharedMap<T, UserServerState>,
-        incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
-        router: StdWeak<R>,
-        num_flows: usize,
-        settings: Arc<Settings<AE>>,
-    ) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
-        use crate::certificate::ObfuscationBufferContainer;
-
-        // Register user with initial key so that the handshake response tailor is
-        // authenticated with the initial key (the client can verify before deriving session key).
-        let obfuscation_buffer = secret.obfuscation_buffer();
-        let crypto_state = UserCryptoState::new(&initial_key, obfuscation_buffer);
-        Self::assemble_session(crypto_state, response_body, handshake_tailor, identity, users, incoming_tx, router, num_flows, settings).await
-    }
-
-    /// Create a server session manager from pre-decapsulated handshake data (full mode).
-    /// `response_body` must be pre-computed outside the `users` lock.
-    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub async fn from_handshake(
-        response_body: DynamicByteBuffer,
-        initial_key: FixedByteBuffer<32>,
-        handshake_tailor: Tailor<T>,
-        identity: T,
-        users: &mut SharedMap<T, UserServerState>,
-        incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
-        router: StdWeak<R>,
-        num_flows: usize,
-        settings: Arc<Settings<AE>>,
-    ) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
-        // Register user with initial key so that the handshake response tailor is
-        // encrypted with the initial key (the client can decrypt before deriving session key).
-        let crypto_state = UserCryptoState::new(&initial_key);
-        Self::assemble_session(crypto_state, response_body, handshake_tailor, identity, users, incoming_tx, router, num_flows, settings).await
-    }
-
-    /// Common session assembly shared by both `from_handshake` variants.
-    /// Inserts `crypto_state` into the shared map, assembles the response packet, creates the
-    /// health provider, and returns the new session + response packet.
-    async fn assemble_session(
-        crypto_state: UserCryptoState,
-        response_body: DynamicByteBuffer,
-        handshake_tailor: Tailor<T>,
-        identity: T,
-        users: &mut SharedMap<T, UserServerState>,
-        incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
-        router: StdWeak<R>,
-        num_flows: usize,
-        settings: Arc<Settings<AE>>,
-    ) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
+    /// Returns `(Arc<Self>, response_packet)`. The caller holds `session_key` from the
+    /// encapsulation step and upgrades the user's crypto state after sending the response.
+    pub(crate) async fn assemble_session(crypto_state: UserCryptoState, response_body: DynamicByteBuffer, handshake_tailor: Tailor<T>, identity: T, users: &mut SharedMap<T, UserServerState>, incoming_tx: NotifyQueueSender<DynamicByteBuffer>, router: StdWeak<R>, num_flows: usize, settings: Arc<Settings<AE>>) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
         let user_state = UserServerState::new(crypto_state);
 
-        // Insert user into shared map under server-generated identity.
         users.insert(identity.clone(), user_state).await;
 
-        // Create independent send/receive templates from the shared map.
         let crypto_send = users.create_cache_for(identity.clone());
         let crypto_recv = users.create_cache_for(identity.clone());
 
-        // Generate server's next_in for the handshake response (tells client when to send first health check).
-        let server_next_in = get_rng().gen_range(
-            settings.get(&keys::HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&keys::HEALTH_CHECK_NEXT_IN_MAX),
-        ) as u32;
+        let server_next_in = get_rng().gen_range(settings.get(&keys::HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&keys::HEALTH_CHECK_NEXT_IN_MAX)) as u32;
 
-        // Assemble response packet: response_body || tailor.
         let response_body_len = response_body.len();
         let tailor_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
         // Tailor writes to the shared buffer in-place via Arc; _response_tailor is dropped but
         // its bytes are included in response_packet via expand_end below.
-        let _response_tailor = Tailor::handshake(
-            tailor_buf,
-            &identity,
-            ReturnCode::Success.into(),
-            server_next_in,
-            handshake_tailor.packet_number(),
-            response_body_len as u16,
-        );
-        // Include the response body in the packet: response_body || tailor (TAILOR_LENGTH + T::length() bytes).
+        let _response_tailor = Tailor::handshake(tailor_buf, &identity, ReturnCode::Success.into(), server_next_in, handshake_tailor.packet_number(), response_body_len as u16);
         let response_packet = response_body.expand_end(TAILOR_LENGTH + T::length());
 
         let health_provider = ServerHealthProvider::new(router.clone(), identity.clone(), settings.clone(), server_next_in);
@@ -206,13 +139,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
 
     /// Route a packet to the network via the outgoing router (Listener).
     async fn route_outgoing(&self, packet: DynamicByteBuffer) -> Result<(), SessionControllerError> {
-        let router = self.router.upgrade().ok_or_else(|| SessionControllerError::FlowError(
-            crate::flow::FlowControllerError::UserNotFound { identity: self.identity.to_string() },
-        ))?;
+        let router = self.router.upgrade().ok_or_else(|| {
+            SessionControllerError::FlowError(FlowControllerError::UserNotFound {
+                identity: self.identity.to_string(),
+            })
+        })?;
         if !router.route_packet(packet, &self.identity).await {
-            return Err(SessionControllerError::FlowError(
-                crate::flow::FlowControllerError::UserNotFound { identity: self.identity.to_string() },
-            ));
+            return Err(SessionControllerError::FlowError(FlowControllerError::UserNotFound {
+                identity: self.identity.to_string(),
+            }));
         }
         Ok(())
     }
@@ -220,16 +155,17 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
     /// Process an incoming packet from the Listener.
     /// Decrypted data is sent to the ClientHandle via user_data_tx.
     pub async fn process_incoming(&self, incoming: IncomingPacket<T>) -> Result<(), SessionControllerError> {
-        let IncomingPacket { body, tailor } = incoming;
+        let IncomingPacket {
+            body,
+            tailor,
+        } = incoming;
         debug!("server session [{}]: received {:?} packet", self.identity.to_string(), tailor.flags());
 
-        // Handle termination.
         if tailor.flags().is_termination() {
             debug!("server session [{}]: connection terminated by client (code={})", self.identity.to_string(), tailor.code());
             return Err(SessionControllerError::ConnectionTerminated(tailor.code()));
         }
 
-        // Handle health check: forward to health provider.
         if tailor.flags().contains(PacketFlags::HEALTH_CHECK) && !tailor.flags().has_payload() {
             self.health_provider.feed_health_check(tailor.time(), tailor.packet_number());
         }
@@ -264,17 +200,13 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
 
         Ok(())
     }
-
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> SessionManager for ServerSessionManager<T, AE, R> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), SessionControllerError> {
         let full_packet = if generated {
-            // Already assembled (tailor included), pass through.
             packet
         } else {
-            // User data: encrypt payload, create DATA tailor, assemble.
-            // Create a local entry per call — no Mutex contention.
             let mut entry = self.crypto_send.create_entry();
             let user_state = entry.get_mut().await.map_err(SessionControllerError::MissingCache)?;
             let encrypted_payload = user_state.crypto_mut().encrypt_payload(packet, None).map_err(SessionControllerError::CryptoError)?;
@@ -286,7 +218,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
             let encrypted_payload_len = encrypted_payload.len();
             let tailor_buf = encrypted_payload.expand_end(T::length()).rebuffer_start(encrypted_payload_len);
             let _tailor = Tailor::data(tailor_buf, &self.identity, payload_length, packet_number);
-            // Include encrypted payload: encrypted_payload || tailor (TAILOR_LENGTH + T::length() bytes).
             let assembled = encrypted_payload.expand_end(TAILOR_LENGTH + T::length());
             debug!("server session [{}]: sending data packet", self.identity.to_string());
             assembled
@@ -301,4 +232,3 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
         Err(SessionControllerError::HealthProviderDied)
     }
 }
-

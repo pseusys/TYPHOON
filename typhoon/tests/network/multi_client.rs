@@ -3,13 +3,13 @@
 use std::sync::Arc;
 
 use futures::future::join_all;
-
+use futures::channel::oneshot::channel;
+use typhoon::bytes::StaticByteBuffer;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
 use typhoon::flow::decoy::SimpleDecoyProvider;
-use typhoon::bytes::StaticByteBuffer;
 use typhoon::socket::{ListenerBuilder, ServerFlowConfiguration};
 
-use super::common::{connect_simple, default_settings, empty_flow_config, free_addr};
+use super::common::{connect_simple, default_settings, empty_flow_config, free_addr, server_key_pair};
 
 const CLIENTS: usize = 3;
 const MSGS: usize = 5;
@@ -19,36 +19,24 @@ const MSGS: usize = 5;
 async fn test_multi_client_isolated_sessions() {
     let settings = default_settings();
     let addr = free_addr();
-    let key_pair = super::common::server_key_pair();
+    let key_pair = server_key_pair();
 
     // Build certificates before consuming key_pair into the listener.
-    let certs: Vec<_> = (0..CLIENTS)
-        .map(|_| key_pair.to_client_certificate(vec![addr]))
-        .collect();
+    let certs: Vec<_> = (0..CLIENTS).map(|_| key_pair.to_client_certificate(vec![addr])).collect();
 
-    let listener = Arc::new(
-        ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>::new(
-            key_pair,
-            DefaultServerConnectionHandler,
-        )
-        .add_flow(ServerFlowConfiguration::with_address(empty_flow_config(), addr))
-        .with_settings(settings.clone())
-        .build()
-        .await
-        .expect("listener"),
-    );
+    let listener = Arc::new(ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(empty_flow_config(), addr)).with_settings(settings.clone()).build().await.expect("listener"));
     listener.start().await;
 
     // A single accept loop to avoid concurrent accept() calls fighting over the WatchReceiver.
-    let (total_tx, total_rx) = futures::channel::oneshot::channel::<usize>();
+    let (total_tx, total_rx) = channel::<usize>();
     let lh = listener.clone();
     settings.executor().spawn(async move {
         let mut total = 0;
         for _ in 0..CLIENTS {
             let client = lh.accept().await.expect("accept");
             // Spawn a per-client echo task.
-            let (done_tx, _done_rx) = futures::channel::oneshot::channel::<usize>();
-            typhoon::defaults::DefaultExecutor::new().spawn(async move {
+            let (done_tx, _done_rx) = channel::<usize>();
+            DefaultExecutor::new().spawn(async move {
                 let mut n = 0;
                 while n < MSGS {
                     let d = client.receive_bytes().await.expect("recv");
