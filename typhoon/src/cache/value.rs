@@ -118,13 +118,6 @@ pub(crate) struct CachedValue<T: Clone + Send + Sync> {
 }
 
 impl<T: Clone + Send + Sync> CachedValue<T> {
-    /// Return a shared reference to the current value, or `Err` if the source was dropped.
-    #[inline]
-    pub(crate) fn get(&mut self) -> Result<&T, CacheError> {
-        self.refresh()?;
-        Ok(&self.local)
-    }
-
     /// Return a mutable reference to the local cache copy, or `Err` if the source was dropped.
     /// Mutations are local to this instance only.
     #[inline]

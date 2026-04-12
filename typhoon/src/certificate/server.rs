@@ -4,7 +4,7 @@
 #[path = "../../tests/certificate/server.rs"]
 mod tests;
 
-use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::fmt::Debug;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::SocketAddr;

@@ -57,14 +57,6 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
         self.local.contains_key(key)
     }
 
-    pub(crate) fn get(&self, key: &K) -> Option<&V> {
-        self.local.get(key)
-    }
-
-    pub(crate) fn get_mut(&mut self, key: &K) -> Option<&mut V> {
-        self.local.get_mut(key)
-    }
-
     /// Mutate an existing entry in place and propagate the change to all `CachedMap` instances
     /// by bumping the shared-state version. Saves one `V` clone and one `K` clone compared to
     /// the `get().cloned()` + `insert()` pattern.
@@ -77,10 +69,6 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> SharedMap<K, V> {
             };
             self.state.write().await.insert(key.clone(), versioned);
         }
-    }
-
-    pub(crate) fn keys(&self) -> impl Iterator<Item = &K> {
-        self.local.keys()
     }
 
     pub(crate) fn create_cache(&self) -> CachedMap<K, V> {
@@ -143,24 +131,8 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMap<K, V> {
         }
     }
 
-    pub(crate) async fn get(&mut self, key: &K) -> Result<&V, CacheError> {
-        Ok(&self.fetch(key).await?.value)
-    }
-
     pub(crate) async fn get_mut(&mut self, key: &K) -> Result<&mut V, CacheError> {
         Ok(&mut self.fetch(key).await?.value)
-    }
-
-    pub(crate) fn create_sibling(&self) -> Result<CachedMap<K, V>, CacheError> {
-        if self.source.strong_count() == 0 {
-            return Err(CacheError::SourceDropped);
-        }
-
-        Ok(CachedMap {
-            source: self.source.clone(),
-            local: HashMap::new(),
-            _not_sync: PhantomData,
-        })
     }
 }
 
@@ -218,10 +190,6 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMapEntry<K, 
                 Err(CacheError::KeyNotFound(self.key.to_string()))
             }
         }
-    }
-
-    pub(crate) async fn get(&mut self) -> Result<&V, CacheError> {
-        Ok(&self.fetch().await?.value)
     }
 
     pub(crate) async fn get_mut(&mut self) -> Result<&mut V, CacheError> {

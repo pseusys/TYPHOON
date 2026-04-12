@@ -133,18 +133,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
         T::from_bytes(correct_buffer.rebuffer_both(ID_OFFSET, ID_OFFSET + T::length()).slice())
     }
 
-    /// Encrypt payload data with per-user session key.
-    pub(crate) async fn encrypt_payload(&mut self, identity: &T, plaintext: DynamicByteBuffer, additional_data: Option<&DynamicByteBuffer>) -> Result<DynamicByteBuffer, CryptoError> {
-        let user = self.users.get_mut(identity).await.map_err(|e| CryptoError::authentication_error(&e.to_string()))?;
-        user.crypto.key.encrypt_auth(plaintext, additional_data)
-    }
-
-    /// Decrypt payload data with per-user session key.
-    pub(crate) async fn decrypt_payload(&mut self, identity: &T, ciphertext: DynamicByteBuffer, additional_data: Option<&DynamicByteBuffer>) -> Result<DynamicByteBuffer, CryptoError> {
-        let user = self.users.get_mut(identity).await.map_err(|e| CryptoError::authentication_error(&e.to_string()))?;
-        user.crypto.key.decrypt_auth(ciphertext, additional_data)
-    }
-
     /// Overhead added by tailor encryption.
     #[inline]
     pub(crate) fn tailor_overhead() -> usize {
