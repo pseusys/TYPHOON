@@ -1,10 +1,9 @@
-use rand::RngCore;
-use rand::rngs::OsRng;
-use rand::CryptoRng;
 #[cfg(feature = "client")]
 use rand::Rng;
 #[cfg(test)]
 use rand::SeedableRng;
+use rand::rngs::OsRng;
+use rand::{CryptoRng, RngCore};
 
 use crate::bytes::FixedByteBuffer;
 
@@ -132,11 +131,7 @@ pub fn clear_test_rng() {
 pub fn get_rng() -> TyphoonRng {
     #[cfg(test)]
     {
-        let forked = TEST_RNG.with(|r| {
-            r.borrow_mut().as_mut().map(|rng| {
-                rand::rngs::StdRng::seed_from_u64(rng.next_u64())
-            })
-        });
+        let forked = TEST_RNG.with(|r| r.borrow_mut().as_mut().map(|rng| rand::rngs::StdRng::seed_from_u64(rng.next_u64())));
         if let Some(seeded) = forked {
             return TyphoonRng::Seeded(seeded);
         }

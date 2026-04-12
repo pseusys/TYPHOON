@@ -259,8 +259,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     /// Perform the handshake and start the background health check timer.
     /// Must be called exactly once, after the background receive loop is running.
     pub async fn perform_handshake(&self) {
-        let mut response_rx = self.state.lock().await.response_rx.take()
-            .expect("perform_handshake() must be called exactly once");
+        let mut response_rx = self.state.lock().await.response_rx.take().expect("perform_handshake() must be called exactly once");
         let handshake_factor = self.settings.get(&HANDSHAKE_NEXT_IN_FACTOR);
         let initial_server_next_in = self.do_handshake(&mut response_rx, handshake_factor).await;
 
@@ -374,11 +373,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     }
 
     /// Perform the client handshake exchange with retry logic.
-    async fn do_handshake(
-        &self,
-        response_rx: &mut WatchReceiver<HealthResponse<T>>,
-        handshake_factor: f64,
-    ) -> Option<u32> {
+    async fn do_handshake(&self, response_rx: &mut WatchReceiver<HealthResponse<T>>, handshake_factor: f64) -> Option<u32> {
         loop {
             let (packet, next_in) = {
                 let mut st = self.state.lock().await;

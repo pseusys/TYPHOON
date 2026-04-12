@@ -2,12 +2,17 @@
 #[path = "../../tests/cache/value.rs"]
 mod tests;
 
+#[cfg(feature = "client")]
 use std::cell::UnsafeCell;
+#[cfg(feature = "client")]
 use std::marker::PhantomData;
+#[cfg(feature = "client")]
 use std::sync::{Arc, Weak};
 
+#[cfg(feature = "client")]
 use arc_swap::ArcSwap;
 
+#[cfg(feature = "client")]
 use crate::cache::common::CacheError;
 
 /// Shared mutable value with lock-free reads.
@@ -20,7 +25,8 @@ use crate::cache::common::CacheError;
 /// shared-state update, at which point it is reset.
 ///
 /// `!Sync` by design: each instance must be driven from exactly one task at a time.
-pub struct SharedValue<T: Clone + Send + Sync> {
+#[cfg(feature = "client")]
+pub(crate) struct SharedValue<T: Clone + Send + Sync> {
     state: Arc<ArcSwap<T>>,
     /// Last pointer seen from `state`; used for staleness detection only.
     shared: Arc<T>,
@@ -29,10 +35,11 @@ pub struct SharedValue<T: Clone + Send + Sync> {
     _not_sync: PhantomData<UnsafeCell<()>>,
 }
 
+#[cfg(feature = "client")]
 impl<T: Clone + Send + Sync> SharedValue<T> {
     /// Create a new shared value.
     #[inline]
-    pub fn new(value: T) -> Self {
+    pub(crate) fn new(value: T) -> Self {
         let arc = Arc::new(value);
         SharedValue {
             state: Arc::new(ArcSwap::from(arc.clone())),
@@ -45,7 +52,7 @@ impl<T: Clone + Send + Sync> SharedValue<T> {
     /// Return a shared reference to the current value, refreshing the local cache if the shared
     /// state has been updated by a sibling.
     #[inline]
-    pub fn get(&mut self) -> &T {
+    pub(crate) fn get(&mut self) -> &T {
         self.refresh();
         &self.local
     }
@@ -53,14 +60,14 @@ impl<T: Clone + Send + Sync> SharedValue<T> {
     /// Return a mutable reference to the local cache copy, refreshing from shared state first if
     /// a sibling has called `set`. Mutations are local to this instance only and do not propagate.
     #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
+    pub(crate) fn get_mut(&mut self) -> &mut T {
         self.refresh();
         Arc::make_mut(&mut self.local)
     }
 
     /// Atomically publish `value` to all siblings and update this instance's local cache.
     #[inline]
-    pub fn set(&mut self, value: T) {
+    pub(crate) fn set(&mut self, value: T) {
         let arc = Arc::new(value);
         self.shared = arc.clone();
         self.local = arc.clone();
@@ -69,7 +76,7 @@ impl<T: Clone + Send + Sync> SharedValue<T> {
 
     /// Create another `SharedValue` pointing at the same shared state.
     #[inline]
-    pub fn create_sibling(&self) -> SharedValue<T> {
+    pub(crate) fn create_sibling(&self) -> SharedValue<T> {
         let current = self.state.load_full();
         SharedValue {
             state: Arc::clone(&self.state),
@@ -81,7 +88,7 @@ impl<T: Clone + Send + Sync> SharedValue<T> {
 
     /// Create a [`CachedValue`] that reads from this shared state but detects drops of the source.
     #[inline]
-    pub fn create_cache(&self) -> CachedValue<T> {
+    pub(crate) fn create_cache(&self) -> CachedValue<T> {
         let current = self.state.load_full();
         CachedValue {
             source: Arc::downgrade(&self.state),
@@ -108,7 +115,8 @@ impl<T: Clone + Send + Sync> SharedValue<T> {
 ///
 /// Staleness detection uses the same `shared` / `local` split as [`SharedValue`].
 /// `!Sync` by design.
-pub struct CachedValue<T: Clone + Send + Sync> {
+#[cfg(feature = "client")]
+pub(crate) struct CachedValue<T: Clone + Send + Sync> {
     source: Weak<ArcSwap<T>>,
     /// Last pointer seen from the source; used for staleness detection only.
     shared: Arc<T>,
@@ -117,25 +125,19 @@ pub struct CachedValue<T: Clone + Send + Sync> {
     _not_sync: PhantomData<UnsafeCell<()>>,
 }
 
+#[cfg(feature = "client")]
 impl<T: Clone + Send + Sync> CachedValue<T> {
-    /// Return a shared reference to the current value, or `Err` if the source was dropped.
-    #[inline]
-    pub fn get(&mut self) -> Result<&T, CacheError> {
-        self.refresh()?;
-        Ok(&self.local)
-    }
-
     /// Return a mutable reference to the local cache copy, or `Err` if the source was dropped.
     /// Mutations are local to this instance only.
     #[inline]
-    pub fn get_mut(&mut self) -> Result<&mut T, CacheError> {
+    pub(crate) fn get_mut(&mut self) -> Result<&mut T, CacheError> {
         self.refresh()?;
         Ok(Arc::make_mut(&mut self.local))
     }
 
     /// Create a sibling [`CachedValue`] pointing at the same source, or `Err` if dropped.
     #[inline]
-    pub fn create_sibling(&self) -> Result<CachedValue<T>, CacheError> {
+    pub(crate) fn create_sibling(&self) -> Result<CachedValue<T>, CacheError> {
         let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
         let current = source.load_full();
         Ok(CachedValue {

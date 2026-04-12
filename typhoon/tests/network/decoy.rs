@@ -4,10 +4,9 @@
 /// (replaced with `Weak<dyn DecoyFlowSender>`) so they are now nameable with two type params.
 /// Each test below exercises the full feed_input / feed_output path end-to-end.
 use futures::channel::oneshot;
-
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor};
-use typhoon::flow::decoy::{HeavyDecoyProvider, NoisyDecoyProvider, SmoothDecoyProvider, SparseDecoyProvider};
+use typhoon::flow::decoy::{DecoyCommunicationMode, HeavyDecoyProvider, NoisyDecoyProvider, SimpleDecoyProvider, SmoothDecoyProvider, SparseDecoyProvider};
 
 use super::common::{connect_with_decoy, default_settings, free_addr, setup_server};
 
@@ -16,10 +15,7 @@ use super::common::{connect_with_decoy, default_settings, free_addr, setup_serve
 /// Echo N messages through the server and assert round-trip correctness.
 async fn run_echo_burst<DP>(n: usize, provider_name: &str)
 where
-    DP: typhoon::flow::decoy::DecoyCommunicationMode<StaticByteBuffer, DefaultExecutor>
-        + Send
-        + Sync
-        + 'static,
+    DP: DecoyCommunicationMode<StaticByteBuffer, DefaultExecutor> + Send + Sync + 'static,
 {
     let settings = default_settings();
     let addr = free_addr();
@@ -72,12 +68,7 @@ async fn test_decoy_simple_burst() {
         let _ = tx.send(n);
     });
 
-    let socket = connect_with_decoy::<typhoon::flow::decoy::SimpleDecoyProvider, _>(
-        cert,
-        settings,
-        DefaultClientConnectionHandler,
-    )
-    .await;
+    let socket = connect_with_decoy::<SimpleDecoyProvider, _>(cert, settings, DefaultClientConnectionHandler).await;
     for i in 0..N {
         let msg = format!("burst-{:03}", i);
         socket.send_bytes(msg.as_bytes()).await.expect("send");
@@ -94,12 +85,7 @@ async fn test_decoy_payload_size_stable() {
     let settings = default_settings();
     let addr = free_addr();
     let (_listener, cert) = setup_server(addr, settings.clone()).await;
-    let socket = connect_with_decoy::<typhoon::flow::decoy::SimpleDecoyProvider, _>(
-        cert,
-        settings,
-        DefaultClientConnectionHandler,
-    )
-    .await;
+    let socket = connect_with_decoy::<SimpleDecoyProvider, _>(cert, settings, DefaultClientConnectionHandler).await;
     let first = socket.max_data_payload();
     let second = socket.max_data_payload();
     assert_eq!(first, second, "max_data_payload must be deterministic");

@@ -11,21 +11,33 @@
 //! | 8      | 8    | send_time | Send timestamp in milliseconds (big-endian u64) |
 //! | 16     | …    | padding   | Random-length zero padding (throughput phase only) |
 
+#[cfg(test)]
+#[path = "../tests/debug/mod.rs"]
+mod tests;
+
+use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures::future::{Either, select};
 use log::{debug, info, trace};
-use std::pin::pin;
 
+#[cfg(feature = "server")]
+use crate::bytes::ByteBuffer;
 use crate::bytes::StaticByteBuffer;
 use crate::certificate::ClientCertificate;
 use crate::defaults::{DefaultExecutor, DefaultSettings};
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use crate::flow::decoy::SimpleDecoyProvider;
+#[cfg(feature = "server")]
+use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 use crate::settings::keys;
 use crate::socket::{ClientSocket, ClientSocketBuilder};
 use crate::tailor::ClientConnectionHandler;
+#[cfg(feature = "server")]
+use crate::tailor::ServerConnectionHandler;
+#[cfg(feature = "server")]
+use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::sleep;
 use crate::utils::unix_timestamp_ms;
 
@@ -118,11 +130,8 @@ impl ClientConnectionHandler for DebugClientConnectionHandler {
 pub struct DebugServerConnectionHandler;
 
 #[cfg(feature = "server")]
-impl crate::tailor::ServerConnectionHandler<StaticByteBuffer> for DebugServerConnectionHandler {
+impl ServerConnectionHandler<StaticByteBuffer> for DebugServerConnectionHandler {
     fn generate(&self, _initial_data: &[u8]) -> StaticByteBuffer {
-        use crate::bytes::ByteBuffer;
-        use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
-        use crate::utils::random::{SupportRng, get_rng};
         StaticByteBuffer::from_slice(get_rng().random_byte_buffer::<DEFAULT_TYPHOON_ID_LENGTH>().slice())
     }
 
@@ -192,11 +201,7 @@ pub async fn run_debug(certificate: ClientCertificate, mode: DebugMode, settings
     // Use empty flow config for all addresses: fake body/header would prepend bytes that the
     // server's handshake parser cannot strip, causing a crypto overflow on decapsulation.
     let empty_config = FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![]));
-    let mut builder = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DebugClientConnectionHandler>::new(
-        certificate.clone(),
-        DebugClientConnectionHandler,
-    )
-    .with_settings(settings.clone());
+    let mut builder = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DebugClientConnectionHandler>::new(certificate.clone(), DebugClientConnectionHandler).with_settings(settings.clone());
     for &addr in certificate.addresses() {
         builder = builder.with_flow_config(addr, empty_config.clone());
     }
@@ -261,8 +266,7 @@ pub async fn run_debug(certificate: ClientCertificate, mode: DebugMode, settings
         let chunks_per_probe = probe_payload_size.div_ceil(max_data_payload);
         let total_echo_packets = probe_count * chunks_per_probe;
 
-        info!("debug probe: throughput phase — {} probe(s) × {}B payload, max_data_payload={}B → {} echo packet(s) expected",
-            probe_count, probe_payload_size, max_data_payload, total_echo_packets);
+        info!("debug probe: throughput phase — {} probe(s) × {}B payload, max_data_payload={}B → {} echo packet(s) expected", probe_count, probe_payload_size, max_data_payload, total_echo_packets);
 
         let mut probe_buf = make_probe(PHASE_THROUGHPUT, 0, probe_size);
         let start_ms = unix_timestamp_ms();
@@ -291,9 +295,7 @@ pub async fn run_debug(certificate: ClientCertificate, mode: DebugMode, settings
         }
 
         let elapsed_ms = unix_timestamp_ms().saturating_sub(start_ms);
-        info!("debug probe: throughput summary — sent {} UDP packet(s), received {} / {} echo(s) ({:.1}% delivery)",
-            result.packets_sent, result.packets_received, total_echo_packets,
-            100.0 * result.packets_received as f64 / total_echo_packets as f64);
+        info!("debug probe: throughput summary — sent {} UDP packet(s), received {} / {} echo(s) ({:.1}% delivery)", result.packets_sent, result.packets_received, total_echo_packets, 100.0 * result.packets_received as f64 / total_echo_packets as f64);
         if elapsed_ms > 0 && received_bytes > 0 {
             let bps = received_bytes as f64 / (elapsed_ms as f64 / 1000.0);
             result.throughput_bps = Some(bps);
@@ -302,77 +304,4 @@ pub async fn run_debug(certificate: ClientCertificate, mode: DebugMode, settings
     }
 
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Test: make_probe produces a buffer of the correct length with the expected header fields.
-    #[test]
-    fn test_make_probe_layout() {
-        let probe = make_probe(PHASE_REACHABILITY, 42, 0);
-        assert_eq!(probe.len(), PROBE_HEADER_SIZE, "probe with no extra padding must be exactly PROBE_HEADER_SIZE bytes");
-
-        let seq = u32::from_be_bytes(probe[0..4].try_into().unwrap());
-        assert_eq!(seq, 42, "sequence number must be at offset 0");
-
-        let phase = u32::from_be_bytes(probe[4..8].try_into().unwrap());
-        assert_eq!(phase, PHASE_REACHABILITY, "phase must be at offset 4");
-    }
-
-    // Test: make_probe with extra padding produces PROBE_HEADER_SIZE + extra bytes.
-    #[test]
-    fn test_make_probe_with_padding() {
-        let probe = make_probe(PHASE_THROUGHPUT, 1, 100);
-        assert_eq!(probe.len(), PROBE_HEADER_SIZE + 100);
-    }
-
-    // Test: stamp_probe updates sequence number without changing the phase.
-    #[test]
-    fn test_stamp_probe_updates_sequence() {
-        let mut probe = make_probe(PHASE_RETURN_TIME, 0, 0);
-        stamp_probe(&mut probe, 99);
-
-        let seq = u32::from_be_bytes(probe[0..4].try_into().unwrap());
-        assert_eq!(seq, 99, "stamp_probe must update sequence number");
-
-        let phase = u32::from_be_bytes(probe[4..8].try_into().unwrap());
-        assert_eq!(phase, PHASE_RETURN_TIME, "stamp_probe must not modify phase field");
-    }
-
-    // Test: parse_send_time extracts a plausible timestamp from a freshly made probe.
-    #[test]
-    fn test_parse_send_time_roundtrip() {
-        let probe = make_probe(PHASE_RETURN_TIME, 0, 0);
-        let send_time = parse_send_time(&probe);
-        assert!(send_time.is_some(), "parse_send_time must succeed for a valid probe");
-        assert!(send_time.unwrap() > 0, "send_time must be nonzero");
-    }
-
-    // Test: parse_send_time returns None for a buffer that is too short.
-    #[test]
-    fn test_parse_send_time_too_short() {
-        assert!(parse_send_time(&[0u8; 7]).is_none(), "must return None when buffer is shorter than 16 bytes");
-    }
-
-    // Test: DebugMode flag methods enable exactly the expected phases.
-    #[test]
-    fn test_debug_mode_flags() {
-        assert!(DebugMode::Reachability.run_reachability());
-        assert!(!DebugMode::Reachability.run_rtt());
-        assert!(!DebugMode::Reachability.run_throughput());
-
-        assert!(!DebugMode::ReturnTime.run_reachability());
-        assert!(DebugMode::ReturnTime.run_rtt());
-        assert!(!DebugMode::ReturnTime.run_throughput());
-
-        assert!(!DebugMode::Throughput.run_reachability());
-        assert!(!DebugMode::Throughput.run_rtt());
-        assert!(DebugMode::Throughput.run_throughput());
-
-        assert!(DebugMode::All.run_reachability());
-        assert!(DebugMode::All.run_rtt());
-        assert!(DebugMode::All.run_throughput());
-    }
 }

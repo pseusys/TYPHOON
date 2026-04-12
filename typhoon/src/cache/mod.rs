@@ -2,6 +2,7 @@ mod common;
 mod map;
 mod value;
 
-pub use common::CacheError;
-pub use map::{CachedMap, CachedMapEntry, CachedMapEntryTemplate, SharedMap};
-pub use value::{CachedValue, SharedValue};
+pub(crate) use common::CacheError;
+pub(crate) use map::{CachedMap, CachedMapEntryTemplate, SharedMap};
+#[cfg(feature = "client")]
+pub(crate) use value::{CachedValue, SharedValue};

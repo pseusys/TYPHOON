@@ -27,6 +27,36 @@ Still, the protocol partly facilitates this goal by providing a health checking 
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    subgraph Client
+        direction TB
+        CSB["ClientSocketBuilder"] -->|build| CS["ClientSocket"]
+        CS --> CSM["SessionManager"]
+        CS --> CFM1["FlowManager → addr 1"]
+        CS --> CFM2["FlowManager → addr 2"]
+        CSM --> CHCP["HealthCheckProvider"]
+        CFM1 --> CDP1["DecoyProvider"]
+        CFM2 --> CDP2["DecoyProvider"]
+    end
+
+    subgraph Server
+        direction TB
+        LB["ListenerBuilder"] -->|build + start| L["Listener"]
+        L --> SFM1["FlowManager :port 1"]
+        L --> SFM2["FlowManager :port 2"]
+        SFM1 --> SDP1["DecoyProvider (per user)"]
+        SFM2 --> SDP2["DecoyProvider (per user)"]
+        L --> SSM1["SessionManager (User A)"]
+        L --> SSM2["SessionManager (User B)"]
+        SSM1 --> SHCP1["HealthCheckProvider"]
+        SSM2 --> SHCP2["HealthCheckProvider"]
+    end
+
+    CFM1 <-->|UDP| SFM1
+    CFM2 <-->|UDP| SFM2
+```
+
 Every TYPHOON server or client consists of two separate parts: a session manager and a flow manager.
 The session manager is responsible for maintaining the protocol state, encryption, and health checks — but it does not own any physical resources.
 The flow manager is responsible for packet datagram flow obfuscation — one flow manager owns one UDP port.
@@ -37,6 +67,16 @@ In that case, a client can select any number of these "proxies" to use and creat
 While it is technically possible for client flow managers to operate using different IP addresses as well, the practicality of this in the real world remains questionable.
 
 ## Packet structure
+
+```text
+ ◄──────────────── wire packet (left = start) ───────────────────►
+
+ ┌───────────────┬───────────────┬───────────────────┬─────────────┐
+ │   Fake Body   │  Fake Header  │ Encrypted Payload │  Encrypted  │
+ │   see below   │   see below   │ (data/hs packets) │   Tailor    │
+ │  (optional)   │  (optional)   │    variable len   │  fixed len  │
+ └───────────────┴───────────────┴───────────────────┴─────────────┘
+```
 
 There are two types of packets in the TYPHOON protocol: real packets and decoy packets.
 Real packets contain a payload and a header; they are either processed or generated (in the case of health check packets) by the session manager.
@@ -55,7 +95,15 @@ Fake header and fake body structures are selected either randomly upon flow mana
 ### Tailor structure
 
 The tailor should always be positioned _at the very end_ of a TYPHOON packet.
-The tailor structure consists of the following fields:
+The tailor structure consists of the following fields (total: `16 + TYPHOON_ID_LENGTH` bytes):
+
+```text
+ Byte offset →   0    1    2         5    6              13   14   15   16 …
+                 ┌────┬────┬────────────┬────────────────┬────────┬──────────┐
+                 │ FG │ CD │  TM (4 B)  │   PN (8 B)     │ PL(2B) │ ID (N B) │
+                 │flag│code│  next_in   │packet number   │pay.len │identity  │
+                 └────┴────┴────────────┴────────────────┴────────┴──────────┘
+```
 
 | Field code | Field name | Byte length | Production meaning | Debug meaning |
 | --- | --- | --- | --- | --- |
@@ -137,6 +185,27 @@ That is why each server flow manager should maintain its own client-to-address m
 
 ### Data packets
 
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant SM as SessionManager
+    participant FM as FlowManager
+
+    App->>SM: send(payload)
+    SM->>SM: Encrypt payload (session key)
+    SM->>SM: Build tailor (flags=DATA, PN, ID)
+    SM->>FM: deliver(body ∥ tailor)
+    FM->>FM: Prepend FakeHeader + FakeBody
+    FM-->>FM: UDP datagram sent
+
+    FM-->>FM: receive UDP datagram
+    FM->>FM: Strip FakeHeader + FakeBody
+    FM->>FM: Decrypt tailor → verify identity + PN
+    FM-->>SM: deliver(body)
+    SM->>SM: Decrypt body (session key)
+    SM-->>App: recv() → plaintext payload
+```
+
 The simplest pattern affects data packets: they are sent directly and completely, without any delays, jitter, splitting or combination - as soon as possible, providing maximum efficiency.
 
 > NB! This behavior _might_ be changed using custom [decoy communication mode](#communication-mode): some [decoy providers](#insertion-and-processing) are allowed to intercept and "hold" data packets for some time, but that is highly discouraged in performance-critical scenarios.
@@ -144,6 +213,36 @@ The simplest pattern affects data packets: they are sent directly and completely
 Just like it has already been described in [packet structure](#packet-structure) section, every data packet is encrypted, prefixed with a [fake header](#fake-header) and postfixed with an [encrypted tailor](#tailor-structure).
 
 ### Handshake packets
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+
+    Note over C: Generate CliNnc (random nonce)
+    Note over C: Generate ephemeral X25519 keypair (CliEphPubKey, CliEphSecKey)
+    Note over C: KEM encapsulate with EPK → Ciph, CliShrSec
+    Note over C: Obfuscate CliEphPubKey and Ciph using OBFS/OPK + CliNnc
+    Note over C: Encrypt initial data with BLAKE3(CliShrSec ∥ CliEphPubKeyObf ∥ CliNnc)
+    C->>S: ClientHandshake(CliEphPubKeyObf ∥ CiphObf ∥ CliNnc ∥ EncInitData)
+
+    Note over S: Deobfuscate → CliEphPubKey, Ciph
+    Note over S: KEM decapsulate with ESK → CliShrSec
+    Note over S: Decrypt initial data → generate identity
+    Note over S: Generate SrvNnc, ephemeral X25519 keypair
+    Note over S: X25519(SrvEphSecKey, CliEphPubKey) → SrvShrSec
+    Note over S: Trans = BLAKE3(CliShrSec ∥ SrvShrSec ∥ CliNnc ∥ SrvNnc)
+    Note over S: Sign Trans with VSK → TransAuth
+    Note over S: Sess = BLAKE3("session key" ∥ CliShrSec ∥ SrvShrSec ∥ Trans)
+    Note over S: Obfuscate SrvEphPubKey using OBFS/OPK + SrvNnc
+    S-->>C: ServerHandshake(SrvEphPubKeyObf ∥ TransAuth ∥ SrvNnc ∥ EncInitData)
+
+    Note over C: Deobfuscate → SrvEphPubKey
+    Note over C: X25519(CliEphSecKey, SrvEphPubKey) → SrvShrSec
+    Note over C: Verify TransAuth with VPK
+    Note over C: Sess = BLAKE3("session key" ∥ CliShrSec ∥ SrvShrSec ∥ Trans)
+    Note over C: Session established ✓
+```
 
 The TYPHOON protocol relies on a two-way handshake that closely resembles those of the OBFS4 and NTORv3 protocols.
 There is no reason to wait for a third packet from the client (TCP-style), as it is not possible to overload the server with partially-initialized sessions if [initial handshake data is used correctly](#initial-data-handling).
@@ -172,6 +271,22 @@ The internal state is designed to be as simple as possible in order to preserve 
 The state itself is dictated by client, and the server simply follows it.
 
 #### Decay cycle
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+
+    loop Decay cycle
+        C->>S: HealthCheck(PN = unix_ts ∥ counter, TM = next_in)
+        Note over S: Remember PN, wait next_in ms
+        Note over S: (attempt shadowride on outgoing data packet)
+        S-->>C: HealthCheck(PN = remembered, TM = next_in')
+        Note over C: Verify PN matches, wait next_in' ms
+        Note over C: (attempt shadowride on outgoing data packet)
+    end
+    Note over C,S: No response after TYPHOON_MAX_RETRIES → connection decays
+```
 
 Health checking cycle is also hereinafter called "decay" cycle.
 The decay behavior is mostly defined by [**TM** and **PN** fields of the tailor](#tailor-structure).
@@ -424,6 +539,45 @@ Since it is used for the majority of all data transferred, the requirements for 
 2. `hardware` mode is only suitable for the systems with AES hardware acceleration hardware installed, it uses [AES-GCM-256](https://en.wikipedia.org/wiki/Galois/Counter_Mode) cipher.
 
 > All the cryptography primitives mentioned here are referenced once again in the [supporting math](#supporting-math) chapter.
+
+#### Encryption path (outgoing packet)
+
+```mermaid
+flowchart TD
+    A([User data bytes]) --> B[encrypt_payload\nAEAD — XChaCha20-Poly1305 or AES-GCM-256\nwith session key + random nonce]
+    B --> C[ciphertext ‖ auth-tag]
+    C --> D[Write DATA Tailor\nflags · code · time · PN · payload_length · identity]
+
+    D --> FM{Feature mode}
+    FM -- fast_software / fast_hardware --> E1[Stream-cipher obfuscate tailor\nXChaCha20 or AES-256-CTR\nusing OBFS key]
+    E1 --> E2[Append BLAKE3 MAC\nover obfuscated tailor]
+    FM -- full_software / full_hardware --> F1[Ephemeral X25519 key-exchange\nwith server long-term OPK]
+    F1 --> F2[Anonymous-encrypt tailor\nAEAD with derived key]
+
+    E2 --> G[Flow layer: prepend FakeHeader ‖ FakeBody]
+    F2 --> G
+    G --> H([UDP socket · send])
+```
+
+#### Decryption path (incoming packet)
+
+```mermaid
+flowchart TD
+    A([UDP socket · recv]) --> B[Flow layer: strip FakeHeader ‖ FakeBody]
+    B --> TM{Feature mode}
+    TM -- fast_software / fast_hardware --> C1[BLAKE3 verify MAC\nover obfuscated tailor]
+    C1 --> C2[Stream-cipher deobfuscate tailor\nXChaCha20 or AES-256-CTR\nusing OBFS key]
+    TM -- full_software / full_hardware --> D1[Ephemeral X25519 key-exchange\nwith server static OSK]
+    D1 --> D2[Anonymous-decrypt tailor\nAEAD with derived key]
+
+    C2 --> E[Parse Tailor fields\nflags · identity · payload_length · PN]
+    D2 --> E
+    E --> F{flags}
+    F -- DATA or SHADOWRIDE --> G[Slice ciphertext via payload_length\ndecrypt_payload with session AEAD key]
+    G --> H([Plaintext delivered to application])
+    F -- HEALTH_CHECK only --> I([Feed to HealthProvider])
+    F -- TERMINATION --> J([Session teardown])
+```
 
 ### Handshake encryption
 
@@ -800,8 +954,6 @@ The sample valid **CD** values are given below:
 - `2`: Connection decayed (health check exchange timed out after all retries).
 - `101`: Unknown error (some error happened indeed, but it is not clear which one exactly).
 
-TODO! Other proposed implementation details worth mentioning.
-
 ### Constants and defaults
 
 The constant default values were selected from experience.
@@ -955,36 +1107,87 @@ The crate defines the following features:
 
 The default features are: `fast_software`, `server`, `client`, `tokio`.
 
-### Buffer Pool
+### Bytes and buffer pool
 
-The `BytePool` provides reusable byte buffers to reduce allocation overhead in high-throughput scenarios.
-Buffers are automatically returned to the pool when dropped.
-The pool has a maximum size limit - excess buffers are freed instead of pooled, preventing unbounded memory growth during traffic spikes.
+Every payload that travels through the protocol lives in a `DynamicByteBuffer` — a view into a backing allocation managed by `BytePool`.
+`DynamicByteBuffer` carries three regions: a `before_cap` prefix, the live data window, and an `after_cap` suffix.
+Flow managers use `before_cap` to prepend fake headers and fake bodies without copying the payload, and `after_cap` to append the encrypted tailor.
 
-Key features:
+`BytePool` allocates from a fixed-size LIFO free-list (`PoolStorage`), falling back to a fresh heap allocation when the list is empty.
+Buffers are returned to the pool automatically via `Drop` on the inner `BufferHolder`.
+Pool dimensions — prefix/suffix capacity, initial fill, and maximum pooled count — are set once in `SettingsBuilder::with_pool`.
 
-- Thread-safe allocation and deallocation
-- Configurable header/trailer space for protocol framing
-- LIFO reuse for better cache locality
-- Bounded pool size with automatic overflow handling
+Also provided are:
 
-### Crypto Module
+- **`FixedByteBuffer<N>`**: stack-allocated constant-size buffer; used for keys, nonces, and identities.
+- **`StaticByteBuffer`**: heap `Arc<[u8]>` buffer; used for certificates and test fixtures.
 
-The `crypto` module implements the cryptographic primitives for TYPHOON protocol as specified in the [Cryptography](#cryptography) section.
+### Cache
 
-Key components:
+The `cache` module provides two snapshot-based primitives that allow multiple consumers to read shared state with no locking on the hot path:
 
-- **symmetric.rs**: Authenticated encryption (XChaCha20-Poly1305 or AES-GCM-256) and anonymous stream cipher for obfuscation
-- **asymmetric.rs**: Handshake encryption using Classic McEliece KEM, X25519 key exchange, and Ed25519 signatures
+- **`SharedValue<T>` / `CachedValue<T>`**: single-value variant. `SharedValue` holds the authoritative copy; each `CachedValue` is a local snapshot that stays valid until the shared version ticks.  Used by `ClientCryptoTool` to propagate the session key to all flow managers the moment it is established.
+- **`SharedMap<K, V>` / `CachedMap<K, V>` / `CachedMapEntryTemplate<K, V>` / `CachedMapEntry<K, V>`**: map variant. The `SharedMap` is the mutable master (write-locked for inserts/removes); `CachedMap` and `CachedMapEntry` carry per-thread snapshots that are refreshed lazily on version mismatch. `CachedMapEntryTemplate` pins a single key so that the per-packet read path avoids a hash lookup entirely.
 
-Cipher modes:
+This design means that every flow manager direction (send / receive) holds its own local copy of the user table, refreshed without a lock when the global version changes.
 
-- `software` feature: XChaCha20-Poly1305 (24-byte nonce) for systems without hardware acceleration
-- `hardware` feature: AES-GCM-256 (16-byte nonce) for systems with AES-NI support
-- `fast` feature: Symmetric key obfuscation with dual authentication (AEAD + BLAKE3)
-- `full` feature: Asymmetric key obfuscation using X25519 ephemeral exchange
+### Crypto module
 
-TODO! Other implementation details.
+The `crypto` module implements all cryptographic primitives described in the [Cryptography](#cryptography) section.
+
+**Symmetric layer** (`symmetric.rs`) provides:
+
+- `Symmetric` — wraps the feature-selected AEAD cipher (XChaCha20-Poly1305 or AES-GCM-256). `encrypt_auth` / `decrypt_auth` for authenticated payload encryption; `decrypt_no_verify` + `verify_decrypted` for the two-step fast-mode tailor path.
+- `encrypt_anonymously` / `decrypt_anonymously` — unauthenticated stream cipher (XChaCha20 or AES-256-CTR) used to obfuscate public keys in the handshake and in full-mode tailor encryption.
+
+**Asymmetric layer** (`asymmetric.rs`) provides handshake encapsulation/decapsulation:
+
+- `ClientCertificate::encapsulate_handshake_client` / `decapsulate_handshake_client`.
+- `ServerSecret::decapsulate_handshake_server` / `encapsulate_handshake_server`.
+
+**Tool layer**:
+
+- `ClientCryptoTool<T>` — client-side per-flow handle. Holds the session cipher via a `CachedValue` so the key upgrade after handshake is visible to all flows with no locking. Obfuscates client-to-server tailors and decrypts server-to-client tailors.
+- `ServerCryptoTool<T>` — server-side per-flow handle. Holds two `CachedMapEntryTemplate` snapshots (send and receive directions) over the shared user table. Deobfuscates client-to-server tailors, verifies incremental packet numbers, and encrypts server-to-client tailors.
+- `UserCryptoState` / `UserServerState` — per-session key material. Created at handshake time with the initial key and upgraded in-place to the session key by calling `upgrade_crypto` after the handshake response is sent.
+
+### Tailor module
+
+The `tailor` module provides the `Tailor<T>` struct — a strongly-typed view over the fixed-size plaintext bytes at the end of every wire packet — and the `IdentityType`, `ServerConnectionHandler`, `ClientConnectionHandler` extension traits.
+
+`Tailor` constructors (`data`, `health_check`, `shadowride`, `handshake`, `decoy`, `termination`, `debug_probe`) write the appropriate flag byte, code, time, packet number, payload length, and identity into a pre-allocated `DynamicByteBuffer` in one pass with no copies.
+Getters (`flags`, `code`, `time`, `packet_number`, `payload_length`, `identity`) read directly from the buffer view.
+
+`PacketFlags` is a `bitflags!` struct; the composite `is_shadowride()` predicate detects the `HEALTH_CHECK | DATA` combination.
+`ReturnCode` is a `u8`-backed enum covering the four protocol-defined codes.
+
+### Flow and decoy module
+
+The `flow` module owns the UDP send/receive paths and decoy injection.
+
+`ClientFlowManager<T, AE, DP>` holds one UDP socket (connected to a server address) and one `DecoyProvider`.
+Its send path prepends fake body + fake header and appends the encrypted tailor before writing to the socket.
+Its receive path strips those same regions after reading from the socket.
+
+`ServerFlowManager<T, AE, DP>` manages a pool of `SO_REUSEPORT` sockets and a per-client address table (`Arc<RwLock<HashMap<T, SocketAddr>>>`).
+The address table is updated lock-free on authenticated packets (read-first, write only on change) to avoid stalling the receive path.
+
+Both managers delegate tailor encryption/decryption to a `FlowCryptoProvider` implementation (`ClientCryptoTool` or `ServerCryptoTool`), keeping the flow layer agnostic to the crypto mode.
+
+Decoy providers implement `DecoyCommunicationMode` and run as independent background tasks attached to a flow manager.
+They observe the real traffic via callbacks and inject decoy packets into the same send queue.
+
+### Session module
+
+The `session` module owns session lifecycle, health checks, and the user-visible data pipe.
+
+`ClientSessionManager` drives the handshake (via `ClientCryptoTool`), multiplexes outgoing data packets across the available flow managers, and receives decrypted payloads from them.
+It is built with a `SharedValue<ClientCryptoTool>` so that the live session key is shared across all flows.
+
+`ServerSessionManager` is created per accepted client inside `Listener::handle_new_client`.
+It holds two `CachedMapEntryTemplate` snapshots (send/receive) over the global `SharedMap<T, UserServerState>`, a lock-free `AtomicBitSet` of active flow indices, and a monotonic `AtomicU32` packet counter.
+
+Both session types delegate health-check timing to a dedicated provider (`ClientHealthProvider` / `ServerHealthProvider`) that runs as an independent spawned task, communicating via a `WatchSender<(next_in, pn)>` channel.
 
 ### Certificate file format
 
@@ -1076,23 +1279,157 @@ The binary file format is documented in [Certificate file format](#certificate-f
 
 ## Development
 
-Build rust crate with this command (in `./typhoon` directory):
+All commands should be run from inside the `./typhoon` directory.
+
+### Feature sets
+
+Two primary feature configurations are used for development and testing:
+
+| Name | Features | Typical use |
+| --- | --- | --- |
+| Default (fast + software + tokio) | `fast_software`, `server`, `client`, `tokio` | Development, CI, most machines |
+| Full hardware + async-std | `full_hardware`, `server`, `client`, `async-std` | AES-NI systems, alternative runtime |
+
+Optional features:
+
+- `debug` — enables `DebugMode`, `run_debug`, and `DebugServerConnectionHandler` (requires `client` + `server`).
+- `clap` — enables the `typhoon-gen-key` CLI binary argument parser.
+
+### Build
 
 ```shell
+# Default features (fast_software + tokio)
 cargo build
+
+# Full hardware + async-std
+cargo build --no-default-features --features "full_hardware,server,client,async-std"
+
+# With debug tooling
+cargo build --features debug
+
+# Release build
+cargo build --release
 ```
 
-Test rust code with this command (in `./typhoon` directory):
+### Test
 
 ```shell
+# Default features
 cargo test -- --nocapture
+
+# Full hardware + async-std (network tests require tokio; use tokio even with async-std runtime here)
+cargo test --no-default-features --features "full_hardware,server,client,tokio" -- --nocapture
 ```
 
-Format rust code with this command (in `./typhoon` directory):
+### Format and lint
 
 ```shell
+# Format
 cargo fmt
+
+# Check formatting without modifying files
+cargo fmt --check
+
+# Lint
+cargo clippy
+cargo clippy --no-default-features --features "full_hardware,server,client,async-std"
 ```
+
+### Coverage
+
+```shell
+# Requires cargo-llvm-cov: cargo install cargo-llvm-cov
+cargo llvm-cov --features "fast_software,server,client,tokio,debug"
+cargo llvm-cov --no-default-features --features "full_hardware,server,client,tokio,debug"
+```
+
+### Examples
+
+All examples start an in-process server and client and require no external setup.
+
+```shell
+# Basic request–response round trip
+cargo run --example hello_world
+
+# Multiple server flow managers
+cargo run --example multi_flow
+
+# Multiple simultaneous clients
+cargo run --example multi_client
+
+# Long-running session with repeated health-check cycles
+cargo run --example long_session
+
+# Debug probe (reachability, RTT, throughput) — requires the debug feature
+cargo run --example debug_probe --features debug
+```
+
+### Binaries
+
+#### `typhoon-gen-key`
+
+Generates a server key pair and optionally a client certificate. Requires the `server` and `clap` features.
+
+```shell
+cargo build --bin typhoon-gen-key --features "server,clap"
+
+# Generate server key pair only
+./target/debug/typhoon-gen-key server.key
+
+# Generate server key pair and a client certificate with one embedded address
+./target/debug/typhoon-gen-key server.key --cert client.cert --addr 127.0.0.1:19999
+
+# Multiple addresses
+./target/debug/typhoon-gen-key server.key --cert client.cert --addr 203.0.113.1:19999 --addr 203.0.113.2:19999
+
+# Override a protocol constant
+./target/debug/typhoon-gen-key server.key --set TYPHOON_MAX_RETRIES=5
+```
+
+#### `typhoon-debug`
+
+Runs diagnostic probes against a live TYPHOON server. Requires the `debug` feature (which implies `client` and `server`).
+
+```shell
+cargo build --bin typhoon-debug --features debug
+
+# Run all phases (reachability, RTT, throughput)
+./target/debug/typhoon-debug client.cert
+
+# Run a single phase
+./target/debug/typhoon-debug client.cert reachability
+./target/debug/typhoon-debug client.cert rtt
+./target/debug/typhoon-debug client.cert throughput
+```
+
+### Settings overrides
+
+All `TYPHOON_*` protocol constants can be overridden at runtime through environment variables:
+
+```shell
+TYPHOON_MAX_RETRIES=5 TYPHOON_TIMEOUT_DEFAULT=10000 cargo run --example hello_world
+```
+
+They can also be set programmatically via `SettingsBuilder`:
+
+```rust
+let settings = Arc::new(
+    SettingsBuilder::<DefaultExecutor>::new()
+        .set(&keys::MAX_RETRIES, 5)
+        .set(&keys::TIMEOUT_DEFAULT, 10_000)
+        .build()
+        .expect("valid settings"),
+);
+```
+
+### Design choices
+
+- **Rust 2024 edition** with `async fn` in traits (RPITIT) — no `async_trait` macro needed.
+- **Runtime agnostic**: async primitives are abstracted behind `AsyncExecutor` and the wrappers in `utils/sync.rs`; switching between `tokio` and `async-std` requires only a feature flag.
+- **Zero-copy by design**: payload bytes travel as views over pooled `ByteBuffer`s from allocation to the UDP socket; copies are introduced only at system boundaries (user API and OS socket calls).
+- **Lock-free hot paths**: per-packet paths use `CachedMap` snapshots (wait-free reads) and `AtomicBitSet` for active-flow tracking; `Mutex`/`RwLock` is confined to session lifecycle operations (handshake, teardown).
+- **Generics over `dyn`**: `DecoyCommunicationMode`, `IdentityType`, `AsyncExecutor`, and connection handlers are all template parameters, enabling the compiler to monomorphize and inline the hot path with zero virtual dispatch overhead.
+- **`#[cfg]` at item level**: feature gating is applied to imports, types, fields, and function signatures — not to code inside function bodies — keeping individual functions readable under any feature combination.
 
 ## Future work
 
@@ -1147,5 +1484,13 @@ Furthermore, the algorithm should be resistant to adversarial path degradation p
 
 ### Isolated flow managers
 
-TODO! Server could support other flow managers residing in other processes or on other devices even, in that case communication and synchronisation of the server with these managers should become the biggest concern. In a standard mode, their lifetime should match: flow managers should be guaranteed alive while server is alive, so that all user certificates are always valid. However, as an edge case for unreliable networks, the design with initial data carrying addresses of currently active flow managers (described in "Initial data handling") can be used; in that case a functionality of tuntime plugging/unplugging of the flow managers to a running server will have to be implemented.
+In the current design, all server flow managers must share the same process lifetime as the listener, and their network addresses are embedded statically in every client certificate.
+This guarantees that all issued certificates remain valid for as long as the server is running, but it prevents runtime changes to the set of active flow managers.
 
+A more dynamic design could allow flow managers to reside in separate processes or on separate machines, communicating with the central listener over a well-defined internal protocol.
+In this model the listener would need to track which flow managers are online, propagate session key material and address-rebinding events to them, and deal with flow managers appearing or disappearing while sessions are active.
+Certificates in such a setup could either embed a stable relay address (the listener itself) and advertise proxy addresses dynamically through server initial data (see [Initial data handling](#initial-data-handling)), or keep the static certificate model with more frequent certificate rotation.
+
+**The challenge**: Dynamic plug/unplug of flow managers while sessions are live requires atomic consistency guarantees between the session state (held by the listener) and the per-flow address tables.
+Any message routed to a flow manager that has just gone offline must be either retried on another flow or transparently dropped, while avoiding split-brain scenarios where the listener believes a flow is active but packets are silently lost.
+The synchronization protocol, failure detection timeout, and certificate invalidation strategy all need careful co-design to keep the overall system both correct and efficient.

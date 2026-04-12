@@ -1,22 +1,20 @@
-use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
+use std::sync::{Arc, LazyLock, Mutex as StdMutex};
+use std::time::Duration;
 
-use std::sync::LazyLock;
+use tokio::time::timeout;
 
-use crate::bytes::{DynamicByteBuffer, StaticByteBuffer};
+use super::{ClientHealthProvider, HealthState};
+use crate::bytes::{DynamicByteBuffer, FixedByteBuffer, StaticByteBuffer};
 use crate::cache::SharedValue;
-use crate::bytes::FixedByteBuffer;
 use crate::certificate::ServerKeyPair;
 use crate::crypto::ClientCryptoTool;
 use crate::defaults::{DefaultClientConnectionHandler, DefaultExecutor};
 use crate::session::SessionControllerError;
 use crate::session::common::SessionManager;
-use crate::settings::{Settings, SettingsBuilder, keys};
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
+use crate::settings::{Settings, SettingsBuilder, keys};
 use crate::tailor::{PacketFlags, Tailor};
-use crate::utils::sync::{create_watch, WatchReceiver};
-
-use super::{ClientHealthProvider, HealthState};
+use crate::utils::sync::{WatchReceiver, create_watch};
 
 // ── Cached test key material (McEliece keygen is expensive) ──────────────────
 
@@ -36,17 +34,7 @@ fn make_test_crypto_tool() -> SharedValue<ClientCryptoTool<StaticByteBuffer>> {
 }
 
 fn fast_settings() -> Arc<Settings<DefaultExecutor>> {
-    Arc::new(
-        SettingsBuilder::new()
-            .set(&keys::TIMEOUT_MIN, 5u64)
-            .set(&keys::TIMEOUT_DEFAULT, 10u64)
-            .set(&keys::TIMEOUT_MAX, 20u64)
-            .set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 21u64)
-            .set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 100u64)
-            .set(&keys::MAX_RETRIES, 3u64)
-            .build()
-            .unwrap(),
-    )
+    Arc::new(SettingsBuilder::new().set(&keys::TIMEOUT_MIN, 5u64).set(&keys::TIMEOUT_DEFAULT, 10u64).set(&keys::TIMEOUT_MAX, 20u64).set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 21u64).set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 100u64).set(&keys::MAX_RETRIES, 3u64).build().unwrap())
 }
 
 /// Minimal session manager that records sent packets and can optionally fail.
@@ -57,12 +45,18 @@ struct MockSessionManager {
 
 impl MockSessionManager {
     fn new() -> Arc<Self> {
-        Arc::new(Self { sent: StdMutex::new(vec![]), fail: false })
+        Arc::new(Self {
+            sent: StdMutex::new(vec![]),
+            fail: false,
+        })
     }
 
     #[allow(dead_code)]
     fn failing() -> Arc<Self> {
-        Arc::new(Self { sent: StdMutex::new(vec![]), fail: true })
+        Arc::new(Self {
+            sent: StdMutex::new(vec![]),
+            fail: true,
+        })
     }
 }
 
@@ -84,25 +78,11 @@ type TestHealthResponse = (u32, u128, Option<DynamicByteBuffer>, Option<StaticBy
 
 /// Build a ClientHealthProvider and return it together with the shadowride receiver.
 /// Tests that need to observe the response channel call `provider.response_tx.subscribe()`.
-fn make_provider(
-    mgr: Arc<MockSessionManager>,
-    settings: Arc<Settings<DefaultExecutor>>,
-) -> (
-    ClientHealthProvider<StaticByteBuffer, DefaultExecutor, MockSessionManager, DefaultClientConnectionHandler>,
-    WatchReceiver<()>,
-) {
+fn make_provider(mgr: Arc<MockSessionManager>, settings: Arc<Settings<DefaultExecutor>>) -> (ClientHealthProvider<StaticByteBuffer, DefaultExecutor, MockSessionManager, DefaultClientConnectionHandler>, WatchReceiver<()>) {
     let crypto = make_test_crypto_tool();
     let (response_tx, response_rx) = create_watch::<TestHealthResponse>();
     let (shadowride_tx, shadowride_rx) = create_watch::<()>();
-    let provider = ClientHealthProvider::new(
-        Arc::downgrade(&mgr),
-        settings,
-        crypto,
-        response_tx,
-        shadowride_tx,
-        response_rx,
-        DefaultClientConnectionHandler,
-    );
+    let provider = ClientHealthProvider::new(Arc::downgrade(&mgr), settings, crypto, response_tx, shadowride_tx, response_rx, DefaultClientConnectionHandler);
     (provider, shadowride_rx)
 }
 
@@ -117,22 +97,14 @@ async fn test_health_state_compute_next_in_in_range() {
     let _ = shadowride_tx;
 
     let crypto = make_test_crypto_tool();
-    let state = HealthState::new(
-        Arc::clone(&settings),
-        crypto,
-        DefaultClientConnectionHandler,
-        response_rx,
-    );
+    let state = HealthState::new(Arc::clone(&settings), crypto, DefaultClientConnectionHandler, response_rx);
     let _ = response_tx;
 
     let min = settings.get(&keys::HEALTH_CHECK_NEXT_IN_MIN) as u32;
     let max = settings.get(&keys::HEALTH_CHECK_NEXT_IN_MAX) as u32;
     for _ in 0..50 {
         let next_in = state.compute_next_in();
-        assert!(
-            next_in >= min && next_in <= max,
-            "compute_next_in returned {next_in}, expected [{min}, {max}]"
-        );
+        assert!(next_in >= min && next_in <= max, "compute_next_in returned {next_in}, expected [{min}, {max}]");
     }
 }
 
@@ -200,10 +172,7 @@ async fn test_health_state_rtt_first_measurement() {
     // rtt_variance should be approximately smooth_rtt / 2.
     let srtt = state.smooth_rtt.unwrap();
     let rttvar = state.rtt_variance.unwrap();
-    assert!(
-        (rttvar - srtt / 2.0).abs() < 1.0,
-        "initial rttvar should be srtt/2, got srtt={srtt}, rttvar={rttvar}"
-    );
+    assert!((rttvar - srtt / 2.0).abs() < 1.0, "initial rttvar should be srtt/2, got srtt={srtt}, rttvar={rttvar}");
 }
 
 // Test: update_rtt converges smooth_rtt toward repeated measurements.
@@ -228,10 +197,7 @@ async fn test_health_state_rtt_ewma_converges() {
 
     let srtt = state.smooth_rtt.unwrap();
     // After many identical samples the EWMA should be near rtt_min.
-    assert!(
-        (srtt - rtt_min).abs() < rtt_min * 0.1,
-        "EWMA should converge near {rtt_min}ms, got {srtt}ms"
-    );
+    assert!((srtt - rtt_min).abs() < rtt_min * 0.1, "EWMA should converge near {rtt_min}ms, got {srtt}ms");
 }
 
 // ── ClientHealthProvider::feed_input tests ────────────────────────────────────
@@ -253,10 +219,7 @@ async fn test_feed_input_wrong_pn_discarded() {
 
     // The watch channel has no pending value — try receiving with a timeout.
     let mut rx = provider.response_tx.subscribe();
-    let result = tokio::time::timeout(
-        std::time::Duration::from_millis(20),
-        rx.recv(),
-    ).await;
+    let result = timeout(Duration::from_millis(20), rx.recv()).await;
     assert!(result.is_err(), "no response must be sent for wrong PN");
 }
 
@@ -278,13 +241,7 @@ async fn test_feed_input_correct_pn_delivers() {
     let mut rx = provider.response_tx.subscribe();
     provider.feed_input(tailor).await.unwrap();
 
-    let result = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        rx.recv(),
-    )
-    .await
-    .expect("response must arrive")
-    .expect("channel must not be closed");
+    let result = timeout(Duration::from_millis(100), rx.recv()).await.expect("response must arrive").expect("channel must not be closed");
 
     let (received_tm, _time, body, _identity) = result;
     assert_eq!(received_tm, server_tm, "received TM must match tailor TM");
@@ -308,13 +265,7 @@ async fn test_feed_input_tm_clamped() {
     let mut rx = provider.response_tx.subscribe();
     provider.feed_input(tailor).await.unwrap();
 
-    let (received_tm, _, _, _) = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        rx.recv(),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let (received_tm, _, _, _) = timeout(Duration::from_millis(100), rx.recv()).await.unwrap().unwrap();
 
     let min = settings.get(&keys::HEALTH_CHECK_NEXT_IN_MIN) as u32;
     assert_eq!(received_tm, min, "TM=0 must be clamped to MIN={min}");
@@ -336,11 +287,7 @@ async fn test_feed_output_noop_when_already_health_check() {
     provider.feed_output(tailor).await.unwrap();
 
     // Shadowride channel must NOT have been signalled.
-    let result = tokio::time::timeout(
-        std::time::Duration::from_millis(20),
-        shadowride_rx.recv(),
-    )
-    .await;
+    let result = timeout(Duration::from_millis(20), shadowride_rx.recv()).await;
     assert!(result.is_err(), "shadowride_tx must not fire when packet already has HC flag");
 }
 
@@ -359,11 +306,7 @@ async fn test_feed_output_noop_when_nothing_pending() {
 
     provider.feed_output(tailor).await.unwrap();
 
-    let result = tokio::time::timeout(
-        std::time::Duration::from_millis(20),
-        shadowride_rx.recv(),
-    )
-    .await;
+    let result = timeout(Duration::from_millis(20), shadowride_rx.recv()).await;
     assert!(result.is_err(), "no shadowride signal when nothing pending");
 }
 
@@ -384,18 +327,11 @@ async fn test_feed_output_attaches_shadowride() {
     provider.feed_output(tailor.clone()).await.unwrap();
 
     // Shadowride channel must have been signalled.
-    let result = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        shadowride_rx.recv(),
-    )
-    .await;
+    let result = timeout(Duration::from_millis(100), shadowride_rx.recv()).await;
     assert!(result.is_ok(), "shadowride_tx must fire after attachment");
 
     // The tailor flags must now include HEALTH_CHECK.
-    assert!(
-        tailor.flags().contains(PacketFlags::HEALTH_CHECK),
-        "tailor must carry HEALTH_CHECK flag after shadowride"
-    );
+    assert!(tailor.flags().contains(PacketFlags::HEALTH_CHECK), "tailor must carry HEALTH_CHECK flag after shadowride");
     // The tailor TM and PN must have been updated.
     assert_eq!(tailor.time(), next_in, "tailor TM must be set to next_in");
     assert_eq!(tailor.packet_number(), pn, "tailor PN must be set to pending pn");
@@ -415,8 +351,5 @@ async fn test_feed_output_clears_pending_after_attach() {
 
     provider.feed_output(tailor).await.unwrap();
 
-    assert!(
-        provider.state.lock().await.shadowride_pending.is_none(),
-        "shadowride_pending must be cleared after attachment"
-    );
+    assert!(provider.state.lock().await.shadowride_pending.is_none(), "shadowride_pending must be cleared after attachment");
 }

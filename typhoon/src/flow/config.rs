@@ -11,8 +11,7 @@ use rand::prelude::Distribution;
 
 use crate::bytes::{ByteBufferMut, DynamicByteBuffer};
 use crate::flow::error::FlowControllerError;
-use crate::settings::Settings;
-use crate::settings::keys;
+use crate::settings::{Settings, keys};
 use crate::utils::random::get_rng;
 use crate::utils::sync::AsyncExecutor;
 use crate::utils::unix_timestamp_ms;
@@ -42,8 +41,13 @@ impl FakeBodyMode {
     pub fn max_len(&self) -> usize {
         match self {
             FakeBodyMode::Empty => 0,
-            FakeBodyMode::Random { max_length, .. } => *max_length,
-            FakeBodyMode::Constant { packet_length } => *packet_length,
+            FakeBodyMode::Random {
+                max_length,
+                ..
+            } => *max_length,
+            FakeBodyMode::Constant {
+                packet_length,
+            } => *packet_length,
         }
     }
 
@@ -239,7 +243,11 @@ impl FlowConfig {
         let fake_header_mode = if rng.r#gen::<f64>() < header_prob {
             let min_len = settings.get(&keys::FAKE_HEADER_LENGTH_MIN) as usize;
             let max_len = settings.get(&keys::FAKE_HEADER_LENGTH_MAX) as usize;
-            let len = if min_len >= max_len { max_len } else { rng.gen_range(min_len..=max_len) };
+            let len = if min_len >= max_len {
+                max_len
+            } else {
+                rng.gen_range(min_len..=max_len)
+            };
             let fields = (0..len).map(|_| FieldTypeHolder::U8(FieldType::Random)).collect();
             FakeHeaderConfig::new(fields)
         } else {
@@ -249,12 +257,19 @@ impl FlowConfig {
         let fake_body_mode = if rng.r#gen::<bool>() {
             let min_len = settings.get(&keys::FAKE_BODY_LENGTH_MIN) as usize;
             let max_len = settings.get(&keys::FAKE_BODY_LENGTH_MAX) as usize;
-            FakeBodyMode::Random { min_length: min_len, max_length: max_len, service: false }
+            FakeBodyMode::Random {
+                min_length: min_len,
+                max_length: max_len,
+                service: false,
+            }
         } else {
             FakeBodyMode::Empty
         };
 
-        Self { fake_body_mode, fake_header_mode }
+        Self {
+            fake_body_mode,
+            fake_header_mode,
+        }
     }
 
     /// Maximum bytes this flow config can add on top of payload: fake header + worst-case fake body.

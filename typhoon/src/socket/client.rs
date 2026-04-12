@@ -10,9 +10,8 @@ use rand::seq::SliceRandom;
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::SharedValue;
 use crate::certificate::{CertificateError, ClientCertificate};
-use crate::crypto::{ClientCryptoTool, KEY_LENGTH};
-use crate::crypto::PAYLOAD_CRYPTO_OVERHEAD;
-use crate::flow::{FlowConfig};
+use crate::crypto::{ClientCryptoTool, KEY_LENGTH, PAYLOAD_CRYPTO_OVERHEAD};
+use crate::flow::FlowConfig;
 use crate::flow::client::ClientFlowManager;
 use crate::flow::decoy::DecoyCommunicationMode;
 use crate::session::{ClientSessionManager, SessionManager};
@@ -26,14 +25,8 @@ use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, create_notif
 /// Builder for constructing a `ClientSocket`.
 pub struct ClientSocketBuilder<T: IdentityType + Clone, AE: AsyncExecutor + 'static, DP, CC: ClientConnectionHandler> {
     settings: Option<Arc<Settings<AE>>>,
-    /// Per-address flow config overrides. Only populated when the caller adds at least one
-    /// explicit flow config via [`with_flow_config`](Self::with_flow_config).
+    /// Per-address flow config overrides. Empty means auto-fill mode (random subset of addresses).
     flow_overrides: HashMap<SocketAddr, FlowConfig>,
-    /// When `true` (the default), a random subset of the certificate's addresses is chosen
-    /// automatically and each gets a random [`FlowConfig`].  Set to `false` the first time
-    /// [`with_flow_config`](Self::with_flow_config) is called, after which only the explicitly
-    /// configured addresses are used.
-    auto_fill_flows: bool,
     certificate: ClientCertificate,
     initial_data_generator: CC,
     _phantom: PhantomData<(T, DP)>,
@@ -53,7 +46,6 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
         Self {
             settings: None,
             flow_overrides: HashMap::new(),
-            auto_fill_flows: true,
             certificate,
             initial_data_generator,
             _phantom: PhantomData,
@@ -73,7 +65,6 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
     /// certificate; otherwise `build` will return
     /// [`ClientSocketError::AddressNotInCertificate`].
     pub fn with_flow_config(mut self, addr: SocketAddr, config: FlowConfig) -> Self {
-        self.auto_fill_flows = false;
         self.flow_overrides.insert(addr, config);
         self
     }
@@ -87,21 +78,16 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 
         let settings = self.settings.take().unwrap_or_else(|| Arc::new(Settings::default()));
 
-        // Validate that all override addresses are in the certificate.
         for addr in self.flow_overrides.keys() {
             if !cert_addrs.contains(addr) {
                 return Err(ClientSocketError::AddressNotInCertificate(*addr));
             }
         }
 
-        // Determine which (address, config) pairs to connect to.
-        // Auto-fill: pick a random number of addresses (1..=total) with random configs.
-        // Manual: use exactly the addresses that were passed to with_flow_config.
-        let addr_configs: Vec<(SocketAddr, FlowConfig)> = if self.auto_fill_flows {
+        let addr_configs: Vec<(SocketAddr, FlowConfig)> = if self.flow_overrides.is_empty() {
             let mut rng = get_rng();
             let n = rng.gen_range(1..=cert_addrs.len());
-            let chosen: Vec<SocketAddr> = cert_addrs.choose_multiple(&mut rng, n).copied().collect();
-            chosen.into_iter().map(|addr| (addr, FlowConfig::random(&settings))).collect()
+            cert_addrs.choose_multiple(&mut rng, n).map(|&addr| (addr, FlowConfig::random(&settings))).collect()
         } else {
             self.flow_overrides.drain().collect()
         };
@@ -117,9 +103,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
         for (addr, config) in addr_configs {
             config.assert(settings.mtu()).map_err(ClientSocketError::FlowError)?;
 
-            let flow_overhead = config.max_overhead()
-                + PAYLOAD_CRYPTO_OVERHEAD
-                + tailor_wire_len;
+            let flow_overhead = config.max_overhead() + PAYLOAD_CRYPTO_OVERHEAD + tailor_wire_len;
             max_data_payload = max_data_payload.min(settings.mtu().saturating_sub(flow_overhead));
 
             let sock = Socket::new(addr, None).await.map_err(ClientSocketError::SocketError)?;
@@ -127,7 +111,11 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
             let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock).await.map_err(ClientSocketError::FlowError)?;
             flows.push(flow);
         }
-        let max_data_payload = if max_data_payload == usize::MAX { settings.mtu() } else { max_data_payload };
+        let max_data_payload = if max_data_payload == usize::MAX {
+            settings.mtu()
+        } else {
+            max_data_payload
+        };
         info!("client socket built: max_data_payload={}B (mtu={}B, {} flow(s))", max_data_payload, settings.mtu(), flows.len());
 
         let session = ClientSessionManager::new(cipher, flows, settings.clone(), self.initial_data_generator).map_err(ClientSocketError::SessionError)?;
@@ -152,7 +140,6 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
             // incoming_tx dropped — receive() will see None and return ChannelClosed.
         });
 
-        // Now perform the handshake and start the health check timer.
         session.start().await.map_err(ClientSocketError::SessionError)?;
 
         Ok(ClientSocket {

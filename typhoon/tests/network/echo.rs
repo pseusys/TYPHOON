@@ -1,6 +1,5 @@
 /// Echo tests: basic send/receive round-trips through the full protocol stack.
-use futures::channel::oneshot;
-
+use futures::channel::oneshot::channel;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler};
 
 use super::common::{connect_simple, default_settings, free_addr, setup_server};
@@ -12,7 +11,7 @@ async fn test_echo_single_message() {
     let addr = free_addr();
     let (listener, cert) = setup_server(addr, settings.clone()).await;
 
-    let (tx, rx) = oneshot::channel::<Vec<u8>>();
+    let (tx, rx) = channel::<Vec<u8>>();
     let lh = listener.clone();
     settings.executor().spawn(async move {
         let client = lh.accept().await.expect("accept");
@@ -38,7 +37,7 @@ async fn test_echo_sequential_messages() {
     let addr = free_addr();
     let (listener, cert) = setup_server(addr, settings.clone()).await;
 
-    let (tx, rx) = oneshot::channel::<usize>();
+    let (tx, rx) = channel::<usize>();
     let lh = listener.clone();
     settings.executor().spawn(async move {
         let client = lh.accept().await.expect("accept");
