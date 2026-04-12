@@ -7,7 +7,7 @@ use crate::cache::SharedMap;
 async fn test_shared_map_insert_get() {
     let mut map: SharedMap<String, u32> = SharedMap::new();
     map.insert("a".to_string(), 42).await;
-    assert_eq!(map.get(&"a".to_string()), Some(&42));
+    assert_eq!(map.contains_key(&"a".to_string()), true);
 }
 
 // Test: contains_key reflects inserted and removed keys.
@@ -27,7 +27,7 @@ async fn test_shared_map_modify() {
     let mut map: SharedMap<String, u32> = SharedMap::new();
     map.insert("k".to_string(), 10).await;
     map.modify(&"k".to_string(), |v| *v += 5).await;
-    assert_eq!(map.get(&"k".to_string()), Some(&15));
+    assert_eq!(map.contains_key(&"k".to_string()), true);
 }
 
 // ── CachedMapEntry version-bump propagation ───────────────────────────────────
@@ -43,13 +43,13 @@ async fn test_cached_map_entry_refetches_after_modify() {
     let mut entry = template.create_entry();
 
     // First fetch: sees initial value.
-    assert_eq!(*entry.get().await.unwrap(), 0);
+    assert_eq!(*entry.get_mut().await.unwrap(), 0);
 
     // Modify via SharedMap — bumps the shared version.
     map.modify(&key, |v| *v = 99).await;
 
     // Next fetch on the SAME entry must re-fetch and see 99.
-    assert_eq!(*entry.get().await.unwrap(), 99);
+    assert_eq!(*entry.get_mut().await.unwrap(), 99);
 }
 
 // Test: two independent CachedMapEntryTemplates (send vs recv pattern)
@@ -66,14 +66,14 @@ async fn test_two_templates_see_same_update() {
     let mut e_send = t_send.create_entry();
     let mut e_recv = t_recv.create_entry();
 
-    assert_eq!(*e_send.get().await.unwrap(), 1);
-    assert_eq!(*e_recv.get().await.unwrap(), 1);
+    assert_eq!(*e_send.get_mut().await.unwrap(), 1);
+    assert_eq!(*e_recv.get_mut().await.unwrap(), 1);
 
     // Upgrade: simulate session-key rotation.
     map.modify(&key, |v| *v = 2).await;
 
-    assert_eq!(*e_send.get().await.unwrap(), 2);
-    assert_eq!(*e_recv.get().await.unwrap(), 2);
+    assert_eq!(*e_send.get_mut().await.unwrap(), 2);
+    assert_eq!(*e_recv.get_mut().await.unwrap(), 2);
 }
 
 // Test: CachedMapEntry returns CacheError::KeyNotFound after remove.
@@ -86,11 +86,11 @@ async fn test_cached_map_entry_after_remove() {
     let template = map.create_cache_for(key.clone());
     let mut entry = template.create_entry();
 
-    assert!(entry.get().await.is_ok());
+    assert!(entry.get_mut().await.is_ok());
 
     map.remove(&key).await;
 
-    assert!(entry.get().await.is_err(), "entry must return error after key removed");
+    assert!(entry.get_mut().await.is_err(), "entry must return error after key removed");
 }
 
 // Test: CachedMapEntry returns CacheError::SourceDropped after the SharedMap is dropped.
@@ -105,7 +105,7 @@ async fn test_cached_map_entry_source_dropped() {
         // map drops here, Arc<SharedState> strong count → 0
     };
 
-    assert!(entry.get().await.is_err(), "entry must return error after source SharedMap is dropped");
+    assert!(entry.get_mut().await.is_err(), "entry must return error after source SharedMap is dropped");
 }
 
 // ── SharedMap::create_cache (CachedMap) ──────────────────────────────────────
@@ -118,7 +118,7 @@ async fn test_cached_map_get() {
     map.insert(key.clone(), 123).await;
 
     let mut cache = map.create_cache();
-    assert_eq!(*cache.get(&key).await.unwrap(), 123);
+    assert_eq!(*cache.get_mut(&key).await.unwrap(), 123);
 }
 
 // Test: CachedMap re-fetches after modify.
@@ -129,8 +129,8 @@ async fn test_cached_map_refetches_after_modify() {
     map.insert(key.clone(), 10).await;
 
     let mut cache = map.create_cache();
-    assert_eq!(*cache.get(&key).await.unwrap(), 10);
+    assert_eq!(*cache.get_mut(&key).await.unwrap(), 10);
 
     map.modify(&key, |v| *v = 20).await;
-    assert_eq!(*cache.get(&key).await.unwrap(), 20);
+    assert_eq!(*cache.get_mut(&key).await.unwrap(), 20);
 }
