@@ -2,8 +2,8 @@
 /// Verifies session isolation: each client's messages are echoed only to that client.
 use std::sync::Arc;
 
-use futures::future::join_all;
 use futures::channel::oneshot::channel;
+use futures::future::join_all;
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
 use typhoon::flow::decoy::SimpleDecoyProvider;

@@ -71,7 +71,10 @@ async fn run() {
     }
 
     // --- Connect all clients concurrently ---
-    let client_futs: Vec<_> = certificates.into_iter().enumerate().map(|(client_id, certificate)| {
+    let client_futs: Vec<_> = certificates
+        .into_iter()
+        .enumerate()
+        .map(|(client_id, certificate)| {
             let settings = settings.clone();
             async move {
                 let socket = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultClientConnectionHandler>::new(certificate, DefaultClientConnectionHandler).with_settings(settings.clone()).build().await.expect("client socket should build");

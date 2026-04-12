@@ -1,10 +1,9 @@
 use std::io::Error as IoError;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket as StdUdpSocket};
 
 use cfg_if::cfg_if;
 #[cfg(feature = "server")]
 use log::{debug, trace};
-use std::net::UdpSocket as StdUdpSocket;
 use thiserror::Error;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};

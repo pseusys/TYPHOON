@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use typhoon::bytes::StaticByteBuffer;
-use typhoon::certificate::{ServerKeyPair, ClientCertificate};
+use typhoon::certificate::{ClientCertificate, ServerKeyPair};
 use typhoon::defaults::{DefaultExecutor, DefaultServerConnectionHandler};
 use typhoon::flow::decoy::{DecoyCommunicationMode, SimpleDecoyProvider};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};

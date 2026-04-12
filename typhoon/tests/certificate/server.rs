@@ -1,8 +1,8 @@
 use std::env::var;
 use std::path::Path;
 
-use crate::certificate::ClientCertificate;
 use super::{ServerKeyPair, ServerSecret};
+use crate::certificate::ClientCertificate;
 
 impl ServerKeyPair {
     /// Load from the mode-appropriate env var path when set; otherwise generate (and save).

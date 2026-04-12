@@ -10,9 +10,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 #[cfg(feature = "async-std")]
-use async_io::Timer;
+use async_channel::{Receiver, Sender, bounded, unbounded};
 #[cfg(feature = "async-std")]
-use async_channel::{Sender, Receiver, bounded, unbounded};
+use async_io::Timer;
 use cfg_if::cfg_if;
 #[cfg(all(feature = "server", feature = "tokio"))]
 use crossbeam::queue::ArrayQueue;
