@@ -133,7 +133,7 @@ impl ServerKeyPair {
         ClientCertificate {
             epk: self.epk.clone(),
             vpk: self.vsk.verifying_key(),
-            obfs: self.obfs.clone(),
+            obfs: self.obfs,
             addresses,
         }
     }

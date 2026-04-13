@@ -207,7 +207,7 @@ fn test_fake_header_config_len_empty() {
     let config = FakeHeaderConfig {
         pattern: vec![],
     };
-    assert_eq!(config.len(), 0);
+    assert_eq!(config.is_empty(), true, "empty pattern should be considered empty");
 }
 
 // Test: fill() writes constant values into buffer correctly.

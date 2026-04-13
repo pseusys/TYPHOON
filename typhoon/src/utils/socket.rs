@@ -40,7 +40,6 @@ impl SocketError {
 }
 
 /// Runtime-agnostic socket wrapper
-
 pub struct Socket {
     #[cfg(feature = "tokio")]
     sock: TokioSocket,
@@ -150,7 +149,7 @@ impl Socket {
         Ok(sockets)
     }
 
-    /// Send to socket
+    // Send to socket
 
     #[cfg(feature = "tokio")]
     pub async fn send(&self, data: DynamicByteBuffer) -> Result<usize, SocketError> {
@@ -162,7 +161,7 @@ impl Socket {
         self.sock.send(data.slice()).await.map_err(SocketError::new_socket_error)
     }
 
-    /// Receive from socket
+    // Receive from socket
 
     #[cfg(feature = "tokio")]
     pub async fn recv(&self, buf: DynamicByteBuffer) -> Result<DynamicByteBuffer, SocketError> {
@@ -176,7 +175,7 @@ impl Socket {
         Ok(buf.rebuffer_end(res))
     }
 
-    /// Send to a specific address (for unconnected sockets).
+    // Send to a specific address (for unconnected sockets).
 
     #[cfg(all(feature = "tokio", feature = "server"))]
     pub async fn send_to(&self, data: DynamicByteBuffer, target: SocketAddr) -> Result<usize, SocketError> {
@@ -214,7 +213,7 @@ impl Socket {
         }
     }
 
-    /// Receive from any peer, returning the data and source address.
+    // Receive from any peer, returning the data and source address.
 
     #[cfg(all(feature = "tokio", feature = "server"))]
     pub async fn recv_from(&self, buf: DynamicByteBuffer) -> Result<(DynamicByteBuffer, SocketAddr), SocketError> {

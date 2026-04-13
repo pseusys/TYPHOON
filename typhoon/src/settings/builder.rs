@@ -6,7 +6,7 @@ mod tests;
 
 use super::error::SettingsError;
 use super::override_map::{Key, OverrideMap, SettingType};
-use super::settings::Settings;
+use super::structure::Settings;
 use super::statics::consts;
 use crate::bytes::BytePool;
 use crate::utils::sync::AsyncExecutor;

@@ -3,11 +3,11 @@
 mod builder;
 mod error;
 mod override_map;
-mod settings;
+mod structure;
 mod statics;
 
 pub use builder::SettingsBuilder;
 pub use error::SettingsError;
 pub use override_map::{Key, OverrideMap, SettingType, SettingValue};
-pub use settings::Settings;
+pub use structure::Settings;
 pub use statics::{consts, keys};

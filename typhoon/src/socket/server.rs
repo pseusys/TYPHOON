@@ -147,8 +147,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 }
             };
 
-            let crypto_send = ServerCryptoTool::new(users.create_cache(), obfs_buffer.clone());
-            let crypto_recv = ServerCryptoTool::new(users.create_cache(), obfs_buffer.clone());
+            let crypto_send = ServerCryptoTool::new(users.create_cache(), obfs_buffer);
+            let crypto_recv = ServerCryptoTool::new(users.create_cache(), obfs_buffer);
             let flow = ServerFlowManager::new(flow_config.config, crypto_send, crypto_recv, settings.clone(), socks);
             flows.push(flow);
         }

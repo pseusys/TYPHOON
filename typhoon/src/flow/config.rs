@@ -182,6 +182,10 @@ impl FakeHeaderConfig {
         })
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn fill(&mut self, buffer: DynamicByteBuffer) {
         self.pattern.iter_mut().fold(0, |a, f| {
             a + match f {

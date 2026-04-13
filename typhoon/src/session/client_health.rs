@@ -339,10 +339,8 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
             }
         };
 
-        if shadowridden {
-            if !self.shadowride_tx.send(()) {
-                return Err(SessionControllerError::HealthProviderDied);
-            }
+        if shadowridden && !self.shadowride_tx.send(()) {
+            return Err(SessionControllerError::HealthProviderDied);
         }
 
         Ok(())

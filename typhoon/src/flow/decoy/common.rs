@@ -336,7 +336,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
     fn next_packet_number(&mut self) -> u64 {
         self.packet_number += 1;
         let timestamp = (unix_timestamp_ms() / 1000) as u32;
-        ((timestamp as u64) << 32) | (self.packet_number as u64)
+        ((timestamp as u64) << 32) | self.packet_number
     }
 
     /// Create a decoy packet with the given body length.

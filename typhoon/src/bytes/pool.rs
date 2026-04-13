@@ -23,7 +23,7 @@ impl PoolStorage {
     /// Return buffer to pool, or free if at capacity.
     #[inline]
     pub(crate) fn try_return(&self, ptr: *mut u8) {
-        if let Err(_) = self.buffers.push(ptr) {
+        if self.buffers.push(ptr).is_err() {
             free_ptr(ptr, self.capacity);
         }
     }
@@ -73,6 +73,7 @@ impl BytePool {
 
     /// Get a buffer from pool or allocate new one.
     /// - `size`: optional size limit (must be <= pool's size), None for full size
+    ///
     /// Returns a DynamicByteBuffer that auto-returns to pool on drop.
     #[inline]
     pub fn allocate(&self, size: Option<usize>) -> DynamicByteBuffer {
@@ -104,7 +105,7 @@ impl BytePool {
     #[inline]
     pub fn allocate_precise_from_slice_with_capacity(&self, data: &[u8], before_cap: usize, after_cap: usize) -> DynamicByteBuffer {
         let buff = self.allocate_precise(data.len(), before_cap, after_cap);
-        if data.len() > 0 {
+        if !data.is_empty() {
             copy_slice(unsafe { buff.data_ptr().add(before_cap) }, data);
         }
         buff
