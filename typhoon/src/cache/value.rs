@@ -2,18 +2,17 @@
 #[path = "../../tests/cache/value.rs"]
 mod tests;
 
-#[cfg(feature = "client")]
-use std::cell::UnsafeCell;
-#[cfg(feature = "client")]
-use std::marker::PhantomData;
-#[cfg(feature = "client")]
-use std::sync::{Arc, Weak};
+use cfg_if::cfg_if;
 
-#[cfg(feature = "client")]
-use arc_swap::ArcSwap;
-
-#[cfg(feature = "client")]
-use crate::cache::common::CacheError;
+cfg_if! {
+    if #[cfg(feature = "client")] {
+        use std::cell::UnsafeCell;
+        use std::marker::PhantomData;
+        use std::sync::{Arc, Weak};
+        use arc_swap::ArcSwap;
+        use crate::cache::common::CacheError;
+    }
+}
 
 /// Shared mutable value with lock-free reads.
 ///

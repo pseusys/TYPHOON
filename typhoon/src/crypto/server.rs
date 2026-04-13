@@ -1,15 +1,18 @@
 /// Server-side cryptographic tool for TYPHOON protocol.
 use std::hash::Hash;
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
-use std::sync::Arc;
 
+use cfg_if::cfg_if;
 use x25519_dalek::PublicKey as X25519PublicKey;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, DynamicByteBuffer, FixedByteBuffer};
 use crate::cache::CachedMap;
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
-use crate::certificate::ServerSecret;
 use crate::crypto::error::CryptoError;
+cfg_if! {
+    if #[cfg(any(feature = "full_software", feature = "full_hardware"))] {
+        use std::sync::Arc;
+        use crate::certificate::ServerSecret;
+    }
+}
 
 /// Ephemeral server handshake state: client X25519 public key, McEliece shared secret, nonce.
 pub(crate) struct ServerData {

@@ -5,21 +5,26 @@
 mod tests;
 
 use std::fmt::Debug;
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+use std::fmt::{Formatter, Result as FmtResult};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 
+use cfg_if::cfg_if;
 use classic_mceliece_rust::{PublicKey as McEliecePublicKey, SecretKey, keypair_boxed};
 use ed25519_dalek::SigningKey;
 use rand::RngCore;
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
-use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
+cfg_if! {
+    if #[cfg(any(feature = "full_software", feature = "full_hardware"))] {
+        use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
+        use super::utils::X25519_BYTES;
+    }
+}
 use super::client::ClientCertificate;
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
-use super::utils::X25519_BYTES;
 use super::utils::{CertificateError, ED25519_BYTES, EPK_BYTES, ESK_BYTES, ObfuscationBufferContainer, TYPE_SERVER, read_header, write_header};
 use crate::bytes::FixedByteBuffer;
 use crate::utils::random::get_rng;

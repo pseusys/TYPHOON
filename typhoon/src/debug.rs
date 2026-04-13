@@ -19,27 +19,28 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use cfg_if::cfg_if;
 use futures::future::{Either, select};
 use log::{debug, info, trace};
 
-#[cfg(feature = "server")]
-use crate::bytes::ByteBuffer;
 use crate::bytes::StaticByteBuffer;
 use crate::certificate::ClientCertificate;
 use crate::defaults::{DefaultExecutor, DefaultSettings};
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use crate::flow::decoy::SimpleDecoyProvider;
-#[cfg(feature = "server")]
-use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 use crate::settings::keys;
 use crate::socket::{ClientSocket, ClientSocketBuilder};
 use crate::tailor::ClientConnectionHandler;
-#[cfg(feature = "server")]
-use crate::tailor::ServerConnectionHandler;
-#[cfg(feature = "server")]
-use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::sleep;
 use crate::utils::unix_timestamp_ms;
+cfg_if! {
+    if #[cfg(feature = "server")] {
+        use crate::bytes::ByteBuffer;
+        use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
+        use crate::tailor::ServerConnectionHandler;
+        use crate::utils::random::{SupportRng, get_rng};
+    }
+}
 
 /// Phase identifier constants embedded in the lower 32 bits of the debug PN field.
 pub const PHASE_REACHABILITY: u32 = 0;

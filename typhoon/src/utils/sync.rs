@@ -3,35 +3,31 @@
 mod tests;
 
 use std::future::Future;
-#[cfg(feature = "client")]
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-#[cfg(feature = "async-std")]
-use async_channel::{Receiver, Sender, bounded, unbounded};
-#[cfg(feature = "async-std")]
-use async_io::Timer;
 use cfg_if::cfg_if;
 #[cfg(all(feature = "server", feature = "tokio"))]
 use crossbeam::queue::ArrayQueue;
-#[cfg(feature = "tokio")]
-use crossbeam::queue::SegQueue;
-#[cfg(feature = "client")]
-use futures::stream::{FuturesUnordered, StreamExt};
 #[cfg(feature = "server")]
 use log::debug;
-#[cfg(feature = "tokio")]
-use tokio::sync::Notify;
-#[cfg(feature = "tokio")]
-use tokio::time::sleep as tokio_sleep;
-
+cfg_if! {
+    if #[cfg(feature = "client")] {
+        use std::pin::Pin;
+        use futures::stream::{FuturesUnordered, StreamExt};
+    }
+}
 cfg_if! {
     if #[cfg(feature = "tokio")] {
+        use crossbeam::queue::SegQueue;
+        use tokio::sync::Notify;
+        use tokio::time::sleep as tokio_sleep;
         pub use tokio::sync::{RwLock, Mutex};
     } else if #[cfg(feature = "async-std")] {
         pub use async_lock::{RwLock, Mutex};
+        use async_channel::{Receiver, Sender, bounded, unbounded};
+        use async_io::Timer;
     }
 }
 

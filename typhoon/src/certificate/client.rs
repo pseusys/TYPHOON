@@ -6,13 +6,16 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 
+use cfg_if::cfg_if;
 use classic_mceliece_rust::PublicKey as McEliecePublicKey;
 use ed25519_dalek::VerifyingKey;
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
-use x25519_dalek::PublicKey as X25519PublicKey;
 
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
-use super::utils::X25519_BYTES;
+cfg_if! {
+    if #[cfg(any(feature = "full_software", feature = "full_hardware"))] {
+        use x25519_dalek::PublicKey as X25519PublicKey;
+        use super::utils::X25519_BYTES;
+    }
+}
 use super::utils::{CertificateError, ED25519_BYTES, EPK_BYTES, ObfuscationBufferContainer, TYPE_CLIENT, read_addresses, read_header, write_addresses, write_header};
 use crate::bytes::FixedByteBuffer;
 

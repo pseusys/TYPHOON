@@ -1,29 +1,24 @@
 use std::future::Future;
 use std::sync::Arc;
 
-#[cfg(feature = "client")]
-use log::warn;
-#[cfg(feature = "client")]
-use rand::Rng;
+use cfg_if::cfg_if;
 
 use crate::bytes::DynamicByteBuffer;
-#[cfg(feature = "client")]
-use crate::bytes::{ByteBuffer, ByteBufferMut};
-#[cfg(feature = "client")]
-use crate::cache::CachedValue;
-#[cfg(feature = "client")]
-use crate::crypto::{CryptoError, ObfuscationTranscript};
-#[cfg(feature = "client")]
-use crate::flow::config::FlowConfig;
 use crate::flow::error::FlowControllerError;
-#[cfg(feature = "client")]
-use crate::settings::consts::TAILOR_LENGTH;
-#[cfg(feature = "client")]
-use crate::tailor::IdentityType;
-#[cfg(feature = "client")]
-use crate::tailor::{PacketFlags, Tailor};
-#[cfg(feature = "client")]
-use crate::utils::random::get_rng;
+cfg_if! {
+    if #[cfg(feature = "client")] {
+        use log::warn;
+        use rand::Rng;
+        use crate::bytes::{ByteBuffer, ByteBufferMut};
+        use crate::cache::CachedValue;
+        use crate::crypto::{CryptoError, ObfuscationTranscript};
+        use crate::flow::config::FlowConfig;
+        use crate::settings::consts::TAILOR_LENGTH;
+        use crate::tailor::IdentityType;
+        use crate::tailor::{PacketFlags, Tailor};
+        use crate::utils::random::get_rng;
+    }
+}
 
 /// Trait for managing packet flow with encryption and decoy traffic.
 pub(crate) trait FlowManager {

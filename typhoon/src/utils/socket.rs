@@ -1,11 +1,13 @@
 use std::io::Error as IoError;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-#[cfg(feature = "server")]
-use std::net::UdpSocket as StdUdpSocket;
 
 use cfg_if::cfg_if;
-#[cfg(feature = "server")]
-use log::{debug, trace};
+cfg_if! {
+    if #[cfg(feature = "server")] {
+        use std::net::UdpSocket as StdUdpSocket;
+        use log::{debug, trace};
+    }
+}
 use thiserror::Error;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
@@ -18,11 +20,12 @@ cfg_if! {
     }
 }
 
-#[cfg(all(target_os = "linux", feature = "server"))]
-use std::io::ErrorKind;
-
-#[cfg(all(target_os = "linux", feature = "server"))]
-use socket2::{Domain, Protocol, Socket as S2Socket, Type};
+cfg_if! {
+    if #[cfg(all(target_os = "linux", feature = "server"))] {
+        use std::io::ErrorKind;
+        use socket2::{Domain, Protocol, Socket as S2Socket, Type};
+    }
+}
 
 /// Socket wrapper error
 

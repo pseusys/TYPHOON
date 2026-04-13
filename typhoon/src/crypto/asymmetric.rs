@@ -8,8 +8,6 @@ use cfg_if::cfg_if;
 #[cfg(feature = "client")]
 use classic_mceliece_rust::encapsulate;
 use classic_mceliece_rust::{CRYPTO_BYTES, CRYPTO_CIPHERTEXTBYTES};
-#[cfg(feature = "server")]
-use classic_mceliece_rust::{Ciphertext, decapsulate};
 use ed25519_dalek::Signature;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
@@ -22,6 +20,7 @@ use crate::utils::random::{SupportRng, get_rng};
 
 cfg_if! {
     if #[cfg(feature = "server")] {
+        use classic_mceliece_rust::{Ciphertext, decapsulate};
         use ed25519_dalek::ed25519::signature::Signer;
         use crate::certificate::ServerSecret;
         use crate::crypto::ServerData;

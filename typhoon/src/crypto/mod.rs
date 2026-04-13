@@ -6,17 +6,21 @@ mod error;
 mod server;
 mod symmetric;
 
-#[cfg(feature = "client")]
-pub(crate) use client::ClientCryptoTool;
-#[cfg(feature = "client")]
-pub(crate) use client::ClientData;
+use cfg_if::cfg_if;
+
+cfg_if! {
+    if #[cfg(feature = "client")] {
+        pub(crate) use client::ClientCryptoTool;
+        pub(crate) use client::ClientData;
+        pub(crate) use symmetric::ObfuscationTranscript;
+        pub(crate) use symmetric::SYMMETRIC_KEY_LENGTH as KEY_LENGTH;
+    }
+}
 pub(crate) use error::CryptoError;
-#[cfg(feature = "server")]
-pub(crate) use server::ServerData;
-#[cfg(feature = "server")]
-pub(crate) use server::{ServerCryptoTool, UserCryptoState, UserServerState};
-#[cfg(feature = "client")]
-pub(crate) use symmetric::ObfuscationTranscript;
+cfg_if! {
+    if #[cfg(feature = "server")] {
+        pub(crate) use server::ServerData;
+        pub(crate) use server::{ServerCryptoTool, UserCryptoState, UserServerState};
+    }
+}
 pub(crate) use symmetric::PAYLOAD_CRYPTO_OVERHEAD;
-#[cfg(feature = "client")]
-pub(crate) use symmetric::SYMMETRIC_KEY_LENGTH as KEY_LENGTH;
