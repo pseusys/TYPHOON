@@ -1,5 +1,7 @@
 use std::io::Error as IoError;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket as StdUdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+#[cfg(feature = "server")]
+use std::net::UdpSocket as StdUdpSocket;
 
 use cfg_if::cfg_if;
 #[cfg(feature = "server")]
