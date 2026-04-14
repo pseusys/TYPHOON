@@ -1,5 +1,5 @@
 use std::io::Error as IoError;
-#[cfg(any(feature = "server", feature = "async-std"))]
+#[cfg(any(feature = "async-std", all(target_os = "linux", feature = "server", feature = "tokio")))]
 use std::net::UdpSocket as StdUdpSocket;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
