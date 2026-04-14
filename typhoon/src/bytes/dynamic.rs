@@ -3,7 +3,7 @@
 mod tests;
 
 use std::cell::UnsafeCell;
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::marker::PhantomData;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::Arc;
@@ -28,7 +28,7 @@ pub struct DynamicByteBuffer {
 }
 
 impl DynamicByteBuffer {
-    pub fn new(data: *mut u8, capacity: usize, before_cap: usize, size: usize, after_cap: usize, return_tx: PoolReturn) -> Self {
+    pub(crate) fn new(data: *mut u8, capacity: usize, before_cap: usize, size: usize, after_cap: usize, return_tx: PoolReturn) -> Self {
         let buffer_end = before_cap + size;
         DynamicByteBuffer {
             holder: Arc::new(BufferHolder::new(data, capacity, return_tx)),
@@ -306,19 +306,19 @@ impl AsRef<[u8]> for DynamicByteBuffer {
     }
 }
 
-impl Into<Vec<u8>> for DynamicByteBuffer {
+impl From<DynamicByteBuffer> for Vec<u8> {
     #[inline]
-    fn into(self) -> Vec<u8> {
-        self.slice().to_vec()
+    fn from(val: DynamicByteBuffer) -> Self {
+        val.slice().to_vec()
     }
 }
 
-impl<const N: usize> Into<[u8; N]> for &DynamicByteBuffer {
+impl<const N: usize> From<&DynamicByteBuffer> for [u8; N] {
     #[inline]
-    fn into(self) -> [u8; N] {
-        match <[u8; N]>::try_from(&self.slice()[..]) {
+    fn from(val: &DynamicByteBuffer) -> Self {
+        match <[u8; N]>::try_from(val.slice()) {
             Ok(res) => res,
-            Err(err) => panic!("error converting DynamicByteBuffer to array [u8; {N}], actual buffer length {}: {}", self.len(), err),
+            Err(err) => panic!("error converting DynamicByteBuffer to array [u8; {N}], actual buffer length {}: {}", val.len(), err),
         }
     }
 }
@@ -338,7 +338,7 @@ impl Fill for DynamicByteBuffer {
 
 impl Debug for DynamicByteBuffer {
     #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("DynamicByteBuffer").field("length", &self.length).field("start", &self.start).field("end", &self.end).field("view_length", &self.len()).field("data", &self.slice()).finish()
     }
 }

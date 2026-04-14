@@ -1,26 +1,33 @@
 //! Server key material: [`ServerKeyPair`] (file I/O) and [`ServerSecret`] (runtime crypto).
 
+#[cfg(test)]
+#[path = "../../tests/certificate/server.rs"]
+mod tests;
+
+use std::fmt::Debug;
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+use std::fmt::{Formatter, Result as FmtResult};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 
+use cfg_if::cfg_if;
 use classic_mceliece_rust::{PublicKey as McEliecePublicKey, SecretKey, keypair_boxed};
 use ed25519_dalek::SigningKey;
 use rand::RngCore;
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
-use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
+cfg_if! {
+    if #[cfg(any(feature = "full_software", feature = "full_hardware"))] {
+        use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
+        use super::utils::X25519_BYTES;
+    }
+}
+use super::client::ClientCertificate;
+use super::utils::{CertificateError, ED25519_BYTES, EPK_BYTES, ESK_BYTES, ObfuscationBufferContainer, TYPE_SERVER, read_header, write_header};
 use crate::bytes::FixedByteBuffer;
 use crate::utils::random::get_rng;
-
-use super::client::ClientCertificate;
-use super::utils::{
-    CertificateError, ED25519_BYTES, EPK_BYTES, ESK_BYTES, ObfuscationBufferContainer,
-    TYPE_SERVER, read_header, write_header,
-};
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
-use super::utils::X25519_BYTES;
 
 // ── ServerSecret ──────────────────────────────────────────────────────────────
 
@@ -131,7 +138,7 @@ impl ServerKeyPair {
         ClientCertificate {
             epk: self.epk.clone(),
             vpk: self.vsk.verifying_key(),
-            obfs: self.obfs.clone(),
+            obfs: self.obfs,
             addresses,
         }
     }
@@ -150,13 +157,22 @@ impl ServerKeyPair {
     /// Consume the key pair and return the inner [`ServerSecret`] for use with the socket layer.
     #[cfg(all(feature = "server", any(feature = "fast_software", feature = "fast_hardware")))]
     pub(crate) fn into_server_secret(self) -> ServerSecret<'static> {
-        ServerSecret { esk: self.esk, vsk: self.vsk, obfs: self.obfs }
+        ServerSecret {
+            esk: self.esk,
+            vsk: self.vsk,
+            obfs: self.obfs,
+        }
     }
 
     /// Consume the key pair and return the inner [`ServerSecret`] for use with the socket layer.
     #[cfg(all(feature = "server", any(feature = "full_software", feature = "full_hardware")))]
     pub(crate) fn into_server_secret(self) -> ServerSecret<'static> {
-        ServerSecret { esk: self.esk, vsk: self.vsk, opk: self.opk, osk: self.osk }
+        ServerSecret {
+            esk: self.esk,
+            vsk: self.vsk,
+            opk: self.opk,
+            osk: self.osk,
+        }
     }
 
     /// Save the server key pair to a binary file (fast mode).
@@ -172,7 +188,7 @@ impl ServerKeyPair {
     /// | 267654       | 32 (`ED25519_BYTES`) | OBFS   | Symmetric tailor obfuscation key |
     /// | **267686**   | —                    | EOF    | |
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn save(&self, path: impl AsRef<std::path::Path>) -> Result<(), CertificateError> {
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), CertificateError> {
         let mut f = File::create(path)?;
         write_header(&mut f, TYPE_SERVER)?;
         f.write_all(self.epk.as_array())?;
@@ -196,7 +212,7 @@ impl ServerKeyPair {
     /// | 267686       | 32 (`X25519_BYTES`)  | OSK    | X25519 static secret key |
     /// | **267718**   | —                    | EOF    | |
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn save(&self, path: impl AsRef<std::path::Path>) -> Result<(), CertificateError> {
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), CertificateError> {
         let mut f = File::create(path)?;
         write_header(&mut f, TYPE_SERVER)?;
         f.write_all(self.epk.as_array())?;
@@ -209,7 +225,7 @@ impl ServerKeyPair {
 
     /// Load a server key pair from a binary file produced by [`save`](Self::save) (fast mode).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, CertificateError> {
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, CertificateError> {
         let mut f = File::open(path)?;
         read_header(&mut f, TYPE_SERVER)?;
         let mut epk_buf = Box::new([0u8; EPK_BYTES]);
@@ -231,7 +247,7 @@ impl ServerKeyPair {
 
     /// Load a server key pair from a binary file produced by [`save`](Self::save) (full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, CertificateError> {
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, CertificateError> {
         let mut f = File::open(path)?;
         read_header(&mut f, TYPE_SERVER)?;
         let mut epk_buf = Box::new([0u8; EPK_BYTES]);
@@ -259,68 +275,8 @@ impl ServerKeyPair {
 
 /// Manual Debug for full-mode ServerKeyPair: StaticSecret does not implement Debug.
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-impl std::fmt::Debug for ServerKeyPair {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ServerKeyPair")
-            .field("epk", &"<McEliece public key>")
-            .field("esk", &"<McEliece secret key>")
-            .field("vsk", &self.vsk)
-            .field("opk", &self.opk)
-            .field("osk", &"<X25519 static secret>")
-            .finish()
+impl Debug for ServerKeyPair {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.debug_struct("ServerKeyPair").field("epk", &"<McEliece public key>").field("esk", &"<McEliece secret key>").field("vsk", &self.vsk).field("opk", &self.opk).field("osk", &"<X25519 static secret>").finish()
     }
-}
-
-// ── Test helpers ─────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-impl ServerKeyPair {
-    /// Load from the mode-appropriate env var path when set; otherwise generate (and save).
-    ///
-    /// Set `TYPHOON_TEST_SERVER_KEY_FAST` (fast_software/fast_hardware) or
-    /// `TYPHOON_TEST_SERVER_KEY_FULL` (full_software/full_hardware) to a file path before
-    /// running tests to skip expensive McEliece key generation.
-    pub fn for_tests() -> Self {
-        let env_var = if cfg!(any(feature = "fast_software", feature = "fast_hardware")) {
-            "TYPHOON_TEST_SERVER_KEY_FAST"
-        } else {
-            "TYPHOON_TEST_SERVER_KEY_FULL"
-        };
-
-        if let Ok(path) = std::env::var(env_var) {
-            let p = std::path::Path::new(&path);
-            if p.exists() {
-                if let Ok(kp) = Self::load(p) {
-                    return kp;
-                }
-            }
-            // File missing or corrupt: generate, save for next run, and continue.
-            let kp = Self::generate();
-            let _ = kp.save(p);
-            kp
-        } else {
-            Self::generate()
-        }
-    }
-
-    /// Create a matched (ClientCertificate, ServerSecret) pair for use in tests.
-    /// Calls `for_tests()` once so both sides share the same key material.
-    #[cfg(all(feature = "client", feature = "server"))]
-    pub(crate) fn for_tests_pair() -> (ClientCertificate, ServerSecret<'static>) {
-        let kp = Self::for_tests();
-        let cert = kp.to_client_certificate(vec![]);
-        let secret = kp.into_server_secret();
-        (cert, secret)
-    }
-
-    pub(crate) fn epk_bytes(&self) -> &[u8] { self.epk.as_array() }
-    pub(crate) fn esk_bytes(&self) -> &[u8] { self.esk.as_array() }
-    pub(crate) fn vsk_bytes(&self) -> [u8; 32] { self.vsk.to_bytes() }
-    pub(crate) fn verifying_key_bytes(&self) -> [u8; 32] { self.vsk.verifying_key().to_bytes() }
-    #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub(crate) fn obfs_bytes(&self) -> &[u8] { self.obfs.as_ref() }
-    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub(crate) fn opk_bytes(&self) -> &[u8] { self.opk.as_bytes() }
-    #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub(crate) fn osk_bytes(&self) -> [u8; 32] { self.osk.to_bytes() }
 }

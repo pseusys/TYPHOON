@@ -2,7 +2,7 @@
 #[path = "../../tests/bytes/static.rs"]
 mod tests;
 
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -123,26 +123,26 @@ impl<const N: usize> From<[u8; N]> for StaticByteBuffer {
     }
 }
 
-impl Into<Vec<u8>> for StaticByteBuffer {
+impl From<StaticByteBuffer> for Vec<u8> {
     #[inline]
-    fn into(self) -> Vec<u8> {
-        self.data.to_vec()
+    fn from(val: StaticByteBuffer) -> Self {
+        val.data.to_vec()
     }
 }
 
-impl Into<Vec<u8>> for &StaticByteBuffer {
+impl From<&StaticByteBuffer> for Vec<u8> {
     #[inline]
-    fn into(self) -> Vec<u8> {
-        self.data.to_vec()
+    fn from(val: &StaticByteBuffer) -> Self {
+        val.data.to_vec()
     }
 }
 
-impl<const N: usize> Into<[u8; N]> for &StaticByteBuffer {
+impl<const N: usize> From<&StaticByteBuffer> for [u8; N] {
     #[inline]
-    fn into(self) -> [u8; N] {
-        match <[u8; N]>::try_from(&self.data[..]) {
+    fn from(val: &StaticByteBuffer) -> Self {
+        match <[u8; N]>::try_from(&val.data[..]) {
             Ok(res) => res,
-            Err(err) => panic!("error converting StaticByteBuffer to array [u8; {}], actual length {}: {}", N, self.len(), err),
+            Err(err) => panic!("error converting StaticByteBuffer to array [u8; {}], actual length {}: {}", N, val.len(), err),
         }
     }
 }
@@ -164,7 +164,7 @@ impl Hash for StaticByteBuffer {
 }
 
 impl Display for StaticByteBuffer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         for byte in self.data.iter() {
             write!(f, "{:02x}", byte)?;
         }
@@ -173,7 +173,7 @@ impl Display for StaticByteBuffer {
 }
 
 impl Debug for StaticByteBuffer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("StaticByteBuffer").field("length", &self.len()).field("data", &self.data.as_ref()).finish()
     }
 }

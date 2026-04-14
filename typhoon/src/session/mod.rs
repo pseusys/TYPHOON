@@ -1,8 +1,8 @@
+#[cfg(feature = "client")]
+mod client_health;
 /// Session management: encryption, health checking, and flow manager coordination.
 mod common;
 mod error;
-#[cfg(feature = "client")]
-mod client_health;
 
 #[cfg(feature = "client")]
 mod client;

@@ -1,7 +1,6 @@
 /// Multi-flow tests: server binds two UDP ports, certificate embeds both addresses.
 /// The client creates one flow manager per address; packets are distributed across flows.
-use futures::channel::oneshot;
-
+use futures::channel::oneshot::channel;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler};
 use typhoon::socket::ClientSocketError;
 
@@ -16,7 +15,7 @@ async fn test_multi_flow_echo() {
     let addr2 = free_addr();
     let (listener, cert) = setup_server_multi(vec![addr1, addr2], settings.clone()).await;
 
-    let (tx, rx) = oneshot::channel::<usize>();
+    let (tx, rx) = channel::<usize>();
     let lh = listener.clone();
     settings.executor().spawn(async move {
         let client = lh.accept().await.expect("accept");

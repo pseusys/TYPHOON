@@ -2,13 +2,13 @@
 #[path = "../../tests/tailor/structure.rs"]
 mod tests;
 
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::marker::PhantomData;
-use crate::utils::unix_timestamp_ms;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
 use crate::settings::consts::{CD_OFFSET, FG_OFFSET, ID_OFFSET, PL_OFFSET, PN_OFFSET, TAILOR_LENGTH, TM_OFFSET};
 use crate::tailor::flags::{PacketFlags, ReturnCode};
+use crate::utils::unix_timestamp_ms;
 
 const TM_LENGTH: usize = 4;
 const PN_LENGTH: usize = 8;
@@ -66,7 +66,10 @@ impl<T: IdentityType> Tailor<T> {
     /// The buffer must contain at least `TAILOR_LENGTH + T::length()` bytes.
     pub fn new(buffer: DynamicByteBuffer) -> Self {
         let buffer = buffer.ensure_size(T::length() + TAILOR_LENGTH);
-        Self { buffer, _phantom: PhantomData }
+        Self {
+            buffer,
+            _phantom: PhantomData,
+        }
     }
 
     /// Write a data packet tailor into the buffer.
@@ -298,12 +301,14 @@ impl<T: IdentityType> Tailor<T> {
 
     // --- Static helpers that read from a raw buffer ---
 
+    #[inline]
     pub fn get_payload_length(buffer: &DynamicByteBuffer) -> u16 {
         let correct_buffer = buffer.ensure_size(TAILOR_LENGTH);
         u16::from_be_bytes(correct_buffer.slice_both(PL_OFFSET, PL_OFFSET + PL_LENGTH).try_into().unwrap())
     }
 
     /// Extract identity from a raw tailor buffer.
+    #[inline]
     pub fn get_identity(buffer: &DynamicByteBuffer) -> T {
         let correct_buffer = buffer.ensure_size(T::length() + TAILOR_LENGTH);
         T::from_bytes(correct_buffer.slice_both(ID_OFFSET, ID_OFFSET + T::length()))
@@ -312,7 +317,10 @@ impl<T: IdentityType> Tailor<T> {
 
 impl<T: IdentityType> Clone for Tailor<T> {
     fn clone(&self) -> Self {
-        Self { buffer: self.buffer.clone(), _phantom: PhantomData }
+        Self {
+            buffer: self.buffer.clone(),
+            _phantom: PhantomData,
+        }
     }
 }
 
@@ -323,13 +331,7 @@ impl<T: IdentityType + PartialEq> PartialEq for Tailor<T> {
 }
 
 impl<T: IdentityType> Debug for Tailor<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Tailor")
-            .field("flags", &self.flags())
-            .field("code", &self.code())
-            .field("time", &self.time())
-            .field("packet_number", &self.packet_number())
-            .field("payload_length", &self.payload_length())
-            .finish()
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.debug_struct("Tailor").field("flags", &self.flags()).field("code", &self.code()).field("time", &self.time()).field("packet_number", &self.packet_number()).field("payload_length", &self.payload_length()).finish()
     }
 }

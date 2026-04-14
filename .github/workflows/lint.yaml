@@ -1,0 +1,45 @@
+name: Lint
+
+permissions:
+  contents: read
+
+on:
+  push:
+    paths:
+      - 'typhoon/**'
+      - '**.md'
+      - '.github/workflows/lint.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  typhoon-lint:
+    name: Lint TYPHOON Crate and Docs
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v4
+
+      - name: Setup Rust 🦀
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.89.0"
+          components: rustfmt, clippy
+          rust-src-dir: typhoon
+          override: true
+
+      - name: Check formatting 🎨
+        working-directory: typhoon
+        run: cargo fmt --check
+
+      - name: Run clippy 📎
+        working-directory: typhoon
+        run: cargo clippy -- -D warnings
+
+      - name: Lint markdown 📝
+        uses: DavidAnson/markdownlint-cli2-action@v19
+        with:
+          globs: '**/*.md'

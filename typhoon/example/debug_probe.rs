@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
-use env_logger;
+use env_logger::init;
+#[cfg(not(feature = "tokio"))]
+use futures::executor::block_on;
 use log::debug;
-
+#[cfg(feature = "tokio")]
+use tokio::runtime::Runtime;
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
 use typhoon::debug::{DebugClientConnectionHandler, DebugMode, DebugServerConnectionHandler, run_debug};
@@ -14,25 +17,18 @@ use typhoon::socket::{ListenerBuilder, ServerFlowConfiguration};
 
 #[cfg(feature = "tokio")]
 fn main() {
-    tokio::runtime::Runtime::new()
-        .expect("failed to create tokio runtime")
-        .block_on(run());
+    Runtime::new().expect("failed to create tokio runtime").block_on(run());
 }
 
 #[cfg(not(feature = "tokio"))]
 fn main() {
-    futures::executor::block_on(run());
+    block_on(run());
 }
 
 async fn run() {
-    env_logger::init();
+    init();
 
-    let settings = Arc::new(
-        SettingsBuilder::<DefaultExecutor>::new()
-            .build()
-            .expect("default settings should be valid"),
-    );
-
+    let settings = Arc::new(SettingsBuilder::<DefaultExecutor>::new().build().expect("default settings should be valid"));
     let server_addr = "127.0.0.1:19998".parse().expect("valid address");
 
     // Generate a server key pair and derive a client certificate.
@@ -43,17 +39,7 @@ async fn run() {
 
     // --- Start echo server ---
     let server_flow = ServerFlowConfiguration::with_address(flow_config, server_addr);
-    let listener: Arc<_> = Arc::new(
-        ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DebugServerConnectionHandler>::new(
-            key_pair,
-            DebugServerConnectionHandler,
-        )
-        .add_flow(server_flow)
-        .with_settings(settings.clone())
-        .build()
-        .await
-        .expect("listener should build"),
-    );
+    let listener: Arc<_> = Arc::new(ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DebugServerConnectionHandler>::new(key_pair, DebugServerConnectionHandler).add_flow(server_flow).with_settings(settings.clone()).build().await.expect("listener should build"));
     listener.start().await;
     println!("Debug echo server listening on {}", server_addr);
 
@@ -62,7 +48,9 @@ async fn run() {
     let inner_settings = settings.clone();
     settings.executor().spawn(async move {
         loop {
-            let Ok(client) = listener_handle.accept().await else { break };
+            let Ok(client) = listener_handle.accept().await else {
+                break;
+            };
             // Echo every packet back verbatim.
             inner_settings.executor().spawn(async move {
                 let mut echo_count = 0usize;
