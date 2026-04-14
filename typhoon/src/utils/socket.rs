@@ -1,11 +1,11 @@
 use std::io::Error as IoError;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-
 #[cfg(any(feature = "server", feature = "async-std"))]
 use std::net::UdpSocket as StdUdpSocket;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+
+use cfg_if::cfg_if;
 #[cfg(feature = "server")]
 use log::{debug, trace};
-use cfg_if::cfg_if;
 use thiserror::Error;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};

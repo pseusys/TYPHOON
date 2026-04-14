@@ -24,7 +24,6 @@ mod server;
 mod utils;
 
 use cfg_if::cfg_if;
-
 pub use client::ClientCertificate;
 cfg_if! {
     if #[cfg(feature = "server")] {
