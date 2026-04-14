@@ -5,7 +5,7 @@ mod tests;
 use cfg_if::cfg_if;
 
 cfg_if! {
-    if #[cfg(feature = "client")] {
+    if #[cfg(any(feature = "client", all(test, feature = "server")))] {
         use std::cell::UnsafeCell;
         use std::marker::PhantomData;
         use std::sync::{Arc, Weak};
@@ -24,7 +24,7 @@ cfg_if! {
 /// shared-state update, at which point it is reset.
 ///
 /// `!Sync` by design: each instance must be driven from exactly one task at a time.
-#[cfg(feature = "client")]
+#[cfg(any(feature = "client", all(test, feature = "server")))]
 pub(crate) struct SharedValue<T: Clone + Send + Sync> {
     state: Arc<ArcSwap<T>>,
     /// Last pointer seen from `state`; used for staleness detection only.
@@ -34,7 +34,7 @@ pub(crate) struct SharedValue<T: Clone + Send + Sync> {
     _not_sync: PhantomData<UnsafeCell<()>>,
 }
 
-#[cfg(feature = "client")]
+#[cfg(any(feature = "client", all(test, feature = "server")))]
 impl<T: Clone + Send + Sync> SharedValue<T> {
     /// Create a new shared value.
     #[inline]
@@ -114,7 +114,7 @@ impl<T: Clone + Send + Sync> SharedValue<T> {
 ///
 /// Staleness detection uses the same `shared` / `local` split as [`SharedValue`].
 /// `!Sync` by design.
-#[cfg(feature = "client")]
+#[cfg(any(feature = "client", all(test, feature = "server")))]
 pub(crate) struct CachedValue<T: Clone + Send + Sync> {
     source: Weak<ArcSwap<T>>,
     /// Last pointer seen from the source; used for staleness detection only.
@@ -124,7 +124,7 @@ pub(crate) struct CachedValue<T: Clone + Send + Sync> {
     _not_sync: PhantomData<UnsafeCell<()>>,
 }
 
-#[cfg(feature = "client")]
+#[cfg(any(feature = "client", all(test, feature = "server")))]
 impl<T: Clone + Send + Sync> CachedValue<T> {
     /// Return a mutable reference to the local cache copy, or `Err` if the source was dropped.
     /// Mutations are local to this instance only.

@@ -1,7 +1,10 @@
 use std::env::var;
 use std::path::Path;
 
-use super::{ServerKeyPair, ServerSecret};
+use super::ServerKeyPair;
+#[cfg(all(feature = "client", feature = "server"))]
+use super::ServerSecret;
+#[cfg(all(feature = "client", feature = "server"))]
 use crate::certificate::ClientCertificate;
 
 impl ServerKeyPair {
