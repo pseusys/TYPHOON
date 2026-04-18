@@ -1,0 +1,153 @@
+name: typhoon-eval
+
+# ---------------------------------------------------------------------------
+# Networks
+#
+#   net_left  (172.20.0.0/24) — client ↔ observer
+#   net_right (172.21.0.0/24) — observer ↔ server
+#
+# The observer sits in-path between both subnets with IP forwarding enabled,
+# so all client↔server traffic passes through it and is captured by tcpdump.
+# ---------------------------------------------------------------------------
+
+networks:
+  net_left:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+  net_right:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
+
+
+services:
+
+  # -------------------------------------------------------------------------
+  # Observer — in-path capture node
+  #
+  # Sits between client and server, forwards all packets, writes a pcap to
+  # the host-mounted captures directory.
+  #
+  # Requires rootful Docker or rootful Podman: NET_ADMIN is needed for
+  # ip_forward and NET_RAW for tcpdump. Rootless Podman cannot satisfy
+  # these capabilities.
+  # -------------------------------------------------------------------------
+  observer:
+    init: true
+    image: typhoon-eval-observer
+    build:
+      context: ../observer
+    environment:
+      PROTOCOL:        ${PROTOCOL}
+      PROTOCOL_SUFFIX: ${PROTOCOL_SUFFIX:-}
+    networks:
+      net_left:
+        ipv4_address: 172.20.0.2   # client-side gateway
+      net_right:
+        ipv4_address: 172.21.0.2   # server-side gateway
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.disable_ipv6=1
+    volumes:
+      - ${CAPTURES_DIR}:/captures
+    # tcpdump starts immediately at entrypoint; pgrep confirms it is running
+    # before any client/server traffic is allowed to flow.
+    healthcheck:
+      test: ["CMD", "pgrep", "-x", "tcpdump"]
+      interval: 1s
+      timeout: 3s
+      retries: 15
+      start_period: 2s
+
+  # -------------------------------------------------------------------------
+  # Server — protocol-specific, swapped per run via SERVER_IMAGE env var
+  #
+  # Each server Dockerfile must define a HEALTHCHECK that passes only when
+  # the server is bound and ready to accept connections (e.g. nc -z localhost
+  # <port>).  The client waits for service_healthy before connecting, so a
+  # missing or always-failing HEALTHCHECK will stall the run.
+  # -------------------------------------------------------------------------
+  server:
+    init: true
+    image: ${SERVER_IMAGE}
+    networks:
+      net_right:
+        ipv4_address: 172.21.0.10
+    cap_add:
+      - NET_ADMIN   # needed to add return route through observer
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    environment:
+      OBSERVER_GW: 172.21.0.2
+    depends_on:
+      observer:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------------
+  # Client — transfers TRANSFER_BYTES to server, then exits with code 0.
+  #
+  # Waits for both observer (tcpdump running) and server (service ready)
+  # before sending any data, eliminating the startup race.
+  #
+  # The orchestrator uses abort_on_container_exit and inspects this
+  # container's exit code via the com.docker.compose.service label to decide
+  # whether the run succeeded.
+  # -------------------------------------------------------------------------
+  client:
+    init: true
+    image: ${CLIENT_IMAGE}
+    networks:
+      net_left:
+        ipv4_address: 172.20.0.10
+    cap_add:
+      - NET_ADMIN   # needed to add route to server subnet through observer
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    environment:
+      SERVER_HOST:    172.21.0.10
+      OBSERVER_GW:    172.20.0.2
+      TRANSFER_BYTES: ${TRANSFER_BYTES:-104857600}
+    depends_on:
+      observer:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    restart: "no"
+
+  # -------------------------------------------------------------------------
+  # Pumba — chaos / network-impairment injection (profile: chaos)
+  #
+  # Only started when the "chaos" Compose profile is active.  The orchestrator
+  # sets compose_profiles=["chaos"] when --chaos is passed; otherwise this
+  # service is completely ignored.
+  #
+  # Targets the client container by name (PUMBA_TARGET, set by orchestrator).
+  # Tunable via env vars (all have defaults):
+  #   CHAOS_DURATION   total duration pumba runs  (default: 120s)
+  #   CHAOS_DELAY_MS   base netem delay in ms     (default: 50)
+  #   CHAOS_JITTER_MS  delay jitter in ms         (default: 20)
+  # -------------------------------------------------------------------------
+  pumba:
+    init: true
+    profiles: ["chaos"]
+    image: ghcr.io/alexei-led/pumba:latest
+    command: >
+      netem
+      --tc-image ghcr.io/alexei-led/pumba-tc:latest
+      --duration ${CHAOS_DURATION:-120s}
+      delay
+      --time ${CHAOS_DELAY_MS:-50}
+      --jitter ${CHAOS_JITTER_MS:-20}
+      ${PUMBA_TARGET}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      client:
+        condition: service_started

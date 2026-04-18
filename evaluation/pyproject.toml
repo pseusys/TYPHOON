@@ -1,0 +1,34 @@
+[tool.poetry]
+name = "typhoon-eval"
+version = "0.1.0"
+description = "TYPHOON protocol evaluation harness — traffic capture, analysis, and classification"
+authors = ["pseusys"]
+packages = [{ include = "typhoon_eval", from = "src" }]
+
+[tool.poetry.dependencies]
+python             = "^3.11"
+click              = "^8.1"
+rich               = "^13.0"
+python-on-whales   = "^0.73"
+
+[tool.poetry.requires-plugins]
+poethepoet = { version = "^0.44.0", extras = ["poetry_plugin"] }
+
+[build-system]
+requires      = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+
+[tool.poe.tasks]
+
+  [tool.poe.tasks.build]
+  cmd  = "docker compose -f compose/docker-compose.yml build"
+  help = "Build all protocol Docker images"
+
+  [tool.poe.tasks.capture]
+  cmd  = "python -m typhoon_eval.orchestrator"
+  help = "Run captures — pass --all or --protocol <name>, optionally --chaos"
+
+  [tool.poe.tasks.clean]
+  shell = "rm -rf results/captures results/logs"
+  help  = "Delete all captured pcap files and logs"
