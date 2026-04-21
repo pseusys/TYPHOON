@@ -44,9 +44,10 @@ pub fn server_key_pair() -> ServerKeyPair {
     if let Ok(path) = std::env::var(env_var) {
         let p = std::path::Path::new(&path);
         if p.exists()
-            && let Ok(kp) = ServerKeyPair::load(p) {
-                return kp;
-            }
+            && let Ok(kp) = ServerKeyPair::load(p)
+        {
+            return kp;
+        }
         let kp = ServerKeyPair::generate();
         let _ = kp.save(p);
         kp
