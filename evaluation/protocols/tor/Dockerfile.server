@@ -1,0 +1,10 @@
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        iproute2 netcat-openbsd openssl \
+    && rm -rf /var/lib/apt/lists/*
+COPY server.py /app/server.py
+# Health check: OR port listening (ss doesn't connect, so it won't trigger TLS)
+# AND cert written so the client can load it before connecting.
+HEALTHCHECK --interval=1s --timeout=3s --retries=20 --start-period=3s \
+    CMD ss -t -l -n | grep -q ':9001' && test -f /keys/tor_cert.pem
+CMD ["python3", "/app/server.py"]

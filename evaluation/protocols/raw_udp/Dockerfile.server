@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+COPY server.py /app/server.py
+COPY server-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+# Health check: UDP port 9000 appears in the bound-socket table
+HEALTHCHECK --interval=1s --timeout=3s --retries=15 --start-period=2s \
+    CMD ss -u -l -n | grep -q ':9000'
+ENTRYPOINT ["/entrypoint.sh"]

@@ -1,0 +1,10 @@
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        wireguard-tools iproute2 python3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY wireguard/client-entrypoint.sh /entrypoint.sh
+COPY common/tcp_sender.py /app/client.py
+RUN chmod +x /entrypoint.sh
+# Client connects to the server's WireGuard IP 10.100.0.1:9000
+ENV SERVER_HOST=10.100.0.1
+ENTRYPOINT ["/entrypoint.sh"]

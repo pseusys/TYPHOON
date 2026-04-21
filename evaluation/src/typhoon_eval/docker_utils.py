@@ -58,7 +58,7 @@ def _make_client(protocol_name: str, env_file: Path, chaos: bool) -> DockerClien
     """
     return DockerClient(
         compose_files=[BASE_COMPOSE],
-        compose_env_file=str(env_file),
+        compose_env_files=[env_file],
         compose_project_name=_project_name(protocol_name),
         compose_profiles=["chaos"] if chaos else [],
     )
@@ -80,9 +80,18 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
     with _overlay_env(extra_env):
         timed_out = False
 
+        # Pre-cleanup: remove any leftover resources from a previous failed run of
+        # the same protocol (same project name → same network names and subnets).
+        # Without this, "Pool overlaps with other one on this address space" errors
+        # cause the run to fail immediately when prior networks were not cleaned up.
+        try:
+            dc.compose.down(volumes=True, remove_orphans=True, quiet=True)
+        except DockerException:
+            pass
+
         def _run_up() -> None:
             try:
-                dc.compose.up(abort_on_container_exit=True, no_build=True)
+                dc.compose.up(abort_on_container_exit=True, no_build=True, quiet=True)
             except DockerException:
                 # Expected: observer/server receive SIGTERM when the client
                 # exits and --abort-on-container-exit fires; their non-zero
@@ -114,7 +123,7 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
                 pass
 
         try:
-            dc.compose.down(volumes=True, remove_orphans=True)
+            dc.compose.down(volumes=True, remove_orphans=True, quiet=True)
         except DockerException:
             pass
 

@@ -11,23 +11,36 @@ click              = "^8.1"
 rich               = "^13.0"
 python-on-whales   = "^0.73"
 
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.11"
+
 [tool.poetry.requires-plugins]
-poethepoet = { version = "^0.44.0", extras = ["poetry_plugin"] }
+poethepoet = { version = ">=0.24", extras = ["poetry_plugin"] }
 
 [build-system]
 requires      = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
 
 [tool.poe.tasks]
 
   [tool.poe.tasks.build]
-  cmd  = "docker compose -f compose/docker-compose.yml build"
+  cmd  = "docker compose -f compose/docker-compose.build.yml build"
   help = "Build all protocol Docker images"
 
   [tool.poe.tasks.capture]
   cmd  = "python -m typhoon_eval.orchestrator"
   help = "Run captures — pass --all or --protocol <name>, optionally --chaos"
+
+  [tool.poe.tasks.lint]
+  cmd  = "ruff check src/ protocols/"
+  help = "Lint Python sources with ruff"
 
   [tool.poe.tasks.clean]
   shell = "rm -rf results/captures results/logs"

@@ -70,10 +70,12 @@ def _run_one(
         timeout=timeout,
     )
 
+    pcap = captures_dir / f"{protocol.name}{suffix}.pcap"
     if success:
-        pcap = captures_dir / f"{protocol.name}{suffix}.pcap"
         if not pcap.exists():
             return False, "observer did not write pcap"
+        if pcap.stat().st_size < 100:
+            return False, f"pcap is empty ({pcap.stat().st_size} bytes)"
 
     return success, "" if success else "non-zero exit or timeout"
 

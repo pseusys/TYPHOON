@@ -1,0 +1,60 @@
+name: Lint
+
+permissions:
+  contents: read
+
+on:
+  push:
+    paths:
+      - 'typhoon/**'
+      - 'evaluation/**'
+      - '.github/workflows/lint.yaml'
+      - '.shellcheckrc'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  clippy:
+    name: Rust — clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.89.0"
+          components: clippy
+          rust-src-dir: typhoon
+          override: true
+      - name: Clippy
+        working-directory: typhoon
+        run: cargo clippy --all-targets -- -D warnings
+
+  shellcheck:
+    name: Shell — shellcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: '.'
+
+  hadolint:
+    name: Dockerfiles — hadolint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          recursive: true
+          config: evaluation/.hadolint.yaml
+
+  ruff:
+    name: Python — ruff
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: "check evaluation/src evaluation/protocols"

@@ -1,0 +1,16 @@
+[package]
+name    = "typhoon-eval"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+typhoon = { path = "../typhoon", features = ["client", "server", "tokio", "fast_software"] }
+tokio   = { version = "^1", features = ["rt-multi-thread", "macros", "time"] }
+
+[[bin]]
+name = "eval-server"
+path = "src/bin/eval_server.rs"
+
+[[bin]]
+name = "eval-client"
+path = "src/bin/eval_client.rs"

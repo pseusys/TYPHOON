@@ -1,0 +1,3 @@
+ignore:
+  - DL3008  # apt-get version pins — eval images, not production
+  - DL3013  # pip version pins — eval images
