@@ -10,7 +10,7 @@ use crate::bytes::dynamic::DynamicByteBuffer;
 use crate::bytes::utils::{allocate_ptr, copy_slice, free_ptr};
 
 /// Shared storage for pooled buffers.
-pub struct PoolStorage {
+pub(crate) struct PoolStorage {
     buffers: ArrayQueue<*mut u8>,
     capacity: usize,
 }
@@ -21,18 +21,20 @@ unsafe impl Sync for PoolStorage {}
 
 impl PoolStorage {
     /// Return buffer to pool, or free if at capacity.
-    pub fn try_return(&self, ptr: *mut u8) {
+    #[inline]
+    pub(crate) fn try_return(&self, ptr: *mut u8) {
         if self.buffers.push(ptr).is_err() {
             free_ptr(ptr, self.capacity);
         }
     }
 
-    pub fn try_take(&self, size: usize) -> *mut u8 {
+    #[inline]
+    pub(crate) fn try_take(&self, size: usize) -> *mut u8 {
         self.buffers.pop().unwrap_or_else(|| allocate_ptr(size))
     }
 }
 
-pub type PoolReturn = Arc<PoolStorage>;
+pub(crate) type PoolReturn = Arc<PoolStorage>;
 
 /// Thread-safe pool of reusable byte buffers.
 pub struct BytePool {
@@ -70,7 +72,9 @@ impl BytePool {
     }
 
     /// Get a buffer from pool or allocate new one.
-    /// `size`: optional limit (must be ≤ pool's size), `None` for full size.
+    /// - `size`: optional size limit (must be <= pool's size), None for full size
+    ///
+    /// Returns a DynamicByteBuffer that auto-returns to pool on drop.
     #[inline]
     pub fn allocate(&self, size: Option<usize>) -> DynamicByteBuffer {
         match size {
@@ -88,6 +92,7 @@ impl BytePool {
         self.allocate_precise(self.size + self.after_cap, self.before_cap, 0)
     }
 
+    #[inline]
     pub fn allocate_precise(&self, size: usize, before_cap: usize, after_cap: usize) -> DynamicByteBuffer {
         let requested_size = before_cap + size + after_cap;
         assert!(requested_size <= self.storage.capacity, "Requested size greater than pool capacity ({requested_size} > {})!", self.storage.capacity);

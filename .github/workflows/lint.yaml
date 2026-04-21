@@ -10,51 +10,59 @@ on:
       - 'evaluation/**'
       - '.github/workflows/lint.yaml'
       - '.shellcheckrc'
+      - '**.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  clippy:
-    name: Rust — clippy
-    runs-on: ubuntu-24.04
+  all-lint:
+    name: Lint All the Code
+    runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Checkout 🛎️
+        uses: actions/checkout@v4
+
+      - name: Setup Rust 🦀
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: "1.89.0"
-          components: clippy
+          components: rustfmt, clippy
           rust-src-dir: typhoon
           override: true
-      - name: Clippy
-        working-directory: typhoon
-        run: cargo clippy --all-targets -- -D warnings
 
-  shellcheck:
-    name: Shell — shellcheck
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ludeeus/action-shellcheck@2.0.0
+      - name: Setup Python 🐍
+        uses: actions/setup-python@v6.2.0
         with:
-          scandir: '.'
+          python-version: "3.12"
 
-  hadolint:
-    name: Dockerfiles — hadolint
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hadolint/hadolint-action@v3.1.0
+      - name: Check formatting 🎨
+        working-directory: typhoon
+        run: cargo fmt --check
+
+      - name: Run clippy 📎
+        working-directory: typhoon
+        run: cargo clippy -- -D warnings
+
+      - name: Check shell scripts 🐚
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: "."
+
+      - name: Check Dockerfile configuration 📦
+        uses: hadolint/hadolint-action@v3.1.0
         with:
           recursive: true
           config: evaluation/.hadolint.yaml
 
-  ruff:
-    name: Python — ruff
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v3
+      - name: Check Python code 📜
+        uses: astral-sh/ruff-action@v3
         with:
           args: "check evaluation/src evaluation/protocols"
+
+      - name: Lint markdown 📝
+        uses: DavidAnson/markdownlint-cli2-action@v19
+        with:
+          globs: '**/*.md'

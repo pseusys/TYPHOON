@@ -23,11 +23,13 @@ mod client;
 mod server;
 mod utils;
 
+use cfg_if::cfg_if;
 pub use client::ClientCertificate;
-#[cfg(feature = "server")]
-pub use server::ServerKeyPair;
-pub use utils::{CertificateError, ED25519_BYTES, EPK_BYTES, ESK_BYTES, X25519_BYTES};
-
-#[cfg(feature = "server")]
-pub(crate) use server::ServerSecret;
+cfg_if! {
+    if #[cfg(feature = "server")] {
+        pub use server::ServerKeyPair;
+        pub(crate) use server::ServerSecret;
+    }
+}
 pub(crate) use utils::ObfuscationBufferContainer;
+pub use utils::{CertificateError, ED25519_BYTES, EPK_BYTES, ESK_BYTES, X25519_BYTES};

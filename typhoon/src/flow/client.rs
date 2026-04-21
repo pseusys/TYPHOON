@@ -1,12 +1,12 @@
 /// Client-side flow manager implementation.
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use crate::bytes::DynamicByteBuffer;
 use crate::cache::CachedValue;
 use crate::crypto::ClientCryptoTool;
 use crate::flow::common::{FlowManager, FlowReceiveInternal, FlowSendInternal};
 use crate::flow::config::FlowConfig;
-use crate::flow::decoy::{DecoyFlowSender, DecoyCommunicationMode};
+use crate::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender};
 use crate::flow::error::FlowControllerError;
 use crate::settings::Settings;
 use crate::tailor::IdentityType;
@@ -29,8 +29,8 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
         let identity = cipher.get_mut().map_err(FlowControllerError::MissingCache)?.identity();
         let send_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
         let receive_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
-        let value = Arc::new_cyclic(|m: &std::sync::Weak<Self>| {
-            let mgr: std::sync::Weak<dyn DecoyFlowSender> = m.clone();
+        let value = Arc::new_cyclic(|m: &Weak<Self>| {
+            let mgr: Weak<dyn DecoyFlowSender> = m.clone();
             ClientFlowManager {
                 decoy_provider: Mutex::new(DP::new(mgr, settings.clone(), identity)),
                 send_internal: Mutex::new(FlowSendInternal {

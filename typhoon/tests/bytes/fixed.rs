@@ -35,7 +35,7 @@ fn test_default_is_zeroed() {
 fn test_copy_semantics() {
     let buf = FixedByteBuffer::<4>::from_array([1, 2, 3, 4]);
     let copy = buf;
-    let _ = copy.as_array();  // ensure copy compiles fine
+    let _ = copy.as_array(); // ensure copy compiles fine
     // Original is unchanged (Copy not Clone-from-ref).
     assert_eq!(buf.slice(), &[1, 2, 3, 4]);
 }

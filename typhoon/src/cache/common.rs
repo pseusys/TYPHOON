@@ -9,6 +9,7 @@ pub enum CacheError {
     KeyNotFound(String),
 }
 
+#[cfg(feature = "server")]
 pub(crate) struct Versioned<T> {
     pub(crate) value: T,
     pub(crate) version: u64,

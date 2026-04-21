@@ -2,16 +2,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+use super::ServerHealthProvider;
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
 use crate::defaults::DefaultExecutor;
 use crate::session::server::OutgoingRouter;
-use crate::settings::{Settings, SettingsBuilder, keys};
 use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILOR_LENGTH};
+use crate::settings::{Settings, SettingsBuilder, keys};
 use crate::tailor::{PacketFlags, Tailor};
-use crate::bytes::StaticByteBuffer;
 use crate::utils::sync::{Mutex, sleep};
-
-use super::ServerHealthProvider;
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
 
@@ -50,28 +48,14 @@ fn test_identity() -> StaticByteBuffer {
 ///   HEALTH_CHECK_NEXT_IN_MIN(21) > TIMEOUT_MAX(20)
 ///   HEALTH_CHECK_NEXT_IN_MIN(21) ≤ HEALTH_CHECK_NEXT_IN_MAX(100)
 fn fast_settings() -> Arc<Settings<DefaultExecutor>> {
-    Arc::new(
-        SettingsBuilder::new()
-            .set(&keys::TIMEOUT_MIN, 5u64)
-            .set(&keys::TIMEOUT_DEFAULT, 10u64)
-            .set(&keys::TIMEOUT_MAX, 20u64)
-            .set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 21u64)
-            .set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 100u64)
-            .set(&keys::MAX_RETRIES, 2u64)
-            .build()
-            .unwrap(),
-    )
+    Arc::new(SettingsBuilder::new().set(&keys::TIMEOUT_MIN, 5u64).set(&keys::TIMEOUT_DEFAULT, 10u64).set(&keys::TIMEOUT_MAX, 20u64).set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 21u64).set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 100u64).set(&keys::MAX_RETRIES, 2u64).build().unwrap())
 }
 
 /// Parse PN, TM and flags from the raw buffer emitted by ServerHealthProvider.
 /// A health-check response has no body, so the whole buffer is the tailor.
 fn parse_response(packet: &DynamicByteBuffer) -> (u64, u32, PacketFlags) {
     let tailor_size = TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH;
-    assert!(
-        packet.len() >= tailor_size,
-        "packet too short: {} < {tailor_size}",
-        packet.len()
-    );
+    assert!(packet.len() >= tailor_size, "packet too short: {} < {tailor_size}", packet.len());
     let tailor_start = packet.len() - tailor_size;
     let (_, tailor_buf) = packet.split_buf(tailor_start);
     let tailor = Tailor::<StaticByteBuffer>::new(tailor_buf);
@@ -87,12 +71,7 @@ async fn test_server_health_response_echoes_client_pn() {
     let settings = fast_settings();
 
     // Very long initial_server_next_in → timer will not time out during the test.
-    let provider = ServerHealthProvider::new(
-        Arc::downgrade(&router),
-        test_identity(),
-        Arc::clone(&settings),
-        60_000u32,
-    );
+    let provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 60_000u32);
 
     let client_pn: u64 = 0xDEAD_BEEF_0000_0001;
     provider.feed_health_check(10u32, client_pn);
@@ -115,12 +94,7 @@ async fn test_server_health_response_own_tm_in_range() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(
-        Arc::downgrade(&router),
-        test_identity(),
-        Arc::clone(&settings),
-        60_000u32,
-    );
+    let provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 60_000u32);
 
     provider.feed_health_check(10u32, 0x1234_5678_0000_0001);
     sleep(Duration::from_millis(50)).await;
@@ -142,12 +116,7 @@ async fn test_server_health_response_has_health_check_flag() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(
-        Arc::downgrade(&router),
-        test_identity(),
-        Arc::clone(&settings),
-        60_000u32,
-    );
+    let provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 60_000u32);
     provider.feed_health_check(10u32, 0xABCD);
     sleep(Duration::from_millis(50)).await;
     drop(provider);
@@ -165,22 +134,14 @@ async fn test_server_health_response_delayed() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(
-        Arc::downgrade(&router),
-        test_identity(),
-        Arc::clone(&settings),
-        60_000u32,
-    );
+    let provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 60_000u32);
 
     // Request a 100 ms delay (clamped to MAX=100ms).
     provider.feed_health_check(100u32, 0x9999);
 
     // After 40 ms the response must NOT have arrived yet.
     sleep(Duration::from_millis(40)).await;
-    assert_eq!(
-        router.packets.lock().await.len(), 0,
-        "response must not arrive before client_next_in delay"
-    );
+    assert_eq!(router.packets.lock().await.len(), 0, "response must not arrive before client_next_in delay");
 
     // After another 110 ms (150 ms total) the response has been sent; drop provider
     // now so the task exits cleanly without entering decay retries.
@@ -199,20 +160,12 @@ async fn test_server_health_timer_removes_session_after_max_retries() {
     let settings = fast_settings(); // MAX_RETRIES=2, TIMEOUT_DEFAULT=10ms
 
     // initial_server_next_in = 1 ms → first timeout = 1 + 10 = 11 ms.
-    let _provider = ServerHealthProvider::new(
-        Arc::downgrade(&router),
-        test_identity(),
-        Arc::clone(&settings),
-        1u32,
-    );
+    let _provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 1u32);
 
     // Never call feed_health_check — let the timer expire MAX_RETRIES times.
     sleep(Duration::from_millis(500)).await;
 
-    assert!(
-        router.remove_count.load(Ordering::Relaxed) > 0,
-        "session must be removed after max retries"
-    );
+    assert!(router.remove_count.load(Ordering::Relaxed) > 0, "session must be removed after max retries");
 }
 
 // Test: termination packet is routed before remove_session is called on decay.
@@ -221,23 +174,12 @@ async fn test_server_health_sends_termination_before_remove() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let _provider = ServerHealthProvider::new(
-        Arc::downgrade(&router),
-        test_identity(),
-        Arc::clone(&settings),
-        1u32,
-    );
+    let _provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 1u32);
 
     sleep(Duration::from_millis(500)).await;
 
-    assert!(
-        !router.packets.lock().await.is_empty(),
-        "termination packet must be sent before remove_session"
-    );
-    assert!(
-        router.remove_count.load(Ordering::Relaxed) > 0,
-        "remove_session must be called after termination"
-    );
+    assert!(!router.packets.lock().await.is_empty(), "termination packet must be sent before remove_session");
+    assert!(router.remove_count.load(Ordering::Relaxed) > 0, "remove_session must be called after termination");
 }
 
 // Test: dropping the router Arc causes the timer task to stop cleanly.
@@ -246,12 +188,7 @@ async fn test_server_health_stops_when_router_dropped() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(
-        Arc::downgrade(&router),
-        test_identity(),
-        Arc::clone(&settings),
-        60_000u32,
-    );
+    let provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 60_000u32);
 
     drop(router);
 

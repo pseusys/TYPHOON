@@ -1,15 +1,17 @@
+use std::ptr::copy_nonoverlapping;
+
 use crate::bytes::pool::PoolReturn;
 
 /// Owns buffer memory and manages its lifecycle.
-pub struct BufferHolder {
-    pub data: *mut u8,
-    pub capacity: usize,
+pub(crate) struct BufferHolder {
+    pub(crate) data: *mut u8,
+    pub(crate) capacity: usize,
     pool_handle: PoolReturn,
 }
 
 impl BufferHolder {
     #[inline]
-    pub fn new(data: *mut u8, capacity: usize, return_tx: PoolReturn) -> Self {
+    pub(crate) fn new(data: *mut u8, capacity: usize, return_tx: PoolReturn) -> Self {
         Self {
             data,
             capacity,
@@ -18,10 +20,10 @@ impl BufferHolder {
     }
 
     #[inline]
-    pub fn copy(&self) -> Self {
+    pub(crate) fn copy(&self) -> Self {
         let new_ptr = self.pool_handle.try_take(self.capacity);
         unsafe {
-            std::ptr::copy_nonoverlapping(self.data, new_ptr, self.capacity);
+            copy_nonoverlapping(self.data, new_ptr, self.capacity);
         }
         Self {
             data: new_ptr,

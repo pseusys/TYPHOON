@@ -246,8 +246,7 @@ fn test_decoy_feature_config_random_valid() {
         // Replication probability should be within configured bounds.
         let prob_min = settings.get(&DECOY_REPLICATION_PROBABILITY_MIN);
         let prob_max = settings.get(&DECOY_REPLICATION_PROBABILITY_MAX);
-        assert!(config.replication_probability >= prob_min && config.replication_probability <= prob_max,
-            "replication_probability {} outside [{}, {}]", config.replication_probability, prob_min, prob_max);
+        assert!(config.replication_probability >= prob_min && config.replication_probability <= prob_max, "replication_probability {} outside [{}, {}]", config.replication_probability, prob_min, prob_max);
 
         // Subheader config should be Some iff mode is not None.
         match config.subheader_mode {
@@ -352,7 +351,9 @@ fn test_schedule_next_maintenance() {
 fn test_schedule_next_maintenance_timed() {
     let settings = make_settings();
     let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
-    state.features.maintenance_mode = MaintenanceMode::Timed { delay_ms: 1000 };
+    state.features.maintenance_mode = MaintenanceMode::Timed {
+        delay_ms: 1000,
+    };
 
     let before = unix_timestamp_ms();
     state.schedule_next_maintenance();
@@ -376,10 +377,7 @@ fn test_seeded_packet_is_deterministic() {
 
     let make_packet = |seed: u64| -> Vec<u8> {
         set_test_rng_seed(seed);
-        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(
-            settings.clone(),
-            StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH),
-        );
+        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
         // Override subheader to All so the subheader path is always taken.
         // The config is generated from the seeded RNG, so it is deterministic.
         state.features.subheader_mode = SubheaderMode::All;
@@ -405,10 +403,7 @@ fn test_seeded_packets_differ_with_different_seeds() {
 
     let make_packet = |seed: u64| -> Vec<u8> {
         set_test_rng_seed(seed);
-        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(
-            settings.clone(),
-            StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH),
-        );
+        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
         state.features.subheader_mode = SubheaderMode::All;
         state.features.subheader_config = Some(super::generate_random_fake_header(sh_min, sh_max));
         let packet = state.create_decoy_packet(64, false);
@@ -433,10 +428,7 @@ fn test_seeded_packet_snapshot() {
 
     let make_packet = |seed: u64| -> Vec<u8> {
         set_test_rng_seed(seed);
-        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(
-            settings.clone(),
-            StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH),
-        );
+        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
         state.features.subheader_mode = SubheaderMode::All;
         state.features.subheader_config = Some(super::generate_random_fake_header(sh_min, sh_max));
         let packet = state.create_decoy_packet(16, false);
@@ -446,7 +438,7 @@ fn test_seeded_packet_snapshot() {
 
     // Build snapshot on first run, then assert second run is identical.
     let snapshot = make_packet(1337);
-    let replay   = make_packet(1337);
+    let replay = make_packet(1337);
     assert_eq!(snapshot, replay, "snapshot must be reproducible across runs");
 }
 

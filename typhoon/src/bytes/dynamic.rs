@@ -3,7 +3,7 @@
 mod tests;
 
 use std::cell::UnsafeCell;
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::marker::PhantomData;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::Arc;
@@ -28,7 +28,7 @@ pub struct DynamicByteBuffer {
 }
 
 impl DynamicByteBuffer {
-    pub fn new(data: *mut u8, capacity: usize, before_cap: usize, size: usize, after_cap: usize, return_tx: PoolReturn) -> Self {
+    pub(crate) fn new(data: *mut u8, capacity: usize, before_cap: usize, size: usize, after_cap: usize, return_tx: PoolReturn) -> Self {
         let buffer_end = before_cap + size;
         DynamicByteBuffer {
             holder: Arc::new(BufferHolder::new(data, capacity, return_tx)),
@@ -338,7 +338,7 @@ impl Fill for DynamicByteBuffer {
 
 impl Debug for DynamicByteBuffer {
     #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("DynamicByteBuffer").field("length", &self.length).field("start", &self.start).field("end", &self.end).field("view_length", &self.len()).field("data", &self.slice()).finish()
     }
 }

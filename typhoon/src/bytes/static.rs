@@ -2,7 +2,7 @@
 #[path = "../../tests/bytes/static.rs"]
 mod tests;
 
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -164,7 +164,7 @@ impl Hash for StaticByteBuffer {
 }
 
 impl Display for StaticByteBuffer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         for byte in self.data.iter() {
             write!(f, "{byte:02x}")?;
         }
@@ -173,7 +173,7 @@ impl Display for StaticByteBuffer {
 }
 
 impl Debug for StaticByteBuffer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("StaticByteBuffer").field("length", &self.len()).field("data", &self.data.as_ref()).finish()
     }
 }

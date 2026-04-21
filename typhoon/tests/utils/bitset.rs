@@ -60,10 +60,7 @@ fn test_bitset_reservoir_sampling_roughly_uniform() {
     let expected = iters / 4;
     for (i, &count) in counts.iter().enumerate() {
         let diff = (count as i64 - expected as i64).unsigned_abs() as u32;
-        assert!(
-            diff < expected / 4,
-            "bit {i} selected {count} times (expected ~{expected}, diff {diff})"
-        );
+        assert!(diff < expected / 4, "bit {i} selected {count} times (expected ~{expected}, diff {diff})");
     }
 }
 

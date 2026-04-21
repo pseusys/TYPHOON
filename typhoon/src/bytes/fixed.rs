@@ -4,7 +4,7 @@ mod tests;
 
 /// Stack-allocated fixed-size byte buffer for compile-time-known sizes (e.g. cryptographic keys).
 /// Zero heap allocation; `Copy` semantics — 32-byte copies are cheaper than atomic Arc ops.
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::hash::{Hash, Hasher};
 
 use crate::bytes::common::ByteBuffer;
@@ -21,13 +21,17 @@ impl<const N: usize> FixedByteBuffer<N> {
     /// Create a zeroed buffer.
     #[inline]
     pub fn zeroed() -> Self {
-        Self { data: [0u8; N] }
+        Self {
+            data: [0u8; N],
+        }
     }
 
     /// Create from a fixed-size array.
     #[inline]
     pub fn from_array(arr: [u8; N]) -> Self {
-        Self { data: arr }
+        Self {
+            data: arr,
+        }
     }
 
     /// Get a reference to the inner array.
@@ -89,14 +93,18 @@ impl<const N: usize> AsRef<[u8]> for FixedByteBuffer<N> {
 impl<const N: usize> From<[u8; N]> for FixedByteBuffer<N> {
     #[inline]
     fn from(arr: [u8; N]) -> Self {
-        Self { data: arr }
+        Self {
+            data: arr,
+        }
     }
 }
 
 impl<const N: usize> From<&[u8; N]> for FixedByteBuffer<N> {
     #[inline]
     fn from(arr: &[u8; N]) -> Self {
-        Self { data: *arr }
+        Self {
+            data: *arr,
+        }
     }
 }
 
@@ -131,7 +139,7 @@ impl<const N: usize> Hash for FixedByteBuffer<N> {
 }
 
 impl<const N: usize> Display for FixedByteBuffer<N> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         for byte in &self.data {
             write!(f, "{byte:02x}")?;
         }
@@ -140,7 +148,7 @@ impl<const N: usize> Display for FixedByteBuffer<N> {
 }
 
 impl<const N: usize> Debug for FixedByteBuffer<N> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("FixedByteBuffer").field("length", &N).field("data", &self.data).finish()
     }
 }

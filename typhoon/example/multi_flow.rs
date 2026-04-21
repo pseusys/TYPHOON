@@ -3,7 +3,12 @@
 /// across them. All messages must arrive regardless of which flow handles each packet.
 use std::sync::Arc;
 
-
+use env_logger;
+use futures::channel::oneshot::channel;
+#[cfg(not(feature = "tokio"))]
+use futures::executor::block_on;
+#[cfg(feature = "tokio")]
+use tokio::runtime::Runtime;
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
@@ -16,24 +21,18 @@ const MESSAGE_COUNT: usize = 30;
 
 #[cfg(feature = "tokio")]
 fn main() {
-    tokio::runtime::Runtime::new()
-        .expect("failed to create tokio runtime")
-        .block_on(run());
+    Runtime::new().expect("failed to create tokio runtime").block_on(run());
 }
 
 #[cfg(not(feature = "tokio"))]
 fn main() {
-    futures::executor::block_on(run());
+    block_on(run());
 }
 
 async fn run() {
     env_logger::init();
 
-    let settings = Arc::new(
-        SettingsBuilder::<DefaultExecutor>::new()
-            .build()
-            .expect("default settings should be valid"),
-    );
+    let settings = Arc::new(SettingsBuilder::<DefaultExecutor>::new().build().expect("default settings should be valid"));
 
     let flow1_addr = "127.0.0.1:19995".parse().expect("valid address");
     let flow2_addr = "127.0.0.1:19994".parse().expect("valid address");
@@ -45,26 +44,15 @@ async fn run() {
     let flow_config = FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![]));
 
     // --- Build and start the server with two flow managers ---
-    let listener: Arc<_> = Arc::new(
-        ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>::new(
-            key_pair,
-            DefaultServerConnectionHandler,
-        )
-        .add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow1_addr))
-        .add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow2_addr))
-        .with_settings(settings.clone())
-        .build()
-        .await
-        .expect("listener should build"),
-    );
+    let listener: Arc<_> = Arc::new(ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow1_addr)).add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow2_addr)).with_settings(settings.clone()).build().await.expect("listener should build"));
     listener.start().await;
     println!("Server: listening on {flow1_addr} and {flow2_addr}");
 
-    let (done_tx, done_rx) = futures::channel::oneshot::channel::<usize>();
+    let (done_tx, done_rx) = channel::<usize>();
     // The server holds `client` alive until the client signals it has finished
     // receiving all echoes.  Dropping `client` earlier triggers a TERMINATION
     // packet that races with in-flight echo responses and causes ChannelClosed.
-    let (ack_tx, ack_rx) = futures::channel::oneshot::channel::<()>();
+    let (ack_tx, ack_rx) = channel::<()>();
     let listener_handle = listener.clone();
     settings.executor().spawn(async move {
         let client = listener_handle.accept().await.expect("accept should succeed");
@@ -82,15 +70,7 @@ async fn run() {
     });
 
     // --- Build the client — flows are auto-created from both certificate addresses ---
-    let socket =
-        ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultClientConnectionHandler>::new(
-            certificate,
-            DefaultClientConnectionHandler,
-        )
-        .with_settings(settings.clone())
-        .build()
-        .await
-        .expect("client socket should build");
+    let socket = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultClientConnectionHandler>::new(certificate, DefaultClientConnectionHandler).with_settings(settings.clone()).build().await.expect("client socket should build");
     println!("Client: connected (2 flows)");
 
     for i in 0..MESSAGE_COUNT {

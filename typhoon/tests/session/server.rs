@@ -6,21 +6,20 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::bytes::{DynamicByteBuffer, StaticByteBuffer};
 use crate::cache::SharedMap;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-use crate::certificate::ServerKeyPair;
-use crate::crypto::UserServerState;
+use crate::certificate::{ObfuscationBufferContainer, ServerKeyPair};
+use crate::crypto::{UserCryptoState, UserServerState};
 use crate::defaults::DefaultExecutor;
 use crate::session::SessionControllerError;
 use crate::session::server::{IncomingPacket, OutgoingRouter, ServerSessionManager};
-use crate::settings::{Settings, SettingsBuilder, keys};
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
+use crate::settings::{Settings, SettingsBuilder, keys};
 use crate::tailor::{ReturnCode, Tailor};
 use crate::utils::sync::create_notify_queue;
 
 /// Shared server secret — generated once so that concurrent tests don't each pay the
 /// expensive McEliece key-generation cost.
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-static TEST_SERVER_SECRET: LazyLock<crate::certificate::ServerSecret<'static>> =
-    LazyLock::new(|| ServerKeyPair::for_tests().into_server_secret());
+static TEST_SERVER_SECRET: LazyLock<crate::certificate::ServerSecret<'static>> = LazyLock::new(|| ServerKeyPair::for_tests().into_server_secret());
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
 
@@ -29,13 +28,7 @@ fn test_identity() -> StaticByteBuffer {
 }
 
 fn fast_settings() -> Arc<Settings<DefaultExecutor>> {
-    Arc::new(
-        SettingsBuilder::new()
-            .set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 60_000u64)
-            .set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 120_000u64)
-            .build()
-            .unwrap(),
-    )
+    Arc::new(SettingsBuilder::new().set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 60_000u64).set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 120_000u64).build().unwrap())
 }
 
 /// Minimal outgoing router that records packets and remove_session calls.
@@ -66,11 +59,7 @@ impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
 
 /// Build a session using `from_handshake`.
 /// Uses a shared static server secret to avoid paying McEliece key-generation cost per test.
-async fn make_session(
-    settings: Arc<Settings<DefaultExecutor>>,
-    router: Arc<CapturingRouter>,
-    num_flows: usize,
-) -> Arc<ServerSessionManager<StaticByteBuffer, DefaultExecutor, CapturingRouter>> {
+async fn make_session(settings: Arc<Settings<DefaultExecutor>>, router: Arc<CapturingRouter>, num_flows: usize) -> Arc<ServerSessionManager<StaticByteBuffer, DefaultExecutor, CapturingRouter>> {
     let identity = test_identity();
 
     let initial_key = crate::bytes::FixedByteBuffer::<32>::from([0u8; 32]);
@@ -87,35 +76,16 @@ async fn make_session(
     let router_weak = Arc::downgrade(&router);
 
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    let (session, _response) = ServerSessionManager::from_handshake(
-        response_body,
-        initial_key,
-        handshake_tailor,
-        identity,
-        &TEST_SERVER_SECRET,
-        &mut users,
-        incoming_tx,
-        router_weak,
-        num_flows,
-        settings,
-    )
-    .await
-    .expect("from_handshake must succeed");
+    let (session, _response) = {
+        let crypto_state = UserCryptoState::new(&initial_key, TEST_SERVER_SECRET.obfuscation_buffer());
+        ServerSessionManager::assemble_session(crypto_state, response_body, handshake_tailor, identity, &mut users, incoming_tx, router_weak, num_flows, settings).await.expect("assemble_session must succeed")
+    };
 
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    let (session, _response) = ServerSessionManager::from_handshake(
-        response_body,
-        initial_key,
-        handshake_tailor,
-        identity,
-        &mut users,
-        incoming_tx,
-        router_weak,
-        num_flows,
-        settings,
-    )
-    .await
-    .expect("from_handshake must succeed");
+    let (session, _response) = {
+        let crypto_state = UserCryptoState::new(&initial_key);
+        ServerSessionManager::assemble_session(crypto_state, response_body, handshake_tailor, identity, &mut users, incoming_tx, router_weak, num_flows, settings).await.expect("assemble_session must succeed")
+    };
 
     session
 }
@@ -181,13 +151,13 @@ async fn test_process_incoming_termination_returns_error() {
     let tailor = Tailor::termination(buf, &identity, ReturnCode::Success, pn);
     let body = settings.pool().allocate(Some(0));
 
-    let incoming = IncomingPacket { body, tailor };
+    let incoming = IncomingPacket {
+        body,
+        tailor,
+    };
     let result = session.process_incoming(incoming).await;
 
-    assert!(
-        matches!(result, Err(SessionControllerError::ConnectionTerminated(_))),
-        "TERMINATION packet must yield ConnectionTerminated, got: {result:?}"
-    );
+    assert!(matches!(result, Err(SessionControllerError::ConnectionTerminated(_))), "TERMINATION packet must yield ConnectionTerminated, got: {:?}", result);
 }
 
 // Test: health-check-only packet (no payload) is accepted without error.
@@ -204,7 +174,10 @@ async fn test_process_incoming_health_check_no_payload() {
     let tailor = Tailor::health_check(buf, &identity, 1000u32, pn);
     let body = settings.pool().allocate(Some(0));
 
-    let incoming = IncomingPacket { body, tailor };
+    let incoming = IncomingPacket {
+        body,
+        tailor,
+    };
     let result = session.process_incoming(incoming).await;
     assert!(result.is_ok(), "health-check-only packet must return Ok, got: {result:?}");
 }

@@ -1,4 +1,6 @@
 use std::io::Error as IoError;
+#[cfg(any(feature = "async-std", all(target_os = "linux", feature = "server", feature = "tokio")))]
+use std::net::UdpSocket as StdUdpSocket;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use cfg_if::cfg_if;
@@ -12,8 +14,14 @@ cfg_if! {
     if #[cfg(feature = "tokio")] {
         use tokio::net::UdpSocket as TokioSocket;
     } else if #[cfg(feature = "async-std")] {
-        use std::net::UdpSocket as StdUdpSocket;
         use async_io::Async;
+    }
+}
+
+cfg_if! {
+    if #[cfg(all(target_os = "linux", feature = "server"))] {
+        use std::io::ErrorKind;
+        use socket2::{Domain, Protocol, Socket as S2Socket, Type};
     }
 }
 
@@ -71,7 +79,9 @@ impl Socket {
     #[cfg(all(feature = "tokio", feature = "server"))]
     pub async fn bind(local: SocketAddr) -> Result<Self, SocketError> {
         let sock = TokioSocket::bind(local).await.map_err(SocketError::new_socket_error)?;
-        Ok(Self { sock })
+        Ok(Self {
+            sock,
+        })
     }
 
     /// Bind a socket without connecting (for server use with multiple peers).
@@ -89,27 +99,26 @@ impl Socket {
     /// `local.port()` must be > 0.
     #[cfg(all(target_os = "linux", feature = "server", feature = "tokio"))]
     pub fn bind_reuse_port(local: SocketAddr, count: usize) -> Result<Vec<Self>, SocketError> {
-        use std::io::ErrorKind;
-        use socket2::{Domain, Protocol, Socket as S2Socket, Type};
-
         if local.port() == 0 {
-            return Err(SocketError::new_socket_error(IoError::new(
-                ErrorKind::InvalidInput,
-                "SO_REUSEPORT requires port > 0",
-            )));
+            return Err(SocketError::new_socket_error(IoError::new(ErrorKind::InvalidInput, "SO_REUSEPORT requires port > 0")));
         }
 
-        let domain = if local.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
+        let domain = if local.is_ipv4() {
+            Domain::IPV4
+        } else {
+            Domain::IPV6
+        };
         let mut sockets = Vec::with_capacity(count);
         for _ in 0..count {
-            let s2 = S2Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))
-                .map_err(SocketError::new_socket_error)?;
+            let s2 = S2Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).map_err(SocketError::new_socket_error)?;
             s2.set_reuse_port(true).map_err(SocketError::new_socket_error)?;
             s2.bind(&local.into()).map_err(SocketError::new_socket_error)?;
             s2.set_nonblocking(true).map_err(SocketError::new_socket_error)?;
-            let std_sock: std::net::UdpSocket = s2.into();
+            let std_sock: StdUdpSocket = s2.into();
             let tok_sock = TokioSocket::from_std(std_sock).map_err(SocketError::new_socket_error)?;
-            sockets.push(Socket { sock: tok_sock });
+            sockets.push(Socket {
+                sock: tok_sock,
+            });
         }
         Ok(sockets)
     }
@@ -120,24 +129,21 @@ impl Socket {
     /// `local.port()` must be > 0.
     #[cfg(all(target_os = "linux", feature = "server", feature = "async-std"))]
     pub fn bind_reuse_port(local: SocketAddr, count: usize) -> Result<Vec<Self>, SocketError> {
-        use std::io::ErrorKind;
-        use socket2::{Domain, Protocol, Socket as S2Socket, Type};
-
         if local.port() == 0 {
-            return Err(SocketError::new_socket_error(IoError::new(
-                ErrorKind::InvalidInput,
-                "SO_REUSEPORT requires port > 0",
-            )));
+            return Err(SocketError::new_socket_error(IoError::new(ErrorKind::InvalidInput, "SO_REUSEPORT requires port > 0")));
         }
 
-        let domain = if local.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
+        let domain = if local.is_ipv4() {
+            Domain::IPV4
+        } else {
+            Domain::IPV6
+        };
         let mut sockets = Vec::with_capacity(count);
         for _ in 0..count {
-            let s2 = S2Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))
-                .map_err(SocketError::new_socket_error)?;
+            let s2 = S2Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).map_err(SocketError::new_socket_error)?;
             s2.set_reuse_port(true).map_err(SocketError::new_socket_error)?;
             s2.bind(&local.into()).map_err(SocketError::new_socket_error)?;
-            let std_sock: std::net::UdpSocket = s2.into();
+            let std_sock: StdUdpSocket = s2.into();
             sockets.push(Socket {
                 sock: Async::new(std_sock).map_err(SocketError::new_socket_error)?,
             });
@@ -145,7 +151,8 @@ impl Socket {
         Ok(sockets)
     }
 
-    /// Send to socket
+    // Send to socket
+
     #[cfg(feature = "tokio")]
     pub async fn send(&self, data: DynamicByteBuffer) -> Result<usize, SocketError> {
         self.sock.send(data.slice()).await.map_err(SocketError::new_socket_error)
@@ -156,7 +163,8 @@ impl Socket {
         self.sock.send(data.slice()).await.map_err(SocketError::new_socket_error)
     }
 
-    /// Receive from socket
+    // Receive from socket
+
     #[cfg(feature = "tokio")]
     pub async fn recv(&self, buf: DynamicByteBuffer) -> Result<DynamicByteBuffer, SocketError> {
         let res = self.sock.recv(buf.slice_mut()).await.map_err(SocketError::new_socket_error)?;
@@ -169,7 +177,8 @@ impl Socket {
         Ok(buf.rebuffer_end(res))
     }
 
-    /// Send to a specific address (for unconnected sockets).
+    // Send to a specific address (for unconnected sockets).
+
     #[cfg(all(feature = "tokio", feature = "server"))]
     pub async fn send_to(&self, data: DynamicByteBuffer, target: SocketAddr) -> Result<usize, SocketError> {
         let len = data.slice().len();
@@ -206,7 +215,8 @@ impl Socket {
         }
     }
 
-    /// Receive from any peer, returning the data and source address.
+    // Receive from any peer, returning the data and source address.
+
     #[cfg(all(feature = "tokio", feature = "server"))]
     pub async fn recv_from(&self, buf: DynamicByteBuffer) -> Result<(DynamicByteBuffer, SocketAddr), SocketError> {
         match self.sock.recv_from(buf.slice_mut()).await {

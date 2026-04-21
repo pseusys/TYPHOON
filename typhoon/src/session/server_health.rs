@@ -6,6 +6,8 @@ mod tests;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use futures::future::{Either, select};
+use futures::pin_mut;
 use log::debug;
 use rand::Rng;
 
@@ -13,9 +15,9 @@ use crate::session::server::OutgoingRouter;
 use crate::settings::Settings;
 use crate::settings::keys::*;
 use crate::tailor::{IdentityType, ReturnCode, Tailor};
-use crate::utils::unix_timestamp_ms;
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, WatchReceiver, WatchSender, create_watch, sleep};
+use crate::utils::unix_timestamp_ms;
 
 /// Events produced when waiting for a client health check trigger.
 enum ServerDecayEvent {
@@ -26,8 +28,6 @@ enum ServerDecayEvent {
 
 /// Wait for a health check trigger from the client or a timeout.
 async fn wait_for_trigger(timeout_ms: u64, trigger_rx: &mut WatchReceiver<(u32, u64)>) -> ServerDecayEvent {
-    use futures::{future::select, future::Either, pin_mut};
-
     let sleep_fut = sleep(Duration::from_millis(timeout_ms));
     let recv_fut = trigger_rx.recv();
     pin_mut!(sleep_fut, recv_fut);
@@ -49,16 +49,13 @@ pub(super) struct ServerHealthProvider {
 }
 
 impl ServerHealthProvider {
-    pub(super) fn new<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, R: OutgoingRouter<T> + 'static>(
-        router: Weak<R>,
-        identity: T,
-        settings: Arc<Settings<AE>>,
-        initial_server_next_in: u32,
-    ) -> Self {
+    pub(super) fn new<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, R: OutgoingRouter<T> + 'static>(router: Weak<R>, identity: T, settings: Arc<Settings<AE>>, initial_server_next_in: u32) -> Self {
         let (trigger_tx, trigger_rx) = create_watch();
         let executor = settings.executor().clone();
         executor.spawn(Self::timer_task(router, identity, settings, trigger_rx, initial_server_next_in));
-        Self { trigger_tx }
+        Self {
+            trigger_tx,
+        }
     }
 
     /// Notify the provider that a health check arrived from the client.
@@ -68,17 +65,8 @@ impl ServerHealthProvider {
         self.trigger_tx.send((client_next_in, client_pn));
     }
 
-    async fn timer_task<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, R: OutgoingRouter<T> + 'static>(
-        router: Weak<R>,
-        identity: T,
-        settings: Arc<Settings<AE>>,
-        mut trigger_rx: WatchReceiver<(u32, u64)>,
-        initial_server_next_in: u32,
-    ) {
-        let timeout = settings.get(&TIMEOUT_DEFAULT).clamp(
-            settings.get(&TIMEOUT_MIN),
-            settings.get(&TIMEOUT_MAX),
-        );
+    async fn timer_task<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, R: OutgoingRouter<T> + 'static>(router: Weak<R>, identity: T, settings: Arc<Settings<AE>>, mut trigger_rx: WatchReceiver<(u32, u64)>, initial_server_next_in: u32) {
+        let timeout = settings.get(&TIMEOUT_DEFAULT).clamp(settings.get(&TIMEOUT_MIN), settings.get(&TIMEOUT_MAX));
         // Initial wait: how long before the client should send its first health check after
         // receiving our handshake response (initial_server_next_in) plus decay tolerance.
         let mut current_timeout = initial_server_next_in as u64 + timeout;
@@ -93,20 +81,14 @@ impl ServerHealthProvider {
                     // during the response delay, adopt its PN and delay and restart — the
                     // client has moved on and no longer expects the earlier response.
                     let mut response_pn = client_pn;
-                    let mut delay_ms = (client_next_in as u64).clamp(
-                        settings.get(&HEALTH_CHECK_NEXT_IN_MIN),
-                        settings.get(&HEALTH_CHECK_NEXT_IN_MAX),
-                    );
+                    let mut delay_ms = (client_next_in as u64).clamp(settings.get(&HEALTH_CHECK_NEXT_IN_MIN), settings.get(&HEALTH_CHECK_NEXT_IN_MAX));
 
                     loop {
                         match wait_for_trigger(delay_ms, &mut trigger_rx).await {
                             ServerDecayEvent::Triggered(new_next_in, new_pn) => {
                                 // Newer HC supersedes the pending one — restart delay.
                                 response_pn = new_pn;
-                                delay_ms = (new_next_in as u64).clamp(
-                                    settings.get(&HEALTH_CHECK_NEXT_IN_MIN),
-                                    settings.get(&HEALTH_CHECK_NEXT_IN_MAX),
-                                );
+                                delay_ms = (new_next_in as u64).clamp(settings.get(&HEALTH_CHECK_NEXT_IN_MIN), settings.get(&HEALTH_CHECK_NEXT_IN_MAX));
                             }
                             ServerDecayEvent::Timeout => break,
                             ServerDecayEvent::Terminated => {
@@ -117,9 +99,7 @@ impl ServerHealthProvider {
                     }
 
                     // Generate our next_in and send the response: PN = response_pn (echoed), TM = server_next_in.
-                    let server_next_in = get_rng().gen_range(
-                        settings.get(&HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&HEALTH_CHECK_NEXT_IN_MAX),
-                    ) as u32;
+                    let server_next_in = get_rng().gen_range(settings.get(&HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&HEALTH_CHECK_NEXT_IN_MAX)) as u32;
 
                     let buf = settings.pool().allocate(Some(T::length()));
                     let response = Tailor::health_check(buf, &identity, server_next_in, response_pn).into_buffer();

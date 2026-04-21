@@ -7,8 +7,8 @@ mod error;
 #[cfg(feature = "server")]
 pub mod server;
 
-pub use common::{FlowCryptoProvider, FlowManager};
+#[cfg(feature = "client")]
+pub(crate) use common::FlowCryptoProvider;
+pub(crate) use common::FlowManager;
 pub use config::{FakeBodyMode, FakeHeaderConfig, FieldType, FieldTypeHolder, FlowConfig};
 pub use error::FlowControllerError;
-#[cfg(feature = "server")]
-pub use server::RawReceivedPacket;

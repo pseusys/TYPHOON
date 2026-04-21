@@ -207,7 +207,7 @@ fn test_fake_header_config_len_empty() {
     let config = FakeHeaderConfig {
         pattern: vec![],
     };
-    assert_eq!(config.len(), 0);
+    assert_eq!(config.is_empty(), true, "empty pattern should be considered empty");
 }
 
 // Test: fill() writes constant values into buffer correctly.
@@ -376,10 +376,7 @@ fn test_field_type_switching_no_thrash_after_first_switch() {
     // Second apply immediately: timer should NOT have expired yet.
     let second = field.apply();
 
-    assert_eq!(
-        first, second,
-        "field switched twice within a single millisecond — next_switch reset is broken"
-    );
+    assert_eq!(first, second, "field switched twice within a single millisecond — next_switch reset is broken");
 }
 
 // Test: after the timeout elapses the field switches again (positive case).

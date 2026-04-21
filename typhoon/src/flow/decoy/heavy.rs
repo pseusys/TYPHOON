@@ -5,7 +5,7 @@ use std::time::Duration;
 use log::warn;
 
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
-use crate::flow::decoy::common::{DecoyFlowSender, DecoyCommunicationMode, DecoyState, exponential_variance, maintenance_timer_task, random_uniform, try_replicate};
+use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender, DecoyState, exponential_variance, maintenance_timer_task, random_uniform, try_replicate};
 use crate::settings::Settings;
 use crate::settings::keys::*;
 use crate::tailor::IdentityType;

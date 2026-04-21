@@ -5,11 +5,9 @@ mod tests;
 use blake3::Hasher;
 use blake3::hazmat::hash_derive_key_context;
 use cfg_if::cfg_if;
-use classic_mceliece_rust::{CRYPTO_BYTES, CRYPTO_CIPHERTEXTBYTES};
-#[cfg(feature = "server")]
-use classic_mceliece_rust::{Ciphertext, decapsulate};
 #[cfg(feature = "client")]
 use classic_mceliece_rust::encapsulate;
+use classic_mceliece_rust::{CRYPTO_BYTES, CRYPTO_CIPHERTEXTBYTES};
 use ed25519_dalek::Signature;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
@@ -17,12 +15,12 @@ use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool, DynamicByteBuffer, Fixed
 use crate::certificate::ObfuscationBufferContainer;
 #[cfg(any(feature = "client", feature = "full_software", feature = "full_hardware"))]
 use crate::crypto::error::HandshakeError;
-use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, decrypt_anonymously, encrypt_anonymously};
-use crate::crypto::symmetric::Symmetric;
+use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, Symmetric, decrypt_anonymously, encrypt_anonymously};
 use crate::utils::random::{SupportRng, get_rng};
 
 cfg_if! {
     if #[cfg(feature = "server")] {
+        use classic_mceliece_rust::{Ciphertext, decapsulate};
         use ed25519_dalek::ed25519::signature::Signer;
         use crate::certificate::ServerSecret;
         use crate::crypto::ServerData;
@@ -133,8 +131,7 @@ impl ClientCertificate {
 
         let initial_data = if let Some(encrypted) = encrypted_initial_data {
             let mut cipher = Symmetric::new(&data.initial_key);
-            cipher.decrypt_auth(encrypted, None::<&DynamicByteBuffer>)
-                .map_err(|e| HandshakeError::handshake_crypto_error("decrypting server initial data", e))?
+            cipher.decrypt_auth(encrypted, None::<&DynamicByteBuffer>).map_err(|e| HandshakeError::handshake_crypto_error("decrypting server initial data", e))?
         } else {
             pool.allocate(Some(0))
         };
@@ -194,8 +191,7 @@ impl ServerSecret<'_> {
 
         let client_initial_data = if let Some(encrypted) = encrypted_initial_data {
             let mut cipher = Symmetric::new(&initial_encryption_key);
-            cipher.decrypt_auth(encrypted, None::<&DynamicByteBuffer>)
-                .unwrap_or_else(|_| pool.allocate(Some(0)))
+            cipher.decrypt_auth(encrypted, None::<&DynamicByteBuffer>).unwrap_or_else(|_| pool.allocate(Some(0)))
         } else {
             pool.allocate(Some(0))
         };

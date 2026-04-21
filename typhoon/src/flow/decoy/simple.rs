@@ -1,8 +1,8 @@
 /// Simple mode: no-op decoy provider that passes packets through without generating any decoy traffic.
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use crate::bytes::DynamicByteBuffer;
-use crate::flow::decoy::common::{DecoyFlowSender, DecoyCommunicationMode};
+use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender};
 use crate::settings::Settings;
 use crate::tailor::IdentityType;
 use crate::utils::sync::AsyncExecutor;
@@ -11,7 +11,7 @@ use crate::utils::sync::AsyncExecutor;
 pub struct SimpleDecoyProvider;
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyCommunicationMode<T, AE> for SimpleDecoyProvider {
-    fn new(_manager: Weak<dyn DecoyFlowSender>, _settings: std::sync::Arc<Settings<AE>>, _identity: T) -> Self {
+    fn new(_manager: Weak<dyn DecoyFlowSender>, _settings: Arc<Settings<AE>>, _identity: T) -> Self {
         Self
     }
 

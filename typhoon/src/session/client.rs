@@ -13,9 +13,9 @@ use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::SharedValue;
 use crate::crypto::ClientCryptoTool;
 use crate::flow::FlowManager;
+use crate::session::client_health::ClientHealthProvider;
 use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
-use crate::session::client_health::ClientHealthProvider;
 use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{ClientConnectionHandler, IdentityType, PacketFlags, Tailor};
@@ -39,7 +39,6 @@ pub struct ClientSessionManager<T: IdentityType + Clone + 'static, AE: AsyncExec
     flows: Vec<FM>,
     settings: Arc<Settings<AE>>,
 }
-
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, CC: ClientConnectionHandler + 'static> ClientSessionManager<T, AE, FM, CC> {
     /// Create a new client session manager without starting the handshake.
@@ -95,10 +94,8 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, CC: ClientConnectionHandler + 'static> SessionManager for ClientSessionManager<T, AE, FM, CC> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), SessionControllerError> {
         let full_packet = if generated {
-            // Health provider already assembled (body + tailor), pass through directly.
             packet
         } else {
-            // User data: encrypt payload, create DATA tailor, check for shadowriding.
             let (encrypted_payload, payload_length, identity) = {
                 let mut send_lock = self.send_internal.lock().await;
                 // Single get_mut() covers both encrypt_payload and identity() — one lock acquire.
@@ -119,7 +116,6 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
             // Clone is cheap (Arc), and writes are visible through the shared buffer.
             self.health_provider.feed_output(tailor.clone()).await?;
 
-            // Include encrypted payload: encrypted_payload || tailor (TAILOR_LENGTH + T::length() bytes).
             encrypted_payload.expand_end(TAILOR_LENGTH + T::length())
         };
 
@@ -134,7 +130,9 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
                 let recv_buf = self.settings.pool().allocate_for_recv();
                 self.flows[0].receive_packet(recv_buf).await.map_err(SessionControllerError::FlowError)?
             } else {
-                let futs: Vec<_> = self.flows.iter()
+                let futs: Vec<_> = self
+                    .flows
+                    .iter()
                     .map(|flow| {
                         let buf = self.settings.pool().allocate_for_recv();
                         Box::pin(flow.receive_packet(buf))
@@ -149,23 +147,19 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
 
             debug!("client session: received {:?} packet", tailor.flags());
 
-            // Handle termination.
             if tailor.flags().is_termination() {
                 debug!("client session: connection terminated by server (code={})", tailor.code());
                 return Err(SessionControllerError::ConnectionTerminated(tailor.code()));
             }
 
-            // Handle handshake response.
             if tailor.flags().contains(PacketFlags::HANDSHAKE) {
                 self.health_provider.feed_handshake_input(tailor.clone(), payload_part.clone()).await?;
             }
 
-            // Handle health check (standalone or shadowride).
             if tailor.flags().contains(PacketFlags::HEALTH_CHECK) {
                 self.health_provider.feed_input(tailor.clone()).await?;
             }
 
-            // If there is data payload, decrypt and return.
             if tailor.flags().has_payload() {
                 let mut recv_lock = self.receive_internal.lock().await;
                 match recv_lock.cipher.get_mut().decrypt_payload(payload_part, None) {

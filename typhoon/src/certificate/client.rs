@@ -3,21 +3,21 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 
+use cfg_if::cfg_if;
 use classic_mceliece_rust::PublicKey as McEliecePublicKey;
 use ed25519_dalek::VerifyingKey;
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
-use x25519_dalek::PublicKey as X25519PublicKey;
 
+cfg_if! {
+    if #[cfg(any(feature = "full_software", feature = "full_hardware"))] {
+        use x25519_dalek::PublicKey as X25519PublicKey;
+        use super::utils::X25519_BYTES;
+    }
+}
+use super::utils::{CertificateError, ED25519_BYTES, EPK_BYTES, ObfuscationBufferContainer, TYPE_CLIENT, read_addresses, read_header, write_addresses, write_header};
 use crate::bytes::FixedByteBuffer;
-
-use super::utils::{
-    CertificateError, ED25519_BYTES, EPK_BYTES, ObfuscationBufferContainer, TYPE_CLIENT,
-    read_addresses, read_header, write_addresses, write_header,
-};
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
-use super::utils::X25519_BYTES;
 
 // ── ClientCertificate ─────────────────────────────────────────────────────────
 
@@ -66,7 +66,7 @@ impl ClientCertificate {
     /// | 261194 | 2                    | ADDR_COUNT | Number of addresses (big-endian u16) |
     /// | 261196 | varies               | ADDRS      | Address list; each entry: 1-byte family (`4`/`6`), 4 or 16 IP bytes, 2-byte port (big-endian) |
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn save(&self, path: impl AsRef<std::path::Path>) -> Result<(), CertificateError> {
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), CertificateError> {
         let mut f = File::create(path)?;
         write_header(&mut f, TYPE_CLIENT)?;
         f.write_all(self.epk.as_array())?;
@@ -89,7 +89,7 @@ impl ClientCertificate {
     /// | 261194 | 2                    | ADDR_COUNT | Number of addresses (big-endian u16) |
     /// | 261196 | varies               | ADDRS      | Address list; each entry: 1-byte family (`4`/`6`), 4 or 16 IP bytes, 2-byte port (big-endian) |
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn save(&self, path: impl AsRef<std::path::Path>) -> Result<(), CertificateError> {
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), CertificateError> {
         let mut f = File::create(path)?;
         write_header(&mut f, TYPE_CLIENT)?;
         f.write_all(self.epk.as_array())?;
@@ -101,7 +101,7 @@ impl ClientCertificate {
 
     /// Load a client certificate from a binary file produced by [`save`](Self::save) (fast mode).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, CertificateError> {
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, CertificateError> {
         let mut f = File::open(path)?;
         read_header(&mut f, TYPE_CLIENT)?;
         let mut epk_buf = Box::new([0u8; EPK_BYTES]);
@@ -122,7 +122,7 @@ impl ClientCertificate {
 
     /// Load a client certificate from a binary file produced by [`save`](Self::save) (full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, CertificateError> {
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, CertificateError> {
         let mut f = File::open(path)?;
         read_header(&mut f, TYPE_CLIENT)?;
         let mut epk_buf = Box::new([0u8; EPK_BYTES]);
