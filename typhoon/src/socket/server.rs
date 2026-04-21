@@ -127,7 +127,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             let flow_overhead = flow_config.config.max_overhead() + PAYLOAD_CRYPTO_OVERHEAD + tailor_wire_len;
             max_data_payload = max_data_payload.min(settings.mtu().saturating_sub(flow_overhead));
 
-            let socks: Vec<Arc<Socket>> = if let Some(socket) = flow_config.socket { vec![Arc::new(socket)] } else {
+            let socks: Vec<Arc<Socket>> = if let Some(socket) = flow_config.socket {
+                vec![Arc::new(socket)]
+            } else {
                 let address = flow_config.address.expect("ServerFlowConfiguration must have either socket or address");
                 cfg_if::cfg_if! {
                     if #[cfg(target_os = "linux")] {
@@ -508,7 +510,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             // Mutex<WatchReceiver> intentionally serializes concurrent accept() callers:
             // only one waiter at a time, so no thundering herd on a burst of new connections.
             match self.accept_signal_rx.lock().await.recv().await {
-                Some(()) => {},
+                Some(()) => {}
                 None => return Err(ServerSocketError::ListenerStopped),
             }
         }
