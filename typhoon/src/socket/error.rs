@@ -1,11 +1,13 @@
-#[cfg(feature = "client")]
-use std::net::SocketAddr;
-
+use cfg_if::cfg_if;
 use thiserror::Error;
 
-#[cfg(feature = "client")]
-use crate::certificate::CertificateError;
 use crate::flow::FlowControllerError;
+cfg_if! {
+    if #[cfg(feature = "client")] {
+        use std::net::SocketAddr;
+        use crate::certificate::CertificateError;
+    }
+}
 use crate::session::SessionControllerError;
 use crate::utils::socket::SocketError;
 

@@ -3,27 +3,31 @@
 mod tests;
 
 use std::future::Future;
-#[cfg(feature = "client")]
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use cfg_if::cfg_if;
-#[cfg(feature = "tokio")]
-use crossbeam::queue::SegQueue;
 #[cfg(all(feature = "server", feature = "tokio"))]
 use crossbeam::queue::ArrayQueue;
 #[cfg(feature = "server")]
 use log::debug;
-#[cfg(feature = "client")]
-use futures::stream::{FuturesUnordered, StreamExt};
-
+cfg_if! {
+    if #[cfg(feature = "client")] {
+        use std::pin::Pin;
+        use futures::stream::{FuturesUnordered, StreamExt};
+    }
+}
 cfg_if! {
     if #[cfg(feature = "tokio")] {
+        use crossbeam::queue::SegQueue;
+        use tokio::sync::Notify;
+        use tokio::time::sleep as tokio_sleep;
         pub use tokio::sync::{RwLock, Mutex};
     } else if #[cfg(feature = "async-std")] {
         pub use async_lock::{RwLock, Mutex};
+        use async_channel::{Receiver, Sender, bounded, unbounded};
+        use async_io::Timer;
     }
 }
 
@@ -47,9 +51,9 @@ struct WatchState<T> {
     closed: AtomicBool,
     receiver_count: AtomicUsize,
     #[cfg(feature = "tokio")]
-    notify: tokio::sync::Notify,
+    notify: Notify,
     #[cfg(feature = "async-std")]
-    notifiers: std::sync::Mutex<Vec<async_channel::Sender<()>>>,
+    notifiers: std::sync::Mutex<Vec<Sender<()>>>,
 }
 
 /// Watch channel sender: stores the latest value, wakes all receivers on change.
@@ -61,7 +65,7 @@ pub struct WatchSender<T: Send> {
 pub struct WatchReceiver<T> {
     state: Arc<WatchState<T>>,
     #[cfg(feature = "async-std")]
-    notify: async_channel::Receiver<()>,
+    notify: Receiver<()>,
 }
 
 impl<T: Send> WatchSender<T> {
@@ -86,12 +90,17 @@ impl<T: Send> WatchSender<T> {
     pub fn subscribe(&self) -> WatchReceiver<T> {
         self.state.receiver_count.fetch_add(1, Ordering::Relaxed);
         #[cfg(feature = "tokio")]
-        return WatchReceiver { state: Arc::clone(&self.state) };
+        return WatchReceiver {
+            state: Arc::clone(&self.state),
+        };
         #[cfg(feature = "async-std")]
         {
-            let (tx, rx) = async_channel::bounded(1);
+            let (tx, rx) = bounded(1);
             self.state.notifiers.lock().unwrap().push(tx);
-            WatchReceiver { state: Arc::clone(&self.state), notify: rx }
+            WatchReceiver {
+                state: Arc::clone(&self.state),
+                notify: rx,
+            }
         }
     }
 }
@@ -140,7 +149,9 @@ impl<T: Send> WatchReceiver<T> {
             #[cfg(feature = "tokio")]
             notified.await;
             #[cfg(feature = "async-std")]
-            { self.notify.recv().await.ok(); }
+            {
+                self.notify.recv().await.ok();
+            }
         }
     }
 }
@@ -152,22 +163,37 @@ pub fn create_watch<T: Send>() -> (WatchSender<T>, WatchReceiver<T>) {
         value: std::sync::Mutex::new(None),
         closed: AtomicBool::new(false),
         receiver_count: AtomicUsize::new(1),
-        notify: tokio::sync::Notify::new(),
+        notify: Notify::new(),
     });
-    (WatchSender { state: Arc::clone(&state) }, WatchReceiver { state })
+    (
+        WatchSender {
+            state: Arc::clone(&state),
+        },
+        WatchReceiver {
+            state,
+        },
+    )
 }
 
 /// Create a watch channel.
 #[cfg(feature = "async-std")]
 pub fn create_watch<T: Send>() -> (WatchSender<T>, WatchReceiver<T>) {
-    let (tx, rx) = async_channel::bounded(1);
+    let (tx, rx) = bounded(1);
     let state = Arc::new(WatchState {
         value: std::sync::Mutex::new(None),
         closed: AtomicBool::new(false),
         receiver_count: AtomicUsize::new(1),
         notifiers: std::sync::Mutex::new(vec![tx]),
     });
-    (WatchSender { state: Arc::clone(&state) }, WatchReceiver { state, notify: rx })
+    (
+        WatchSender {
+            state: Arc::clone(&state),
+        },
+        WatchReceiver {
+            state,
+            notify: rx,
+        },
+    )
 }
 
 // ── Notifying queues ──────────────────────────────────────────────────────────
@@ -186,7 +212,7 @@ cfg_if! {
 
         struct NotifyQueueState<T> {
             queue: SegQueue<T>,
-            notify: tokio::sync::Notify,
+            notify: Notify,
             closed: AtomicBool,
         }
 
@@ -240,7 +266,7 @@ cfg_if! {
         pub fn create_notify_queue<T: Send>() -> (NotifyQueueSender<T>, NotifyQueueReceiver<T>) {
             let state = Arc::new(NotifyQueueState {
                 queue: SegQueue::new(),
-                notify: tokio::sync::Notify::new(),
+                notify: Notify::new(),
                 closed: AtomicBool::new(false),
             });
             (NotifyQueueSender(Arc::clone(&state)), NotifyQueueReceiver(state))
@@ -251,7 +277,7 @@ cfg_if! {
         #[cfg(feature = "server")]
         struct BoundedNotifyQueueState<T> {
             queue: ArrayQueue<T>,
-            notify: tokio::sync::Notify,
+            notify: Notify,
             closed: AtomicBool,
         }
 
@@ -310,7 +336,7 @@ cfg_if! {
         pub fn create_bounded_notify_queue<T: Send>(cap: usize) -> (BoundedNotifyQueueSender<T>, BoundedNotifyQueueReceiver<T>) {
             let state = Arc::new(BoundedNotifyQueueState {
                 queue: ArrayQueue::new(cap),
-                notify: tokio::sync::Notify::new(),
+                notify: Notify::new(),
                 closed: AtomicBool::new(false),
             });
             (BoundedNotifyQueueSender(Arc::clone(&state)), BoundedNotifyQueueReceiver(state))
@@ -322,10 +348,10 @@ cfg_if! {
         // async_channel which is already a dependency.
 
         /// Push side of an unbounded notifying queue.
-        pub struct NotifyQueueSender<T: Send>(async_channel::Sender<T>);
+        pub struct NotifyQueueSender<T: Send>(Sender<T>);
 
         /// Pop side of an unbounded notifying queue.
-        pub struct NotifyQueueReceiver<T: Send>(async_channel::Receiver<T>);
+        pub struct NotifyQueueReceiver<T: Send>(Receiver<T>);
 
         impl<T: Send> NotifyQueueSender<T> {
             pub fn push(&self, item: T) {
@@ -341,17 +367,17 @@ cfg_if! {
 
         /// Create an unbounded notifying queue.
         pub fn create_notify_queue<T: Send>() -> (NotifyQueueSender<T>, NotifyQueueReceiver<T>) {
-            let (tx, rx) = async_channel::unbounded();
+            let (tx, rx) = unbounded();
             (NotifyQueueSender(tx), NotifyQueueReceiver(rx))
         }
 
         /// Push side of a bounded notifying queue.
         #[cfg(feature = "server")]
-        pub struct BoundedNotifyQueueSender<T: Send>(async_channel::Sender<T>);
+        pub struct BoundedNotifyQueueSender<T: Send>(Sender<T>);
 
         /// Pop side of a bounded notifying queue.
         #[cfg(feature = "server")]
-        pub struct BoundedNotifyQueueReceiver<T: Send>(async_channel::Receiver<T>);
+        pub struct BoundedNotifyQueueReceiver<T: Send>(Receiver<T>);
 
         #[cfg(feature = "server")]
         impl<T: Send> BoundedNotifyQueueSender<T> {
@@ -372,7 +398,7 @@ cfg_if! {
         /// Create a bounded notifying queue with the given capacity.
         #[cfg(feature = "server")]
         pub fn create_bounded_notify_queue<T: Send>(cap: usize) -> (BoundedNotifyQueueSender<T>, BoundedNotifyQueueReceiver<T>) {
-            let (tx, rx) = async_channel::bounded(cap);
+            let (tx, rx) = bounded(cap);
             (BoundedNotifyQueueSender(tx), BoundedNotifyQueueReceiver(rx))
         }
     }
@@ -389,7 +415,9 @@ pub struct FuturePool<'f, T> {
 #[cfg(feature = "client")]
 impl<'f, T> FuturePool<'f, T> {
     pub fn new() -> Self {
-        Self { tasks: FuturesUnordered::new() }
+        Self {
+            tasks: FuturesUnordered::new(),
+        }
     }
 
     pub fn add<F: Future<Output = T> + Send + 'f>(&mut self, future: F) {
@@ -405,10 +433,10 @@ impl<'f, T> FuturePool<'f, T> {
 
 #[cfg(feature = "tokio")]
 pub async fn sleep(duration: Duration) {
-    tokio::time::sleep(duration).await;
+    tokio_sleep(duration).await;
 }
 
 #[cfg(feature = "async-std")]
 pub async fn sleep(duration: Duration) {
-    async_io::Timer::after(duration).await;
+    Timer::after(duration).await;
 }

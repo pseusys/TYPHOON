@@ -10,28 +10,31 @@
 /// Example:
 ///   typhoon-debug server.client.typhoon
 ///   typhoon-debug server.client.typhoon rtt
+use std::process::exit;
 use std::sync::Arc;
 
+#[cfg(not(feature = "tokio"))]
+use futures::executor::block_on;
+#[cfg(feature = "tokio")]
+use tokio::runtime::Runtime;
 use typhoon::certificate::ClientCertificate;
 use typhoon::debug::{DebugMode, run_debug};
-use typhoon::settings::SettingsBuilder;
 use typhoon::defaults::DefaultExecutor;
+use typhoon::settings::SettingsBuilder;
 
 fn usage() -> ! {
     eprintln!("Usage: typhoon-debug <certificate> [reachability|rtt|throughput|all]");
-    std::process::exit(1);
+    exit(1);
 }
 
 #[cfg(feature = "tokio")]
 fn main() {
-    tokio::runtime::Runtime::new()
-        .expect("failed to create tokio runtime")
-        .block_on(run_cli());
+    Runtime::new().expect("failed to create tokio runtime").block_on(run_cli());
 }
 
 #[cfg(not(feature = "tokio"))]
 fn main() {
-    futures::executor::block_on(run_cli());
+    block_on(run_cli());
 }
 
 async fn run_cli() {
@@ -51,14 +54,10 @@ async fn run_cli() {
 
     let certificate = ClientCertificate::load(&cert_path).unwrap_or_else(|e| {
         eprintln!("Failed to load certificate '{}': {}", cert_path, e);
-        std::process::exit(1);
+        exit(1);
     });
 
-    let settings = Arc::new(
-        SettingsBuilder::<DefaultExecutor>::new()
-            .build()
-            .expect("default settings should be valid"),
-    );
+    let settings = Arc::new(SettingsBuilder::<DefaultExecutor>::new().build().expect("default settings should be valid"));
 
     println!("Certificate: {}", cert_path);
     println!("Mode:        {:?}", mode);

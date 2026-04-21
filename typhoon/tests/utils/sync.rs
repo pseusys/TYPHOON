@@ -1,8 +1,11 @@
 use std::time::Duration;
 
-use crate::utils::sync::{create_notify_queue, create_watch};
+use tokio::spawn;
+use tokio::time::sleep;
+
 #[cfg(feature = "server")]
 use crate::utils::sync::create_bounded_notify_queue;
+use crate::utils::sync::{create_notify_queue, create_watch};
 
 // ── WatchSender / WatchReceiver ──────────────────────────────────────────────
 
@@ -18,8 +21,8 @@ async fn test_watch_send_before_recv() {
 #[tokio::test]
 async fn test_watch_recv_blocks_until_send() {
     let (tx, mut rx) = create_watch::<u32>();
-    let handle = tokio::spawn(async move { rx.recv().await });
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    let handle = spawn(async move { rx.recv().await });
+    sleep(Duration::from_millis(10)).await;
     tx.send(99);
     assert_eq!(handle.await.unwrap(), Some(99));
 }
@@ -72,8 +75,8 @@ async fn test_notify_queue_fifo_order() {
 #[tokio::test]
 async fn test_notify_queue_recv_wakes_on_push() {
     let (tx, mut rx) = create_notify_queue::<u32>();
-    let handle = tokio::spawn(async move { rx.recv().await });
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    let handle = spawn(async move { rx.recv().await });
+    sleep(Duration::from_millis(10)).await;
     tx.push(55);
     assert_eq!(handle.await.unwrap(), Some(55));
 }
@@ -123,8 +126,8 @@ async fn test_bounded_queue_drops_on_full() {
 #[tokio::test]
 async fn test_bounded_queue_recv_wakes_on_push() {
     let (tx, mut rx) = create_bounded_notify_queue::<u32>(8);
-    let handle = tokio::spawn(async move { rx.recv().await });
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    let handle = spawn(async move { rx.recv().await });
+    sleep(Duration::from_millis(10)).await;
     tx.push(42);
     assert_eq!(handle.await.unwrap(), Some(42));
 }

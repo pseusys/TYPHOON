@@ -56,12 +56,6 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
         self.identity.clone()
     }
 
-    /// Get the identity length.
-    #[inline]
-    pub fn identity_len(&self) -> usize {
-        T::length()
-    }
-
     /// Overhead added by tailor encryption (nonce + auth tags).
     #[inline]
     pub fn tailor_overhead() -> usize {
