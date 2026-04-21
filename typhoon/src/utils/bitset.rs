@@ -18,7 +18,7 @@ pub struct AtomicBitSet {
 impl AtomicBitSet {
     /// Create a new bitset capable of holding `num_bits` bits, all initially clear.
     pub fn new(num_bits: usize) -> Self {
-        let num_words = (num_bits + 63) / 64;
+        let num_words = num_bits.div_ceil(64);
         let words = (0..num_words)
             .map(|_| AtomicU64::new(0))
             .collect::<Vec<_>>()
@@ -39,7 +39,7 @@ impl AtomicBitSet {
     /// Falls back to `0` if no bits are set (e.g. no flows seen yet).
     /// Uses reservoir sampling so no heap allocation is required.
     pub fn random_set_index(&self, num_bits: usize) -> usize {
-        let max_word = ((num_bits + 63) / 64).min(self.words.len());
+        let max_word = num_bits.div_ceil(64).min(self.words.len());
         let mut result = 0usize;
         let mut count = 0u64;
 

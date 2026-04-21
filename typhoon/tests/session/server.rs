@@ -92,7 +92,7 @@ async fn make_session(
         initial_key,
         handshake_tailor,
         identity,
-        &*TEST_SERVER_SECRET,
+        &TEST_SERVER_SECRET,
         &mut users,
         incoming_tx,
         router_weak,
@@ -186,7 +186,7 @@ async fn test_process_incoming_termination_returns_error() {
 
     assert!(
         matches!(result, Err(SessionControllerError::ConnectionTerminated(_))),
-        "TERMINATION packet must yield ConnectionTerminated, got: {:?}", result
+        "TERMINATION packet must yield ConnectionTerminated, got: {result:?}"
     );
 }
 
@@ -206,5 +206,5 @@ async fn test_process_incoming_health_check_no_payload() {
 
     let incoming = IncomingPacket { body, tailor };
     let result = session.process_incoming(incoming).await;
-    assert!(result.is_ok(), "health-check-only packet must return Ok, got: {:?}", result);
+    assert!(result.is_ok(), "health-check-only packet must return Ok, got: {result:?}");
 }

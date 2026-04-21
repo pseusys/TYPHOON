@@ -130,28 +130,25 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 + tailor_wire_len;
             max_data_payload = max_data_payload.min(settings.mtu().saturating_sub(flow_overhead));
 
-            let socks: Vec<Arc<Socket>> = match flow_config.socket {
-                Some(socket) => vec![Arc::new(socket)],
-                None => {
-                    let address = flow_config.address.expect("ServerFlowConfiguration must have either socket or address");
-                    cfg_if::cfg_if! {
-                        if #[cfg(target_os = "linux")] {
-                            if flow_config.reader_count > 1 {
-                                Socket::bind_reuse_port(address, flow_config.reader_count)
-                                    .map_err(ServerSocketError::SocketError)?
-                                    .into_iter().map(Arc::new).collect()
-                            } else {
-                                vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
-                            }
+            let socks: Vec<Arc<Socket>> = if let Some(socket) = flow_config.socket { vec![Arc::new(socket)] } else {
+                let address = flow_config.address.expect("ServerFlowConfiguration must have either socket or address");
+                cfg_if::cfg_if! {
+                    if #[cfg(target_os = "linux")] {
+                        if flow_config.reader_count > 1 {
+                            Socket::bind_reuse_port(address, flow_config.reader_count)
+                                .map_err(ServerSocketError::SocketError)?
+                                .into_iter().map(Arc::new).collect()
                         } else {
                             vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
                         }
+                    } else {
+                        vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
                     }
                 }
             };
 
-            let crypto_send = crate::crypto::ServerCryptoTool::new(users.create_cache(), obfs_buffer.clone());
-            let crypto_recv = crate::crypto::ServerCryptoTool::new(users.create_cache(), obfs_buffer.clone());
+            let crypto_send = crate::crypto::ServerCryptoTool::new(users.create_cache(), obfs_buffer);
+            let crypto_recv = crate::crypto::ServerCryptoTool::new(users.create_cache(), obfs_buffer);
             let flow = ServerFlowManager::new(flow_config.config, crypto_send, crypto_recv, settings.clone(), socks);
             flows.push(flow);
         }
@@ -297,7 +294,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                         match flow_drain.receive_raw(recv_buf, &sock).await {
                             Ok(raw_packet) => drain_tx.push(raw_packet),
                             Err(err) => {
-                                warn!("flow manager {} socket {}: receive error: {}", index, sock_index, err);
+                                warn!("flow manager {index} socket {sock_index}: receive error: {err}");
                                 break;
                             }
                         }
@@ -375,7 +372,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             let buf = self.settings.pool().allocate(Some(T::length()));
             let tailor = Tailor::termination(buf, &client_version_identity, ReturnCode::VersionMismatch, pn);
             if let Err(err) = self.flows[flow_index].send_packet(tailor.into_buffer(), true).await {
-                warn!("failed to send version mismatch rejection: {}", err);
+                warn!("failed to send version mismatch rejection: {err}");
             }
             {
                 let mut users = self.users.lock().await;
@@ -438,7 +435,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             match result {
                 Ok((session, response_packet)) => (session, response_packet, replacing),
                 Err(err) => {
-                    warn!("handshake failed: {}", err);
+                    warn!("handshake failed: {err}");
                     return;
                 }
             }
@@ -464,7 +461,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         // Send handshake response through the flow that received the handshake.
         // At this point the tailor is encrypted/authenticated with the initial key.
         if let Err(err) = self.flows[flow_index].send_packet(response_packet, false).await {
-            warn!("failed to send handshake response: {}", err);
+            warn!("failed to send handshake response: {err}");
             // Clean up: remove user from shared map and all flow decoy providers.
             self.users.lock().await.remove(&identity).await;
             for flow in &self.flows {
@@ -522,7 +519,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             // Mutex<WatchReceiver> intentionally serializes concurrent accept() callers:
             // only one waiter at a time, so no thundering herd on a burst of new connections.
             match self.accept_signal_rx.lock().await.recv().await {
-                Some(()) => continue,
+                Some(()) => {},
                 None => return Err(ServerSocketError::ListenerStopped),
             }
 

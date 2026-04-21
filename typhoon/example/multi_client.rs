@@ -3,7 +3,6 @@
 /// Tests independent session isolation and concurrent RwLock read access to the sessions map.
 use std::sync::Arc;
 
-use env_logger;
 use futures::future::join_all;
 
 use typhoon::bytes::StaticByteBuffer;
@@ -62,7 +61,7 @@ async fn run() {
         .expect("listener should build"),
     );
     listener.start().await;
-    println!("Server: listening on {}", server_addr);
+    println!("Server: listening on {server_addr}");
 
     // Spawn one echo task per expected client (accepted in order of handshake arrival).
     let mut server_done_rxs = Vec::with_capacity(CLIENT_COUNT);
@@ -73,14 +72,14 @@ async fn run() {
         let listener_handle = listener.clone();
         settings.executor().spawn(async move {
             let client = listener_handle.accept().await.expect("accept should succeed");
-            println!("Server: client {} connected", client_id);
+            println!("Server: client {client_id} connected");
             let mut count = 0;
             while count < MESSAGES_PER_CLIENT {
                 let data = client.receive_bytes().await.expect("receive should succeed");
                 client.send_bytes(&data).await.expect("echo send should succeed");
                 count += 1;
             }
-            println!("Server: client {} echoed {} messages", client_id, count);
+            println!("Server: client {client_id} echoed {count} messages");
             let _ = done_tx.send(count);
         });
     }
@@ -103,10 +102,10 @@ async fn run() {
                 .await
                 .expect("client socket should build");
 
-                println!("Client {}: connected", client_id);
+                println!("Client {client_id}: connected");
 
                 for i in 0..MESSAGES_PER_CLIENT {
-                    let msg = format!("c{}-msg-{:02}", client_id, i);
+                    let msg = format!("c{client_id}-msg-{i:02}");
                     socket.send_bytes(msg.as_bytes()).await.expect("send should succeed");
                 }
 
@@ -117,7 +116,7 @@ async fn run() {
                     received += 1;
                 }
 
-                println!("Client {}: all {} messages echoed", client_id, received);
+                println!("Client {client_id}: all {received} messages echoed");
                 received
             }
         })
@@ -126,16 +125,15 @@ async fn run() {
     let client_counts = join_all(client_futs).await;
 
     for (id, count) in client_counts.iter().enumerate() {
-        assert_eq!(*count, MESSAGES_PER_CLIENT, "client {} received wrong count", id);
+        assert_eq!(*count, MESSAGES_PER_CLIENT, "client {id} received wrong count");
     }
 
     for (id, done_rx) in server_done_rxs.into_iter().enumerate() {
         let count = done_rx.await.expect("server task should complete");
-        assert_eq!(count, MESSAGES_PER_CLIENT, "server echoed wrong count for client {}", id);
+        assert_eq!(count, MESSAGES_PER_CLIENT, "server echoed wrong count for client {id}");
     }
 
     println!(
-        "Success! {} clients × {} messages all round-tripped correctly.",
-        CLIENT_COUNT, MESSAGES_PER_CLIENT
+        "Success! {CLIENT_COUNT} clients × {MESSAGES_PER_CLIENT} messages all round-tripped correctly."
     );
 }

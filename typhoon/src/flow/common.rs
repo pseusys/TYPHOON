@@ -127,16 +127,16 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
             Ok(cipher) => match cipher.deobfuscate_tailor(encrypted_tailor, pool) {
                 Ok((tailor, transcript)) => {
                     match cipher.verify_tailor(transcript) {
-                        Ok(_) => {}
+                        Ok(()) => {}
                         Err(err) => {
-                            warn!("client flow: tailor verification failed: {}", err);
+                            warn!("client flow: tailor verification failed: {err}");
                             return Ok(None);
                         }
                     }
                     tailor
                 }
                 Err(err) => {
-                    warn!("client flow: tailor decryption failed: {}", err);
+                    warn!("client flow: tailor decryption failed: {err}");
                     return Ok(None);
                 }
             },

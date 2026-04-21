@@ -1,3 +1,5 @@
+use std::f64::consts::PI;
+
 use super::{SettingType, SettingValue};
 
 // ── SettingValue::Add ─────────────────────────────────────────────────────────
@@ -92,7 +94,7 @@ fn test_u64_roundtrip() {
 
 #[test]
 fn test_f64_roundtrip() {
-    let v: f64 = 3.14;
+    let v: f64 = PI;
     let out = f64::from_value(v.to_value());
     assert!((out - v).abs() < 1e-9);
 }

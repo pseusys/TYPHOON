@@ -18,7 +18,6 @@ cfg_if! {
 }
 
 /// Socket wrapper error
-
 #[derive(Error, Debug)]
 #[error("asynchronous socket IO error: {}", source.to_string())]
 pub struct SocketError {
@@ -35,7 +34,6 @@ impl SocketError {
 }
 
 /// Runtime-agnostic socket wrapper
-
 pub struct Socket {
     #[cfg(feature = "tokio")]
     sock: TokioSocket,
@@ -47,7 +45,7 @@ pub struct Socket {
 impl Socket {
     #[cfg(feature = "tokio")]
     pub async fn new(peer: SocketAddr, local: Option<SocketAddr>) -> Result<Self, SocketError> {
-        let local_addr = local.unwrap_or_else(|| SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)));
+        let local_addr = local.unwrap_or_else(|| SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)));
         let sock = TokioSocket::bind(local_addr).await.map_err(SocketError::new_socket_error)?;
         if let Err(err) = sock.connect(peer).await {
             return Err(SocketError::new_socket_error(err));
@@ -148,7 +146,6 @@ impl Socket {
     }
 
     /// Send to socket
-
     #[cfg(feature = "tokio")]
     pub async fn send(&self, data: DynamicByteBuffer) -> Result<usize, SocketError> {
         self.sock.send(data.slice()).await.map_err(SocketError::new_socket_error)
@@ -160,7 +157,6 @@ impl Socket {
     }
 
     /// Receive from socket
-
     #[cfg(feature = "tokio")]
     pub async fn recv(&self, buf: DynamicByteBuffer) -> Result<DynamicByteBuffer, SocketError> {
         let res = self.sock.recv(buf.slice_mut()).await.map_err(SocketError::new_socket_error)?;
@@ -174,20 +170,19 @@ impl Socket {
     }
 
     /// Send to a specific address (for unconnected sockets).
-
     #[cfg(all(feature = "tokio", feature = "server"))]
     pub async fn send_to(&self, data: DynamicByteBuffer, target: SocketAddr) -> Result<usize, SocketError> {
         let len = data.slice().len();
         match self.sock.send_to(data.slice(), target).await {
             Ok(sent) => {
                 if sent < len {
-                    debug!("socket: send_to partial write: {} of {} bytes sent to {}", sent, len, target);
+                    debug!("socket: send_to partial write: {sent} of {len} bytes sent to {target}");
                 }
-                trace!("socket: send_to {} bytes to {} → ok ({} sent)", len, target, sent);
+                trace!("socket: send_to {len} bytes to {target} → ok ({sent} sent)");
                 Ok(sent)
             }
             Err(e) => {
-                debug!("socket: send_to {} bytes to {} → error: {}", len, target, e);
+                debug!("socket: send_to {len} bytes to {target} → error: {e}");
                 Err(SocketError::new_socket_error(e))
             }
         }
@@ -212,16 +207,15 @@ impl Socket {
     }
 
     /// Receive from any peer, returning the data and source address.
-
     #[cfg(all(feature = "tokio", feature = "server"))]
     pub async fn recv_from(&self, buf: DynamicByteBuffer) -> Result<(DynamicByteBuffer, SocketAddr), SocketError> {
         match self.sock.recv_from(buf.slice_mut()).await {
             Ok((res, addr)) => {
-                trace!("socket: recv_from {} bytes from {}", res, addr);
+                trace!("socket: recv_from {res} bytes from {addr}");
                 Ok((buf.rebuffer_end(res), addr))
             }
             Err(e) => {
-                debug!("socket: recv_from error: {}", e);
+                debug!("socket: recv_from error: {e}");
                 Err(SocketError::new_socket_error(e))
             }
         }

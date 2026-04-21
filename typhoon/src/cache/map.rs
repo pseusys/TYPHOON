@@ -117,26 +117,23 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMap<K, V> {
         let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
         let guard = source.read().await;
 
-        match guard.get(key) {
-            Some(entry) => {
-                let needs_update = self.local.get(key).map(|local| local.source_version != entry.version).unwrap_or(true);
+        if let Some(entry) = guard.get(key) {
+            let needs_update = self.local.get(key).is_none_or(|local| local.source_version != entry.version);
 
-                if needs_update {
-                    self.local.insert(
-                        key.clone(),
-                        LocalEntry {
-                            value: entry.value.clone(),
-                            source_version: entry.version,
-                        },
-                    );
-                }
-                drop(guard);
-                Ok(self.local.get_mut(key).unwrap())
+            if needs_update {
+                self.local.insert(
+                    key.clone(),
+                    LocalEntry {
+                        value: entry.value.clone(),
+                        source_version: entry.version,
+                    },
+                );
             }
-            None => {
-                self.local.remove(key);
-                Err(CacheError::KeyNotFound(key.to_string()))
-            }
+            drop(guard);
+            Ok(self.local.get_mut(key).unwrap())
+        } else {
+            self.local.remove(key);
+            Err(CacheError::KeyNotFound(key.to_string()))
         }
     }
 
@@ -197,23 +194,20 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMapEntry<K, 
         let source = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
         let guard = source.read().await;
 
-        match guard.get(&self.key) {
-            Some(entry) => {
-                let needs_update = self.local.as_ref().map(|local| local.source_version != entry.version).unwrap_or(true);
+        if let Some(entry) = guard.get(&self.key) {
+            let needs_update = self.local.as_ref().is_none_or(|local| local.source_version != entry.version);
 
-                if needs_update {
-                    self.local = Some(LocalEntry {
-                        value: entry.value.clone(),
-                        source_version: entry.version,
-                    });
-                }
-                drop(guard);
-                Ok(self.local.as_mut().unwrap())
+            if needs_update {
+                self.local = Some(LocalEntry {
+                    value: entry.value.clone(),
+                    source_version: entry.version,
+                });
             }
-            None => {
-                self.local = None;
-                Err(CacheError::KeyNotFound(self.key.to_string()))
-            }
+            drop(guard);
+            Ok(self.local.as_mut().unwrap())
+        } else {
+            self.local = None;
+            Err(CacheError::KeyNotFound(self.key.to_string()))
         }
     }
 

@@ -75,7 +75,7 @@ fn test_settings_next_in_not_greater_than_timeout() {
 // Test: RTT_DEFAULT outside [RTT_MIN, RTT_MAX] fails assertion.
 #[test]
 fn test_settings_rtt_default_out_of_range() {
-    let result = builder().set(&RTT_DEFAULT, 100000).build();
+    let result = builder().set(&RTT_DEFAULT, 100_000).build();
     assert!(result.is_err());
 }
 

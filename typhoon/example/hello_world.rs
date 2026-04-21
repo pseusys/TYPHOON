@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use env_logger;
 
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
@@ -56,7 +55,7 @@ async fn run() {
         .expect("listener should build"),
     );
     listener.start().await;
-    println!("Server listening on {}", server_addr);
+    println!("Server listening on {server_addr}");
 
     // Spawn server handler: accept one client, echo back what it receives.
     let listener_handle = listener.clone();
@@ -74,10 +73,10 @@ async fn run() {
             .await
             .expect("receive should succeed");
         let msg = String::from_utf8_lossy(&received).to_string();
-        println!("Server: received '{}'", msg);
+        println!("Server: received '{msg}'");
 
         client
-            .send_bytes(format!("echo: {}", msg).as_bytes())
+            .send_bytes(format!("echo: {msg}").as_bytes())
             .await
             .expect("send should succeed");
         println!("Server: sent echo response");
@@ -96,7 +95,7 @@ async fn run() {
         .build()
         .await
         .expect("client socket should build");
-    println!("Client: connected to {}", server_addr);
+    println!("Client: connected to {server_addr}");
 
     // Send a message and receive the echo.
     socket

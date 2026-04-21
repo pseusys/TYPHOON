@@ -77,7 +77,7 @@ fn make_termination_packet(settings: &Arc<Settings<DefaultExecutor>>) -> Dynamic
 }
 
 /// Build a `ClientSessionManager` with the given mock flows.
-async fn make_session(
+fn make_session(
     settings: Arc<Settings<DefaultExecutor>>,
     flows: Vec<Arc<MockFlowManager>>,
 ) -> Arc<ClientSessionManager<StaticByteBuffer, DefaultExecutor, Arc<MockFlowManager>, DefaultClientConnectionHandler>> {
@@ -94,12 +94,12 @@ async fn test_receive_packet_termination_returns_error() {
     let settings = fast_settings();
     let termination = make_termination_packet(&settings);
     let flow = MockFlowManager::new(vec![termination]);
-    let session = make_session(Arc::clone(&settings), vec![flow]).await;
+    let session = make_session(Arc::clone(&settings), vec![flow]);
 
     let result = session.receive_packet().await;
     assert!(
         matches!(result, Err(SessionControllerError::ConnectionTerminated(_))),
-        "TERMINATION must yield ConnectionTerminated, got: {:?}", result
+        "TERMINATION must yield ConnectionTerminated, got: {result:?}"
     );
 }
 
@@ -111,12 +111,12 @@ async fn test_receive_packet_termination_on_any_flow_terminates() {
     // Flow 0 blocks, flow 1 returns TERMINATION immediately.
     let flow0 = MockFlowManager::new(vec![]);
     let flow1 = MockFlowManager::new(vec![termination]);
-    let session = make_session(Arc::clone(&settings), vec![flow0, flow1]).await;
+    let session = make_session(Arc::clone(&settings), vec![flow0, flow1]);
 
     let result = session.receive_packet().await;
     assert!(
         matches!(result, Err(SessionControllerError::ConnectionTerminated(_))),
-        "TERMINATION on any flow must terminate session, got: {:?}", result
+        "TERMINATION on any flow must terminate session, got: {result:?}"
     );
 }
 
@@ -127,11 +127,11 @@ async fn test_receive_packet_termination_on_any_flow_terminates() {
 async fn test_send_packet_empty_payload_succeeds() {
     let settings = fast_settings();
     let flow = MockFlowManager::new(vec![]);
-    let session = make_session(Arc::clone(&settings), vec![flow]).await;
+    let session = make_session(Arc::clone(&settings), vec![flow]);
 
     let buf = settings.pool().allocate(Some(0));
     let result = session.send_packet(buf, false).await;
-    assert!(result.is_ok(), "send_packet with empty payload must succeed, got: {:?}", result);
+    assert!(result.is_ok(), "send_packet with empty payload must succeed, got: {result:?}");
 }
 
 // Test: send_packet with a non-empty payload succeeds.
@@ -139,10 +139,10 @@ async fn test_send_packet_empty_payload_succeeds() {
 async fn test_send_packet_with_payload_succeeds() {
     let settings = fast_settings();
     let flow = MockFlowManager::new(vec![]);
-    let session = make_session(Arc::clone(&settings), vec![flow]).await;
+    let session = make_session(Arc::clone(&settings), vec![flow]);
 
     let buf = settings.pool().allocate(Some(16));
     buf.slice_mut().copy_from_slice(b"hello typhoon!!!");
     let result = session.send_packet(buf, false).await;
-    assert!(result.is_ok(), "send_packet with payload must succeed, got: {:?}", result);
+    assert!(result.is_ok(), "send_packet with payload must succeed, got: {result:?}");
 }

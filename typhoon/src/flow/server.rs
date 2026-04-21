@@ -121,7 +121,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 let (tailor_buf, transcript) = match crypto.deobfuscate_tailor(encrypted_tailor, self.settings.pool()) {
                     Ok(result) => result,
                     Err(err) => {
-                        warn!("server flow: tailor decryption failed from {}: {}", source_addr, err);
+                        warn!("server flow: tailor decryption failed from {source_addr}: {err}");
                         continue;
                     }
                 };
@@ -129,7 +129,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 if !tailor.flags().is_discardable() && !tailor.flags().contains(PacketFlags::HANDSHAKE) {
                     let identity = tailor.identity();
                     if let Err(err) = crypto.verify_tailor(&identity, transcript).await {
-                        debug!("error verifying packet tailor: {}", err);
+                        debug!("error verifying packet tailor: {err}");
                         continue;
                     }
                 }
@@ -172,7 +172,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 encrypted_packet
             };
 
-            debug!("server flow: received {:?} packet from {}", packet_flags, source_addr);
+            debug!("server flow: received {packet_flags:?} packet from {source_addr}");
             return Ok(RawReceivedPacket {
                 body,
                 tailor,
@@ -244,7 +244,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             full_packet
         };
 
-        debug!("server flow: sending {:?} packet to {}", packet_flags, addr);
+        debug!("server flow: sending {packet_flags:?} packet to {addr}");
         self.socks[0].send_to(full_packet, addr).await.map_err(FlowControllerError::SocketError)?;
         Ok(())
     }

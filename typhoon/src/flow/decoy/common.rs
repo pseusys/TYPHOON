@@ -114,12 +114,12 @@ impl DecoyFeatureConfig {
             _ => SubheaderMode::All,
         };
 
-        let subheader_config = if subheader_mode != SubheaderMode::None {
+        let subheader_config = if subheader_mode == SubheaderMode::None {
+            None
+        } else {
             let min_len = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
             let max_len = settings.get(&DECOY_SUBHEADER_LENGTH_MAX) as usize;
             Some(generate_random_fake_header(min_len, max_len))
-        } else {
-            None
         };
 
         Self {
@@ -268,12 +268,12 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
         let features = DecoyFeatureConfig::random(&settings);
 
         // Initial maintenance scheduling.
-        let (maint_time, maint_len) = if features.maintenance_mode != MaintenanceMode::None {
+        let (maint_time, maint_len) = if features.maintenance_mode == MaintenanceMode::None {
+            (u128::MAX, 0)
+        } else {
             let delay = maintenance_delay_for(&features.maintenance_mode, &settings);
             let length = maintenance_length_for(&features.maintenance_mode, &settings);
             (now + delay as u128, length)
-        } else {
-            (u128::MAX, 0)
         };
 
         Self {
@@ -324,7 +324,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
     fn next_packet_number(&mut self) -> u64 {
         self.packet_number += 1;
         let timestamp = (unix_timestamp_ms() / 1000) as u32;
-        ((timestamp as u64) << 32) | (self.packet_number as u64)
+        ((timestamp as u64) << 32) | self.packet_number
     }
 
     /// Create a decoy packet with the given body length.
@@ -406,7 +406,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
             SubheaderMode::All => true,
         };
         if should_apply {
-            self.features.subheader_config.as_ref().map_or(0, |c| c.len())
+            self.features.subheader_config.as_ref().map_or(0, super::super::config::FakeHeaderConfig::len)
         } else {
             0
         }
@@ -495,10 +495,10 @@ pub(super) async fn maintenance_timer_task<T, AE>(
         // Allocate body bytes for replication only when actually needed (outside write lock).
         let body_bytes = should_rep.then(|| packet.slice_end(body_length).to_vec());
 
-        debug!("Maintenance: generated packet (len={})", body_length);
+        debug!("Maintenance: generated packet (len={body_length})");
 
         if let Err(err) = manager_arc.send_decoy_packet(packet).await {
-            warn!("Maintenance: failed to send: {:?}", err);
+            warn!("Maintenance: failed to send: {err:?}");
         } else if let Some(bytes) = body_bytes {
             try_replicate(&state, &manager, true, bytes).await;
         }

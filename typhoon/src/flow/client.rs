@@ -80,9 +80,8 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
             };
 
             let mut lock = self.receive_internal.lock().await;
-            match lock.process_incoming(notified_packet.unwrap(), self.settings.pool())? {
-                Some(result) => return Ok(result),
-                None => continue,
+            if let Some(result) = lock.process_incoming(notified_packet.unwrap(), self.settings.pool())? {
+                return Ok(result);
             }
         }
     }

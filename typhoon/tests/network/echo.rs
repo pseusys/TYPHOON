@@ -53,7 +53,7 @@ async fn test_echo_sequential_messages() {
 
     let socket = connect_simple(cert, settings, DefaultClientConnectionHandler).await;
     for i in 0..COUNT {
-        let msg = format!("msg-{:04}", i);
+        let msg = format!("msg-{i:04}");
         socket.send_bytes(msg.as_bytes()).await.expect("send");
         let resp = socket.receive_bytes().await.expect("recv");
         assert_eq!(resp, msg.as_bytes());

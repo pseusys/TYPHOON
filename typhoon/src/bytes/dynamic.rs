@@ -306,19 +306,19 @@ impl AsRef<[u8]> for DynamicByteBuffer {
     }
 }
 
-impl Into<Vec<u8>> for DynamicByteBuffer {
+impl From<DynamicByteBuffer> for Vec<u8> {
     #[inline]
-    fn into(self) -> Vec<u8> {
-        self.slice().to_vec()
+    fn from(val: DynamicByteBuffer) -> Self {
+        val.slice().to_vec()
     }
 }
 
-impl<const N: usize> Into<[u8; N]> for &DynamicByteBuffer {
+impl<const N: usize> From<&DynamicByteBuffer> for [u8; N] {
     #[inline]
-    fn into(self) -> [u8; N] {
-        match <[u8; N]>::try_from(&self.slice()[..]) {
+    fn from(val: &DynamicByteBuffer) -> Self {
+        match <[u8; N]>::try_from(val.slice()) {
             Ok(res) => res,
-            Err(err) => panic!("error converting DynamicByteBuffer to array [u8; {N}], actual buffer length {}: {}", self.len(), err),
+            Err(err) => panic!("error converting DynamicByteBuffer to array [u8; {N}], actual buffer length {}: {}", val.len(), err),
         }
     }
 }

@@ -101,7 +101,7 @@ pub struct ObfuscationTranscript {}
 pub fn encrypt_anonymously(key: &[u8], plaintext: &mut DynamicByteBuffer) -> DynamicByteBuffer {
     let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = key.try_into().expect("key must be 32 bytes");
     let nonce = get_rng().random_byte_array::<ANONYMOUS_NONCE_LEN>();
-    AnonymousCipher::new(&key_bytes.into(), &nonce.into()).apply_keystream(&mut plaintext.slice_mut());
+    AnonymousCipher::new(&key_bytes.into(), &nonce.into()).apply_keystream(plaintext.slice_mut());
     plaintext.append(&nonce)
 }
 
@@ -112,7 +112,7 @@ pub fn decrypt_anonymously(key: &[u8], ciphertext_with_nonce: &mut DynamicByteBu
     let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf(ciphertext_with_nonce.len() - ANONYMOUS_NONCE_LEN);
     let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = key.try_into().expect("key must be 32 bytes");
     let nonce: [u8; ANONYMOUS_NONCE_LEN] = nonce_bytes.slice().try_into().expect("nonce must be ANONYMOUS_NONCE_LEN bytes");
-    AnonymousCipher::new(&key_bytes.into(), &nonce.into()).apply_keystream(&mut ciphertext.slice_mut());
+    AnonymousCipher::new(&key_bytes.into(), &nonce.into()).apply_keystream(ciphertext.slice_mut());
     ciphertext
 }
 

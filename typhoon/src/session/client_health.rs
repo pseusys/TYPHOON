@@ -206,7 +206,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
         match self.crypto_tool.get().process_handshake_response(client_data, handshake_body, self.settings.pool()) {
             Ok((session_key, server_initial_data)) => Some((session_key, server_initial_data)),
             Err(err) => {
-                warn!("health provider: handshake response decryption failed: {}", err);
+                warn!("health provider: handshake response decryption failed: {err}");
                 None
             }
         }
@@ -333,18 +333,17 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                 tailor.set_time(next_in);
                 tailor.set_packet_number_raw(pn);
                 state.last_sent_time = unix_timestamp_ms();
-                debug!("health provider: health check shadowridden onto data packet (PN={:#018x})", pn);
+                debug!("health provider: health check shadowridden onto data packet (PN={pn:#018x})");
                 true
             } else {
                 false
             }
         };
 
-        if shadowridden {
-            if !self.shadowride_tx.send(()) {
+        if shadowridden
+            && !self.shadowride_tx.send(()) {
                 return Err(SessionControllerError::HealthProviderDied);
             }
-        }
 
         Ok(())
     }
@@ -361,7 +360,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
             return SendOutcome::Stop;
         };
         if let Err(err) = mgr.send_packet(packet, true).await {
-            warn!("health provider: failed to send packet: {}", err);
+            warn!("health provider: failed to send packet: {err}");
             let mut st = state.lock().await;
             if st.increment_retry() {
                 debug!("health provider: retry {}/{}", st.retry_count, st.settings.get(&MAX_RETRIES));
@@ -473,7 +472,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                 });
                 pool.add(async {
                     match shadowride_rx.recv().await {
-                        Some(_) => DecayShadowrideEvent::Shadowridden,
+                        Some(()) => DecayShadowrideEvent::Shadowridden,
                         None => DecayShadowrideEvent::Terminated,
                     }
                 });
@@ -583,7 +582,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
             if let Some(mgr) = manager.upgrade() {
                 match mgr.send_packet(tailor.into_buffer(), true).await {
                     Ok(()) => debug!("health provider: termination packet sent"),
-                    Err(err) => warn!("health provider: failed to send termination packet: {}", err),
+                    Err(err) => warn!("health provider: failed to send termination packet: {err}"),
                 }
             }
         });

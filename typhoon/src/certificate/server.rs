@@ -41,7 +41,7 @@ pub(crate) struct ServerSecret<'a> {
     pub obfs: FixedByteBuffer<ED25519_BYTES>,
 }
 
-impl<'a> ObfuscationBufferContainer for ServerSecret<'a> {
+impl ObfuscationBufferContainer for ServerSecret<'_> {
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     #[inline]
     fn obfuscation_buffer(&self) -> FixedByteBuffer<ED25519_BYTES> {
@@ -131,7 +131,7 @@ impl ServerKeyPair {
         ClientCertificate {
             epk: self.epk.clone(),
             vpk: self.vsk.verifying_key(),
-            obfs: self.obfs.clone(),
+            obfs: self.obfs,
             addresses,
         }
     }
@@ -289,10 +289,8 @@ impl ServerKeyPair {
 
         if let Ok(path) = std::env::var(env_var) {
             let p = std::path::Path::new(&path);
-            if p.exists() {
-                if let Ok(kp) = Self::load(p) {
-                    return kp;
-                }
+            if p.exists() && let Ok(kp) = Self::load(p) {
+                return kp;
             }
             // File missing or corrupt: generate, save for next run, and continue.
             let kp = Self::generate();

@@ -118,16 +118,13 @@ impl ServerConnectionHandler<StaticByteBuffer> for DefaultServerConnectionHandle
         let (cli_major, cli_minor, cli_patch) = parse_version(version_bytes);
         let (srv_major, srv_minor, srv_patch) = parse_version(env!("CARGO_PKG_VERSION").as_bytes());
         if cli_major != srv_major {
-            warn!("client version major mismatch (client={}.{}.{}, server={}.{}.{}), rejecting handshake",
-                cli_major, cli_minor, cli_patch, srv_major, srv_minor, srv_patch);
+            warn!("client version major mismatch (client={cli_major}.{cli_minor}.{cli_patch}, server={srv_major}.{srv_minor}.{srv_patch}), rejecting handshake");
             false
         } else if cli_minor != srv_minor {
-            warn!("client version minor mismatch (client={}.{}.{}, server={}.{}.{})",
-                cli_major, cli_minor, cli_patch, srv_major, srv_minor, srv_patch);
+            warn!("client version minor mismatch (client={cli_major}.{cli_minor}.{cli_patch}, server={srv_major}.{srv_minor}.{srv_patch})");
             true
         } else if cli_patch != srv_patch {
-            debug!("client version patch mismatch (client={}.{}.{}, server={}.{}.{})",
-                cli_major, cli_minor, cli_patch, srv_major, srv_minor, srv_patch);
+            debug!("client version patch mismatch (client={cli_major}.{cli_minor}.{cli_patch}, server={srv_major}.{srv_minor}.{srv_patch})");
             true
         } else {
             true

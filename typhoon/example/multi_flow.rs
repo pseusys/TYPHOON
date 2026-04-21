@@ -3,7 +3,6 @@
 /// across them. All messages must arrive regardless of which flow handles each packet.
 use std::sync::Arc;
 
-use env_logger;
 
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
@@ -59,7 +58,7 @@ async fn run() {
         .expect("listener should build"),
     );
     listener.start().await;
-    println!("Server: listening on {} and {}", flow1_addr, flow2_addr);
+    println!("Server: listening on {flow1_addr} and {flow2_addr}");
 
     let (done_tx, done_rx) = futures::channel::oneshot::channel::<usize>();
     // The server holds `client` alive until the client signals it has finished
@@ -76,7 +75,7 @@ async fn run() {
             client.send_bytes(&data).await.expect("echo send should succeed");
             echoed += 1;
         }
-        println!("Server: echoed {} messages", echoed);
+        println!("Server: echoed {echoed} messages");
         let _ = done_tx.send(echoed);
         // Keep `client` alive until the client confirms receipt.
         let _ = ack_rx.await;
@@ -95,10 +94,10 @@ async fn run() {
     println!("Client: connected (2 flows)");
 
     for i in 0..MESSAGE_COUNT {
-        let msg = format!("msg-{:03}", i);
+        let msg = format!("msg-{i:03}");
         socket.send_bytes(msg.as_bytes()).await.expect("send should succeed");
     }
-    println!("Client: sent {} messages", MESSAGE_COUNT);
+    println!("Client: sent {MESSAGE_COUNT} messages");
 
     let mut received = 0;
     for _ in 0..MESSAGE_COUNT {
@@ -112,5 +111,5 @@ async fn run() {
     let _ = ack_tx.send(());
     assert_eq!(server_count, MESSAGE_COUNT, "server echoed wrong count");
     assert_eq!(received, MESSAGE_COUNT, "client received wrong count");
-    println!("Success! All {} messages round-tripped across 2 flows.", MESSAGE_COUNT);
+    println!("Success! All {MESSAGE_COUNT} messages round-tripped across 2 flows.");
 }

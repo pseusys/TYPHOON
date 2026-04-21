@@ -81,7 +81,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> SmoothDecoyProvider<T, AE> {
                     // Allocate body bytes for replication only when actually needed (outside write lock).
                     let body_bytes = should_rep.then(|| decoy_packet.slice_end(decoy_length).to_vec());
                     if let Err(err) = manager_arc.send_decoy_packet(decoy_packet).await {
-                        warn!("SmoothDecoyProvider: failed to send decoy packet: {:?}", err);
+                        warn!("SmoothDecoyProvider: failed to send decoy packet: {err:?}");
                     } else if let Some(bytes) = body_bytes {
                         try_replicate(&state, &manager, false, bytes).await;
                     }

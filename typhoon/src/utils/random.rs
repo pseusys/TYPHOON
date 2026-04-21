@@ -101,7 +101,7 @@ use std::cell::RefCell;
 // callers advance independently but the overall sequence is deterministic.
 #[cfg(test)]
 thread_local! {
-    static TEST_RNG: RefCell<Option<rand::rngs::StdRng>> = RefCell::new(None);
+    static TEST_RNG: RefCell<Option<rand::rngs::StdRng>> = const { RefCell::new(None) };
 }
 
 /// Seed the per-thread deterministic RNG for the current test.

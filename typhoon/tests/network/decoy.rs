@@ -40,7 +40,7 @@ where
 
     let socket = connect_with_decoy::<DP, _>(cert, settings, DefaultClientConnectionHandler).await;
     for i in 0..n {
-        let msg = format!("{}-burst-{:03}", provider_name, i);
+        let msg = format!("{provider_name}-burst-{i:03}");
         socket.send_bytes(msg.as_bytes()).await.expect("send");
         let resp = socket.receive_bytes().await.expect("recv");
         assert_eq!(resp, msg.as_bytes());
@@ -79,7 +79,7 @@ async fn test_decoy_simple_burst() {
     )
     .await;
     for i in 0..N {
-        let msg = format!("burst-{:03}", i);
+        let msg = format!("burst-{i:03}");
         socket.send_bytes(msg.as_bytes()).await.expect("send");
         let resp = socket.receive_bytes().await.expect("recv");
         assert_eq!(resp, msg.as_bytes());

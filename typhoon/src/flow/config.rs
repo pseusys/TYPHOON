@@ -270,7 +270,7 @@ impl FlowConfig {
             } => {
                 if *packet_length > max_packet_size {
                     return Err(FlowControllerError::AssertionFailed {
-                        message: format!("constant fake body packet_length ({}) must not exceed max_packet_size ({})", packet_length, max_packet_size),
+                        message: format!("constant fake body packet_length ({packet_length}) must not exceed max_packet_size ({max_packet_size})"),
                     });
                 }
             }
@@ -281,7 +281,7 @@ impl FlowConfig {
             } => {
                 if min_length > max_length {
                     return Err(FlowControllerError::AssertionFailed {
-                        message: format!("random fake body min_length ({}) must be <= max_length ({})", min_length, max_length),
+                        message: format!("random fake body min_length ({min_length}) must be <= max_length ({max_length})"),
                     });
                 }
             }
@@ -291,7 +291,7 @@ impl FlowConfig {
         let header_len = self.fake_header_mode.len();
         if header_len > max_packet_size {
             return Err(FlowControllerError::AssertionFailed {
-                message: format!("fake header length ({}) must not exceed max_packet_size ({})", header_len, max_packet_size),
+                message: format!("fake header length ({header_len}) must not exceed max_packet_size ({max_packet_size})"),
             });
         }
 

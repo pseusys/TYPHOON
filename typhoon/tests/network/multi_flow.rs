@@ -31,7 +31,7 @@ async fn test_multi_flow_echo() {
 
     let socket = connect_simple(cert, settings, DefaultClientConnectionHandler).await;
     for i in 0..COUNT {
-        let msg = format!("flow-{:03}", i);
+        let msg = format!("flow-{i:03}");
         socket.send_bytes(msg.as_bytes()).await.expect("send");
         // ChannelClosed is acceptable: TERMINATION from the server can race the last
         // echo on a different UDP flow, which is normal behaviour for multi-flow UDP.

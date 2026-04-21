@@ -71,10 +71,10 @@ async fn test_multi_client_isolated_sessions() {
             async move {
                 let socket = connect_simple(cert, settings, DefaultClientConnectionHandler).await;
                 for i in 0..MSGS {
-                    let msg = format!("c{}-{}", id, i);
+                    let msg = format!("c{id}-{i}");
                     socket.send_bytes(msg.as_bytes()).await.expect("send");
                     let resp = socket.receive_bytes().await.expect("recv");
-                    assert_eq!(resp, msg.as_bytes(), "payload mismatch c{} msg{}", id, i);
+                    assert_eq!(resp, msg.as_bytes(), "payload mismatch c{id} msg{i}");
                 }
                 MSGS
             }
@@ -83,7 +83,7 @@ async fn test_multi_client_isolated_sessions() {
 
     let counts = join_all(client_futs).await;
     for (id, &count) in counts.iter().enumerate() {
-        assert_eq!(count, MSGS, "client {} wrong count", id);
+        assert_eq!(count, MSGS, "client {id} wrong count");
     }
 
     let accepted = total_rx.await.expect("accept loop");

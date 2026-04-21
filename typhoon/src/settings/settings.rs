@@ -142,7 +142,7 @@ impl<AE: AsyncExecutor> Settings<AE> {
         // Helper to check f64 is in inclusive range [0, 1].
         let assert_unit_inclusive = |key: &Key<f64>| -> Result<(), SettingsError> {
             let val = self.get(key);
-            if val < 0.0 || val > 1.0 {
+            if !(0.0..=1.0).contains(&val) {
                 return Err(SettingsError::AssertionFailed {
                     message: format!("{} ({}) must be in [0, 1]", key.name, val),
                 });

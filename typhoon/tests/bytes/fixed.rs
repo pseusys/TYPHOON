@@ -56,7 +56,7 @@ fn test_get() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "index out of bounds")]
 fn test_get_out_of_bounds() {
     let buf = FixedByteBuffer::<4>::zeroed();
     let _ = buf.get(4);
@@ -154,12 +154,12 @@ fn test_hash_equal_for_equal_values() {
 #[test]
 fn test_display_hex() {
     let buf = FixedByteBuffer::<3>::from_array([0xde, 0xad, 0xbe]);
-    assert_eq!(format!("{}", buf), "deadbe");
+    assert_eq!(format!("{buf}"), "deadbe");
 }
 
 #[test]
 fn test_debug_includes_length() {
     let buf = FixedByteBuffer::<2>::from_array([0, 1]);
-    let s = format!("{:?}", buf);
+    let s = format!("{buf:?}");
     assert!(s.contains("length"), "debug output should include 'length': {s}");
 }

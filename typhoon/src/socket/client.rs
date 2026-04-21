@@ -144,7 +144,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
                         incoming_tx.push(buffer);
                     }
                     Err(err) => {
-                        debug!("client bg-recv: terminated: {}", err);
+                        debug!("client bg-recv: terminated: {err}");
                         break;
                     }
                 }

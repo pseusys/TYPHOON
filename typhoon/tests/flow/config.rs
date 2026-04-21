@@ -67,7 +67,7 @@ fn test_fake_body_random_non_service_pads() {
     };
     for _ in 0..20 {
         let len = mode.get_length(1500, 100, false);
-        assert!(len >= 10 && len < 200, "length {len} should be in [10, 200)");
+        assert!((10..200).contains(&len), "length {len} should be in [10, 200)");
     }
 }
 
@@ -81,7 +81,7 @@ fn test_fake_body_random_service_only_pads_service() {
     };
     for _ in 0..20 {
         let len = mode.get_length(1500, 100, true);
-        assert!(len >= 10 && len < 200, "length {len} should be in [10, 200)");
+        assert!((10..200).contains(&len), "length {len} should be in [10, 200)");
     }
 }
 
@@ -222,7 +222,7 @@ fn test_fake_header_config_fill_constants() {
                 value: 0x1234,
             }),
             FieldTypeHolder::U32(FieldType::Constant {
-                value: 0xDEADBEEF,
+                value: 0xDEAD_BEEF,
             }),
         ],
     };
@@ -235,7 +235,7 @@ fn test_fake_header_config_fill_constants() {
     let data = buffer.slice();
     assert_eq!(data[0], 0xAB, "u8 field should be written at offset 0");
     assert_eq!(&data[1..3], &0x1234u16.to_be_bytes(), "u16 field should be big-endian at offset 1");
-    assert_eq!(&data[3..7], &0xDEADBEEFu32.to_be_bytes(), "u32 field should be big-endian at offset 3");
+    assert_eq!(&data[3..7], &0xDEAD_BEEFu32.to_be_bytes(), "u32 field should be big-endian at offset 3");
 }
 
 // Test: fill() with incremental field writes incrementing values across calls.
