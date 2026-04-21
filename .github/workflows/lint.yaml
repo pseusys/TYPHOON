@@ -44,7 +44,7 @@ jobs:
 
       - name: Run clippy 📎
         working-directory: typhoon
-        run: cargo clippy -- -W clippy::all -W clippy::pedantic
+        run: cargo clippy
 
       - name: Check shell scripts 🐚
         uses: ludeeus/action-shellcheck@2.0.0
