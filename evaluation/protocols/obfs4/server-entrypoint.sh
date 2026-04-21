@@ -13,6 +13,7 @@ mkdir -p /state
 export TOR_PT_MANAGED_TRANSPORT_VER="1"
 export TOR_PT_STATE_LOCATION="/state"
 export TOR_PT_SERVER_TRANSPORTS="obfs4"
+[ -n "${OBFS4_IAT_MODE:-}" ] && export TOR_PT_SERVER_TRANSPORT_OPTIONS="obfs4:iat-mode=${OBFS4_IAT_MODE}"
 export TOR_PT_SERVER_BINDADDR="obfs4-${CERT_HOST:-0.0.0.0}:9000"
 export TOR_PT_ORPORT="127.0.0.1:9001"
 

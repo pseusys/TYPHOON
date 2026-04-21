@@ -52,6 +52,15 @@ def _run_one(
     suffix = "_chaos" if chaos else ""
     pumba_target = f"re2:typhoon-eval-{protocol.name.replace('_', '-')}-client-1"
 
+    # Allow per-protocol TIMEOUT override in the env file.
+    effective_timeout = timeout
+    for line in env_file.read_text().splitlines():
+        key, _, val = line.strip().partition("=")
+        if not key or key.startswith("#"):
+            continue
+        elif key == "TIMEOUT":
+            effective_timeout = int(val)
+
     extra_env = {
         "PROTOCOL":        protocol.name,
         "PROTOCOL_SUFFIX": suffix,
@@ -67,7 +76,7 @@ def _run_one(
         env_file=env_file,
         extra_env=extra_env,
         chaos=chaos,
-        timeout=timeout,
+        timeout=effective_timeout,
     )
 
     pcap = captures_dir / f"{protocol.name}{suffix}.pcap"
@@ -104,7 +113,7 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
 
     console.print(f"\n[bold]TYPHOON evaluation{chaos_note}[/bold]")
     console.print(f"  Protocols : {', '.join(p.name for p in protocols)}")
-    console.print(f"  Timeout   : {timeout}s per run")
+    console.print(f"  Timeout   : {timeout}s per run (env file may override per protocol)")
     console.print(f"  Transfer  : {transfer_bytes / 1_048_576:.0f} MB\n")
 
     captures_dir = RESULTS_DIR / "captures"

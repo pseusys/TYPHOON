@@ -11,6 +11,7 @@ on:
       - '.github/workflows/lint.yaml'
       - '.shellcheckrc'
       - '**.md'
+      - '**.go'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -38,6 +39,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Setup Go 🐹
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
       - name: Check formatting 🎨
         working-directory: typhoon
         run: cargo fmt --check
@@ -61,6 +67,14 @@ jobs:
         uses: astral-sh/ruff-action@v3
         with:
           args: "check evaluation/src evaluation/protocols"
+
+      - name: Lint Go (wireguard_daita) 🔍
+        run: |
+          git clone --depth=1 --branch mullvad https://github.com/mullvad/wireguard-go evaluation/protocols/wireguard_daita/wireguard-go
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          cd evaluation/protocols/wireguard_daita/wg-daita
+          go mod tidy
+          staticcheck -tags daita ./...
 
       - name: Lint markdown 📝
         uses: DavidAnson/markdownlint-cli2-action@v19

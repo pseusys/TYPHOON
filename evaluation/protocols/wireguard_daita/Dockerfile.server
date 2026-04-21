@@ -1,0 +1,50 @@
+## Stage 1: build maybenot-ffi static library + machines-printer binary
+FROM rust:1-bookworm AS rust-build
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
+# Clone Mullvad's wireguard-go fork (mullvad branch has DAITA in device package)
+RUN git clone --depth=1 --branch mullvad https://github.com/mullvad/wireguard-go /build/wireguard-go
+
+# Build libmaybenot_ffi.a, then rename to libmaybenot.a at the repo root.
+# The CGo directive in device/daita.go uses: -L${SRCDIR}/../ -lmaybenot
+WORKDIR /build/wireguard-go/maybenot-ffi
+RUN RUSTFLAGS="-C metadata=maybenot-ffi" \
+    cargo rustc --crate-type=staticlib --release && \
+    cp target/release/libmaybenot_ffi.a /build/wireguard-go/libmaybenot.a
+
+# Build machines-printer to capture all Maybenot machine strings at image-build time
+COPY wireguard_daita/machines-printer /build/machines-printer
+WORKDIR /build/machines-printer
+RUN cargo build --release && \
+    /build/machines-printer/target/release/machines-printer server > /build/machines-server.txt && \
+    /build/machines-printer/target/release/machines-printer client > /build/machines-client.txt
+
+## Stage 2: build wg-daita Go binary with DAITA build tag
+FROM golang:1.22-bookworm AS go-build
+RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
+
+COPY --from=rust-build /build/wireguard-go /build/wireguard-go
+
+WORKDIR /build/wireguard-go
+RUN go mod download
+
+COPY wireguard_daita/wg-daita /build/wg-daita
+WORKDIR /build/wg-daita
+RUN go mod tidy && CGO_ENABLED=1 go build -tags daita -o /usr/local/bin/wg-daita .
+
+## Stage 3: runtime image
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        iproute2 python3 wireguard-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=go-build /usr/local/bin/wg-daita /usr/local/bin/wg-daita
+COPY --from=rust-build /build/machines-server.txt /etc/daita/machines.txt
+COPY common/tcp_sink.py /app/server.py
+COPY wireguard_daita/server-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+HEALTHCHECK --interval=1s --timeout=3s --retries=30 --start-period=10s \
+    CMD ss -tln | grep -q ':9000'
+
+ENTRYPOINT ["/entrypoint.sh"]

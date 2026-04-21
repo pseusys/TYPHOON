@@ -54,6 +54,8 @@ services:
         ipv4_address: 172.21.0.10
     cap_add:
       - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
     environment:
@@ -62,6 +64,8 @@ services:
       # Server's own externally-reachable IP — embedded in the TYPHOON certificate
       # so the client knows where to connect (0.0.0.0 is unroutable as a peer address)
       CERT_HOST:   172.21.0.10
+      # obfs4_iat: when set, obfs4proxy uses the given IAT mode (0=off, 1=on, 2=paranoid)
+      OBFS4_IAT_MODE: ${OBFS4_IAT_MODE:-}
     volumes:
       - eval_keys:/keys
     depends_on:
@@ -76,6 +80,8 @@ services:
         ipv4_address: 172.20.0.10
     cap_add:
       - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
     environment:

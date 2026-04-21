@@ -1,0 +1,31 @@
+## Stage 1 — build amneziawg-go (userspace AmneziaWG daemon)
+FROM golang:1.26-bookworm AS go-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth=1 https://github.com/amnezia-vpn/amneziawg-go /build
+WORKDIR /build
+RUN make
+
+## Stage 2 — build awg (amneziawg-tools: fork of wg-tools with AmneziaWG params)
+FROM debian:bookworm AS tools-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential git libmnl-dev pkg-config ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth=1 https://github.com/amnezia-vpn/amneziawg-tools /src
+WORKDIR /src/src
+RUN make
+
+## Final image
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        iproute2 python3 libmnl0 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=go-builder    /build/amneziawg-go           /usr/local/bin/amneziawg-go
+COPY --from=tools-builder /src/src/wg                   /usr/local/bin/awg
+COPY amneziawg/server-entrypoint.sh /entrypoint.sh
+COPY common/tcp_sink.py              /app/server.py
+RUN chmod +x /entrypoint.sh
+HEALTHCHECK --interval=1s --timeout=3s --retries=20 --start-period=15s \
+    CMD ip link show awg0 >/dev/null 2>&1 && ss -tln | grep -q ':9000'
+ENTRYPOINT ["/entrypoint.sh"]

@@ -1,0 +1,12 @@
+[package]
+name = "machines-printer"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "machines-printer"
+path = "src/main.rs"
+
+[dependencies]
+maybenot-machines = "1.0.1"
+rand = "0.9"

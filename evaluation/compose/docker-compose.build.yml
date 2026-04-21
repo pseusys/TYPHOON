@@ -138,6 +138,58 @@ services:
       dockerfile: vless_reality/Dockerfile.client
     image: typhoon-eval-vless-reality-client
 
+  # ── amneziawg ─────────────────────────────────────────────────────────────
+  amneziawg-server:
+    build:
+      context: ../protocols
+      dockerfile: amneziawg/Dockerfile.server
+    image: typhoon-eval-amneziawg-server
+
+  amneziawg-client:
+    build:
+      context: ../protocols
+      dockerfile: amneziawg/Dockerfile.client
+    image: typhoon-eval-amneziawg-client
+
+  # ── hysteria2 ─────────────────────────────────────────────────────────────
+  hysteria2-server:
+    build:
+      context: ../protocols
+      dockerfile: hysteria2/Dockerfile.server
+    image: typhoon-eval-hysteria2-server
+
+  hysteria2-client:
+    build:
+      context: ../protocols
+      dockerfile: hysteria2/Dockerfile.client
+    image: typhoon-eval-hysteria2-client
+
+  # ── openvpn ───────────────────────────────────────────────────────────────
+  openvpn-server:
+    build:
+      context: ../protocols
+      dockerfile: openvpn/Dockerfile.server
+    image: typhoon-eval-openvpn-server
+
+  openvpn-client:
+    build:
+      context: ../protocols
+      dockerfile: openvpn/Dockerfile.client
+    image: typhoon-eval-openvpn-client
+
+  # ── wireguard_daita ───────────────────────────────────────────────────────
+  wireguard-daita-server:
+    build:
+      context: ../protocols
+      dockerfile: wireguard_daita/Dockerfile.server
+    image: typhoon-eval-wireguard-daita-server
+
+  wireguard-daita-client:
+    build:
+      context: ../protocols
+      dockerfile: wireguard_daita/Dockerfile.client
+    image: typhoon-eval-wireguard-daita-client
+
   # ── typhoon ───────────────────────────────────────────────────────────────
   # Context is the repository root so the Dockerfile can access both
   # typhoon/ (library) and evaluation/protocols/typhoon/ (eval crate).
