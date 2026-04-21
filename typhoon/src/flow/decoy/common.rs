@@ -32,9 +32,16 @@ use crate::utils::unix_timestamp_ms;
 pub(super) enum MaintenanceMode {
     None,
     Random,
-    Timed { delay_ms: u64 },
-    Sized { length: usize },
-    Both { delay_ms: u64, length: usize },
+    Timed {
+        delay_ms: u64,
+    },
+    Sized {
+        length: usize,
+    },
+    Both {
+        delay_ms: u64,
+        length: usize,
+    },
 }
 
 /// Replication mode for decoy packets.
@@ -85,9 +92,16 @@ impl DecoyFeatureConfig {
             let idx = ((roll - none_weight) * 4.0 / 4.0) as usize;
             match idx.min(3) {
                 0 => MaintenanceMode::Random,
-                1 => MaintenanceMode::Timed { delay_ms: fixed_delay },
-                2 => MaintenanceMode::Sized { length: fixed_length },
-                _ => MaintenanceMode::Both { delay_ms: fixed_delay, length: fixed_length },
+                1 => MaintenanceMode::Timed {
+                    delay_ms: fixed_delay,
+                },
+                2 => MaintenanceMode::Sized {
+                    length: fixed_length,
+                },
+                _ => MaintenanceMode::Both {
+                    delay_ms: fixed_delay,
+                    length: fixed_length,
+                },
             }
         };
 
@@ -173,7 +187,9 @@ where
 {
     match rng.gen_range(0u8..5) {
         0 => FieldType::Random,
-        1 => FieldType::Constant { value: rng.r#gen::<L>() },
+        1 => FieldType::Constant {
+            value: rng.r#gen::<L>(),
+        },
         2 => FieldType::Volatile {
             value: rng.r#gen::<L>(),
             change_probability: rng.gen_range(0.01..0.5),
@@ -183,7 +199,9 @@ where
             next_switch: unix_timestamp_ms() + rng.gen_range(1000..10000) as u128,
             switch_timeout: rng.gen_range(1000..10000),
         },
-        _ => FieldType::Incremental { value: rng.r#gen::<L>() },
+        _ => FieldType::Incremental {
+            value: rng.r#gen::<L>(),
+        },
     }
 }
 
@@ -193,17 +211,11 @@ where
 /// Implemented automatically for every `FlowManager + Send + Sync` type.
 pub trait DecoyFlowSender: Send + Sync {
     /// Send a generated decoy packet through the flow manager.
-    fn send_decoy_packet<'a>(
-        &'a self,
-        packet: DynamicByteBuffer,
-    ) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>>;
+    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>>;
 }
 
 impl<T: FlowManager + Send + Sync> DecoyFlowSender for T {
-    fn send_decoy_packet<'a>(
-        &'a self,
-        packet: DynamicByteBuffer,
-    ) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>> {
+    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>> {
         Box::pin(self.send_packet(packet, true))
     }
 }
@@ -324,7 +336,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
     fn next_packet_number(&mut self) -> u64 {
         self.packet_number += 1;
         let timestamp = (unix_timestamp_ms() / 1000) as u32;
-        ((timestamp as u64) << 32) | (self.packet_number as u64)
+        ((timestamp as u64) << 32) | self.packet_number
     }
 
     /// Create a decoy packet with the given body length.
@@ -427,7 +439,13 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
 /// Get maintenance delay for the given mode.
 fn maintenance_delay_for<AE: AsyncExecutor>(mode: &MaintenanceMode, settings: &Settings<AE>) -> u64 {
     match *mode {
-        MaintenanceMode::Timed { delay_ms } | MaintenanceMode::Both { delay_ms, .. } => delay_ms,
+        MaintenanceMode::Timed {
+            delay_ms,
+        }
+        | MaintenanceMode::Both {
+            delay_ms,
+            ..
+        } => delay_ms,
         _ => {
             let min = settings.get(&DECOY_MAINTENANCE_DELAY_MIN);
             let max = settings.get(&DECOY_MAINTENANCE_DELAY_MAX);
@@ -439,7 +457,13 @@ fn maintenance_delay_for<AE: AsyncExecutor>(mode: &MaintenanceMode, settings: &S
 /// Get maintenance packet length for the given mode.
 fn maintenance_length_for<AE: AsyncExecutor>(mode: &MaintenanceMode, settings: &Settings<AE>) -> usize {
     match *mode {
-        MaintenanceMode::Sized { length } | MaintenanceMode::Both { length, .. } => length,
+        MaintenanceMode::Sized {
+            length,
+        }
+        | MaintenanceMode::Both {
+            length,
+            ..
+        } => length,
         _ => {
             let min = settings.get(&DECOY_MAINTENANCE_LENGTH_MIN) as usize;
             let max = settings.get(&DECOY_MAINTENANCE_LENGTH_MAX) as usize;
@@ -450,10 +474,8 @@ fn maintenance_length_for<AE: AsyncExecutor>(mode: &MaintenanceMode, settings: &
 
 /// Background maintenance timer task. Runs independently of the communication mode timer.
 /// Returns immediately if maintenance mode is `None`.
-pub(super) async fn maintenance_timer_task<T, AE>(
-    manager: Weak<dyn DecoyFlowSender>,
-    state: Arc<RwLock<DecoyState<T, AE>>>,
-) where
+pub(super) async fn maintenance_timer_task<T, AE>(manager: Weak<dyn DecoyFlowSender>, state: Arc<RwLock<DecoyState<T, AE>>>)
+where
     T: IdentityType + Clone + 'static,
     AE: AsyncExecutor + 'static,
 {
@@ -512,12 +534,8 @@ pub(super) async fn maintenance_timer_task<T, AE>(
 
 /// Attempt replication of a decoy packet. If replication mode applies, spawns a cascading
 /// task that re-sends the packet body with diminishing probability.
-pub(super) async fn try_replicate<T, AE>(
-    state: &Arc<RwLock<DecoyState<T, AE>>>,
-    manager: &Weak<dyn DecoyFlowSender>,
-    is_maintenance: bool,
-    body_bytes: Vec<u8>,
-) where
+pub(super) async fn try_replicate<T, AE>(state: &Arc<RwLock<DecoyState<T, AE>>>, manager: &Weak<dyn DecoyFlowSender>, is_maintenance: bool, body_bytes: Vec<u8>)
+where
     T: IdentityType + Clone + 'static,
     AE: AsyncExecutor + 'static,
 {
@@ -526,13 +544,7 @@ pub(super) async fn try_replicate<T, AE>(
         if !guard.should_replicate(is_maintenance) {
             return;
         }
-        (
-            guard.features.replication_probability,
-            guard.settings.get(&DECOY_REPLICATION_DELAY_MIN),
-            guard.settings.get(&DECOY_REPLICATION_DELAY_MAX),
-            guard.settings.get(&DECOY_REPLICATION_PROBABILITY_REDUCE),
-            guard.settings.executor().clone(),
-        )
+        (guard.features.replication_probability, guard.settings.get(&DECOY_REPLICATION_DELAY_MIN), guard.settings.get(&DECOY_REPLICATION_DELAY_MAX), guard.settings.get(&DECOY_REPLICATION_PROBABILITY_REDUCE), guard.settings.executor().clone())
     };
 
     let state_clone = Arc::clone(state);
@@ -548,7 +560,9 @@ pub(super) async fn try_replicate<T, AE>(
             let delay = random_uniform(delay_min as f64, delay_max as f64) as u64;
             sleep(Duration::from_millis(delay)).await;
 
-            let Some(manager_arc) = manager_clone.upgrade() else { break; };
+            let Some(manager_arc) = manager_clone.upgrade() else {
+                break;
+            };
 
             let packet = {
                 let mut guard = state_clone.write().await;

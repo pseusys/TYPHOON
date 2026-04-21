@@ -42,7 +42,7 @@ fn test_shared_value_create_sibling_initially_same() {
 fn test_shared_value_create_cache_initially_same() {
     let sv = SharedValue::new(33u32);
     let mut cache = sv.create_cache();
-    assert_eq!(*cache.get().unwrap(), 33);
+    assert_eq!(*cache.get_mut().unwrap(), 33);
 }
 
 // ── CachedValue ───────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ fn test_cached_value_refetches_after_set() {
     let mut sv = SharedValue::new(10u32);
     let mut cache = sv.create_cache();
     sv.set(20u32);
-    assert_eq!(*cache.get().unwrap(), 20);
+    assert_eq!(*cache.get_mut().unwrap(), 20);
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn test_cached_value_source_dropped_returns_error() {
     let sv = SharedValue::new(1u32);
     let mut cache = sv.create_cache();
     drop(sv);
-    assert!(matches!(cache.get(), Err(CacheError::SourceDropped)));
+    assert!(matches!(cache.get_mut(), Err(CacheError::SourceDropped)));
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn test_cached_value_get_mut() {
     let mut cache = sv.create_cache();
     *cache.get_mut().unwrap() += 3;
     // local mutation is visible within this cache instance.
-    assert_eq!(*cache.get().unwrap(), 8);
+    assert_eq!(*cache.get_mut().unwrap(), 8);
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn test_cached_value_create_sibling() {
     let sv = SharedValue::new(42u32);
     let cache = sv.create_cache();
     let mut sibling = cache.create_sibling().unwrap();
-    assert_eq!(*sibling.get().unwrap(), 42);
+    assert_eq!(*sibling.get_mut().unwrap(), 42);
 }
 
 #[test]

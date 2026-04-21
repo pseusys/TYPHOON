@@ -3,12 +3,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use typhoon::bytes::StaticByteBuffer;
-use typhoon::certificate::ServerKeyPair;
+use typhoon::certificate::{ClientCertificate, ServerKeyPair};
 use typhoon::defaults::{DefaultExecutor, DefaultServerConnectionHandler};
 use typhoon::flow::decoy::{DecoyCommunicationMode, SimpleDecoyProvider};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::{Settings, SettingsBuilder};
-use typhoon::socket::{ClientSocket, ClientSocketBuilder, ClientConnectionHandler, ListenerBuilder, ServerFlowConfiguration};
+use typhoon::socket::{ClientConnectionHandler, ClientSocket, ClientSocketBuilder, Listener, ListenerBuilder, ServerFlowConfiguration};
 
 /// Allocate a loopback address on an OS-assigned port.
 /// Bind a UDP socket briefly to learn the port, then release it so the
@@ -22,11 +22,7 @@ pub fn free_addr() -> SocketAddr {
 
 /// Build shared default settings.
 pub fn default_settings() -> Arc<Settings<DefaultExecutor>> {
-    Arc::new(
-        SettingsBuilder::<DefaultExecutor>::new()
-            .build()
-            .expect("default settings should be valid"),
-    )
+    Arc::new(SettingsBuilder::<DefaultExecutor>::new().build().expect("default settings should be valid"))
 }
 
 /// Build a minimal flow config with no padding.
@@ -60,51 +56,25 @@ pub fn server_key_pair() -> ServerKeyPair {
     }
 }
 
-
 /// Build a listener with a caller-supplied key pair (so we can also derive a certificate).
-pub async fn listener_with_key(
-    addrs: Vec<SocketAddr>,
-    settings: Arc<Settings<DefaultExecutor>>,
-    key_pair: ServerKeyPair,
-) -> Arc<typhoon::socket::Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>> {
-    let mut builder = ListenerBuilder::<
-        StaticByteBuffer,
-        DefaultExecutor,
-        SimpleDecoyProvider,
-        DefaultServerConnectionHandler,
-    >::new(key_pair, DefaultServerConnectionHandler);
+pub async fn listener_with_key(addrs: Vec<SocketAddr>, settings: Arc<Settings<DefaultExecutor>>, key_pair: ServerKeyPair) -> Arc<Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>> {
+    let mut builder = ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler);
 
     for addr in addrs {
         builder = builder.add_flow(ServerFlowConfiguration::with_address(empty_flow_config(), addr));
     }
 
-    let listener = Arc::new(
-        builder
-            .with_settings(settings)
-            .build()
-            .await
-            .expect("listener should build"),
-    );
+    let listener = Arc::new(builder.with_settings(settings).build().await.expect("listener should build"));
     listener.start().await;
     listener
 }
 
-async fn simple_listener_with_key(
-    addr: SocketAddr,
-    settings: Arc<Settings<DefaultExecutor>>,
-    key_pair: ServerKeyPair,
-) -> Arc<typhoon::socket::Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>> {
+async fn simple_listener_with_key(addr: SocketAddr, settings: Arc<Settings<DefaultExecutor>>, key_pair: ServerKeyPair) -> Arc<Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>> {
     listener_with_key(vec![addr], settings, key_pair).await
 }
 
 /// Build a `ServerKeyPair`, start a listener on `addr`, and return (listener, certificate).
-pub async fn setup_server(
-    addr: SocketAddr,
-    settings: Arc<Settings<DefaultExecutor>>,
-) -> (
-    Arc<typhoon::socket::Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>>,
-    typhoon::certificate::ClientCertificate,
-) {
+pub async fn setup_server(addr: SocketAddr, settings: Arc<Settings<DefaultExecutor>>) -> (Arc<Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>>, ClientCertificate) {
     let key_pair = server_key_pair();
     let certificate = key_pair.to_client_certificate(vec![addr]);
     let listener = simple_listener_with_key(addr, settings, key_pair).await;
@@ -112,13 +82,7 @@ pub async fn setup_server(
 }
 
 /// Build a `ServerKeyPair`, start a listener on all `addrs`, and return (listener, certificate).
-pub async fn setup_server_multi(
-    addrs: Vec<SocketAddr>,
-    settings: Arc<Settings<DefaultExecutor>>,
-) -> (
-    Arc<typhoon::socket::Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>>,
-    typhoon::certificate::ClientCertificate,
-) {
+pub async fn setup_server_multi(addrs: Vec<SocketAddr>, settings: Arc<Settings<DefaultExecutor>>) -> (Arc<Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>>, ClientCertificate) {
     let key_pair = server_key_pair();
     let certificate = key_pair.to_client_certificate(addrs.clone());
     let listener = listener_with_key(addrs, settings, key_pair).await;
@@ -126,35 +90,15 @@ pub async fn setup_server_multi(
 }
 
 /// Build a `ClientSocket<DP>` using any `DecoyCommunicationMode` provider.
-pub async fn connect_with_decoy<DP, CC>(
-    certificate: typhoon::certificate::ClientCertificate,
-    settings: Arc<Settings<DefaultExecutor>>,
-    handler: CC,
-) -> ClientSocket<StaticByteBuffer, DefaultExecutor, DP, CC>
+pub async fn connect_with_decoy<DP, CC>(certificate: ClientCertificate, settings: Arc<Settings<DefaultExecutor>>, handler: CC) -> ClientSocket<StaticByteBuffer, DefaultExecutor, DP, CC>
 where
     DP: DecoyCommunicationMode<StaticByteBuffer, DefaultExecutor> + Send + Sync + 'static,
     CC: ClientConnectionHandler + 'static,
 {
-    ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DP, CC>::new(certificate, handler)
-        .with_settings(settings)
-        .build()
-        .await
-        .expect("client socket should build")
+    ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DP, CC>::new(certificate, handler).with_settings(settings).build().await.expect("client socket should build")
 }
 
 /// Build a `ClientSocket<SimpleDecoyProvider>` using the given certificate and settings.
-pub async fn connect_simple<CC: ClientConnectionHandler + 'static>(
-    certificate: typhoon::certificate::ClientCertificate,
-    settings: Arc<Settings<DefaultExecutor>>,
-    handler: CC,
-) -> ClientSocket<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, CC> {
-    ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, CC>::new(
-        certificate,
-        handler,
-    )
-    .with_settings(settings)
-    .build()
-    .await
-    .expect("client socket should build")
+pub async fn connect_simple<CC: ClientConnectionHandler + 'static>(certificate: ClientCertificate, settings: Arc<Settings<DefaultExecutor>>, handler: CC) -> ClientSocket<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, CC> {
+    ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, CC>::new(certificate, handler).with_settings(settings).build().await.expect("client socket should build")
 }
-

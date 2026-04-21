@@ -4,19 +4,21 @@ mod error;
 #[cfg(feature = "server")]
 mod server;
 
-#[cfg(feature = "client")]
-pub use client::{ClientSocket, ClientSocketBuilder};
-#[cfg(feature = "client")]
-pub use error::ClientSocketError;
-#[cfg(feature = "server")]
-pub use error::ServerSocketError;
-#[cfg(feature = "server")]
-pub use server::{ClientHandle, Listener, ListenerBuilder, ServerFlowConfiguration};
-#[cfg(feature = "client")]
-pub use crate::certificate::ClientCertificate;
-#[cfg(feature = "server")]
-pub use crate::certificate::ServerKeyPair;
-#[cfg(feature = "client")]
-pub use crate::tailor::ClientConnectionHandler;
-#[cfg(feature = "server")]
-pub use crate::tailor::ServerConnectionHandler;
+use cfg_if::cfg_if;
+
+cfg_if! {
+    if #[cfg(feature = "client")] {
+        pub use client::{ClientSocket, ClientSocketBuilder};
+        pub use error::ClientSocketError;
+        pub use crate::certificate::ClientCertificate;
+        pub use crate::tailor::ClientConnectionHandler;
+    }
+}
+cfg_if! {
+    if #[cfg(feature = "server")] {
+        pub use error::ServerSocketError;
+        pub use server::{ClientHandle, Listener, ListenerBuilder, ServerFlowConfiguration};
+        pub use crate::certificate::ServerKeyPair;
+        pub use crate::tailor::ServerConnectionHandler;
+    }
+}

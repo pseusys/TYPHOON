@@ -1,22 +1,26 @@
 use std::future::Future;
+use std::str::from_utf8;
+#[cfg(feature = "async-std")]
+use std::sync::Arc;
 
 use cfg_if::cfg_if;
 use log::{debug, warn};
+#[cfg(feature = "tokio")]
+use tokio::spawn;
 
 use crate::bytes::{ByteBuffer, StaticByteBuffer};
 use crate::settings::Settings;
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
+pub use crate::tailor::{ClientConnectionHandler, ServerConnectionHandler};
 use crate::tailor::{IdentityType, Tailor};
 use crate::utils::random::{SupportRng, get_rng};
-
-pub use crate::tailor::{ClientConnectionHandler, ServerConnectionHandler};
 pub use crate::utils::sync::AsyncExecutor;
 
 /// Parse a version byte slice of the form `"major[.minor[.patch[-tag]]]"` into `(major, minor, patch)`.
 /// Bytes after the first null are ignored. Components that cannot be parsed default to `0`.
 fn parse_version(bytes: &[u8]) -> (u64, u64, u64) {
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    let s = std::str::from_utf8(&bytes[..end]).unwrap_or("").trim();
+    let s = from_utf8(&bytes[..end]).unwrap_or("").trim();
     let base = s.split('-').next().unwrap_or(s);
     let mut parts = base.split('.');
     let major = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -52,7 +56,7 @@ impl AsyncExecutor for TokioExecutor {
     }
 
     fn spawn<F: Future<Output = ()> + Send + 'static>(&self, future: F) {
-        tokio::spawn(future);
+        spawn(future);
     }
 }
 
@@ -60,14 +64,14 @@ impl AsyncExecutor for TokioExecutor {
 #[cfg(feature = "async-std")]
 #[derive(Clone)]
 pub struct AsyncStdExecutor {
-    executor: std::sync::Arc<async_executor::Executor<'static>>,
+    executor: Arc<async_executor::Executor<'static>>,
 }
 
 #[cfg(feature = "async-std")]
 impl AsyncExecutor for AsyncStdExecutor {
     fn new() -> Self {
         Self {
-            executor: std::sync::Arc::new(async_executor::Executor::new()),
+            executor: Arc::new(async_executor::Executor::new()),
         }
     }
 
@@ -77,8 +81,8 @@ impl AsyncExecutor for AsyncStdExecutor {
 }
 
 #[cfg(feature = "async-std")]
-impl From<std::sync::Arc<async_executor::Executor<'static>>> for AsyncStdExecutor {
-    fn from(executor: std::sync::Arc<async_executor::Executor<'static>>) -> Self {
+impl From<Arc<async_executor::Executor<'static>>> for AsyncStdExecutor {
+    fn from(executor: Arc<async_executor::Executor<'static>>) -> Self {
         Self {
             executor,
         }
@@ -118,16 +122,13 @@ impl ServerConnectionHandler<StaticByteBuffer> for DefaultServerConnectionHandle
         let (cli_major, cli_minor, cli_patch) = parse_version(version_bytes);
         let (srv_major, srv_minor, srv_patch) = parse_version(env!("CARGO_PKG_VERSION").as_bytes());
         if cli_major != srv_major {
-            warn!("client version major mismatch (client={}.{}.{}, server={}.{}.{}), rejecting handshake",
-                cli_major, cli_minor, cli_patch, srv_major, srv_minor, srv_patch);
+            warn!("client version major mismatch (client={}.{}.{}, server={}.{}.{}), rejecting handshake", cli_major, cli_minor, cli_patch, srv_major, srv_minor, srv_patch);
             false
         } else if cli_minor != srv_minor {
-            warn!("client version minor mismatch (client={}.{}.{}, server={}.{}.{})",
-                cli_major, cli_minor, cli_patch, srv_major, srv_minor, srv_patch);
+            warn!("client version minor mismatch (client={}.{}.{}, server={}.{}.{})", cli_major, cli_minor, cli_patch, srv_major, srv_minor, srv_patch);
             true
         } else if cli_patch != srv_patch {
-            debug!("client version patch mismatch (client={}.{}.{}, server={}.{}.{})",
-                cli_major, cli_minor, cli_patch, srv_major, srv_minor, srv_patch);
+            debug!("client version patch mismatch (client={}.{}.{}, server={}.{}.{})", cli_major, cli_minor, cli_patch, srv_major, srv_minor, srv_patch);
             true
         } else {
             true

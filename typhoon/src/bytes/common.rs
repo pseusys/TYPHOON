@@ -36,18 +36,23 @@ pub trait ByteBufferMut: ByteBuffer + AsMut<[u8]> {
     fn set(&self, at: usize, value: u8);
 
     /// Get mutable slice of entire buffer.
+    #[allow(clippy::mut_from_ref)]
     fn slice_mut(&self) -> &mut [u8];
 
     /// Get mutable slice from `start` offset to end.
+    #[allow(clippy::mut_from_ref)]
     fn slice_start_mut(&self, start: usize) -> &mut [u8];
 
     /// Get mutable slice from beginning to `end` offset.
+    #[allow(clippy::mut_from_ref)]
     fn slice_end_mut(&self, end: usize) -> &mut [u8];
 
     /// Get mutable slice from `start` to `end` offset.
+    #[allow(clippy::mut_from_ref)]
     fn slice_both_mut(&self, start: usize, end: usize) -> &mut [u8];
 
     /// Split into two mutable slices at `divide` point. Returns (left, right).
+    #[allow(clippy::mut_from_ref)]
     fn split_mut(&self, divide: usize) -> (&mut [u8], &mut [u8]);
 
     /// Create view with start shifted forward by `start` bytes.
