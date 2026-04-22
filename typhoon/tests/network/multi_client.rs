@@ -6,7 +6,6 @@ use futures::channel::oneshot::channel;
 use futures::future::join_all;
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
-use typhoon::flow::decoy::SimpleDecoyProvider;
 use typhoon::socket::{ListenerBuilder, ServerFlowConfiguration};
 
 use super::common::{connect_simple, default_settings, empty_flow_config, free_addr, server_key_pair};
@@ -24,7 +23,7 @@ async fn test_multi_client_isolated_sessions() {
     // Build certificates before consuming key_pair into the listener.
     let certs: Vec<_> = (0..CLIENTS).map(|_| key_pair.to_client_certificate(vec![addr])).collect();
 
-    let listener = Arc::new(ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(empty_flow_config(), addr)).with_settings(settings.clone()).build().await.expect("listener"));
+    let listener = Arc::new(ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(empty_flow_config(), addr)).with_settings(settings.clone()).build().await.expect("listener"));
     listener.start().await;
 
     // A single accept loop to avoid concurrent accept() calls fighting over the WatchReceiver.

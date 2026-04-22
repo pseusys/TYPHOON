@@ -6,7 +6,7 @@ use crate::cache::CachedValue;
 use crate::crypto::ClientCryptoTool;
 use crate::flow::common::{FlowManager, FlowReceiveInternal, FlowSendInternal};
 use crate::flow::config::FlowConfig;
-use crate::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender};
+use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
 use crate::settings::Settings;
 use crate::tailor::IdentityType;
@@ -14,8 +14,8 @@ use crate::utils::socket::Socket;
 use crate::utils::sync::{AsyncExecutor, Mutex};
 
 /// Client-side flow manager that handles packet encryption, decoy traffic, and socket I/O.
-pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor, DP: Send + Sync> {
-    decoy_provider: Mutex<DP>,
+pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor> {
+    decoy_provider: Mutex<Box<dyn DecoyProvider>>,
     send_internal: Mutex<FlowSendInternal<ClientCryptoTool<T>>>,
     receive_internal: Mutex<FlowReceiveInternal<ClientCryptoTool<T>>>,
     sock: Socket,
@@ -23,16 +23,18 @@ pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor, DP: Sen
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static> ClientFlowManager<T, AE, DP> {
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowManager<T, AE> {
     /// Create a new client flow manager.
-    pub(crate) async fn new(config: FlowConfig, mut cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, sock: Socket) -> Result<Arc<Self>, FlowControllerError> {
+    pub(crate) async fn new(config: FlowConfig, mut cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, sock: Socket, factory: &DecoyFactory<T, AE>) -> Result<Arc<Self>, FlowControllerError> {
         let identity = cipher.get_mut().map_err(FlowControllerError::MissingCache)?.identity();
         let send_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
         let receive_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
-        let value = Arc::new_cyclic(|m: &Weak<Self>| {
+
+        let manager_ref = Arc::new_cyclic(|m: &Weak<ClientFlowManager<T, AE>>| {
             let mgr: Weak<dyn DecoyFlowSender> = m.clone();
+            let decoy = factory(mgr, settings.clone(), identity);
             ClientFlowManager {
-                decoy_provider: Mutex::new(DP::new(mgr, settings.clone(), identity)),
+                decoy_provider: Mutex::new(decoy),
                 send_internal: Mutex::new(FlowSendInternal {
                     provider: send_provider,
                     config,
@@ -45,12 +47,12 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
                 settings,
             }
         });
-        value.decoy_provider.lock().await.start().await;
-        Ok(value)
+        manager_ref.decoy_provider.lock().await.start().await;
+        Ok(manager_ref)
     }
 }
 
-impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static> FlowManager for ClientFlowManager<T, AE, DP> {
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager for ClientFlowManager<T, AE> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {
         let notified_packet = {
             let mut lock = self.decoy_provider.lock().await;

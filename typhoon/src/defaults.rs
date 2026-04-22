@@ -1,3 +1,10 @@
+//! Default concrete types and re-exports for the most common TYPHOON configurations.
+//!
+//! Provides [`DefaultExecutor`] (backed by the active runtime feature flag), the
+//! [`DefaultServerConnectionHandler`] / [`DefaultClientConnectionHandler`] pair, and
+//! re-exports [`DecoyFactory`], [`decoy_factory`], and [`random_decoy_factory`] so callers
+//! do not need to import from the deeper `flow::decoy` path.
+
 use std::future::Future;
 use std::str::from_utf8;
 #[cfg(feature = "async-std")]
@@ -9,6 +16,7 @@ use log::{debug, warn};
 use tokio::spawn;
 
 use crate::bytes::{ByteBuffer, StaticByteBuffer};
+pub use crate::flow::decoy::{DecoyFactory, decoy_factory, random_decoy_factory};
 use crate::settings::Settings;
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 pub use crate::tailor::{ClientConnectionHandler, ServerConnectionHandler};
