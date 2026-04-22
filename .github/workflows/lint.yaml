@@ -26,33 +26,10 @@ jobs:
       - name: Checkout 🛎️
         uses: actions/checkout@v4
 
-      - name: Setup Rust 🦀
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Lint markdown 📝
+        uses: DavidAnson/markdownlint-cli2-action@v19
         with:
-          toolchain: nightly
-          components: rustfmt, clippy
-          rust-src-dir: typhoon
-          override: true
-
-      - name: Setup Python 🐍
-        uses: actions/setup-python@v6.2.0
-        with:
-          python-version: "3.12"
-
-      - name: Setup Go 🐹
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.22"
-
-      - name: Check formatting 🎨
-        run: |
-          cd typhoon && cargo fmt --check
-          cd ../evaluation/protocols/typhoon && cargo fmt --check
-          cd ../wireguard_daita/machines-printer && cargo fmt --check
-
-      - name: Run clippy 📎
-        working-directory: typhoon
-        run: cargo clippy
+          globs: '**/*.md'
 
       - name: Check shell scripts 🐚
         uses: ludeeus/action-shellcheck@2.0.0
@@ -67,10 +44,38 @@ jobs:
           recursive: true
           config: evaluation/.hadolint.yaml
 
+      - name: Setup Rust 🦀
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+          components: rustfmt, clippy
+          rust-src-dir: typhoon
+          override: true
+
+      - name: Check formatting 🎨
+        run: |
+          cd typhoon && cargo fmt --check
+          cd ../evaluation/protocols/typhoon && cargo fmt --check
+          cd ../wireguard_daita/machines-printer && cargo fmt --check
+
+      - name: Run clippy 📎
+        working-directory: typhoon
+        run: cargo clippy
+
+      - name: Setup Python 🐍
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.12"
+
       - name: Check Python code 📜
         uses: astral-sh/ruff-action@v3
         with:
           args: "check --config evaluation/pyproject.toml evaluation/src evaluation/protocols"
+
+      - name: Setup Go 🐹
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
 
       - name: Lint Go (wireguard_daita) 🔍
         working-directory: evaluation/protocols/wireguard_daita/wg-daita
@@ -79,8 +84,3 @@ jobs:
           go install honnef.co/go/tools/cmd/staticcheck@latest
           go mod tidy
           staticcheck -tags daita ./...
-
-      - name: Lint markdown 📝
-        uses: DavidAnson/markdownlint-cli2-action@v19
-        with:
-          globs: '**/*.md'
