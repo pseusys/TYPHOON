@@ -1,9 +1,11 @@
+use std::env::args;
+
 use maybenot_machines::{get_machine, StaticMachine};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 
 fn main() {
-    let role = std::env::args().nth(1).expect("missing role argument");
+    let role = args().nth(1).expect("missing role argument");
 
     let static_machines: Vec<StaticMachine> = match role.as_str() {
         "server" => vec![

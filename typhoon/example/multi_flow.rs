@@ -3,7 +3,7 @@
 /// across them. All messages must arrive regardless of which flow handles each packet.
 use std::sync::Arc;
 
-use env_logger;
+use env_logger::init;
 use futures::channel::oneshot::channel;
 #[cfg(not(feature = "tokio"))]
 use futures::executor::block_on;
@@ -30,7 +30,7 @@ fn main() {
 }
 
 async fn run() {
-    env_logger::init();
+    init();
 
     let settings = Arc::new(SettingsBuilder::<DefaultExecutor>::new().build().expect("default settings should be valid"));
 

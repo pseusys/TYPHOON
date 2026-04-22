@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/eval/target/release/eval-server /usr/local/bin/eval-server
 
-# Health: UDP port 19999 bound AND cert written to shared volume
+# Health: all 3 UDP ports bound AND cert written to shared volume
 HEALTHCHECK --interval=2s --timeout=5s --retries=30 --start-period=10s \
-    CMD ss -u -l -n | grep -q ':19999' && test -f /keys/typhoon.cert
+    CMD ss -u -l -n | grep -q ':19999' && ss -u -l -n | grep -q ':19998' && ss -u -l -n | grep -q ':19997' && test -f /keys/typhoon.cert
 CMD ["eval-server"]
