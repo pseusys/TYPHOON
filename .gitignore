@@ -10,3 +10,8 @@ typhoon/target
 # Tests:
 
 typhoon/.test_keys
+
+# Evaluation:
+
+evaluation/protocols/wireguard_daita/wg-daita/go.sum
+evaluation/protocols/wireguard_daita/wireguard-go

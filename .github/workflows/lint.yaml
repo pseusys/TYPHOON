@@ -75,7 +75,7 @@ jobs:
       - name: Lint Go (wireguard_daita) 🔍
         working-directory: evaluation/protocols/wireguard_daita/wg-daita
         run: |
-          git clone --depth=1 --branch mullvad https://github.com/mullvad/wireguard-go evaluation/protocols/wireguard_daita/wireguard-go
+          git clone --depth=1 --branch mullvad https://github.com/mullvad/wireguard-go ../wireguard-go
           go install honnef.co/go/tools/cmd/staticcheck@latest
           go mod tidy
           staticcheck -tags daita ./...
