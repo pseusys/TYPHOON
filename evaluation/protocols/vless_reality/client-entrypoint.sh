@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-ip route add 172.21.0.0/24 via "$OBSERVER_GW" || true
+ip route add 172.21.0.0/24 via "${OBSERVER_GW}" || true
 
 until [ -f /keys/vless_public_key ] && [ -f /keys/vless_short_id ] && [ -f /keys/vless_uuid ]; do
     sleep 0.5
@@ -61,4 +61,4 @@ SERVER_PORT=9000 \
 OBSERVER_GW="" \
 python3 /app/client.py
 
-kill "$XRAY_PID" 2>/dev/null || true
+kill "${XRAY_PID}" 2>/dev/null || true

@@ -20,4 +20,4 @@ SINK_PID=$!
     wg set wg0 peer "$(cat /keys/wg_client.pub)" allowed-ips 10.100.0.2/32
 ) &
 
-wait $SINK_PID
+wait "${SINK_PID}"

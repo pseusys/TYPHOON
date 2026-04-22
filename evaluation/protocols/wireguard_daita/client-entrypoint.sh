@@ -1,9 +1,9 @@
 #!/bin/sh
 set -e
 
-if [ -n "$OBSERVER_GW" ]; then
+if [ -n "${OBSERVER_GW}" ]; then
     ip route del 172.21.0.0/24 2>/dev/null || true
-    ip route add 172.21.0.0/24 via "$OBSERVER_GW" || true
+    ip route add 172.21.0.0/24 via "${OBSERVER_GW}" || true
 fi
 
 # Wait for server public key (base64)
@@ -57,7 +57,7 @@ ip link set wg0 up
 # Wait for handshake
 for i in $(seq 1 30); do
     HS=$(wg show wg0 latest-handshakes 2>/dev/null | awk '{print $2}')
-    if [ -n "$HS" ] && [ "$HS" != "0" ]; then break; fi
+    if [ -n "${HS}" ] && [ "${HS}" != "0" ]; then break; fi
     sleep 1
 done
 

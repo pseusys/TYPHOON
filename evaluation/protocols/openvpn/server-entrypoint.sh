@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-ip route add 172.20.0.0/24 via "$OBSERVER_GW" || true
+ip route add 172.20.0.0/24 via "${OBSERVER_GW}" || true
 
 # Generate CA
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
@@ -55,5 +55,5 @@ SINK_PID=$!
 openvpn --config /tmp/server.conf &
 OVP_PID=$!
 
-wait $SINK_PID
-kill "$OVP_PID" 2>/dev/null || true
+wait "${SINK_PID}"
+kill "${OVP_PID}" 2>/dev/null || true

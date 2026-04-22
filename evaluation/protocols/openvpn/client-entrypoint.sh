@@ -1,9 +1,9 @@
 #!/bin/sh
 set -e
 
-if [ -n "$OBSERVER_GW" ]; then
+if [ -n "${OBSERVER_GW}" ]; then
     ip route del 172.21.0.0/24 2>/dev/null || true
-    ip route add 172.21.0.0/24 via "$OBSERVER_GW" || true
+    ip route add 172.21.0.0/24 via "${OBSERVER_GW}" || true
 fi
 
 until [ -f /keys/ovpn_pki_ready ]; do sleep 0.5; done
@@ -40,4 +40,4 @@ SERVER_PORT=9000 \
 OBSERVER_GW="" \
 python3 /app/client.py
 
-kill "$OVP_PID" 2>/dev/null || true
+kill "${OVP_PID}" 2>/dev/null || true

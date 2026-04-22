@@ -1,18 +1,18 @@
 #!/bin/sh
 set -e
 
-ip route add 172.20.0.0/24 via "$OBSERVER_GW" || true
+ip route add 172.20.0.0/24 via "${OBSERVER_GW}" || true
 
 # xray x25519 v26+ format: "Password (PublicKey): <key>" — match /PublicKey/ not /PublicKey:/
 KEYS=$(xray x25519)
-PRIVATE_KEY=$(echo "$KEYS" | awk '/^PrivateKey:/ {print $2}')
-PUBLIC_KEY=$(echo  "$KEYS" | awk '/PublicKey/   {print $NF}')
+PRIVATE_KEY=$(echo "${KEYS}" | awk '/^PrivateKey:/ {print $2}')
+PUBLIC_KEY=$(echo  "${KEYS}" | awk '/PublicKey/   {print $NF}')
 SHORT_ID=$(openssl rand -hex 8)
 UUID="a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
-echo "$PUBLIC_KEY" > /keys/vless_public_key
-echo "$SHORT_ID"   > /keys/vless_short_id
-echo "$UUID"       > /keys/vless_uuid
+echo "${PUBLIC_KEY}" > /keys/vless_public_key
+echo "${SHORT_ID}"   > /keys/vless_short_id
+echo "${UUID}"       > /keys/vless_uuid
 
 # REALITY requires a decoy backend; unauthenticated connections are forwarded here
 openssl req -x509 -newkey rsa:2048 \
@@ -58,4 +58,4 @@ SINK_PID=$!
 xray run -config /etc/xray/config.json &
 XRAY_PID=$!
 
-wait $SINK_PID
+wait "${SINK_PID}"

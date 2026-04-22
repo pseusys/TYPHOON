@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-ip route add 172.21.0.0/24 via "$OBSERVER_GW" || true
+ip route add 172.21.0.0/24 via "${OBSERVER_GW}" || true
 
 until [ -f /keys/hysteria_ready ]; do sleep 0.5; done
 
@@ -35,4 +35,4 @@ SERVER_PORT=9000 \
 OBSERVER_GW="" \
 python3 /app/client.py
 
-kill "$CLIENT_PID" 2>/dev/null || true
+kill "${CLIENT_PID}" 2>/dev/null || true

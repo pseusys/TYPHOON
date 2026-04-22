@@ -2,9 +2,9 @@
 set -e
 
 # Route must exist before the WireGuard handshake so UDP reaches 172.21.0.10:51820
-if [ -n "$OBSERVER_GW" ]; then
+if [ -n "${OBSERVER_GW}" ]; then
     ip route del 172.21.0.0/24 2>/dev/null || true
-    ip route add 172.21.0.0/24 via "$OBSERVER_GW" \
+    ip route add 172.21.0.0/24 via "${OBSERVER_GW}" \
         || echo "[wg-client] WARNING: route add failed"
 fi
 
@@ -25,7 +25,7 @@ ip link set wg0 up
 
 for i in $(seq 1 30); do
     HS=$(wg show wg0 latest-handshakes 2>/dev/null | awk '{print $2}')
-    if [ -n "$HS" ] && [ "$HS" != "0" ]; then break; fi
+    if [ -n "${HS}" ] && [ "${HS}" != "0" ]; then break; fi
     sleep 1
 done
 

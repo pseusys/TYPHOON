@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-ip route add 172.20.0.0/24 via "$OBSERVER_GW" || true
+ip route add 172.20.0.0/24 via "${OBSERVER_GW}" || true
 
 TRANSFER_BYTES="${TRANSFER_BYTES:-104857600}" \
 OBSERVER_GW="" \
@@ -19,13 +19,13 @@ export TOR_PT_ORPORT="127.0.0.1:9001"
 
 # PT spec: SMETHOD line on stdout carries the cert args for the client
 obfs4proxy -enableLogging -logLevel INFO 2>/tmp/obfs4.log | while IFS= read -r line; do
-    echo "[obfs4-server] $line"
-    case "$line" in
+    echo "[obfs4-server] ${line}"
+    case "${line}" in
         SMETHOD\ obfs4\ *)
-            ARGS=$(echo "$line" | sed 's/.*ARGS://')
-            echo "$ARGS" > /keys/obfs4_args.txt
+            ARGS=$(echo "${line}" | sed 's/.*ARGS://')
+            echo "${ARGS}" > /keys/obfs4_args.txt
             ;;
     esac
 done &
 
-wait $SINK_PID
+wait "${SINK_PID}"

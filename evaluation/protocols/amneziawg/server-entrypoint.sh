@@ -17,9 +17,9 @@ ip addr add 10.100.0.1/24 dev awg0
 awg set awg0 \
     private-key /keys/awg_server.key \
     listen-port 51820 \
-    jc "$AWG_JC" jmin "$AWG_JMIN" jmax "$AWG_JMAX" \
-    s1 "$AWG_S1" s2 "$AWG_S2" \
-    h1 "$AWG_H1" h2 "$AWG_H2" h3 "$AWG_H3" h4 "$AWG_H4"
+    jc "${AWG_JC}" jmin "${AWG_JMIN}" jmax "${AWG_JMAX}" \
+    s1 "${AWG_S1}" s2 "${AWG_S2}" \
+    h1 "${AWG_H1}" h2 "${AWG_H2}" h3 "${AWG_H3}" h4 "${AWG_H4}"
 
 ip link set awg0 up
 
@@ -33,4 +33,4 @@ SINK_PID=$!
     awg set awg0 peer "$(cat /keys/awg_client.pub)" allowed-ips 10.100.0.2/32
 ) &
 
-wait $SINK_PID
+wait "${SINK_PID}"

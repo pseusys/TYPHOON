@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-ip route add 172.21.0.0/24 via "$OBSERVER_GW" || true
+ip route add 172.21.0.0/24 via "${OBSERVER_GW}" || true
 
 ss-local \
     -s "${SERVER_HOST:-172.21.0.10}" -p 8388 \
@@ -21,4 +21,4 @@ SERVER_PORT=9000 \
 OBSERVER_GW="" \
 python3 /app/client.py
 
-kill "$SSLOCAL_PID" 2>/dev/null || true
+kill "${SSLOCAL_PID}" 2>/dev/null || true

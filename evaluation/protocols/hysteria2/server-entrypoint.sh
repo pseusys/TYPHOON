@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-ip route add 172.20.0.0/24 via "$OBSERVER_GW" || true
+ip route add 172.20.0.0/24 via "${OBSERVER_GW}" || true
 
 # Self-signed TLS cert — client uses insecure mode, no CA needed
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
@@ -37,4 +37,4 @@ hysteria server -c /tmp/server.yaml &
 # Signal healthcheck and client
 touch /keys/hysteria_ready
 
-wait $SINK_PID
+wait "${SINK_PID}"

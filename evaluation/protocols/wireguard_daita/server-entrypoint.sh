@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-ip route add 172.20.0.0/24 via "$OBSERVER_GW" || true
+ip route add 172.20.0.0/24 via "${OBSERVER_GW}" || true
 
 # Generate server keypair using wg (keys in hex for UAPI format)
 wg genkey > /keys/wg_server_b64.key
@@ -61,5 +61,5 @@ until [ -f /keys/wg_daita_ready ]; do sleep 0.2; done
 ip addr add 10.100.0.1/24 dev wg0
 ip link set wg0 up
 
-wait $SINK_PID
-kill "$WG_PID" 2>/dev/null || true
+wait "${SINK_PID}"
+kill "${WG_PID}" 2>/dev/null || true
