@@ -58,8 +58,6 @@ jobs:
         uses: ludeeus/action-shellcheck@2.0.0
         with:
           scandir: "."
-        env:
-          SHELLCHECK_OPTS: -s bash
 
       - name: Check Dockerfile configuration 📦
         uses: hadolint/hadolint-action@v3.1.0
