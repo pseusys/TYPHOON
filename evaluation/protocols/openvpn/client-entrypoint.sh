@@ -1,12 +1,13 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
+OBSERVER_GW="${OBSERVER_GW:-}"
 
-if [ -n "${OBSERVER_GW}" ]; then
+if [[ -n "${OBSERVER_GW}" ]]; then
     ip route del 172.21.0.0/24 2>/dev/null || true
     ip route add 172.21.0.0/24 via "${OBSERVER_GW}" || true
 fi
 
-until [ -f /keys/ovpn_pki_ready ]; do sleep 0.5; done
+until [[ -f /keys/ovpn_pki_ready ]]; do sleep 0.5; done
 
 cat > /tmp/client.conf << 'EOF'
 client
@@ -29,8 +30,8 @@ openvpn --config /tmp/client.conf &
 OVP_PID=$!
 
 # Wait for VPN tunnel to assign an IP on tun0
-for i in $(seq 1 30); do
-    ip addr show tun0 2>/dev/null | grep -q "10\.200\.0\." && break
+for i in {1..30}; do
+    if ip addr show tun0 2>/dev/null | grep -q "10\.200\.0\."; then break; fi
     sleep 1
 done
 

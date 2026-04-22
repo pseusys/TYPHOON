@@ -1,9 +1,10 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
+OBSERVER_GW="${OBSERVER_GW:-}"
 
 ip route add 172.21.0.0/24 via "${OBSERVER_GW}" || true
 
-until [ -f /keys/hysteria_ready ]; do sleep 0.5; done
+until [[ -f /keys/hysteria_ready ]]; do sleep 0.5; done
 
 cat > /tmp/client.yaml << 'EOF'
 server: "172.21.0.10:443"
@@ -24,8 +25,8 @@ EOF
 hysteria client -c /tmp/client.yaml &
 CLIENT_PID=$!
 
-for i in $(seq 1 30); do
-    ss -tln | grep -q ':1080' && break
+for i in {1..30}; do
+    if ss -tln | grep -q ':1080'; then break; fi
     sleep 1
 done
 

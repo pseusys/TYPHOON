@@ -1,5 +1,6 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
+OBSERVER_GW="${OBSERVER_GW:-}"
 
 ip route add 172.20.0.0/24 via "${OBSERVER_GW}" || true
 

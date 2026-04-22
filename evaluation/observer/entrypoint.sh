@@ -1,14 +1,16 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
+: "${PROTOCOL:?PROTOCOL must be set}"
+PROTOCOL_SUFFIX="${PROTOCOL_SUFFIX:-}"
 
 { echo 1 > /proc/sys/net/ipv4/ip_forward; } 2>/dev/null || true
 
 # Docker doesn't guarantee eth0=net_left / eth1=net_right ordering, so derive
 # interface names from assigned IPs.
-LEFT_IF=$(ip -o addr show | awk '/172\.20\.0\.2\// { print $2; exit }')
-RIGHT_IF=$(ip -o addr show | awk '/172\.21\.0\.2\// { print $2; exit }')
+LEFT_IF=$(ip -o addr show | awk '/172\.20\.0\.2\// { print $2; exit }') || true
+RIGHT_IF=$(ip -o addr show | awk '/172\.21\.0\.2\// { print $2; exit }') || true
 
-if [ -z "${LEFT_IF}" ] || [ -z "${RIGHT_IF}" ]; then
+if [[ -z "${LEFT_IF}" ]] || [[ -z "${RIGHT_IF}" ]]; then
     echo "[observer] ERROR: cannot identify interfaces (left='${LEFT_IF}' right='${RIGHT_IF}')"
     ip addr
     exit 1
@@ -28,7 +30,7 @@ nft add chain ip nat POSTROUTING '{ type nat hook postrouting priority 100; }'
 # SNAT so return packets are routed back through observer via conntrack
 nft add rule ip nat POSTROUTING oifname "${RIGHT_IF}" masquerade
 
-PCAP="/captures/${PROTOCOL}${PROTOCOL_SUFFIX:-}.pcap"
+PCAP="/captures/${PROTOCOL}${PROTOCOL_SUFFIX}.pcap"
 echo "[observer] protocol=${PROTOCOL} capture=${PCAP}"
 
 exec tcpdump -U -i any -n -q \

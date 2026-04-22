@@ -1,5 +1,5 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
 
 wg genkey | tee /keys/wg_server.key | wg pubkey > /keys/wg_server.pub
 chmod 600 /keys/wg_server.key
@@ -16,8 +16,8 @@ python3 /app/server.py &
 SINK_PID=$!
 
 (
-    until [ -f /keys/wg_client.pub ]; do sleep 0.5; done
-    wg set wg0 peer "$(cat /keys/wg_client.pub)" allowed-ips 10.100.0.2/32
+    until [[ -f /keys/wg_client.pub ]]; do sleep 0.5; done
+    wg set wg0 peer "$(<  /keys/wg_client.pub)" allowed-ips 10.100.0.2/32
 ) &
 
 wait "${SINK_PID}"

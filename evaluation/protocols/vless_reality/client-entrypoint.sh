@@ -1,15 +1,16 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
+OBSERVER_GW="${OBSERVER_GW:-}"
 
 ip route add 172.21.0.0/24 via "${OBSERVER_GW}" || true
 
-until [ -f /keys/vless_public_key ] && [ -f /keys/vless_short_id ] && [ -f /keys/vless_uuid ]; do
+until [[ -f /keys/vless_public_key ]] && [[ -f /keys/vless_short_id ]] && [[ -f /keys/vless_uuid ]]; do
     sleep 0.5
 done
 
-PUBLIC_KEY=$(cat /keys/vless_public_key)
-SHORT_ID=$(cat  /keys/vless_short_id)
-UUID=$(cat      /keys/vless_uuid)
+PUBLIC_KEY=$(<  /keys/vless_public_key)
+SHORT_ID=$(<    /keys/vless_short_id)
+UUID=$(<        /keys/vless_uuid)
 
 cat > /etc/xray/config.json <<EOF
 {
@@ -51,8 +52,8 @@ EOF
 xray run -config /etc/xray/config.json &
 XRAY_PID=$!
 
-for i in $(seq 1 30); do
-    ss -tln | grep -q ':1080' && break
+for i in {1..30}; do
+    if ss -tln | grep -q ':1080'; then break; fi
     sleep 1
 done
 

@@ -1,5 +1,6 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
+OBSERVER_GW="${OBSERVER_GW:-}"
 
 ip route add 172.20.0.0/24 via "${OBSERVER_GW}" || true
 
@@ -28,7 +29,7 @@ python3 /app/server.py &
 SINK_PID=$!
 
 # Wait for client public key (written as base64 by client)
-until [ -f /keys/wg_client_b64.pub ]; do sleep 0.5; done
+until [[ -f /keys/wg_client_b64.pub ]]; do sleep 0.5; done
 
 python3 -c "
 import base64, binascii
@@ -36,8 +37,8 @@ b64 = open('/keys/wg_client_b64.pub').read().strip()
 print(binascii.hexlify(base64.b64decode(b64)).decode())
 " > /keys/wg_client.pub
 
-CLIENT_HEX=$(cat /keys/wg_client.pub)
-SERVER_KEY_HEX=$(cat /keys/wg_server.key)
+CLIENT_HEX=$(<  /keys/wg_client.pub)
+SERVER_KEY_HEX=$(<  /keys/wg_server.key)
 
 # Write UAPI config for wg-daita
 cat > /tmp/wg.conf << EOF
@@ -56,7 +57,7 @@ DAITA_MACHINES_FILE=/etc/daita/machines.txt \
 wg-daita &
 WG_PID=$!
 
-until [ -f /keys/wg_daita_ready ]; do sleep 0.2; done
+until [[ -f /keys/wg_daita_ready ]]; do sleep 0.2; done
 
 ip addr add 10.100.0.1/24 dev wg0
 ip link set wg0 up

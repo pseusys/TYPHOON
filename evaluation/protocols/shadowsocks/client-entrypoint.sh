@@ -1,5 +1,6 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
+OBSERVER_GW="${OBSERVER_GW:-}"
 
 ip route add 172.21.0.0/24 via "${OBSERVER_GW}" || true
 
@@ -11,8 +12,8 @@ ss-local \
     -t 300 &
 SSLOCAL_PID=$!
 
-for i in $(seq 1 30); do
-    ss -tln | grep -q ':1080' && break
+for i in {1..30}; do
+    if ss -tln | grep -q ':1080'; then break; fi
     sleep 1
 done
 

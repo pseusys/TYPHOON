@@ -1,12 +1,13 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
+OBSERVER_GW="${OBSERVER_GW:-}"
 
 ip route add 172.20.0.0/24 via "${OBSERVER_GW}" || true
 
 # xray x25519 v26+ format: "Password (PublicKey): <key>" — match /PublicKey/ not /PublicKey:/
 KEYS=$(xray x25519)
-PRIVATE_KEY=$(echo "${KEYS}" | awk '/^PrivateKey:/ {print $2}')
-PUBLIC_KEY=$(echo  "${KEYS}" | awk '/PublicKey/   {print $NF}')
+PRIVATE_KEY=$(echo "${KEYS}" | awk '/^PrivateKey:/ {print $2}') || true
+PUBLIC_KEY=$(echo  "${KEYS}" | awk '/PublicKey/   {print $NF}') || true
 SHORT_ID=$(openssl rand -hex 8)
 UUID="a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 

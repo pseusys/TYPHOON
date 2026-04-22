@@ -1,5 +1,7 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
+OBSERVER_GW="${OBSERVER_GW:-}"
+OBFS4_IAT_MODE="${OBFS4_IAT_MODE:-}"
 
 ip route add 172.20.0.0/24 via "${OBSERVER_GW}" || true
 
@@ -13,7 +15,7 @@ mkdir -p /state
 export TOR_PT_MANAGED_TRANSPORT_VER="1"
 export TOR_PT_STATE_LOCATION="/state"
 export TOR_PT_SERVER_TRANSPORTS="obfs4"
-[ -n "${OBFS4_IAT_MODE:-}" ] && export TOR_PT_SERVER_TRANSPORT_OPTIONS="obfs4:iat-mode=${OBFS4_IAT_MODE}"
+[[ -n "${OBFS4_IAT_MODE}" ]] && export TOR_PT_SERVER_TRANSPORT_OPTIONS="obfs4:iat-mode=${OBFS4_IAT_MODE}"
 export TOR_PT_SERVER_BINDADDR="obfs4-${CERT_HOST:-0.0.0.0}:9000"
 export TOR_PT_ORPORT="127.0.0.1:9001"
 
@@ -22,9 +24,10 @@ obfs4proxy -enableLogging -logLevel INFO 2>/tmp/obfs4.log | while IFS= read -r l
     echo "[obfs4-server] ${line}"
     case "${line}" in
         SMETHOD\ obfs4\ *)
-            ARGS=$(echo "${line}" | sed 's/.*ARGS://')
+            ARGS="${line##*ARGS:}"
             echo "${ARGS}" > /keys/obfs4_args.txt
             ;;
+        *)  ;;
     esac
 done &
 

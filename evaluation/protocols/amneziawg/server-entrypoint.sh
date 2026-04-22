@@ -1,5 +1,5 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
 
 # AmneziaWG obfuscation parameters — must match client exactly.
 # H1-H4 replace WireGuard's fixed type bytes (1/2/3/4) to remove the fixed-header fingerprint.
@@ -29,8 +29,8 @@ python3 /app/server.py &
 SINK_PID=$!
 
 (
-    until [ -f /keys/awg_client.pub ]; do sleep 0.5; done
-    awg set awg0 peer "$(cat /keys/awg_client.pub)" allowed-ips 10.100.0.2/32
+    until [[ -f /keys/awg_client.pub ]]; do sleep 0.5; done
+    awg set awg0 peer "$(<  /keys/awg_client.pub)" allowed-ips 10.100.0.2/32
 ) &
 
 wait "${SINK_PID}"
