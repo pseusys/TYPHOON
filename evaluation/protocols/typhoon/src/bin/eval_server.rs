@@ -6,8 +6,8 @@
 use std::env::var;
 use std::net::SocketAddr;
 use std::process;
-use std::sync::Arc;
 use std::process::Command;
+use std::sync::Arc;
 
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
