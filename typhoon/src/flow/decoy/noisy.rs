@@ -2,10 +2,11 @@
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use log::warn;
 
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
-use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender, DecoyState, exponential_variance, maintenance_timer_task, random_gauss, random_uniform, try_replicate};
+use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DecoyState, exponential_variance, maintenance_timer_task, random_gauss, random_uniform, try_replicate};
 use crate::settings::Settings;
 use crate::settings::keys::*;
 use crate::tailor::IdentityType;
@@ -94,20 +95,8 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> NoisyDecoyProvider<T, AE> {
     }
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyCommunicationMode<T, AE> for NoisyDecoyProvider<T, AE> {
-    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T) -> Self {
-        let state = DecoyState::new(settings.clone(), identity);
-        let delay = Self::calculate_delay(&state);
-        let length = Self::calculate_length(&state);
-        let mut state = state;
-        state.schedule_next(delay, length);
-
-        Self {
-            manager,
-            state: Arc::new(RwLock::new(state)),
-        }
-    }
-
+#[async_trait]
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvider for NoisyDecoyProvider<T, AE> {
     async fn start(&mut self) {
         let executor = {
             let lock = self.state.read().await;
@@ -132,5 +121,20 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyCommunicationMode<T, AE> f
             state.update(packet.len());
         }
         Some(packet)
+    }
+}
+
+impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyCommunicationMode<T, AE> for NoisyDecoyProvider<T, AE> {
+    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T) -> Self {
+        let state = DecoyState::new(settings.clone(), identity);
+        let delay = Self::calculate_delay(&state);
+        let length = Self::calculate_length(&state);
+        let mut state = state;
+        state.schedule_next(delay, length);
+
+        Self {
+            manager,
+            state: Arc::new(RwLock::new(state)),
+        }
     }
 }

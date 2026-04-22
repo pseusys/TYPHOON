@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use async_trait::async_trait;
+
 use crate::bytes::{DynamicByteBuffer, StaticByteBuffer};
 use crate::cache::SharedMap;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
@@ -46,6 +48,7 @@ impl CapturingRouter {
     }
 }
 
+#[async_trait]
 impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
     async fn route_packet(&self, packet: DynamicByteBuffer, _identity: &StaticByteBuffer) -> bool {
         self.packets.lock().await.push(packet);
@@ -59,7 +62,7 @@ impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
 
 /// Build a session using `from_handshake`.
 /// Uses a shared static server secret to avoid paying McEliece key-generation cost per test.
-async fn make_session(settings: Arc<Settings<DefaultExecutor>>, router: Arc<CapturingRouter>, num_flows: usize) -> Arc<ServerSessionManager<StaticByteBuffer, DefaultExecutor, CapturingRouter>> {
+async fn make_session(settings: Arc<Settings<DefaultExecutor>>, router: Arc<CapturingRouter>, num_flows: usize) -> Arc<ServerSessionManager<StaticByteBuffer, DefaultExecutor>> {
     let identity = test_identity();
 
     let initial_key = crate::bytes::FixedByteBuffer::<32>::from([0u8; 32]);
@@ -73,7 +76,9 @@ async fn make_session(settings: Arc<Settings<DefaultExecutor>>, router: Arc<Capt
 
     let mut users: SharedMap<StaticByteBuffer, UserServerState> = SharedMap::new();
     let (incoming_tx, _incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
-    let router_weak = Arc::downgrade(&router);
+    let router_cloned: Arc<CapturingRouter> = Arc::clone(&router);
+    let router_dyn: Arc<dyn OutgoingRouter<StaticByteBuffer>> = router_cloned;
+    let router_weak = Arc::downgrade(&router_dyn);
 
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     let (session, _response) = {

@@ -5,15 +5,12 @@ use std::sync::Arc;
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::{ClientCertificate, ServerKeyPair};
 use typhoon::defaults::{DefaultExecutor, DefaultServerConnectionHandler};
-use typhoon::flow::decoy::{DecoyCommunicationMode, SimpleDecoyProvider};
+use typhoon::flow::decoy::DecoyCommunicationMode;
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::{Settings, SettingsBuilder};
 use typhoon::socket::{ClientConnectionHandler, ClientSocket, ClientSocketBuilder, Listener, ListenerBuilder, ServerFlowConfiguration};
 
 /// Allocate a loopback address on an OS-assigned port.
-/// Bind a UDP socket briefly to learn the port, then release it so the
-/// listener can bind it. (Races are acceptable in tests; ephemeral port
-/// re-use failures will just make the test fail with a bind error.)
 pub fn free_addr() -> SocketAddr {
     use std::net::UdpSocket;
     let sock = UdpSocket::bind("127.0.0.1:0").expect("OS should assign a free port");
@@ -30,11 +27,6 @@ pub fn empty_flow_config() -> FlowConfig {
     FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![]))
 }
 
-/// Load a server key pair from the env-var-pointed file when available,
-/// otherwise generate a fresh one (and save it for subsequent runs).
-///
-/// Integration tests cannot access `#[cfg(test)]` items in the library,
-/// so the load-or-generate logic is inlined here.
 pub fn server_key_pair() -> ServerKeyPair {
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     let env_var = "TYPHOON_TEST_SERVER_KEY_FAST";
@@ -57,8 +49,8 @@ pub fn server_key_pair() -> ServerKeyPair {
 }
 
 /// Build a listener with a caller-supplied key pair (so we can also derive a certificate).
-pub async fn listener_with_key(addrs: Vec<SocketAddr>, settings: Arc<Settings<DefaultExecutor>>, key_pair: ServerKeyPair) -> Arc<Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>> {
-    let mut builder = ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler);
+pub async fn listener_with_key(addrs: Vec<SocketAddr>, settings: Arc<Settings<DefaultExecutor>>, key_pair: ServerKeyPair) -> Arc<Listener<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>> {
+    let mut builder = ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler);
 
     for addr in addrs {
         builder = builder.add_flow(ServerFlowConfiguration::with_address(empty_flow_config(), addr));
@@ -69,12 +61,12 @@ pub async fn listener_with_key(addrs: Vec<SocketAddr>, settings: Arc<Settings<De
     listener
 }
 
-async fn simple_listener_with_key(addr: SocketAddr, settings: Arc<Settings<DefaultExecutor>>, key_pair: ServerKeyPair) -> Arc<Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>> {
+async fn simple_listener_with_key(addr: SocketAddr, settings: Arc<Settings<DefaultExecutor>>, key_pair: ServerKeyPair) -> Arc<Listener<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>> {
     listener_with_key(vec![addr], settings, key_pair).await
 }
 
 /// Build a `ServerKeyPair`, start a listener on `addr`, and return (listener, certificate).
-pub async fn setup_server(addr: SocketAddr, settings: Arc<Settings<DefaultExecutor>>) -> (Arc<Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>>, ClientCertificate) {
+pub async fn setup_server(addr: SocketAddr, settings: Arc<Settings<DefaultExecutor>>) -> (Arc<Listener<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>>, ClientCertificate) {
     let key_pair = server_key_pair();
     let certificate = key_pair.to_client_certificate(vec![addr]);
     let listener = simple_listener_with_key(addr, settings, key_pair).await;
@@ -82,23 +74,23 @@ pub async fn setup_server(addr: SocketAddr, settings: Arc<Settings<DefaultExecut
 }
 
 /// Build a `ServerKeyPair`, start a listener on all `addrs`, and return (listener, certificate).
-pub async fn setup_server_multi(addrs: Vec<SocketAddr>, settings: Arc<Settings<DefaultExecutor>>) -> (Arc<Listener<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>>, ClientCertificate) {
+pub async fn setup_server_multi(addrs: Vec<SocketAddr>, settings: Arc<Settings<DefaultExecutor>>) -> (Arc<Listener<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>>, ClientCertificate) {
     let key_pair = server_key_pair();
     let certificate = key_pair.to_client_certificate(addrs.clone());
     let listener = listener_with_key(addrs, settings, key_pair).await;
     (listener, certificate)
 }
 
-/// Build a `ClientSocket<DP>` using any `DecoyCommunicationMode` provider.
-pub async fn connect_with_decoy<DP, CC>(certificate: ClientCertificate, settings: Arc<Settings<DefaultExecutor>>, handler: CC) -> ClientSocket<StaticByteBuffer, DefaultExecutor, DP, CC>
+/// Build a `ClientSocket` using any `DecoyCommunicationMode` provider type.
+pub async fn connect_with_decoy<DP, CC>(certificate: ClientCertificate, settings: Arc<Settings<DefaultExecutor>>, handler: CC) -> ClientSocket<StaticByteBuffer, DefaultExecutor, CC>
 where
-    DP: DecoyCommunicationMode<StaticByteBuffer, DefaultExecutor> + Send + Sync + 'static,
+    DP: DecoyCommunicationMode<StaticByteBuffer, DefaultExecutor> + 'static,
     CC: ClientConnectionHandler + 'static,
 {
-    ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DP, CC>::new(certificate, handler).with_settings(settings).build().await.expect("client socket should build")
+    ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, CC>::new(certificate, handler).with_decoy::<DP>().with_settings(settings).build().await.expect("client socket should build")
 }
 
-/// Build a `ClientSocket<SimpleDecoyProvider>` using the given certificate and settings.
-pub async fn connect_simple<CC: ClientConnectionHandler + 'static>(certificate: ClientCertificate, settings: Arc<Settings<DefaultExecutor>>, handler: CC) -> ClientSocket<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, CC> {
-    ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, CC>::new(certificate, handler).with_settings(settings).build().await.expect("client socket should build")
+/// Build a `ClientSocket` using the default (random) decoy provider selection.
+pub async fn connect_simple<CC: ClientConnectionHandler + 'static>(certificate: ClientCertificate, settings: Arc<Settings<DefaultExecutor>>, handler: CC) -> ClientSocket<StaticByteBuffer, DefaultExecutor, CC> {
+    ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, CC>::new(certificate, handler).with_settings(settings).build().await.expect("client socket should build")
 }

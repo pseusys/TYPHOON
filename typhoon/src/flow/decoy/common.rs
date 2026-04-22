@@ -8,6 +8,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use log::{debug, warn};
 use rand::Rng;
 use rand::seq::SliceRandom;
@@ -220,19 +221,25 @@ impl<T: FlowManager + Send + Sync> DecoyFlowSender for T {
     }
 }
 
-/// Trait for implementing decoy traffic communication modes.
-pub trait DecoyCommunicationMode<T: IdentityType + Clone, AE: AsyncExecutor>: Sized + Send + Sync {
+/// Object-safe runtime interface for decoy traffic. Used as `Box<dyn DecoyProvider>` in
+/// flow managers. All async methods are boxed automatically by `async_trait`.
+#[async_trait]
+pub trait DecoyProvider: Send + Sync {
+    /// Start the background decoy generation timer.
+    async fn start(&mut self);
+
+    /// Process an incoming packet, updating internal rate tracking.
+    async fn feed_input(&mut self, packet: DynamicByteBuffer) -> Option<DynamicByteBuffer>;
+
+    /// Process an outgoing packet, updating internal rate tracking.
+    async fn feed_output(&mut self, packet: DynamicByteBuffer, generated: bool) -> Option<DynamicByteBuffer>;
+}
+
+/// Construction contract for decoy providers. Extends `DecoyProvider` so that any
+/// `DecoyCommunicationMode` can be stored as `Box<dyn DecoyProvider>`.
+pub trait DecoyCommunicationMode<T: IdentityType + Clone, AE: AsyncExecutor>: DecoyProvider + Sized {
     /// Create a new decoy provider with the given manager, settings, and identity.
     fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T) -> Self;
-
-    /// Start the background decoy generation timer.
-    fn start(&mut self) -> impl Future<Output = ()> + Send;
-
-    /// Process an incoming packet through the decoy provider, updating internal rate tracking.
-    fn feed_input(&mut self, packet: DynamicByteBuffer) -> impl Future<Output = Option<DynamicByteBuffer>> + Send;
-
-    /// Process an outgoing packet through the decoy provider, updating internal rate tracking.
-    fn feed_output(&mut self, packet: DynamicByteBuffer, generated: bool) -> impl Future<Output = Option<DynamicByteBuffer>> + Send;
 }
 
 // ── DecoyState ──────────────────────────────────────────────────────────────

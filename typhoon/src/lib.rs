@@ -1,3 +1,29 @@
+//! TYPHOON — Transfer Your Packets Hidden Over Observed Networks.
+//!
+//! An obfuscated UDP transport protocol designed to be statistically indistinguishable from
+//! generic network traffic. Each wire packet consists of an optional fake body, an optional fake
+//! header, an encrypted payload, and an encrypted tailor. Decoy packets (pure random bytes) are
+//! injected by the flow layer to obscure timing and volume patterns.
+//!
+//! # Entry points
+//!
+//! - **Client**: [`socket::ClientSocketBuilder`] → [`socket::ClientSocket`]
+//! - **Server**: [`socket::ListenerBuilder`] → [`socket::Listener`] → [`socket::ClientHandle`]
+//!
+//! # Feature flags
+//!
+//! | Flag | Description |
+//! |---|---|
+//! | `fast_software` | X25519 + XChaCha20-Poly1305 (default) |
+//! | `fast_hardware` | X25519 + AES-GCM-256 |
+//! | `full_software` | Classic McEliece + XChaCha20-Poly1305 |
+//! | `full_hardware` | Classic McEliece + AES-GCM-256 |
+//! | `server` | Server-side listener and session management |
+//! | `client` | Client-side socket and session management |
+//! | `debug` | Debug probe tools (requires `client` + `server`) |
+//! | `tokio` | Tokio async runtime |
+//! | `async-std` | async-std runtime |
+
 #[cfg(all(feature = "tokio", feature = "async-std"))]
 compile_error!("feature 'tokio' and feature 'async-std' cannot be enabled at the same time");
 

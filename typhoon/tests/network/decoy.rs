@@ -15,7 +15,7 @@ use super::common::{connect_with_decoy, default_settings, free_addr, setup_serve
 /// Echo N messages through the server and assert round-trip correctness.
 async fn run_echo_burst<DP>(n: usize, provider_name: &str)
 where
-    DP: DecoyCommunicationMode<StaticByteBuffer, DefaultExecutor> + Send + Sync + 'static,
+    DP: DecoyCommunicationMode<StaticByteBuffer, DefaultExecutor> + 'static,
 {
     let settings = default_settings();
     let addr = free_addr();

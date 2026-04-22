@@ -1139,17 +1139,19 @@ Getters (`flags`, `code`, `time`, `packet_number`, `payload_length`, `identity`)
 
 The `flow` module owns the UDP send/receive paths and decoy injection.
 
-`ClientFlowManager<T, AE, DP>` holds one UDP socket (connected to a server address) and one `DecoyProvider`.
+`ClientFlowManager<T, AE>` holds one UDP socket (connected to a server address) and one `Box<dyn DecoyProvider>`.
 Its send path prepends fake body + fake header and appends the encrypted tailor before writing to the socket.
 Its receive path strips those same regions after reading from the socket.
 
-`ServerFlowManager<T, AE, DP>` manages a pool of `SO_REUSEPORT` sockets and a per-client address table (`Arc<RwLock<HashMap<T, SocketAddr>>>`).
+`ServerFlowManager<T, AE>` manages a pool of `SO_REUSEPORT` sockets and a per-client address table (`Arc<RwLock<HashMap<T, SocketAddr>>>`).
 The address table is updated lock-free on authenticated packets (read-first, write only on change) to avoid stalling the receive path.
 
 Both managers delegate tailor encryption/decryption to a `FlowCryptoProvider` implementation (`ClientCryptoTool` or `ServerCryptoTool`), keeping the flow layer agnostic to the crypto mode.
 
-Decoy providers implement `DecoyCommunicationMode` and run as independent background tasks attached to a flow manager.
-They observe the real traffic via callbacks and inject decoy packets into the same send queue.
+Decoy providers implement `DecoyProvider` (the runtime trait, made object-safe via `async-trait`) and are constructed through a `DecoyFactory<T, AE>` — a type-erased closure `Arc<dyn Fn(Weak<dyn DecoyFlowSender>, Arc<Settings<AE>>, T) -> Box<dyn DecoyProvider>>`.
+This design allows each flow manager (or each per-user slot within a server flow manager) to use a different concrete decoy strategy without baking the choice into generic type parameters.
+The construction trait `DecoyCommunicationMode<T, AE>` extends `DecoyProvider` with a single `new()` constructor and is the target of `decoy_factory::<T, AE, DP>()`.
+`random_decoy_factory()` selects randomly among all five built-in providers on every invocation and is the default when no override is supplied.
 
 ### Session module
 

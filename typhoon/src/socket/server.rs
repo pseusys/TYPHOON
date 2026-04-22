@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use crossbeam::queue::SegQueue;
 use log::{debug, info, warn};
 
@@ -13,7 +13,7 @@ use crate::cache::SharedMap;
 use crate::certificate::ObfuscationBufferContainer;
 use crate::certificate::{ServerKeyPair, ServerSecret};
 use crate::crypto::{PAYLOAD_CRYPTO_OVERHEAD, ServerCryptoTool, UserCryptoState, UserServerState};
-use crate::flow::decoy::DecoyCommunicationMode;
+use crate::flow::decoy::{DecoyFactory, random_decoy_factory};
 use crate::flow::server::{RawReceivedPacket, ServerFlowManager};
 use crate::flow::{FlowConfig, FlowManager};
 use crate::session::server::{IncomingPacket, OutgoingRouter, ServerSessionManager};
@@ -26,16 +26,18 @@ use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, RwLock, Watc
 use crate::utils::unix_timestamp_ms;
 
 /// Configuration for a single server flow manager.
-pub struct ServerFlowConfiguration {
+pub struct ServerFlowConfiguration<T: IdentityType + Clone, AE: AsyncExecutor> {
     socket: Option<Socket>,
     address: Option<SocketAddr>,
     config: FlowConfig,
     /// Number of SO_REUSEPORT reader sockets to create (Linux only; default 1).
     /// Values > 1 are silently clamped to 1 on non-Linux platforms.
     reader_count: usize,
+    /// Optional per-flow decoy factory. Falls back to the listener's default when `None`.
+    decoy_factory: Option<DecoyFactory<T, AE>>,
 }
 
-impl ServerFlowConfiguration {
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ServerFlowConfiguration<T, AE> {
     /// Create a configuration with a pre-built socket.
     pub fn new(config: FlowConfig, socket: Socket) -> Self {
         Self {
@@ -43,6 +45,7 @@ impl ServerFlowConfiguration {
             address: None,
             config,
             reader_count: 1,
+            decoy_factory: None,
         }
     }
 
@@ -53,6 +56,7 @@ impl ServerFlowConfiguration {
             address: Some(address),
             config,
             reader_count: 1,
+            decoy_factory: None,
         }
     }
 
@@ -64,26 +68,40 @@ impl ServerFlowConfiguration {
         self.reader_count = count.max(1);
         self
     }
+
+    /// Override the decoy provider factory for this flow.
+    /// When not set, the listener's default factory (random selection) is used.
+    pub fn with_decoy_factory(mut self, factory: DecoyFactory<T, AE>) -> Self {
+        self.decoy_factory = Some(factory);
+        self
+    }
+
+    /// Override the decoy provider for this flow using a concrete type.
+    pub fn with_decoy<DP: crate::flow::decoy::DecoyCommunicationMode<T, AE> + 'static>(mut self) -> Self {
+        self.decoy_factory = Some(crate::flow::decoy::decoy_factory::<T, AE, DP>());
+        self
+    }
 }
 
 /// Builder for constructing a `Listener`.
-pub struct ListenerBuilder<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor + 'static, DP, IG: ServerConnectionHandler<T>> {
+pub struct ListenerBuilder<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T>> {
     settings: Option<Arc<Settings<AE>>>,
-    flow_configs: Vec<ServerFlowConfiguration>,
+    flow_configs: Vec<ServerFlowConfiguration<T, AE>>,
     secret: ServerSecret<'static>,
     identity_generator: IG,
-    _phantom: PhantomData<(T, DP)>,
+    default_decoy_factory: DecoyFactory<T, AE>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static, IG: ServerConnectionHandler<T> + 'static> ListenerBuilder<T, AE, DP, IG> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> ListenerBuilder<T, AE, IG> {
     /// Create a new builder with the given server key pair and identity generator.
+    /// Decoy providers are randomly selected per-user by default.
     pub fn new(key_pair: ServerKeyPair, identity_generator: IG) -> Self {
         Self {
             settings: None,
             flow_configs: Vec::new(),
             secret: key_pair.into_server_secret(),
             identity_generator,
-            _phantom: PhantomData,
+            default_decoy_factory: random_decoy_factory(),
         }
     }
 
@@ -93,21 +111,33 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         self
     }
 
+    /// Override the default decoy factory used for flows that have no per-flow override.
+    pub fn with_decoy_factory(mut self, factory: DecoyFactory<T, AE>) -> Self {
+        self.default_decoy_factory = factory;
+        self
+    }
+
+    /// Override the default decoy provider type for all flows without a per-flow override.
+    pub fn with_decoy<DP: crate::flow::decoy::DecoyCommunicationMode<T, AE> + 'static>(mut self) -> Self {
+        self.default_decoy_factory = crate::flow::decoy::decoy_factory::<T, AE, DP>();
+        self
+    }
+
     /// Append a single flow manager configuration.
-    pub fn add_flow(mut self, config: ServerFlowConfiguration) -> Self {
+    pub fn add_flow(mut self, config: ServerFlowConfiguration<T, AE>) -> Self {
         self.flow_configs.push(config);
         self
     }
 
     /// Set all flow manager configurations at once.
-    pub fn with_flows(mut self, configs: Vec<ServerFlowConfiguration>) -> Self {
+    pub fn with_flows(mut self, configs: Vec<ServerFlowConfiguration<T, AE>>) -> Self {
         self.flow_configs = configs;
         self
     }
 
     /// Build the listener, creating all flow managers.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub async fn build(mut self) -> Result<Listener<T, AE, DP, IG>, ServerSocketError> {
+    pub async fn build(mut self) -> Result<Listener<T, AE, IG>, ServerSocketError> {
         if self.flow_configs.is_empty() {
             return Err(ServerSocketError::NoFlows);
         }
@@ -146,9 +176,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 }
             };
 
+            let factory = flow_config.decoy_factory.unwrap_or_else(|| Arc::clone(&self.default_decoy_factory));
             let crypto_send = ServerCryptoTool::new(users.create_cache(), obfs_buffer);
             let crypto_recv = ServerCryptoTool::new(users.create_cache(), obfs_buffer);
-            let flow = ServerFlowManager::new(flow_config.config, crypto_send, crypto_recv, settings.clone(), socks);
+            let flow = ServerFlowManager::new(flow_config.config, crypto_send, crypto_recv, settings.clone(), socks, factory);
             flows.push(flow);
         }
         let max_data_payload = if max_data_payload == usize::MAX {
@@ -158,7 +189,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         };
         info!("listener built: max_data_payload={}B (mtu={}B, {} flow(s))", max_data_payload, settings.mtu(), flows.len());
 
-        // Accept signal: WatchSender — fires once per pushed ClientHandle to wake accept().
         let (accept_signal_tx, accept_signal_rx) = create_watch();
 
         Ok(Listener {
@@ -177,7 +207,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
     /// Build the listener, creating all flow managers (full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub async fn build(mut self) -> Result<Listener<T, AE, DP, IG>, ServerSocketError> {
+    pub async fn build(mut self) -> Result<Listener<T, AE, IG>, ServerSocketError> {
         if self.flow_configs.is_empty() {
             return Err(ServerSocketError::NoFlows);
         }
@@ -217,9 +247,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 }
             };
 
+            let factory = flow_config.decoy_factory.unwrap_or_else(|| Arc::clone(&self.default_decoy_factory));
             let crypto_send = ServerCryptoTool::new(users.create_cache(), Arc::clone(&secret_arc));
             let crypto_recv = ServerCryptoTool::new(users.create_cache(), Arc::clone(&secret_arc));
-            let flow = ServerFlowManager::new(flow_config.config, crypto_send, crypto_recv, settings.clone(), socks);
+            let flow = ServerFlowManager::new(flow_config.config, crypto_send, crypto_recv, settings.clone(), socks, factory);
             flows.push(flow);
         }
         let max_data_payload = if max_data_payload == usize::MAX {
@@ -229,7 +260,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         };
         info!("listener built: max_data_payload={}B (mtu={}B, {} flow(s))", max_data_payload, settings.mtu(), flows.len());
 
-        // Accept signal: WatchSender — fires once per pushed ClientHandle to wake accept().
         let (accept_signal_tx, accept_signal_rx) = create_watch();
 
         Ok(Listener {
@@ -248,16 +278,16 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 }
 
 /// Server-side listener that manages flow managers and client sessions.
-pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static, IG: ServerConnectionHandler<T> + 'static> {
-    flows: Vec<Arc<ServerFlowManager<T, AE, DP>>>,
-    sessions: RwLock<HashMap<T, Arc<ServerSessionManager<T, AE, Listener<T, AE, DP, IG>>>>>,
+pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> {
+    flows: Vec<Arc<ServerFlowManager<T, AE>>>,
+    sessions: RwLock<HashMap<T, Arc<ServerSessionManager<T, AE>>>>,
     users: Mutex<SharedMap<T, UserServerState>>,
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     secret: ServerSecret<'static>,
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     secret: Arc<ServerSecret<'static>>,
     identity_generator: IG,
-    accept_queue: SegQueue<ClientHandle<T, AE, Listener<T, AE, DP, IG>>>,
+    accept_queue: SegQueue<ClientHandle<T, AE>>,
     accept_signal_tx: WatchSender<()>,
     accept_signal_rx: Mutex<WatchReceiver<()>>,
     /// Maximum user-data bytes per packet so the wire packet fits within MTU.
@@ -265,7 +295,7 @@ pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'sta
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static, IG: ServerConnectionHandler<T> + 'static> Listener<T, AE, DP, IG> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> Listener<T, AE, IG> {
     /// Create initial user crypto state from a handshake key (fast mode).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     #[inline]
@@ -309,7 +339,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         for (index, flow) in self.flows.iter().enumerate() {
             let (drain_tx, mut drain_rx) = create_bounded_notify_queue(drain_capacity);
-            // Wrap in Arc so all N drain tasks share ownership; the last one to exit drops the sender.
             let drain_tx = Arc::new(drain_tx);
 
             for (sock_index, sock) in flow.recv_socks().iter().enumerate() {
@@ -319,9 +348,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 let settings_drain = Arc::clone(&self.settings);
                 self.settings.executor().spawn(async move {
                     loop {
-                        // Allocate a fresh buffer each iteration: the decrypted payload view
-                        // shares backing memory with recv_buf, so reusing it across iterations
-                        // would corrupt queue items that haven't been consumed yet.
                         let recv_buf = settings_drain.pool().allocate_for_recv();
                         match flow_drain.receive_raw(recv_buf, &sock).await {
                             Ok(raw_packet) => drain_tx.push(raw_packet),
@@ -331,10 +357,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                             }
                         }
                     }
-                    // drain_tx Arc clone dropped here; when all N drain tasks exit the sender drops.
                 });
             }
-            // Drop the local Arc so only the spawned task clones remain.
             drop(drain_tx);
 
             let listener = Arc::clone(self);
@@ -384,7 +408,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         let client_version_identity = raw_packet.tailor.identity();
         if !self.identity_generator.verify_version(client_version_identity.to_bytes()) {
-            // Temporarily register client with initial key so the tailor can be obfuscated.
             {
                 let mut users = self.users.lock().await;
                 let crypto_state = self.make_initial_crypto_state(&initial_key);
@@ -410,16 +433,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let (incoming_tx, incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
         let router_weak = Arc::downgrade(self);
 
-        // Perform crypto BEFORE acquiring the users lock: encapsulate_handshake_server is
-        // CPU-intensive (McEliece + ChaCha20) and does not need access to the shared user map.
         let (response_body, session_key) = self.secret.encapsulate_handshake_server(server_data, self.settings.pool(), server_initial_data.slice(), &initial_key);
 
-        // Lock scope limited to shared-map mutations + packet assembly only.
         let (session, response_packet, replacing) = {
             let mut users = self.users.lock().await;
-            // "Last wins": if a session already exists for this identity (client crash-and-
-            // reconnect, or a concurrent in-flight retransmission), remove the old user state
-            // and proceed. Sessions + decoy cleanup happens below (lock order: users → sessions).
             let replacing = users.contains_key(&identity);
             if replacing {
                 debug!("re-handshake for {}: replacing existing session (last wins)", identity.to_string());
@@ -436,8 +453,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             }
         };
 
-        // If we replaced an existing session, remove its sessions entry and decoy providers
-        // before re-registering. Lock order preserved: users released above.
         if replacing {
             self.sessions.write().await.remove(&identity);
             for flow in &self.flows {
@@ -447,13 +462,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         self.flows[flow_index].register_user_addr(identity.clone(), raw_packet.source_addr).await;
 
-        // Register user in all flow managers for decoy traffic.
         for flow in &self.flows {
             flow.register_user(identity.clone()).await;
         }
 
-        // Send handshake response through the flow that received the handshake.
-        // At this point the tailor is encrypted/authenticated with the initial key.
         if let Err(err) = self.flows[flow_index].send_packet(response_packet, false).await {
             warn!("failed to send handshake response: {err}");
             // Clean up: remove user from shared map and all flow decoy providers.
@@ -464,9 +476,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             return;
         }
 
-        // Upgrade user crypto from initial key to session key.
-        // modify() mutates the local entry in place and bumps the shared-state version so all
-        // CachedMap instances re-fetch — saves one V clone and one K clone vs get+insert.
         {
             let mut users = self.users.lock().await;
             users
@@ -478,9 +487,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         session.note_active_flow(flow_index);
 
-        // Store session — last wins: a concurrent handshake that arrived between our
-        // users-lock release and now is simply displaced. Its session Arc is dropped,
-        // and its ClientHandle (if already published) will error out on the next send.
         {
             let mut sessions = self.sessions.write().await;
             if sessions.contains_key(&identity) {
@@ -502,13 +508,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 
     /// Wait for the next client connection and return a handle to it.
-    pub async fn accept(&self) -> Result<ClientHandle<T, AE, Listener<T, AE, DP, IG>>, ServerSocketError> {
+    pub async fn accept(&self) -> Result<ClientHandle<T, AE>, ServerSocketError> {
         loop {
             if let Some(handle) = self.accept_queue.pop() {
                 return Ok(handle);
             }
-            // Mutex<WatchReceiver> intentionally serializes concurrent accept() callers:
-            // only one waiter at a time, so no thundering herd on a burst of new connections.
             match self.accept_signal_rx.lock().await.recv().await {
                 Some(()) => {}
                 None => return Err(ServerSocketError::ListenerStopped),
@@ -518,7 +522,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 }
 
 /// OutgoingRouter implementation: selects an active flow via the per-session bitmask and sends the packet.
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static, IG: ServerConnectionHandler<T> + 'static> OutgoingRouter<T> for Listener<T, AE, DP, IG> {
+#[async_trait]
+impl<T: IdentityType + Clone + Eq + Hash + Send + Sync + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> OutgoingRouter<T> for Listener<T, AE, IG> {
     async fn route_packet(&self, packet: DynamicByteBuffer, identity: &T) -> bool {
         let session = {
             let sessions = self.sessions.read().await;
@@ -536,8 +541,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 
     async fn remove_session(&self, identity: &T) {
-        // Short-circuit if the session was already removed (e.g. both TERMINATION received and
-        // ClientHandle dropped concurrently). Avoids acquiring users + N flow locks on a no-op.
         if self.sessions.write().await.remove(identity).is_none() {
             return;
         }
@@ -551,15 +554,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
 /// Handle to a connected client, providing send/receive operations.
 /// Not cloneable — only one handle per connection.
-pub struct ClientHandle<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, R: OutgoingRouter<T> + 'static> {
-    session: Arc<ServerSessionManager<T, AE, R>>,
+pub struct ClientHandle<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> {
+    session: Arc<ServerSessionManager<T, AE>>,
     incoming_rx: Mutex<NotifyQueueReceiver<DynamicByteBuffer>>,
     /// Maximum user-data bytes per packet so the wire packet fits within MTU.
     max_data_payload: usize,
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> ClientHandle<T, AE, R> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> ClientHandle<T, AE> {
     /// Send a packet using a pre-allocated buffer.
     pub async fn send(&self, packet: DynamicByteBuffer) -> Result<(), ServerSocketError> {
         self.session.send_packet(packet, false).await.map_err(ServerSocketError::SessionError)
@@ -593,11 +596,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
     }
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, R: OutgoingRouter<T> + 'static> Drop for ClientHandle<T, AE, R> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> Drop for ClientHandle<T, AE> {
     fn drop(&mut self) {
-        // Spawn async cleanup so that dropping a ClientHandle removes the session from shared state
-        // even if the client never sent a TERMINATION packet.
-        // All removes are no-ops if route_incoming already cleaned up on receipt of TERMINATION.
         self.session.spawn_cleanup(self.settings.executor());
     }
 }

@@ -11,7 +11,7 @@ use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::crypto::ServerCryptoTool;
 use crate::flow::common::FlowManager;
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
-use crate::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender};
+use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
 use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
@@ -33,10 +33,11 @@ pub(crate) struct RawReceivedPacket<T: IdentityType> {
 /// Per-user source addresses and decoy providers are local to each flow manager instance.
 /// When built with multiple sockets (SO_REUSEPORT on Linux), each socket is polled by its own
 /// drain task in the listener; the kernel distributes incoming datagrams across all sockets.
-pub struct ServerFlowManager<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, DP: Send + Sync> {
+pub struct ServerFlowManager<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> {
     user_addrs: RwLock<HashMap<T, SocketAddr>>,
     /// Per-user decoy providers behind individual locks so concurrent users don't contend.
-    decoy_providers: RwLock<HashMap<T, Arc<Mutex<DP>>>>,
+    decoy_providers: RwLock<HashMap<T, Arc<Mutex<Box<dyn DecoyProvider>>>>>,
+    decoy_factory: DecoyFactory<T, AE>,
     crypto_send: Mutex<ServerCryptoTool<T>>,
     crypto_recv: Mutex<ServerCryptoTool<T>>,
     fake_body_mode: FakeBodyMode,
@@ -49,17 +50,18 @@ pub struct ServerFlowManager<T: IdentityType + Clone + Eq + Hash + Send + ToStri
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static> ServerFlowManager<T, AE, DP> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> ServerFlowManager<T, AE> {
     /// Create a new server flow manager.
     /// `crypto_send` and `crypto_recv` must be independent instances (e.g. two `create_cache()` calls
     /// on the same `SharedMap`) so their mutexes never contend between the send and receive paths.
     /// `socks` must contain at least one socket; on Linux with SO_REUSEPORT multiple sockets may be
     /// supplied so that the listener can spawn one drain task per socket.
-    pub(crate) fn new(config: FlowConfig, crypto_send: ServerCryptoTool<T>, crypto_recv: ServerCryptoTool<T>, settings: Arc<Settings<AE>>, socks: Vec<Arc<Socket>>) -> Arc<Self> {
+    pub(crate) fn new(config: FlowConfig, crypto_send: ServerCryptoTool<T>, crypto_recv: ServerCryptoTool<T>, settings: Arc<Settings<AE>>, socks: Vec<Arc<Socket>>, decoy_factory: DecoyFactory<T, AE>) -> Arc<Self> {
         let max_overhead = config.max_overhead();
         Arc::new(ServerFlowManager {
             user_addrs: RwLock::new(HashMap::new()),
             decoy_providers: RwLock::new(HashMap::new()),
+            decoy_factory,
             crypto_send: Mutex::new(crypto_send),
             crypto_recv: Mutex::new(crypto_recv),
             fake_body_mode: config.fake_body_mode,
@@ -87,7 +89,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     pub async fn register_user(self: &Arc<Self>, id: T) {
         let weak: Weak<Self> = Arc::downgrade(self);
         let mgr: Weak<dyn DecoyFlowSender> = weak;
-        let mut dp = DP::new(mgr, self.settings.clone(), id.clone());
+        let mut dp = (self.decoy_factory)(mgr, self.settings.clone(), id.clone());
         dp.start().await;
         self.decoy_providers.write().await.insert(id, Arc::new(Mutex::new(dp)));
     }
@@ -176,7 +178,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static> FlowManager for ServerFlowManager<T, AE, DP> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> FlowManager for ServerFlowManager<T, AE> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {
         let identity_len = T::length();
 

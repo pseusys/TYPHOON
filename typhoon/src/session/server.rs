@@ -3,11 +3,11 @@
 mod tests;
 
 /// Server-side session manager implementation.
-use std::future::Future;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak as StdWeak};
 
+use async_trait::async_trait;
 use log::{debug, warn};
 use rand::Rng;
 
@@ -27,11 +27,12 @@ use crate::utils::sync::{AsyncExecutor, NotifyQueueSender};
 use crate::utils::unix_timestamp_ms;
 
 /// Trait for routing outgoing packets from a session back to the network.
-/// Implemented by the Listener, stored as `Weak<R>` in each session.
-pub trait OutgoingRouter<T>: Send + Sync {
-    fn route_packet<'a>(&'a self, packet: DynamicByteBuffer, identity: &'a T) -> impl Future<Output = bool> + Send + 'a;
+/// Implemented by the Listener, stored as `Weak<dyn OutgoingRouter<T>>` in each session.
+#[async_trait]
+pub trait OutgoingRouter<T: Send + Sync>: Send + Sync {
+    async fn route_packet(&self, packet: DynamicByteBuffer, identity: &T) -> bool;
     /// Remove all state associated with the given identity (session map, user crypto, decoy providers).
-    fn remove_session<'a>(&'a self, identity: &'a T) -> impl Future<Output = ()> + Send + 'a;
+    async fn remove_session(&self, identity: &T);
 }
 
 /// Incoming packet for the server session manager: body + tailor view.
@@ -41,7 +42,7 @@ pub struct IncomingPacket<T: IdentityType> {
 }
 
 /// Server-side session manager for a single client connection.
-pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, R: OutgoingRouter<T> + 'static> {
+pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> {
     /// Sync template — used per-call to create a local cache entry; no Mutex needed.
     crypto_send: CachedMapEntryTemplate<T, UserServerState>,
     /// Sync template — used per-call to create a local cache entry; no Mutex needed.
@@ -51,12 +52,12 @@ pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToS
     active_flows: AtomicBitSet,
     incremental_counter: AtomicU32,
     incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
-    router: StdWeak<R>,
+    router: StdWeak<dyn OutgoingRouter<T>>,
     settings: Arc<Settings<AE>>,
     health_provider: ServerHealthProvider,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> ServerSessionManager<T, AE, R> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> ServerSessionManager<T, AE> {
     /// Assemble a new server session from a pre-decapsulated handshake.
     ///
     /// `crypto_state` must be constructed with the initial handshake key **before** calling
@@ -66,7 +67,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
     ///
     /// Returns `(Arc<Self>, response_packet)`. The caller holds `session_key` from the
     /// encapsulation step and upgrades the user's crypto state after sending the response.
-    pub(crate) async fn assemble_session(crypto_state: UserCryptoState, response_body: DynamicByteBuffer, handshake_tailor: Tailor<T>, identity: T, users: &mut SharedMap<T, UserServerState>, incoming_tx: NotifyQueueSender<DynamicByteBuffer>, router: StdWeak<R>, num_flows: usize, settings: Arc<Settings<AE>>) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
+    pub(crate) async fn assemble_session(crypto_state: UserCryptoState, response_body: DynamicByteBuffer, handshake_tailor: Tailor<T>, identity: T, users: &mut SharedMap<T, UserServerState>, incoming_tx: NotifyQueueSender<DynamicByteBuffer>, router: StdWeak<dyn OutgoingRouter<T>>, num_flows: usize, settings: Arc<Settings<AE>>) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
         let user_state = UserServerState::new(crypto_state);
 
         users.insert(identity.clone(), user_state).await;
@@ -78,8 +79,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
 
         let response_body_len = response_body.len();
         let tailor_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
-        // Tailor writes to the shared buffer in-place via Arc; _response_tailor is dropped but
-        // its bytes are included in response_packet via expand_end below.
         let _response_tailor = Tailor::handshake(tailor_buf, &identity, ReturnCode::Success.into(), server_next_in, handshake_tailor.packet_number(), response_body_len as u16);
         let response_packet = response_body.expand_end(TAILOR_LENGTH + T::length());
 
@@ -112,10 +111,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
     }
 
     /// Spawn a cleanup task that notifies the client and removes this session from shared state.
-    /// Called from ClientHandle::Drop (server-side close). Sends TERMINATION while the session
-    /// is still in the router's sessions map (so route_packet can resolve the active flow),
-    /// then removes all associated state. All removes are no-ops if the client already sent
-    /// TERMINATION and route_incoming already called remove_session.
     pub fn spawn_cleanup(&self, executor: &AE) {
         let identity = self.identity.clone();
         let router = self.router.clone();
@@ -170,9 +165,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
             self.health_provider.feed_health_check(tailor.time(), tailor.packet_number());
         }
 
-        // If there is data payload, decrypt and forward to ClientHandle.
-        // The local entry is dropped before user_data_tx.send() to avoid holding any
-        // shared-map reader across a potentially-blocking channel send.
         if tailor.flags().has_payload() {
             let payload_len = tailor.payload_length() as usize;
             let encrypted_payload = body.rebuffer_start(body.len() - payload_len);
@@ -181,12 +173,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
                 let mut entry = self.crypto_recv.create_entry();
                 let user_state = entry.get_mut().await.map_err(SessionControllerError::MissingCache)?;
                 user_state.crypto_mut().decrypt_payload(encrypted_payload, None)
-                // entry drops here
             };
 
             match decrypt_result {
                 Ok(decrypted) => {
-                    // If this is a shadowride (data + health check), respond to the health check.
                     if tailor.flags().contains(PacketFlags::HEALTH_CHECK) {
                         self.health_provider.feed_health_check(tailor.time(), tailor.packet_number());
                     }
@@ -202,7 +192,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
     }
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R: OutgoingRouter<T> + 'static> SessionManager for ServerSessionManager<T, AE, R> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> SessionManager for ServerSessionManager<T, AE> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), SessionControllerError> {
         let full_packet = if generated {
             packet
@@ -228,7 +218,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor, R
 
     #[cfg(feature = "client")]
     async fn receive_packet(&self) -> Result<DynamicByteBuffer, SessionControllerError> {
-        // Not used directly — the Listener drives incoming packet processing.
         Err(SessionControllerError::HealthProviderDied)
     }
 }

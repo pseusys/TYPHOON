@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -13,7 +12,7 @@ use crate::certificate::{CertificateError, ClientCertificate};
 use crate::crypto::{ClientCryptoTool, KEY_LENGTH, PAYLOAD_CRYPTO_OVERHEAD};
 use crate::flow::FlowConfig;
 use crate::flow::client::ClientFlowManager;
-use crate::flow::decoy::DecoyCommunicationMode;
+use crate::flow::decoy::{DecoyFactory, random_decoy_factory};
 use crate::session::{ClientSessionManager, SessionManager};
 use crate::settings::Settings;
 use crate::socket::error::ClientSocketError;
@@ -23,17 +22,18 @@ use crate::utils::socket::Socket;
 use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, create_notify_queue};
 
 /// Builder for constructing a `ClientSocket`.
-pub struct ClientSocketBuilder<T: IdentityType + Clone, AE: AsyncExecutor + 'static, DP, CC: ClientConnectionHandler> {
+pub struct ClientSocketBuilder<T: IdentityType + Clone, AE: AsyncExecutor + 'static, CC: ClientConnectionHandler> {
     settings: Option<Arc<Settings<AE>>>,
     /// Per-address flow config overrides. Empty means auto-fill mode (random subset of addresses).
     flow_overrides: HashMap<SocketAddr, FlowConfig>,
     certificate: ClientCertificate,
     initial_data_generator: CC,
-    _phantom: PhantomData<(T, DP)>,
+    decoy_factory: DecoyFactory<T, AE>,
 }
 
-impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static, CC: ClientConnectionHandler + 'static> ClientSocketBuilder<T, AE, DP, CC> {
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientConnectionHandler + 'static> ClientSocketBuilder<T, AE, CC> {
     /// Create a new builder with the given certificate and client connection handler.
+    /// Decoy providers are randomly selected per-flow by default.
     ///
     /// The certificate must contain at least one server address; otherwise `build` will return
     /// [`CertificateError::NoAddresses`](crate::certificate::CertificateError::NoAddresses).
@@ -48,13 +48,25 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
             flow_overrides: HashMap::new(),
             certificate,
             initial_data_generator,
-            _phantom: PhantomData,
+            decoy_factory: random_decoy_factory(),
         }
     }
 
     /// Set custom settings to use for the socket.
     pub fn with_settings(mut self, settings: Arc<Settings<AE>>) -> Self {
         self.settings = Some(settings);
+        self
+    }
+
+    /// Set the decoy factory used for all flows.
+    pub fn with_decoy_factory(mut self, factory: DecoyFactory<T, AE>) -> Self {
+        self.decoy_factory = factory;
+        self
+    }
+
+    /// Set a fixed decoy provider type for all flows.
+    pub fn with_decoy<DP: crate::flow::decoy::DecoyCommunicationMode<T, AE> + 'static>(mut self) -> Self {
+        self.decoy_factory = crate::flow::decoy::decoy_factory::<T, AE, DP>();
         self
     }
 
@@ -70,7 +82,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
     }
 
     /// Build the client socket, validating all flow configs and creating underlying managers.
-    pub async fn build(mut self) -> Result<ClientSocket<T, AE, DP, CC>, ClientSocketError> {
+    pub async fn build(mut self) -> Result<ClientSocket<T, AE, CC>, ClientSocketError> {
         let cert_addrs = self.certificate.addresses();
         if cert_addrs.is_empty() {
             return Err(ClientSocketError::CertificateError(CertificateError::NoAddresses));
@@ -108,7 +120,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 
             let sock = Socket::new(addr, None).await.map_err(ClientSocketError::SocketError)?;
             let cipher_cache = cipher.create_cache();
-            let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock).await.map_err(ClientSocketError::FlowError)?;
+            let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock, &self.decoy_factory).await.map_err(ClientSocketError::FlowError)?;
             flows.push(flow);
         }
         let max_data_payload = if max_data_payload == usize::MAX {
@@ -122,8 +134,6 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 
         let (incoming_tx, incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
 
-        // Spawn the background receive loop BEFORE the handshake so that
-        // handshake responses from the server can be received and routed.
         let receive_session = session.clone();
         settings.executor().spawn(async move {
             loop {
@@ -137,7 +147,6 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
                     }
                 }
             }
-            // incoming_tx dropped — receive() will see None and return ChannelClosed.
         });
 
         session.start().await.map_err(ClientSocketError::SessionError)?;
@@ -152,15 +161,15 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCo
 }
 
 /// Client-side TYPHOON socket providing send/receive operations.
-pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> {
-    session: Arc<ClientSessionManager<T, AE, Arc<ClientFlowManager<T, AE, DP>>, CC>>,
+pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientConnectionHandler + 'static> {
+    session: Arc<ClientSessionManager<T, AE, Arc<ClientFlowManager<T, AE>>, CC>>,
     incoming_rx: Mutex<NotifyQueueReceiver<DynamicByteBuffer>>,
     /// Maximum user-data bytes per packet so the wire packet fits within MTU.
     max_data_payload: usize,
     settings: Arc<Settings<AE>>,
 }
 
-impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, DP: DecoyCommunicationMode<T, AE> + 'static, CC: ClientConnectionHandler + 'static> ClientSocket<T, AE, DP, CC> {
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientConnectionHandler + 'static> ClientSocket<T, AE, CC> {
     /// Send a packet using a pre-allocated buffer.
     pub async fn send(&self, packet: DynamicByteBuffer) -> Result<(), ClientSocketError> {
         self.session.send_packet(packet, false).await.map_err(ClientSocketError::SessionError)
