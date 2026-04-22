@@ -48,7 +48,7 @@ jobs:
         run: |
           cd typhoon && cargo fmt --check
           cd ../evaluation/protocols/typhoon && cargo fmt --check
-          cd ../evaluation/protocols/wireguard_daita/machines-printer && cargo fmt --check
+          cd ../wireguard_daita/machines-printer && cargo fmt --check
 
       - name: Run clippy 📎
         working-directory: typhoon

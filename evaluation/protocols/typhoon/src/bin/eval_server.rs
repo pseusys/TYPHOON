@@ -8,15 +8,15 @@ use std::{env, net::SocketAddr, process, sync::Arc};
 use typhoon::{
     bytes::StaticByteBuffer,
     certificate::ServerKeyPair,
-    defaults::{DefaultExecutor, DefaultServerConnectionHandler, AsyncExecutor},
+    defaults::{AsyncExecutor, DefaultExecutor, DefaultServerConnectionHandler},
     flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig, decoy::SimpleDecoyProvider},
     settings::SettingsBuilder,
     socket::{ListenerBuilder, ServerFlowConfiguration},
 };
 
 const CERT_PATH: &str = "/keys/typhoon.cert";
-const PORT:      u16  = 19999;
-const CHUNK:     usize = 65536;
+const PORT: u16 = 19999;
+const CHUNK: usize = 65536;
 
 #[tokio::main]
 async fn main() {
@@ -40,24 +40,31 @@ async fn main() {
 
     // The certificate must contain the server's externally reachable address so the client
     // knows where to connect.
-    let cert_ip   = env::var("CERT_HOST").unwrap_or_else(|_| "172.21.0.10".to_string());
+    let cert_ip = env::var("CERT_HOST").unwrap_or_else(|_| "172.21.0.10".to_string());
     let cert_addr: SocketAddr = format!("{cert_ip}:{PORT}").parse().unwrap();
     let bind_addr: SocketAddr = format!("0.0.0.0:{PORT}").parse().unwrap();
 
-    let key_pair    = ServerKeyPair::generate();
+    let key_pair = ServerKeyPair::generate();
     let certificate = key_pair.to_client_certificate(vec![cert_addr]);
 
     // Save cert so the client container can load it
-    certificate.save(CERT_PATH).expect("save cert to /keys/typhoon.cert");
+    certificate
+        .save(CERT_PATH)
+        .expect("save cert to /keys/typhoon.cert");
     println!("Certificate saved to {CERT_PATH}");
 
     let flow_config = FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![]));
     let listener: Arc<_> = Arc::new(
-        ListenerBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultServerConnectionHandler>::new(
-            key_pair,
+        ListenerBuilder::<
+            StaticByteBuffer,
+            DefaultExecutor,
+            SimpleDecoyProvider,
             DefaultServerConnectionHandler,
-        )
-        .add_flow(ServerFlowConfiguration::with_address(flow_config, bind_addr))
+        >::new(key_pair, DefaultServerConnectionHandler)
+        .add_flow(ServerFlowConfiguration::with_address(
+            flow_config,
+            bind_addr,
+        ))
         .with_settings(settings.clone())
         .build()
         .await

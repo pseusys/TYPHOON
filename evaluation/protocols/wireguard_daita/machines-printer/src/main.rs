@@ -1,6 +1,6 @@
-use maybenot_machines::{StaticMachine, get_machine};
-use rand::SeedableRng;
+use maybenot_machines::{get_machine, StaticMachine};
 use rand::rngs::SmallRng;
+use rand::SeedableRng;
 
 fn main() {
     let role = std::env::args().nth(1).expect("missing role argument");

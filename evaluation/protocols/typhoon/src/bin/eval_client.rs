@@ -15,7 +15,7 @@ use typhoon::{
 };
 
 const CERT_PATH: &str = "/keys/typhoon.cert";
-const CHUNK:     usize = 65536;
+const CHUNK: usize = 65536;
 
 #[tokio::main]
 async fn main() {
@@ -52,15 +52,16 @@ async fn main() {
             .expect("default settings"),
     );
 
-    let socket =
-        ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DefaultClientConnectionHandler>::new(
-            certificate,
-            DefaultClientConnectionHandler,
-        )
-        .with_settings(settings.clone())
-        .build()
-        .await
-        .expect("client socket build");
+    let socket = ClientSocketBuilder::<
+        StaticByteBuffer,
+        DefaultExecutor,
+        SimpleDecoyProvider,
+        DefaultClientConnectionHandler,
+    >::new(certificate, DefaultClientConnectionHandler)
+    .with_settings(settings.clone())
+    .build()
+    .await
+    .expect("client socket build");
     println!("Connected to server");
 
     let chunk = vec![0u8; CHUNK];
