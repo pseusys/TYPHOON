@@ -12,7 +12,7 @@ use tokio::runtime::Runtime;
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler, decoy_factory};
-use typhoon::flow::decoy::{SparseDecoyProvider, HeavyDecoyProvider};
+use typhoon::flow::decoy::{HeavyDecoyProvider, SparseDecoyProvider};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::SettingsBuilder;
 use typhoon::socket::{ClientSocketBuilder, ListenerBuilder, ServerFlowConfiguration};
@@ -46,15 +46,7 @@ async fn run() {
     // --- Build and start the server with two flow managers ---
     // Each flow can use a different decoy provider; here flow1 uses Sparse and flow2 uses Heavy.
     // Omitting `.with_decoy()` on a flow uses the listener-level default (random selection).
-    let listener: Arc<_> = Arc::new(
-        ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler)
-            .add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow1_addr).with_decoy::<SparseDecoyProvider<StaticByteBuffer, DefaultExecutor>>())
-            .add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow2_addr).with_decoy::<HeavyDecoyProvider<StaticByteBuffer, DefaultExecutor>>())
-            .with_settings(settings.clone())
-            .build()
-            .await
-            .expect("listener should build"),
-    );
+    let listener: Arc<_> = Arc::new(ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow1_addr).with_decoy::<SparseDecoyProvider<StaticByteBuffer, DefaultExecutor>>()).add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow2_addr).with_decoy::<HeavyDecoyProvider<StaticByteBuffer, DefaultExecutor>>()).with_settings(settings.clone()).build().await.expect("listener should build"));
     listener.start().await;
     println!("Server: listening on {} and {}", flow1_addr, flow2_addr);
 
@@ -81,12 +73,7 @@ async fn run() {
 
     // --- Build the client — flows are auto-created from both certificate addresses ---
     // Use `with_decoy::<DP>()` to pin one provider type, or omit for random selection per flow.
-    let socket = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DefaultClientConnectionHandler>::new(certificate, DefaultClientConnectionHandler)
-        .with_decoy_factory(decoy_factory::<StaticByteBuffer, DefaultExecutor, SparseDecoyProvider<StaticByteBuffer, DefaultExecutor>>())
-        .with_settings(settings.clone())
-        .build()
-        .await
-        .expect("client socket should build");
+    let socket = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DefaultClientConnectionHandler>::new(certificate, DefaultClientConnectionHandler).with_decoy_factory(decoy_factory::<StaticByteBuffer, DefaultExecutor, SparseDecoyProvider<StaticByteBuffer, DefaultExecutor>>()).with_settings(settings.clone()).build().await.expect("client socket should build");
     println!("Client: connected (2 flows)");
 
     for i in 0..MESSAGE_COUNT {

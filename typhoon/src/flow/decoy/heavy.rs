@@ -2,12 +2,11 @@
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use log::warn;
 
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
-use async_trait::async_trait;
-
-use crate::flow::decoy::common::{DecoyProvider, DecoyCommunicationMode, DecoyFlowSender, DecoyState, exponential_variance, maintenance_timer_task, random_uniform, try_replicate};
+use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DecoyState, exponential_variance, maintenance_timer_task, random_uniform, try_replicate};
 use crate::settings::Settings;
 use crate::settings::keys::*;
 use crate::tailor::IdentityType;

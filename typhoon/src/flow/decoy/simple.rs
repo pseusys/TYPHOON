@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 use async_trait::async_trait;
 
 use crate::bytes::DynamicByteBuffer;
-use crate::flow::decoy::common::{DecoyProvider, DecoyCommunicationMode, DecoyFlowSender};
+use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider};
 use crate::settings::Settings;
 use crate::tailor::IdentityType;
 use crate::utils::sync::AsyncExecutor;

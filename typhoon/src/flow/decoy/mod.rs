@@ -17,11 +17,10 @@ mod sparse;
 
 use std::sync::{Arc, Weak};
 
-use rand::Rng;
-
-pub use common::{DecoyProvider, DecoyCommunicationMode, DecoyFlowSender};
+pub use common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider};
 pub use heavy::HeavyDecoyProvider;
 pub use noisy::NoisyDecoyProvider;
+use rand::Rng;
 pub use simple::SimpleDecoyProvider;
 pub use smooth::SmoothDecoyProvider;
 pub use sparse::SparseDecoyProvider;
@@ -32,11 +31,7 @@ use crate::utils::random::get_rng;
 use crate::utils::sync::AsyncExecutor;
 
 /// A factory that constructs a `Box<dyn DecoyProvider>` for a given identity and flow manager.
-pub type DecoyFactory<T, AE> = Arc<
-    dyn Fn(Weak<dyn DecoyFlowSender>, Arc<Settings<AE>>, T) -> Box<dyn DecoyProvider>
-        + Send
-        + Sync,
->;
+pub type DecoyFactory<T, AE> = Arc<dyn Fn(Weak<dyn DecoyFlowSender>, Arc<Settings<AE>>, T) -> Box<dyn DecoyProvider> + Send + Sync>;
 
 /// Lift a concrete `DecoyCommunicationMode` type into a `DecoyFactory`.
 pub fn decoy_factory<T, AE, DP>() -> DecoyFactory<T, AE>
@@ -54,14 +49,12 @@ where
     T: IdentityType + Clone + 'static,
     AE: AsyncExecutor + 'static,
 {
-    Arc::new(|manager, settings, identity| {
-        match get_rng().gen_range(0u8..5) {
-            0 => Box::new(SimpleDecoyProvider::new(manager, settings, identity)),
-            1 => Box::new(SparseDecoyProvider::new(manager, settings, identity)),
-            2 => Box::new(NoisyDecoyProvider::new(manager, settings, identity)),
-            3 => Box::new(SmoothDecoyProvider::new(manager, settings, identity)),
-            4 => Box::new(HeavyDecoyProvider::new(manager, settings, identity)),
-            _ => unreachable!(),
-        }
+    Arc::new(|manager, settings, identity| match get_rng().gen_range(0u8..5) {
+        0 => Box::new(SimpleDecoyProvider::new(manager, settings, identity)),
+        1 => Box::new(SparseDecoyProvider::new(manager, settings, identity)),
+        2 => Box::new(NoisyDecoyProvider::new(manager, settings, identity)),
+        3 => Box::new(SmoothDecoyProvider::new(manager, settings, identity)),
+        4 => Box::new(HeavyDecoyProvider::new(manager, settings, identity)),
+        _ => unreachable!(),
     })
 }
