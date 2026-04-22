@@ -9,7 +9,6 @@ use typhoon::{
     bytes::StaticByteBuffer,
     certificate::ClientCertificate,
     defaults::{DefaultClientConnectionHandler, DefaultExecutor},
-    flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig, decoy::SimpleDecoyProvider},
     settings::SettingsBuilder,
     socket::ClientSocketBuilder,
 };
@@ -55,7 +54,6 @@ async fn main() {
     let socket = ClientSocketBuilder::<
         StaticByteBuffer,
         DefaultExecutor,
-        SimpleDecoyProvider,
         DefaultClientConnectionHandler,
     >::new(certificate, DefaultClientConnectionHandler)
     .with_settings(settings.clone())

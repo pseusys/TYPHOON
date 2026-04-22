@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
-use typhoon::defaults::{AsyncExecutor, DefaultExecutor, DefaultServerConnectionHandler};
-use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig, decoy::SimpleDecoyProvider};
+use typhoon::defaults::{DefaultExecutor, DefaultServerConnectionHandler};
+use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::SettingsBuilder;
 use typhoon::socket::{ListenerBuilder, ServerFlowConfiguration};
 
@@ -61,17 +61,15 @@ async fn main() {
     println!("Certificate saved to {CERT_PATH}");
 
     let flow_config = FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![]));
-    let flows: Vec<ServerFlowConfiguration> = bind_addrs
+    let flows: Vec<ServerFlowConfiguration<StaticByteBuffer, DefaultExecutor>> = bind_addrs
         .into_iter()
         .map(|addr| ServerFlowConfiguration::with_address(flow_config.clone(), addr))
         .collect();
     let listener: Arc<_> = Arc::new(
-        ListenerBuilder::<
-            StaticByteBuffer,
-            DefaultExecutor,
-            SimpleDecoyProvider,
+        ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(
+            key_pair,
             DefaultServerConnectionHandler,
-        >::new(key_pair, DefaultServerConnectionHandler)
+        )
         .with_flows(flows)
         .with_settings(settings.clone())
         .build()
