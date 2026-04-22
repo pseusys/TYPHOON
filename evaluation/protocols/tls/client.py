@@ -3,17 +3,26 @@
 TLS 1.3 sender — waits for /keys/tls_cert.pem from the server, then sends
 TRANSFER_BYTES over TLS using that cert as the trusted CA.
 """
-import os, socket, ssl, subprocess, sys, time
 
-observer_gw    = os.environ.get("OBSERVER_GW")
-server_host    = os.environ["SERVER_HOST"]
+import os
+import socket
+import ssl
+import subprocess
+import sys
+import time
+
+observer_gw = os.environ.get("OBSERVER_GW")
+server_host = os.environ["SERVER_HOST"]
 transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
-port           = 9000
-retries        = 30
+port = 9000
+retries = 30
 
 if observer_gw:
-    subprocess.run(["ip", "route", "add", "172.21.0.0/24", "via", observer_gw],
-                   check=False, capture_output=True)
+    subprocess.run(
+        ["ip", "route", "add", "172.21.0.0/24", "via", observer_gw],
+        check=False,
+        capture_output=True,
+    )
 
 # Wait for server cert
 for _ in range(retries):
@@ -30,7 +39,7 @@ ctx.load_verify_locations("/keys/tls_cert.pem")
 ctx.check_hostname = False
 
 chunk = bytes(65536)
-for attempt in range(retries):
+for _attempt in range(retries):
     try:
         raw = socket.create_connection((server_host, port), timeout=5)
         tls = ctx.wrap_socket(raw, server_hostname="tls-eval")

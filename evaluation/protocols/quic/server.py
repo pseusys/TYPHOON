@@ -1,25 +1,44 @@
 #!/usr/bin/env python3
-import asyncio, os, subprocess, sys
+import asyncio
+import os
+import subprocess
+import sys
+
 from aioquic.asyncio import serve
 from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.quic.configuration import QuicConfiguration
-from aioquic.quic.events import QuicEvent, StreamDataReceived, ConnectionTerminated
+from aioquic.quic.events import ConnectionTerminated, QuicEvent, StreamDataReceived
 
 transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
-PORT           = 9000
+PORT = 9000
 
-subprocess.run([
-    "openssl", "req", "-x509", "-newkey", "rsa:2048",
-    "-keyout", "/tmp/quic_key.pem", "-out", "/keys/quic_cert.pem",
-    "-days", "1", "-nodes", "-subj", "/CN=quic-eval",
-], check=True, capture_output=True)
+subprocess.run(
+    [
+        "openssl",
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-keyout",
+        "/tmp/quic_key.pem",
+        "-out",
+        "/keys/quic_cert.pem",
+        "-days",
+        "1",
+        "-nodes",
+        "-subj",
+        "/CN=quic-eval",
+    ],
+    check=True,
+    capture_output=True,
+)
 
 
 class SinkProtocol(QuicConnectionProtocol):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._received = 0
-        self._done     = asyncio.Event()
+        self._done = asyncio.Event()
 
     def quic_event_received(self, event: QuicEvent) -> None:
         if isinstance(event, StreamDataReceived):

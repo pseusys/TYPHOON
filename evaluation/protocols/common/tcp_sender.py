@@ -10,14 +10,19 @@ Env vars:
   LISTEN_PORT     destination port (default 9000)
   CONNECT_RETRIES times to retry on connection refused (default 30)
 """
-import os, socket, subprocess, sys, time
 
-observer_gw    = os.environ.get("OBSERVER_GW")
+import os
+import socket
+import subprocess
+import sys
+import time
+
+observer_gw = os.environ.get("OBSERVER_GW")
 forward_subnet = os.environ.get("FORWARD_SUBNET", "172.21.0.0/24")
-server_host    = os.environ["SERVER_HOST"]
-port           = int(os.environ.get("LISTEN_PORT",     9000))
-transfer_bytes = int(os.environ.get("TRANSFER_BYTES",  104_857_600))
-retries        = int(os.environ.get("CONNECT_RETRIES", 30))
+server_host = os.environ["SERVER_HOST"]
+port = int(os.environ.get("LISTEN_PORT", 9000))
+transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
+retries = int(os.environ.get("CONNECT_RETRIES", 30))
 
 if observer_gw:
     subprocess.run(["ip", "route", "add", forward_subnet, "via", observer_gw], check=False, capture_output=True)

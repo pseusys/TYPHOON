@@ -25,7 +25,7 @@ from pathlib import Path
 
 from python_on_whales import DockerClient, DockerException
 
-COMPOSE_DIR  = Path(__file__).parent.parent.parent / "compose"
+COMPOSE_DIR = Path(__file__).parent.parent.parent / "compose"
 BASE_COMPOSE = COMPOSE_DIR / "docker-compose.yml"
 
 

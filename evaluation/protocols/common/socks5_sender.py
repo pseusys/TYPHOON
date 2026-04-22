@@ -18,30 +18,33 @@ Env vars:
   TRANSFER_BYTES   bytes to send (default 100 MB)
   CONNECT_RETRIES  attempts before giving up (default 30)
 """
-import os, subprocess, sys, time
+
+import os
+import subprocess
+import sys
+import time
+
 import socks  # PySocks
 
-observer_gw    = os.environ.get("OBSERVER_GW")
+observer_gw = os.environ.get("OBSERVER_GW")
 forward_subnet = os.environ.get("FORWARD_SUBNET", "172.21.0.0/24")
-server_host    = os.environ["SERVER_HOST"]
-server_port    = int(os.environ.get("SERVER_PORT",     9000))
-socks5_host    = os.environ.get("SOCKS5_HOST",  "127.0.0.1")
-socks5_port    = int(os.environ.get("SOCKS5_PORT",     1080))
-socks5_user    = os.environ.get("SOCKS5_USERNAME")
-transfer_bytes = int(os.environ.get("TRANSFER_BYTES",  104_857_600))
-retries        = int(os.environ.get("CONNECT_RETRIES", 30))
+server_host = os.environ["SERVER_HOST"]
+server_port = int(os.environ.get("SERVER_PORT", 9000))
+socks5_host = os.environ.get("SOCKS5_HOST", "127.0.0.1")
+socks5_port = int(os.environ.get("SOCKS5_PORT", 1080))
+socks5_user = os.environ.get("SOCKS5_USERNAME")
+transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
+retries = int(os.environ.get("CONNECT_RETRIES", 30))
 
 if observer_gw:
-    subprocess.run(["ip", "route", "add", forward_subnet, "via", observer_gw],
-                   check=False, capture_output=True)
+    subprocess.run(["ip", "route", "add", forward_subnet, "via", observer_gw], check=False, capture_output=True)
 
 chunk = bytes(65536)
 for attempt in range(retries):
     try:
         s = socks.socksocket()
         if socks5_user:
-            s.set_proxy(socks.SOCKS5, socks5_host, socks5_port,
-                        username=socks5_user, password="\x00")
+            s.set_proxy(socks.SOCKS5, socks5_host, socks5_port, username=socks5_user, password="\x00")
         else:
             s.set_proxy(socks.SOCKS5, socks5_host, socks5_port)
         s.settimeout(10)

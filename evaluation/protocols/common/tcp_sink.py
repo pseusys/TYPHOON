@@ -8,16 +8,19 @@ Env vars:
   TRANSFER_BYTES  bytes to receive before exiting (default 100 MB)
   LISTEN_PORT     TCP port to bind (default 9000)
 """
-import os, socket, subprocess, sys
 
-observer_gw    = os.environ.get("OBSERVER_GW")
-return_subnet  = os.environ.get("RETURN_SUBNET", "172.20.0.0/24")
+import os
+import socket
+import subprocess
+import sys
+
+observer_gw = os.environ.get("OBSERVER_GW")
+return_subnet = os.environ.get("RETURN_SUBNET", "172.20.0.0/24")
 transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
-port           = int(os.environ.get("LISTEN_PORT",   9000))
+port = int(os.environ.get("LISTEN_PORT", 9000))
 
 if observer_gw:
-    subprocess.run(["ip", "route", "add", return_subnet, "via", observer_gw],
-                   check=False, capture_output=True)
+    subprocess.run(["ip", "route", "add", return_subnet, "via", observer_gw], check=False, capture_output=True)
 
 srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

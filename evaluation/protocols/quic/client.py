@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
-import asyncio, os, ssl, subprocess, sys, time
+import asyncio
+import os
+import ssl
+import subprocess
+import sys
+import time
+
 from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.connection import QuicConnection
 
-observer_gw    = os.environ.get("OBSERVER_GW")
-server_host    = os.environ["SERVER_HOST"]
+observer_gw = os.environ.get("OBSERVER_GW")
+server_host = os.environ["SERVER_HOST"]
 transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
-PORT           = 9000
-CHUNK          = 65536
+PORT = 9000
+CHUNK = 65536
 
 if observer_gw:
-    subprocess.run(["ip", "route", "add", "172.21.0.0/24", "via", observer_gw],
-                   check=False, capture_output=True)
+    subprocess.run(
+        ["ip", "route", "add", "172.21.0.0/24", "via", observer_gw],
+        check=False,
+        capture_output=True,
+    )
 
 for _ in range(30):
     if os.path.exists("/keys/quic_cert.pem"):
@@ -40,10 +49,10 @@ async def main() -> None:
         await asyncio.wait_for(proto.wait_connected(), timeout=30)
 
         stream_id = proto._quic.get_next_available_stream_id()
-        chunk     = bytes(CHUNK)
+        chunk = bytes(CHUNK)
         while sent_bytes < transfer_bytes:
-            n        = min(CHUNK, transfer_bytes - sent_bytes)
-            end      = (sent_bytes + n) >= transfer_bytes
+            n = min(CHUNK, transfer_bytes - sent_bytes)
+            end = (sent_bytes + n) >= transfer_bytes
             proto._quic.send_stream_data(stream_id, chunk[:n], end_stream=end)
             proto.transmit()
             sent_bytes += n

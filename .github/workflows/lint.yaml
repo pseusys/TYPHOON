@@ -70,7 +70,7 @@ jobs:
       - name: Check Python code 📜
         uses: astral-sh/ruff-action@v3
         with:
-          args: "check evaluation/src evaluation/protocols"
+          args: "check --config evaluation/pyproject.toml evaluation/src evaluation/protocols"
 
       - name: Lint Go (wireguard_daita) 🔍
         working-directory: evaluation/protocols/wireguard_daita/wg-daita

@@ -31,7 +31,7 @@ from .protocols import ALL, BY_NAME, Protocol
 console = Console()
 
 RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
-ENV_DIR     = COMPOSE_DIR / "env"
+ENV_DIR = COMPOSE_DIR / "env"
 
 
 def _run_one(
@@ -62,13 +62,13 @@ def _run_one(
             effective_timeout = int(val)
 
     extra_env = {
-        "PROTOCOL":        protocol.name,
+        "PROTOCOL": protocol.name,
         "PROTOCOL_SUFFIX": suffix,
-        "CLIENT_IMAGE":    protocol.client_image,
-        "SERVER_IMAGE":    protocol.server_image,
-        "TRANSFER_BYTES":  str(transfer_bytes),
-        "CAPTURES_DIR":    str(captures_dir.resolve()),
-        "PUMBA_TARGET":    pumba_target,
+        "CLIENT_IMAGE": protocol.client_image,
+        "SERVER_IMAGE": protocol.server_image,
+        "TRANSFER_BYTES": str(transfer_bytes),
+        "CAPTURES_DIR": str(captures_dir.resolve()),
+        "PUMBA_TARGET": pumba_target,
     }
 
     success = compose_up(
@@ -91,10 +91,27 @@ def _run_one(
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--all", "run_all", is_flag=True, help="Capture all protocols.")
-@click.option("--protocol", "protocol_name", default=None, metavar="NAME", help=f"Capture one protocol. Choices: {', '.join(BY_NAME)}.")
+@click.option(
+    "--protocol",
+    "protocol_name",
+    default=None,
+    metavar="NAME",
+    help=f"Capture one protocol. Choices: {', '.join(BY_NAME)}.",
+)
 @click.option("--chaos", is_flag=True, default=False, help="Enable pumba chaos overlay (latency + jitter).")
-@click.option("--timeout", default=300, show_default=True, help="Per-protocol timeout in seconds before the run is killed.")
-@click.option("--bytes", "transfer_bytes", default=104_857_600, show_default=True, help="Payload bytes transferred by each client (default 100 MB).")
+@click.option(
+    "--timeout",
+    default=300,
+    show_default=True,
+    help="Per-protocol timeout in seconds before the run is killed.",
+)
+@click.option(
+    "--bytes",
+    "transfer_bytes",
+    default=104_857_600,
+    show_default=True,
+    help="Payload bytes transferred by each client (default 100 MB).",
+)
 def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, transfer_bytes: int) -> None:
     """TYPHOON evaluation — run traffic captures for protocol comparison."""
 
@@ -108,7 +125,7 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
         console.print(f"Available: {', '.join(BY_NAME)}")
         sys.exit(1)
 
-    protocols  = list(ALL) if run_all else [BY_NAME[protocol_name]]
+    protocols = list(ALL) if run_all else [BY_NAME[protocol_name]]
     chaos_note = " [yellow](chaos mode)[/yellow]" if chaos else ""
 
     console.print(f"\n[bold]TYPHOON evaluation{chaos_note}[/bold]")
@@ -122,7 +139,13 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
 
     run_results: dict[str, dict] = {}
 
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), TimeElapsedColumn(), console=console, transient=False) as progress:
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
         for protocol in protocols:
             task = progress.add_task(
                 f"  [cyan]{protocol.name:<16}[/cyan] {protocol.description}",
@@ -140,15 +163,15 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
 
             elapsed = (datetime.datetime.now(datetime.UTC) - started_at).total_seconds()
             run_results[protocol.name] = {
-                "success":        success,
-                "error":          error,
-                "elapsed_s":      round(elapsed, 1),
-                "chaos":          chaos,
+                "success": success,
+                "error": error,
+                "elapsed_s": round(elapsed, 1),
+                "chaos": chaos,
                 "transfer_bytes": transfer_bytes,
-                "timestamp":      datetime.datetime.now(datetime.UTC).isoformat(),
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
             }
 
-            icon   = "[green]✓[/green]" if success else "[red]✗[/red]"
+            icon = "[green]✓[/green]" if success else "[red]✗[/red]"
             detail = "" if success else f" [dim]— {error}[/dim]"
             progress.update(
                 task,
@@ -159,14 +182,14 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
 
     # Summary table
     table = Table(title="Capture summary", show_lines=True)
-    table.add_column("Protocol",  style="cyan", no_wrap=True)
+    table.add_column("Protocol", style="cyan", no_wrap=True)
     table.add_column("Transport", style="dim")
     table.add_column("Status")
-    table.add_column("Time (s)",  justify="right", style="dim")
+    table.add_column("Time (s)", justify="right", style="dim")
 
     ok = 0
     for p in protocols:
-        r      = run_results[p.name]
+        r = run_results[p.name]
         status = "[green]OK[/green]" if r["success"] else "[red]FAIL[/red]"
         table.add_row(p.name, p.transport, status, str(r["elapsed_s"]))
         if r["success"]:
@@ -177,7 +200,7 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
 
     # Persist metadata (merge with any prior runs)
     meta_path = RESULTS_DIR / "metadata.json"
-    existing  = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    existing = json.loads(meta_path.read_text()) if meta_path.exists() else {}
     existing.update(run_results)
     meta_path.write_text(json.dumps(existing, indent=2))
     console.print(f"Metadata → [dim]{meta_path}[/dim]\n")

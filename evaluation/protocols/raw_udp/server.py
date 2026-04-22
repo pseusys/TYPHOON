@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
-import os, socket, subprocess, sys
+import os
+import socket
+import subprocess
+import sys
 
-observer_gw    = os.environ.get("OBSERVER_GW")
+observer_gw = os.environ.get("OBSERVER_GW")
 transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
-port           = 9000
+port = 9000
 
 if observer_gw:
-    subprocess.run(["ip", "route", "add", "172.20.0.0/24", "via", observer_gw],
-                   check=False, capture_output=True)
+    subprocess.run(
+        ["ip", "route", "add", "172.20.0.0/24", "via", observer_gw],
+        check=False,
+        capture_output=True,
+    )
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(("0.0.0.0", port))
