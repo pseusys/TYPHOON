@@ -1,6 +1,11 @@
+//! Session management: encryption, health checking, and flow manager coordination.
+//!
+//! A session manager handles the protocol state machine for one logical connection — key
+//! exchange, payload encryption/decryption, and the health-check keepalive cycle — without
+//! owning any UDP sockets (those belong to the flow layer).
+
 #[cfg(feature = "client")]
 mod client_health;
-/// Session management: encryption, health checking, and flow manager coordination.
 mod common;
 mod error;
 

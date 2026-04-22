@@ -27,7 +27,6 @@ use crate::bytes::StaticByteBuffer;
 use crate::certificate::ClientCertificate;
 use crate::defaults::{DefaultExecutor, DefaultSettings};
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
-use crate::flow::decoy::SimpleDecoyProvider;
 use crate::settings::keys;
 use crate::socket::{ClientSocket, ClientSocketBuilder};
 use crate::tailor::ClientConnectionHandler;
@@ -147,7 +146,7 @@ impl ServerConnectionHandler<StaticByteBuffer> for DebugServerConnectionHandler 
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-type DebugSocket = ClientSocket<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DebugClientConnectionHandler>;
+type DebugSocket = ClientSocket<StaticByteBuffer, DefaultExecutor, DebugClientConnectionHandler>;
 
 /// Build a probe payload: 16-byte header + `extra` zero bytes of padding.
 fn make_probe(phase: u32, sequence: u32, extra: usize) -> Vec<u8> {
@@ -202,7 +201,7 @@ pub async fn run_debug(certificate: ClientCertificate, mode: DebugMode, settings
     // Use empty flow config for all addresses: fake body/header would prepend bytes that the
     // server's handshake parser cannot strip, causing a crypto overflow on decapsulation.
     let empty_config = FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![]));
-    let mut builder = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, SimpleDecoyProvider, DebugClientConnectionHandler>::new(certificate.clone(), DebugClientConnectionHandler).with_settings(settings.clone());
+    let mut builder = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DebugClientConnectionHandler>::new(certificate.clone(), DebugClientConnectionHandler).with_settings(settings.clone());
     for &addr in certificate.addresses() {
         builder = builder.with_flow_config(addr, empty_config.clone());
     }

@@ -36,12 +36,7 @@ All commands should be run from inside the `./typhoon` directory.
 
 ### Feature sets
 
-Two primary feature configurations are used for development and testing:
-
-| Name | Features | Typical use |
-| --- | --- | --- |
-| Default (fast + software + tokio) | `fast_software`, `server`, `client`, `tokio` | Development, CI, most machines |
-| Full hardware + async-std | `full_hardware`, `server`, `client`, `async-std` | AES-NI systems, alternative runtime |
+Two default feature configuration used for development and testing: `fast_software`, `server`, `client`, `tokio`.
 
 Optional features:
 
@@ -177,9 +172,6 @@ let settings = Arc::new(
 
 ### Design choices
 
-- **Rust 2024 edition** with `async fn` in traits (RPITIT) — no `async_trait` macro needed.
 - **Runtime agnostic**: async primitives are abstracted behind `AsyncExecutor` and the wrappers in `utils/sync.rs`; switching between `tokio` and `async-std` requires only a feature flag.
 - **Zero-copy by design**: payload bytes travel as views over pooled `ByteBuffer`s from allocation to the UDP socket; copies are introduced only at system boundaries (user API and OS socket calls).
 - **Lock-free hot paths**: per-packet paths use `CachedMap` snapshots (wait-free reads) and `AtomicBitSet` for active-flow tracking; `Mutex`/`RwLock` is confined to session lifecycle operations (handshake, teardown).
-- **Generics over `dyn`**: `DecoyCommunicationMode`, `IdentityType`, `AsyncExecutor`, and connection handlers are all template parameters, enabling the compiler to monomorphize and inline the hot path with zero virtual dispatch overhead.
-- **`#[cfg]` at item level**: feature gating is applied to imports, types, fields, and function signatures — not to code inside function bodies — keeping individual functions readable under any feature combination.
