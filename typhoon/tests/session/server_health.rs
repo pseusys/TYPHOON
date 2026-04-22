@@ -1,5 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use async_trait::async_trait;
 use std::time::Duration;
 
 use super::ServerHealthProvider;
@@ -27,6 +29,7 @@ impl CapturingRouter {
     }
 }
 
+#[async_trait]
 impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
     async fn route_packet(&self, packet: DynamicByteBuffer, _identity: &StaticByteBuffer) -> bool {
         self.packets.lock().await.push(packet);
@@ -36,6 +39,12 @@ impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
     async fn remove_session(&self, _identity: &StaticByteBuffer) {
         self.remove_count.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+fn downgrade_router(r: &Arc<CapturingRouter>) -> std::sync::Weak<dyn OutgoingRouter<StaticByteBuffer>> {
+    let cloned: Arc<CapturingRouter> = Arc::clone(r);
+    let dyn_r: Arc<dyn OutgoingRouter<StaticByteBuffer>> = cloned;
+    Arc::downgrade(&dyn_r)
 }
 
 fn test_identity() -> StaticByteBuffer {
@@ -71,7 +80,7 @@ async fn test_server_health_response_echoes_client_pn() {
     let settings = fast_settings();
 
     // Very long initial_server_next_in → timer will not time out during the test.
-    let provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
 
     let client_pn: u64 = 0xDEAD_BEEF_0000_0001;
     provider.feed_health_check(10u32, client_pn);
@@ -94,7 +103,7 @@ async fn test_server_health_response_own_tm_in_range() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
 
     provider.feed_health_check(10u32, 0x1234_5678_0000_0001);
     sleep(Duration::from_millis(50)).await;
@@ -116,7 +125,7 @@ async fn test_server_health_response_has_health_check_flag() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
     provider.feed_health_check(10u32, 0xABCD);
     sleep(Duration::from_millis(50)).await;
     drop(provider);
@@ -134,7 +143,7 @@ async fn test_server_health_response_delayed() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
 
     // Request a 100 ms delay (clamped to MAX=100ms).
     provider.feed_health_check(100u32, 0x9999);
@@ -160,7 +169,7 @@ async fn test_server_health_timer_removes_session_after_max_retries() {
     let settings = fast_settings(); // MAX_RETRIES=2, TIMEOUT_DEFAULT=10ms
 
     // initial_server_next_in = 1 ms → first timeout = 1 + 10 = 11 ms.
-    let _provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 1u32);
+    let _provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 1u32);
 
     // Never call feed_health_check — let the timer expire MAX_RETRIES times.
     sleep(Duration::from_millis(500)).await;
@@ -174,7 +183,7 @@ async fn test_server_health_sends_termination_before_remove() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let _provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 1u32);
+    let _provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 1u32);
 
     sleep(Duration::from_millis(500)).await;
 
@@ -188,7 +197,7 @@ async fn test_server_health_stops_when_router_dropped() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(Arc::downgrade(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
 
     drop(router);
 
