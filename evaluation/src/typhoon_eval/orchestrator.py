@@ -38,9 +38,10 @@ def _run_one(
     protocol: Protocol,
     chaos: bool,
     timeout: int,
+    chaos_multiplier: int,
     transfer_bytes: int,
     captures_dir: Path,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, float | None]:
     """
     Run a single protocol capture.
     Returns (success, error_message).
@@ -60,6 +61,8 @@ def _run_one(
             continue
         elif key == "TIMEOUT":
             effective_timeout = int(val)
+    if chaos:
+        effective_timeout *= chaos_multiplier
 
     extra_env = {
         "PROTOCOL": protocol.name,
@@ -71,7 +74,7 @@ def _run_one(
         "PUMBA_TARGET": pumba_target,
     }
 
-    success = compose_up(
+    success, delivery_pct = compose_up(
         protocol_name=protocol.name,
         env_file=env_file,
         extra_env=extra_env,
@@ -82,11 +85,11 @@ def _run_one(
     pcap = captures_dir / f"{protocol.name}{suffix}.pcap"
     if success:
         if not pcap.exists():
-            return False, "observer did not write pcap"
+            return False, "observer did not write pcap", None
         if pcap.stat().st_size < 100:
-            return False, f"pcap is empty ({pcap.stat().st_size} bytes)"
+            return False, f"pcap is empty ({pcap.stat().st_size} bytes)", None
 
-    return success, "" if success else "non-zero exit or timeout"
+    return success, "" if success else "non-zero exit or timeout", delivery_pct
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
@@ -106,14 +109,24 @@ def _run_one(
     help="Per-protocol timeout in seconds before the run is killed.",
 )
 @click.option(
+    "--chaos-multiplier",
+    "chaos_multiplier",
+    default=3,
+    show_default=True,
+    help="Multiply per-protocol timeout by this factor when --chaos is active.",
+)
+@click.option(
     "--bytes",
     "transfer_bytes",
-    default=104_857_600,
-    show_default=True,
-    help="Payload bytes transferred by each client (default 100 MB).",
+    default=None,
+    type=int,
+    help="Payload bytes transferred by each client (default 10 MB with --chaos, 100 MB otherwise).",
 )
-def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, transfer_bytes: int) -> None:
+def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, chaos_multiplier: int, transfer_bytes: int | None) -> None:
     """TYPHOON evaluation — run traffic captures for protocol comparison."""
+
+    if transfer_bytes is None:
+        transfer_bytes = 10_485_760 if chaos else 104_857_600
 
     if not run_all and not protocol_name:
         console.print("[red]Error:[/red] specify --all or --protocol <name>.")
@@ -128,9 +141,13 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
     protocols = list(ALL) if run_all else [BY_NAME[protocol_name]]
     chaos_note = " [yellow](chaos mode)[/yellow]" if chaos else ""
 
+    timeout_note = f"{timeout}s per run (env file may override per protocol)"
+    if chaos:
+        timeout_note += f", ×{chaos_multiplier} in chaos mode"
+
     console.print(f"\n[bold]TYPHOON evaluation{chaos_note}[/bold]")
     console.print(f"  Protocols : {', '.join(p.name for p in protocols)}")
-    console.print(f"  Timeout   : {timeout}s per run (env file may override per protocol)")
+    console.print(f"  Timeout   : {timeout_note}")
     console.print(f"  Transfer  : {transfer_bytes / 1_048_576:.0f} MB\n")
 
     captures_dir = RESULTS_DIR / "captures"
@@ -139,59 +156,75 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
 
     run_results: dict[str, dict] = {}
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=False,
-    ) as progress:
-        for protocol in protocols:
-            task = progress.add_task(
-                f"  [cyan]{protocol.name:<16}[/cyan] {protocol.description}",
-                total=None,
-            )
-            started_at = datetime.datetime.now(datetime.UTC)
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            for protocol in protocols:
+                task = progress.add_task(
+                    f"  [cyan]{protocol.name:<16}[/cyan] {protocol.description}",
+                    total=None,
+                )
+                started_at = datetime.datetime.now(datetime.UTC)
 
-            success, error = _run_one(
-                protocol=protocol,
-                chaos=chaos,
-                timeout=timeout,
-                transfer_bytes=transfer_bytes,
-                captures_dir=captures_dir,
-            )
+                success, error, delivery_pct = _run_one(
+                    protocol=protocol,
+                    chaos=chaos,
+                    timeout=timeout,
+                    chaos_multiplier=chaos_multiplier,
+                    transfer_bytes=transfer_bytes,
+                    captures_dir=captures_dir,
+                )
 
-            elapsed = (datetime.datetime.now(datetime.UTC) - started_at).total_seconds()
-            run_results[protocol.name] = {
-                "success": success,
-                "error": error,
-                "elapsed_s": round(elapsed, 1),
-                "chaos": chaos,
-                "transfer_bytes": transfer_bytes,
-                "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
-            }
+                elapsed = (datetime.datetime.now(datetime.UTC) - started_at).total_seconds()
+                run_results[protocol.name] = {
+                    "success": success,
+                    "error": error,
+                    "elapsed_s": round(elapsed, 1),
+                    "chaos": chaos,
+                    "transfer_bytes": transfer_bytes,
+                    "delivery_pct": delivery_pct,
+                    "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                }
 
-            icon = "[green]✓[/green]" if success else "[red]✗[/red]"
-            detail = "" if success else f" [dim]— {error}[/dim]"
-            progress.update(
-                task,
-                description=f"  {icon} [cyan]{protocol.name:<16}[/cyan] {protocol.description}{detail}",
-                total=1,
-                completed=1,
-            )
+                icon = "[green]✓[/green]" if success else "[red]✗[/red]"
+                detail = "" if success else f" [dim]— {error}[/dim]"
+                progress.update(
+                    task,
+                    description=f"  {icon} [cyan]{protocol.name:<16}[/cyan] {protocol.description}{detail}",
+                    total=1,
+                    completed=1,
+                )
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted — containers cleaned up.[/yellow]")
+        sys.exit(1)
 
     # Summary table
     table = Table(title="Capture summary", show_lines=True)
     table.add_column("Protocol", style="cyan", no_wrap=True)
     table.add_column("Transport", style="dim")
     table.add_column("Status")
+    table.add_column("Delivery", justify="right")
     table.add_column("Time (s)", justify="right", style="dim")
 
     ok = 0
     for p in protocols:
         r = run_results[p.name]
         status = "[green]OK[/green]" if r["success"] else "[red]FAIL[/red]"
-        table.add_row(p.name, p.transport, status, str(r["elapsed_s"]))
+        pct = r.get("delivery_pct")
+        if pct is None:
+            delivery = "[dim]—[/dim]"
+        elif pct >= 99.9:
+            delivery = f"[green]{pct:.1f}%[/green]"
+        elif pct >= 80.0:
+            delivery = f"[yellow]{pct:.1f}%[/yellow]"
+        else:
+            delivery = f"[red]{pct:.1f}%[/red]"
+        table.add_row(p.name, p.transport, status, delivery, str(r["elapsed_s"]))
         if r["success"]:
             ok += 1
 

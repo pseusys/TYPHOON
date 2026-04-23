@@ -50,7 +50,8 @@ class SinkProtocol(QuicConnectionProtocol):
 
     async def wait_done(self) -> None:
         await self._done.wait()
-        print(f"received {self._received}/{transfer_bytes} bytes", flush=True)
+        pct = self._received / transfer_bytes * 100
+        print(f"received {self._received}/{transfer_bytes} bytes ({pct:.1f}%)", flush=True)
 
 
 async def main() -> None:

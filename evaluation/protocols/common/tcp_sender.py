@@ -31,11 +31,19 @@ chunk = bytes(65536)
 for attempt in range(retries):
     try:
         with socket.create_connection((server_host, port), timeout=5) as s:
+            s.settimeout(None)
             sent = 0
             while sent < transfer_bytes:
                 n = min(len(chunk), transfer_bytes - sent)
                 s.sendall(chunk[:n])
                 sent += n
+            try:
+                s.shutdown(socket.SHUT_WR)
+                s.settimeout(120)
+                while s.recv(65536):
+                    pass
+            except OSError:
+                pass
         print(f"sent {sent} bytes", flush=True)
         sys.exit(0)
     except (ConnectionRefusedError, OSError):

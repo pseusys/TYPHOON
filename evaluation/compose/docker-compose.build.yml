@@ -21,6 +21,12 @@ services:
       context: ../observer
     image: typhoon-eval-observer
 
+  # ── Chaos (netem overlay) ─────────────────────────────────────────────────
+  chaos:
+    build:
+      context: ../chaos
+    image: typhoon-eval-chaos
+
   # ── raw_udp ───────────────────────────────────────────────────────────────
   raw-udp-server:
     build:

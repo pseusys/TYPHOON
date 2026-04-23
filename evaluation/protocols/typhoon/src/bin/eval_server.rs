@@ -8,6 +8,9 @@ use std::net::SocketAddr;
 use std::process;
 use std::process::Command;
 use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::time::timeout;
 
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
@@ -79,15 +82,28 @@ async fn main() {
     listener.start().await;
     println!("TYPHOON eval server listening on ports {:?}", PORTS);
 
+    let idle_timeout = Duration::from_secs(
+        var("IDLE_TIMEOUT_S").ok().and_then(|v| v.parse().ok()).unwrap_or(10),
+    );
+
     let client = listener.accept().await.expect("accept");
     println!("Client connected");
 
     let mut received: usize = 0;
-    while received < transfer_bytes {
-        let data = client.receive_bytes().await.expect("receive");
-        received += data.len();
+    loop {
+        match timeout(idle_timeout, client.receive_bytes()).await {
+            Ok(Ok(data)) => {
+                received += data.len();
+                if received >= transfer_bytes {
+                    break;
+                }
+            }
+            Ok(Err(_)) => break,
+            Err(_) => break,
+        }
     }
 
-    println!("Received {received}/{transfer_bytes} bytes — done");
+    let pct = received as f64 / transfer_bytes as f64 * 100.0;
+    println!("Received {received}/{transfer_bytes} bytes ({pct:.1}%) — done");
     process::exit(0);
 }

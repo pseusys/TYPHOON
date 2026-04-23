@@ -42,13 +42,29 @@ chunk = bytes(65536)
 for _attempt in range(retries):
     try:
         raw = socket.create_connection((server_host, port), timeout=5)
+        raw.settimeout(None)
         tls = ctx.wrap_socket(raw, server_hostname="tls-eval")
         sent = 0
         while sent < transfer_bytes:
             n = min(len(chunk), transfer_bytes - sent)
             tls.sendall(chunk[:n])
             sent += n
-        tls.close()
+        try:
+            raw2 = tls.unwrap()
+        except (ssl.SSLError, OSError):
+            raw2 = raw
+        try:
+            raw2.shutdown(socket.SHUT_WR)
+            raw2.settimeout(120)
+            while raw2.recv(65536):
+                pass
+        except OSError:
+            pass
+        finally:
+            try:
+                raw2.close()
+            except OSError:
+                pass
         print(f"sent {sent} bytes", flush=True)
         sys.exit(0)
     except (ConnectionRefusedError, OSError, ssl.SSLError):

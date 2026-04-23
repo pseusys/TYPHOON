@@ -12,6 +12,7 @@ import sys
 
 observer_gw = os.environ.get("OBSERVER_GW")
 transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
+idle_timeout = int(os.environ.get("IDLE_TIMEOUT_S", 10))
 port = 9000
 
 if observer_gw:
@@ -52,20 +53,29 @@ raw.bind(("0.0.0.0", port))
 raw.listen(1)
 print(f"TLS sink ready on :{port}", flush=True)
 
-received = 0
-while received < transfer_bytes:
-    conn, _ = raw.accept()
-    try:
-        tls = ctx.wrap_socket(conn, server_side=True)
-    except ssl.SSLError:
-        conn.close()
-        continue
-    with tls:
-        while received < transfer_bytes:
-            data = tls.recv(65536)
-            if not data:
-                break
-            received += len(data)
+conn, _ = raw.accept()
+try:
+    tls = ctx.wrap_socket(conn, server_side=True)
+except ssl.SSLError as e:
+    print(f"TLS handshake failed: {e}", flush=True)
+    sys.exit(1)
 
-print(f"received {received}/{transfer_bytes} bytes", flush=True)
-sys.exit(0 if received >= transfer_bytes else 1)
+tls.settimeout(idle_timeout)
+received = 0
+try:
+    while received < transfer_bytes:
+        data = tls.recv(65536)
+        if not data:
+            break
+        received += len(data)
+except (ssl.SSLError, OSError, socket.timeout):
+    pass
+finally:
+    try:
+        tls.close()
+    except OSError:
+        pass
+
+pct = received / transfer_bytes * 100
+print(f"received {received}/{transfer_bytes} bytes ({pct:.1f}%)", flush=True)
+sys.exit(0)

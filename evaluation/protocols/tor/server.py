@@ -21,6 +21,7 @@ def recv_exact(sock, n):
 
 observer_gw = os.environ.get("OBSERVER_GW")
 transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
+idle_timeout = int(os.environ.get("IDLE_TIMEOUT_S", 10))
 
 if observer_gw:
     subprocess.run(
@@ -63,25 +64,29 @@ print(f"Tor OR simulator listening on :{PORT}", flush=True)
 received_data = 0
 DATA_PER_CELL = 498  # usable payload bytes per RELAY cell
 
-# Loop: accept connections and accumulate data until transfer_bytes received.
-# No padding echo — client sends cells unidirectionally.
-while received_data < transfer_bytes:
-    conn, addr = raw.accept()
-    try:
-        tls = ctx.wrap_socket(conn, server_side=True)
-    except ssl.SSLError:
-        conn.close()
-        continue
-    print(f"TLS connection from {addr}", flush=True)
-    try:
-        while received_data < transfer_bytes:
-            cell = recv_exact(tls, CELL)
-            if len(cell) < CELL:
-                break
-            received_data += DATA_PER_CELL
-    except (ssl.SSLError, ConnectionResetError, BrokenPipeError):
-        pass
-    tls.close()
+conn, addr = raw.accept()
+try:
+    tls = ctx.wrap_socket(conn, server_side=True)
+except ssl.SSLError as e:
+    print(f"TLS handshake failed: {e}", flush=True)
+    sys.exit(1)
 
-print(f"received ~{received_data} bytes in cells", flush=True)
+print(f"TLS connection from {addr}", flush=True)
+tls.settimeout(idle_timeout)
+try:
+    while received_data < transfer_bytes:
+        cell = recv_exact(tls, CELL)
+        if len(cell) < CELL:
+            break
+        received_data += DATA_PER_CELL
+except (ssl.SSLError, OSError, socket.timeout):
+    pass
+finally:
+    try:
+        tls.close()
+    except OSError:
+        pass
+
+pct = received_data / transfer_bytes * 100
+print(f"received ~{received_data} bytes in cells ({pct:.1f}%)", flush=True)
 sys.exit(0)

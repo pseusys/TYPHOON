@@ -22,21 +22,32 @@ port = int(os.environ.get("LISTEN_PORT", 9000))
 if observer_gw:
     subprocess.run(["ip", "route", "add", return_subnet, "via", observer_gw], check=False, capture_output=True)
 
+idle_timeout = int(os.environ.get("IDLE_TIMEOUT_S", 10))
+
 srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 srv.bind(("0.0.0.0", port))
 srv.listen(1)
 print(f"TCP sink ready on :{port}", flush=True)
 
-received = 0
-while received < transfer_bytes:
-    conn, addr = srv.accept()
-    with conn:
-        while received < transfer_bytes:
-            data = conn.recv(65536)
-            if not data:
-                break
-            received += len(data)
+conn, _ = srv.accept()
+conn.settimeout(idle_timeout)
 
-print(f"received {received}/{transfer_bytes} bytes", flush=True)
-sys.exit(0 if received >= transfer_bytes else 1)
+received = 0
+try:
+    while received < transfer_bytes:
+        data = conn.recv(65536)
+        if not data:
+            break
+        received += len(data)
+except (socket.timeout, OSError):
+    pass
+finally:
+    try:
+        conn.close()
+    except OSError:
+        pass
+
+pct = received / transfer_bytes * 100
+print(f"received {received}/{transfer_bytes} bytes ({pct:.1f}%)", flush=True)
+sys.exit(0)

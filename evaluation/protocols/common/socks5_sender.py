@@ -20,6 +20,7 @@ Env vars:
 """
 
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -49,11 +50,19 @@ for attempt in range(retries):
             s.set_proxy(socks.SOCKS5, socks5_host, socks5_port)
         s.settimeout(10)
         s.connect((server_host, server_port))
+        s.settimeout(None)
         sent = 0
         while sent < transfer_bytes:
             n = min(len(chunk), transfer_bytes - sent)
             s.sendall(chunk[:n])
             sent += n
+        try:
+            s.shutdown(socket.SHUT_WR)
+            s.settimeout(120)
+            while s.recv(65536):
+                pass
+        except OSError:
+            pass
         s.close()
         print(f"sent {sent} bytes via SOCKS5", flush=True)
         sys.exit(0)

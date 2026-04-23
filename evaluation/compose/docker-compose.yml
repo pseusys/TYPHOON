@@ -98,20 +98,19 @@ services:
         condition: service_healthy
     restart: "no"
 
-  pumba:
+  chaos:
     init: true
     profiles: ["chaos"]
-    image: ghcr.io/alexei-led/pumba:latest
-    command: >
-      netem
-      --tc-image ghcr.io/alexei-led/pumba-tc:latest
-      --duration ${CHAOS_DURATION:-120s}
-      delay
-      --time ${CHAOS_DELAY_MS:-50}
-      --jitter ${CHAOS_JITTER_MS:-20}
-      ${PUMBA_TARGET}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+    image: typhoon-eval-chaos
+    build:
+      context: ../chaos
+    environment:
+      CHAOS_DELAY_MS:
+      CHAOS_JITTER_MS:
+      CHAOS_LOSS_PCT:
+    network_mode: "service:observer"
+    cap_add:
+      - NET_ADMIN
     depends_on:
-      client:
-        condition: service_started
+      observer:
+        condition: service_healthy

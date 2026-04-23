@@ -55,6 +55,7 @@ ctx.check_hostname = False
 for attempt in range(retries):
     try:
         raw = socket.create_connection((server_host, PORT), timeout=5)
+        raw.settimeout(None)
         tls = ctx.wrap_socket(raw, server_hostname="tor-eval")
         sent_data = 0
         chunk = bytes(DATA_PER_CELL)
@@ -63,7 +64,22 @@ for attempt in range(retries):
             cell = make_relay_cell(chunk[:n])
             tls.sendall(cell)
             sent_data += n
-        tls.close()
+        try:
+            raw2 = tls.unwrap()
+        except (ssl.SSLError, OSError):
+            raw2 = raw
+        try:
+            raw2.shutdown(socket.SHUT_WR)
+            raw2.settimeout(120)
+            while raw2.recv(65536):
+                pass
+        except OSError:
+            pass
+        finally:
+            try:
+                raw2.close()
+            except OSError:
+                pass
         print(f"sent {sent_data} data bytes in cells", flush=True)
         sys.exit(0)
     except (ConnectionRefusedError, OSError, ssl.SSLError) as exc:
