@@ -150,9 +150,22 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, ch
     console.print(f"  Timeout   : {timeout_note}")
     console.print(f"  Transfer  : {transfer_bytes / 1_048_576:.0f} MB\n")
 
-    captures_dir = RESULTS_DIR / "captures"
+    run_id = "run_" + datetime.datetime.now(datetime.UTC).strftime("%Y%m%d_%H%M%S")
+    captures_dir = RESULTS_DIR / "captures" / run_id
     captures_dir.mkdir(parents=True, exist_ok=True)
-    (RESULTS_DIR / "logs").mkdir(parents=True, exist_ok=True)
+    console.print(f"  Run ID    : [dim]{run_id}[/dim]\n")
+
+    config: dict = {
+        "run_id": run_id,
+        "started_at": datetime.datetime.now(datetime.UTC).isoformat(),
+        "protocols": [p.name for p in protocols],
+        "chaos": chaos,
+        "timeout_s": timeout,
+        "transfer_bytes": transfer_bytes,
+    }
+    if chaos:
+        config["chaos_multiplier"] = chaos_multiplier
+    (captures_dir / "config.json").write_text(json.dumps(config, indent=2))
 
     run_results: dict[str, dict] = {}
 
@@ -231,11 +244,8 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, ch
     console.print(table)
     console.print(f"\n{ok}/{len(protocols)} captures succeeded.\n")
 
-    # Persist metadata (merge with any prior runs)
-    meta_path = RESULTS_DIR / "metadata.json"
-    existing = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-    existing.update(run_results)
-    meta_path.write_text(json.dumps(existing, indent=2))
+    meta_path = captures_dir / "metadata.json"
+    meta_path.write_text(json.dumps(run_results, indent=2))
     console.print(f"Metadata → [dim]{meta_path}[/dim]\n")
 
     sys.exit(0 if ok == len(protocols) else 1)

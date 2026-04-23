@@ -24,8 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=go-builder    /build/amneziawg-go           /usr/local/bin/amneziawg-go
 COPY --from=tools-builder /src/src/wg                   /usr/local/bin/awg
 COPY amneziawg/server-entrypoint.sh /entrypoint.sh
-COPY common/tcp_sink.py              /app/server.py
+COPY common/udp_sink.py              /app/server.py
 RUN chmod +x /entrypoint.sh
 HEALTHCHECK --interval=1s --timeout=3s --retries=20 --start-period=15s \
-    CMD ip link show awg0 >/dev/null 2>&1 && ss -tln | grep -q ':9000'
+    CMD ip link show awg0 >/dev/null 2>&1 && ss -uln | grep -q ':9000'
 ENTRYPOINT ["/entrypoint.sh"]
