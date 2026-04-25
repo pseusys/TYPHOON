@@ -10,6 +10,7 @@ Env vars:
 """
 
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -22,7 +23,18 @@ port = int(os.environ.get("LISTEN_PORT", 9000))
 if observer_gw:
     subprocess.run(["ip", "route", "add", return_subnet, "via", observer_gw], check=False, capture_output=True)
 
-idle_timeout = int(os.environ.get("IDLE_TIMEOUT_S", 10))
+idle_timeout = int(os.environ.get("IDLE_TIMEOUT_S", 120))
+
+received = 0
+
+
+def _sigterm(signum, frame):
+    pct = received / transfer_bytes * 100
+    print(f"received {received}/{transfer_bytes} bytes ({pct:.1f}%)", flush=True)
+    sys.exit(0)
+
+
+signal.signal(signal.SIGTERM, _sigterm)
 
 srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -33,7 +45,6 @@ print(f"TCP sink ready on :{port}", flush=True)
 conn, _ = srv.accept()
 conn.settimeout(idle_timeout)
 
-received = 0
 try:
     while received < transfer_bytes:
         data = conn.recv(65536)

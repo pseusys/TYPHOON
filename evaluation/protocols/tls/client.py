@@ -16,6 +16,9 @@ server_host = os.environ["SERVER_HOST"]
 transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
 port = 9000
 retries = 30
+chunk_size = 500
+delay_ms = float(os.environ.get("INTER_PACKET_DELAY_MS", 0))
+delay_every = int(os.environ.get("DELAY_EVERY_N", 1))
 
 if observer_gw:
     subprocess.run(
@@ -38,17 +41,21 @@ ctx.minimum_version = ssl.TLSVersion.TLSv1_3
 ctx.load_verify_locations("/keys/tls_cert.pem")
 ctx.check_hostname = False
 
-chunk = bytes(65536)
+chunk = bytes(chunk_size)
 for _attempt in range(retries):
     try:
         raw = socket.create_connection((server_host, port), timeout=5)
         raw.settimeout(None)
         tls = ctx.wrap_socket(raw, server_hostname="tls-eval")
         sent = 0
+        packets = 0
         while sent < transfer_bytes:
-            n = min(len(chunk), transfer_bytes - sent)
+            n = min(chunk_size, transfer_bytes - sent)
             tls.sendall(chunk[:n])
             sent += n
+            packets += 1
+            if delay_ms > 0 and packets % delay_every == 0:
+                time.sleep(delay_ms / 1000)
         try:
             raw2 = tls.unwrap()
         except (ssl.SSLError, OSError):

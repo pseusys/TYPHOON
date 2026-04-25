@@ -10,7 +10,15 @@ from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.events import ConnectionTerminated, QuicEvent, StreamDataReceived
 
 transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
+observer_gw = os.environ.get("OBSERVER_GW")
 PORT = 9000
+
+if observer_gw:
+    subprocess.run(
+        ["ip", "route", "add", "172.20.0.0/24", "via", observer_gw],
+        check=False,
+        capture_output=True,
+    )
 
 subprocess.run(
     [
@@ -28,6 +36,8 @@ subprocess.run(
         "-nodes",
         "-subj",
         "/CN=quic-eval",
+        "-addext",
+        "subjectAltName=DNS:quic-eval",
     ],
     check=True,
     capture_output=True,
@@ -46,6 +56,7 @@ class SinkProtocol(QuicConnectionProtocol):
             if event.end_stream or self._received >= transfer_bytes:
                 self._done.set()
         elif isinstance(event, ConnectionTerminated):
+            print(f"connection terminated (received so far: {self._received})", flush=True)
             self._done.set()
 
     async def wait_done(self) -> None:
@@ -56,6 +67,10 @@ class SinkProtocol(QuicConnectionProtocol):
 
 async def main() -> None:
     config = QuicConfiguration(is_client=False, alpn_protocols=["eval"])
+    config.idle_timeout = 300.0
+    config.max_stream_data = 128 * 1024 * 1024
+    config.max_data = 256 * 1024 * 1024
+    config.congestion_control_algorithm = "cubic"
     config.load_cert_chain("/keys/quic_cert.pem", "/tmp/quic_key.pem")
 
     protocols: list[SinkProtocol] = []
@@ -63,6 +78,7 @@ async def main() -> None:
     def factory(*args, **kwargs) -> SinkProtocol:
         p = SinkProtocol(*args, **kwargs)
         protocols.append(p)
+        print(f"connection accepted (total: {len(protocols)})", flush=True)
         return p
 
     print(f"QUIC sink ready on :{PORT}", flush=True)

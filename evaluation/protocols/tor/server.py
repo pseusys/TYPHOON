@@ -21,7 +21,7 @@ def recv_exact(sock, n):
 
 observer_gw = os.environ.get("OBSERVER_GW")
 transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
-idle_timeout = int(os.environ.get("IDLE_TIMEOUT_S", 10))
+idle_timeout = int(os.environ.get("IDLE_TIMEOUT_S", 120))
 
 if observer_gw:
     subprocess.run(
@@ -81,6 +81,7 @@ try:
         received_data += DATA_PER_CELL
 except (ssl.SSLError, OSError, socket.timeout):
     pass
+
 finally:
     try:
         tls.close()

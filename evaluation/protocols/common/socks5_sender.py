@@ -36,11 +36,14 @@ socks5_port = int(os.environ.get("SOCKS5_PORT", 1080))
 socks5_user = os.environ.get("SOCKS5_USERNAME")
 transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
 retries = int(os.environ.get("CONNECT_RETRIES", 30))
+chunk_size = 500
+delay_ms = float(os.environ.get("INTER_PACKET_DELAY_MS", 0))
+delay_every = int(os.environ.get("DELAY_EVERY_N", 1))
 
 if observer_gw:
     subprocess.run(["ip", "route", "add", forward_subnet, "via", observer_gw], check=False, capture_output=True)
 
-chunk = bytes(65536)
+chunk = bytes(chunk_size)
 for attempt in range(retries):
     try:
         s = socks.socksocket()
@@ -52,10 +55,14 @@ for attempt in range(retries):
         s.connect((server_host, server_port))
         s.settimeout(None)
         sent = 0
+        packets = 0
         while sent < transfer_bytes:
-            n = min(len(chunk), transfer_bytes - sent)
+            n = min(chunk_size, transfer_bytes - sent)
             s.sendall(chunk[:n])
             sent += n
+            packets += 1
+            if delay_ms > 0 and packets % delay_every == 0:
+                time.sleep(delay_ms / 1000)
         try:
             s.shutdown(socket.SHUT_WR)
             s.settimeout(120)

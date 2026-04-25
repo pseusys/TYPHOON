@@ -14,7 +14,7 @@ use typhoon::{
 };
 
 const CERT_PATH: &str = "/keys/typhoon.cert";
-const CHUNK: usize = 65536;
+const CHUNK: usize = 500;
 
 #[tokio::main]
 async fn main() {
@@ -28,6 +28,16 @@ async fn main() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(104_857_600);
+
+    let delay_ms: u64 = env::var("INTER_PACKET_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .map(|f| f as u64)
+        .unwrap_or(0);
+    let delay_every: usize = env::var("DELAY_EVERY_N")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
 
     // Wait for server to write the certificate
     println!("Waiting for {CERT_PATH}...");
@@ -64,10 +74,15 @@ async fn main() {
 
     let chunk = vec![0u8; CHUNK];
     let mut sent: usize = 0;
+    let mut packets: usize = 0;
     while sent < transfer_bytes {
         let n = CHUNK.min(transfer_bytes - sent);
         socket.send_bytes(&chunk[..n]).await.expect("send");
         sent += n;
+        packets += 1;
+        if delay_ms > 0 && packets % delay_every == 0 {
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        }
     }
 
     println!("Sent {sent}/{transfer_bytes} bytes — done");

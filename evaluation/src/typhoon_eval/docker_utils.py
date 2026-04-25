@@ -35,6 +35,27 @@ def _project_name(protocol_name: str) -> str:
     return f"typhoon-eval-{protocol_name.replace('_', '-')}"
 
 
+def _purge_stale_stacks(current_protocol: str = "") -> None:
+    """Force-remove leftover typhoon-eval-* containers and networks."""
+    current_prefix = f"typhoon-eval-{current_protocol.replace('_', '-')}-" if current_protocol else ""
+    try:
+        dc = DockerClient()
+        for container in dc.container.list(all=True, filters={"name": "typhoon-eval-"}):
+            if not current_prefix or not container.name.startswith(current_prefix):
+                try:
+                    dc.container.remove(container.name, force=True, volumes=True)
+                except Exception:
+                    pass
+        for net in dc.network.list(filters={"name": "typhoon-eval-"}):
+            if not current_prefix or not net.name.startswith(current_prefix):
+                try:
+                    dc.network.remove(net.name)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
 @contextlib.contextmanager
 def _overlay_env(extra: dict[str, str]) -> Generator[None, None, None]:
     """Temporarily inject extra variables into the process environment."""
@@ -80,7 +101,25 @@ def _make_client(protocol_name: str, env_file: Path, chaos: bool) -> DockerClien
     )
 
 
-def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], chaos: bool, timeout: int) -> tuple[bool, float | None]:
+def _save_logs(dc: DockerClient, protocol_name: str, log_dir: Path) -> None:
+    """Write stdout+stderr logs for each compose service to log_dir/<service>.log."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        containers = dc.compose.ps(all=True)
+    except Exception as e:
+        (log_dir / "_error.txt").write_text(f"compose ps failed: {e}\n")
+        return
+    for container in containers:
+        service = container.config.labels.get("com.docker.compose.service", container.name)
+        log_path = log_dir / f"{service}.log"
+        try:
+            raw = dc.container.logs(container.name)
+            log_path.write_text(raw if isinstance(raw, str) else raw.decode("utf-8", errors="replace"))
+        except Exception as e:
+            log_path.write_text(f"[log capture failed: {e}]\n")
+
+
+def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], chaos: bool, timeout: int, log_dir: Path | None = None) -> tuple[bool, float | None]:
     """
     Run `docker compose up` for a protocol capture.
 
@@ -97,6 +136,8 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
     always removed.
     """
     dc = _make_client(protocol_name, env_file, chaos)
+
+    _purge_stale_stacks(protocol_name)
 
     with _overlay_env(extra_env):
         timed_out = False
@@ -158,10 +199,13 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
                     time.sleep(2)
 
             if not timed_out:
+                # In chaos mode the client is killed by SIGTERM after the server exits
+                # naturally, so its exit code is 143 (not meaningful). Use server exit.
+                target = "server" if chaos else "client"
                 try:
                     for container in dc.compose.ps(all=True):
                         service = container.config.labels.get("com.docker.compose.service", "")
-                        if service == "client":
+                        if service == target:
                             success = container.state.exit_code == 0
                             break
                 except Exception:
@@ -175,6 +219,8 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
             if _up_thread is not None:
                 _up_thread.join(timeout=10)
             delivery_pct = _parse_delivery(dc, protocol_name)
+            if log_dir is not None:
+                _save_logs(dc, protocol_name, log_dir)
             try:
                 dc.compose.down(volumes=True, remove_orphans=True, quiet=True)
             except DockerException:

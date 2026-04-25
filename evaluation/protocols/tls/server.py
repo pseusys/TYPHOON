@@ -12,7 +12,7 @@ import sys
 
 observer_gw = os.environ.get("OBSERVER_GW")
 transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
-idle_timeout = int(os.environ.get("IDLE_TIMEOUT_S", 10))
+idle_timeout = int(os.environ.get("IDLE_TIMEOUT_S", 120))
 port = 9000
 
 if observer_gw:

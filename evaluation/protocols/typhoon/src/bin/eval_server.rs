@@ -21,7 +21,6 @@ use typhoon::socket::{ListenerBuilder, ServerFlowConfiguration};
 
 const CERT_PATH: &str = "/keys/typhoon.cert";
 const PORTS: [u16; 3] = [19999, 19998, 19997];
-const CHUNK: usize = 65536;
 
 #[tokio::main]
 async fn main() {
@@ -83,7 +82,7 @@ async fn main() {
     println!("TYPHOON eval server listening on ports {:?}", PORTS);
 
     let idle_timeout = Duration::from_secs(
-        var("IDLE_TIMEOUT_S").ok().and_then(|v| v.parse().ok()).unwrap_or(10),
+        var("IDLE_TIMEOUT_S").ok().and_then(|v| v.parse().ok()).unwrap_or(120),
     );
 
     let client = listener.accept().await.expect("accept");

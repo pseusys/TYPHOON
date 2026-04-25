@@ -28,6 +28,8 @@ OBSERVER_GW="" \
 python3 /app/server.py &
 SINK_PID=$!
 
+trap 'kill -TERM "${SINK_PID}" 2>/dev/null; wait "${SINK_PID}"; exit' SIGTERM SIGINT
+
 (
     until [[ -f /keys/awg_client.pub ]]; do sleep 0.5; done
     awg set awg0 peer "$(<  /keys/awg_client.pub)" allowed-ips 10.100.0.2/32

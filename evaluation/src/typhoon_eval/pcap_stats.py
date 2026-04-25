@@ -24,9 +24,10 @@ from scapy.utils import PcapReader
 CLIENT_IP = "172.20.0.10"
 SERVER_IP = "172.21.0.10"
 
-# Packets with IP payload larger than this in the C→S direction mark the end
-# of the handshake phase and the start of bulk data transfer.
-_HANDSHAKE_THRESHOLD = 500
+# All packets captured within this many seconds of the first packet are
+# considered part of the handshake phase (covers decoy traffic, obfuscated
+# handshakes, and key-exchange rounds for all supported protocols).
+_HANDSHAKE_WINDOW_S = 5.0
 
 
 def _entropy(data: bytes) -> float:
@@ -35,6 +36,13 @@ def _entropy(data: bytes) -> float:
         return 0.0
     counts = Counter(data)
     n = len(data)
+    return -sum((c / n) * math.log2(c / n) for c in counts.values())
+
+
+def _size_entropy(sizes: np.ndarray) -> float:
+    """Shannon entropy of the packet-size distribution in bits."""
+    counts = Counter(int(s) for s in sizes)
+    n = len(sizes)
     return -sum((c / n) * math.log2(c / n) for c in counts.values())
 
 
@@ -56,8 +64,8 @@ def _stats_for(
     Compute all metrics for a list of (timestamp, ip_size, app_payload) records.
     transfer_bytes is the application payload the client intended to send;
     used only to compute overhead_ratio (None if unknown).
-    handshake_end_ts is the timestamp of the first large C→S packet;
-    used to split entropy into handshake vs data phases.
+    handshake_end_ts is the end of the handshake window (first-packet ts +
+    _HANDSHAKE_WINDOW_S); used to split entropy into handshake vs data phases.
     """
     if not records:
         return {}
@@ -79,15 +87,16 @@ def _stats_for(
         "byte_count":   int(sz_arr.sum()),
         "transmission_time_s": float(ts_arr.max() - ts_arr.min()),
         "packet_size": {
-            "mean": float(sz_arr.mean()),
-            "std":  float(sz_arr.std()),
-            "min":  int(sz_arr.min()),
-            "max":  int(sz_arr.max()),
-            "p25":  float(np.percentile(sz_arr, 25)),
-            "p50":  float(np.percentile(sz_arr, 50)),
-            "p75":  float(np.percentile(sz_arr, 75)),
-            "p95":  float(np.percentile(sz_arr, 95)),
-            "p99":  float(np.percentile(sz_arr, 99)),
+            "mean":    float(sz_arr.mean()),
+            "std":     float(sz_arr.std()),
+            "min":     int(sz_arr.min()),
+            "max":     int(sz_arr.max()),
+            "p25":     float(np.percentile(sz_arr, 25)),
+            "p50":     float(np.percentile(sz_arr, 50)),
+            "p75":     float(np.percentile(sz_arr, 75)),
+            "p95":     float(np.percentile(sz_arr, 95)),
+            "p99":     float(np.percentile(sz_arr, 99)),
+            "entropy": _size_entropy(sz_arr),
         },
         "iat_ms": {
             "mean": float(iats_ms.mean()) if len(iats_ms) else 0.0,
@@ -135,12 +144,8 @@ def analyze_pcap(path: Path, transfer_bytes: int | None = None) -> dict[str, dic
 
             bucket.append((float(pkt.time), len(ip), _app_payload(pkt)))
 
-    # Handshake boundary: timestamp of the first large C→S packet.
-    handshake_end_ts: float | None = None
-    for ts, sz, _ in c2s:
-        if sz > _HANDSHAKE_THRESHOLD:
-            handshake_end_ts = ts
-            break
+    all_ts = [ts for ts, _, _ in c2s] + [ts for ts, _, _ in s2c]
+    handshake_end_ts: float | None = (min(all_ts) + _HANDSHAKE_WINDOW_S) if all_ts else None
 
     all_records = c2s + s2c
     return {

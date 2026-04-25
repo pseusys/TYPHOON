@@ -56,5 +56,7 @@ SINK_PID=$!
 openvpn --config /tmp/server.conf &
 OVP_PID=$!
 
+trap 'kill -TERM "${SINK_PID}" 2>/dev/null; wait "${SINK_PID}"; kill "${OVP_PID}" 2>/dev/null; exit' SIGTERM SIGINT
+
 wait "${SINK_PID}"
 kill "${OVP_PID}" 2>/dev/null || true

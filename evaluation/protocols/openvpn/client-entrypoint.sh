@@ -29,6 +29,8 @@ EOF
 openvpn --config /tmp/client.conf &
 OVP_PID=$!
 
+trap 'kill "${OVP_PID}" 2>/dev/null; exit 0' SIGTERM SIGINT
+
 # Wait for VPN tunnel to assign an IP on tun0
 for i in {1..30}; do
     if ip addr show tun0 2>/dev/null | grep -q "10\.200\.0\."; then break; fi

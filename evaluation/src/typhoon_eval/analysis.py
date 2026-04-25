@@ -47,7 +47,7 @@ def main(run_id: str | None) -> None:
     """TYPHOON evaluation — analyse pcap captures from a capture run."""
 
     if run_id:
-        run_dir = CAPTURES_ROOT / run_id
+        run_dir = CAPTURES_ROOT / f"run_{run_id}"
         if not run_dir.is_dir():
             console.print(f"[red]Run not found:[/red] {run_dir}")
             sys.exit(1)
@@ -106,7 +106,14 @@ def main(run_id: str | None) -> None:
     out_path.write_text(json.dumps(all_stats, indent=2))
     console.print(f"\nStats → [dim]{out_path}[/dim]")
 
-    _print_summary(all_stats)
+    _print_summary(all_stats, metadata, cfg)
+
+
+def _fmt_delivery(v: float | None) -> str:
+    if v is None:
+        return "[dim]—[/dim]"
+    color = "green" if v >= 99.9 else ("yellow" if v >= 80.0 else "red")
+    return f"[{color}]{v:.1f}%[/{color}]"
 
 
 def _fmt_entropy(e: float | None) -> str:
@@ -123,18 +130,32 @@ def _fmt_pct(v: float | None) -> str:
     return f"[{color}]{v:+.1%}[/{color}]"
 
 
-def _print_summary(all_stats: dict[str, dict]) -> None:
-    table = Table(title="Analysis summary", show_lines=True)
-    table.add_column("Capture", style="cyan", no_wrap=True)
-    table.add_column("Dir", style="dim")
-    table.add_column("Pkts", justify="right", style="dim")
-    table.add_column("Time (s)", justify="right", style="dim")
-    table.add_column("Size p50/p99 (B)", justify="right")
-    table.add_column("IAT p50/p95 (ms)", justify="right", style="dim")
-    table.add_column("Entropy\nall / hs / data", justify="right")
-    table.add_column("Overhead", justify="right")
+def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> None:
+    chaos = cfg.get("chaos", False)
+    injected_delay_s: float = cfg.get("injected_delay_s", 0.0)
+
+    if chaos:
+        title = "Analysis summary (chaos mode)"
+        table = Table(title=title, show_lines=True)
+        table.add_column("Capture", style="cyan", no_wrap=True)
+        table.add_column("Dir", style="dim")
+        table.add_column("Pkts", justify="right", style="dim")
+        table.add_column("Delivery%", justify="right")
+        table.add_column("IAT p5/p50/p95 (ms)", justify="right", style="dim")
+        table.add_column("Entropy\nall / hs / data / size", justify="right")
+        table.add_column("Size p50/p99 (B)", justify="right")
+    else:
+        title = "Analysis summary"
+        table = Table(title=title, show_lines=True)
+        table.add_column("Capture", style="cyan", no_wrap=True)
+        table.add_column("Dir", style="dim")
+        table.add_column("Pkts", justify="right", style="dim")
+        table.add_column("Eff.Time (s)", justify="right")
+        table.add_column("Throughput", justify="right")
+        table.add_column("Overhead", justify="right")
 
     for name, dirs in sorted(all_stats.items()):
+        proto_key = name.removesuffix("_chaos")
         first = True
         for direction in ("c2s", "s2c", "all"):
             s = dirs.get(direction, {})
@@ -146,27 +167,50 @@ def _print_summary(all_stats: dict[str, dict]) -> None:
 
             p50 = f"{ps.get('p50', 0):.0f}" if ps else "—"
             p99 = f"{ps.get('p99', 0):.0f}" if ps else "—"
+            ip5  = f"{iat.get('p5',  0):.2f}" if iat else "—"
             ip50 = f"{iat.get('p50', 0):.2f}" if iat else "—"
             ip95 = f"{iat.get('p95', 0):.2f}" if iat else "—"
 
-            ent_str = (
-                f"{_fmt_entropy(ent.get('all'))} / "
-                f"{_fmt_entropy(ent.get('handshake'))} / "
-                f"{_fmt_entropy(ent.get('data'))}"
-            )
+            byte_count = s.get("byte_count", 0)
 
-            overhead = _fmt_pct(s.get("overhead_ratio"))
-
-            table.add_row(
-                name if first else "",
-                direction,
-                str(s.get("packet_count", 0)),
-                f"{s.get('transmission_time_s', 0):.1f}",
-                f"{p50} / {p99}",
-                f"{ip50} / {ip95}",
-                ent_str,
-                overhead,
-            )
+            if chaos:
+                delivery_pct: float | None = metadata.get(proto_key, {}).get("delivery_pct")
+                ent_str = (
+                    f"{_fmt_entropy(ent.get('all'))} / "
+                    f"{_fmt_entropy(ent.get('handshake'))} / "
+                    f"{_fmt_entropy(ent.get('data'))} / "
+                    f"{_fmt_entropy(ps.get('entropy'))}"
+                )
+                table.add_row(
+                    name if first else "",
+                    direction,
+                    str(s.get("packet_count", 0)),
+                    _fmt_delivery(delivery_pct) if first else "",
+                    f"{ip5} / {ip50} / {ip95}",
+                    ent_str,
+                    f"{p50} / {p99}",
+                )
+            else:
+                meta_eff = metadata.get(proto_key, {}).get("effective_time_s")
+                if meta_eff is not None:
+                    eff_s = float(meta_eff)
+                else:
+                    t_s = s.get("transmission_time_s", 0)
+                    eff_s = max(t_s - injected_delay_s, 0.0) if injected_delay_s > 0 else t_s
+                if eff_s > 0 and byte_count > 0:
+                    mbps = byte_count * 8 / eff_s / 1_000_000
+                    throughput = f"{mbps:.1f} Mbps"
+                else:
+                    throughput = "[dim]—[/dim]"
+                overhead = _fmt_pct(s.get("overhead_ratio"))
+                table.add_row(
+                    name if first else "",
+                    direction,
+                    str(s.get("packet_count", 0)),
+                    f"{eff_s:.1f}" if eff_s > 0 else "[dim]—[/dim]",
+                    throughput,
+                    overhead,
+                )
             first = False
 
     console.print(table)
