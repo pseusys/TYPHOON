@@ -7,7 +7,7 @@
 //! A [`DecoyFactory`] is a type-erased `Arc<dyn Fn(…) -> Box<dyn DecoyProvider>>` so that
 //! different flows or users can hold different concrete provider types at runtime.
 //! Use [`decoy_factory::<T, AE, DP>()`](decoy_factory) to wrap a concrete type, or
-//! [`random_decoy_factory()`] for the default behaviour (random selection per invocation).
+//! [`random_decoy_factory()`] for the default behavior (random selection per invocation).
 mod common;
 mod heavy;
 mod noisy;
@@ -25,6 +25,8 @@ pub use simple::SimpleDecoyProvider;
 pub use smooth::SmoothDecoyProvider;
 pub use sparse::SparseDecoyProvider;
 
+use log::info;
+
 use crate::settings::Settings;
 use crate::tailor::IdentityType;
 use crate::utils::random::get_rng;
@@ -40,7 +42,10 @@ where
     AE: AsyncExecutor + 'static,
     DP: DecoyCommunicationMode<T, AE> + 'static,
 {
-    Arc::new(|manager, settings, identity| Box::new(DP::new(manager, settings, identity)))
+    Arc::new(|manager, settings, identity| {
+        info!("decoy provider: {}", DP::name());
+        Box::new(DP::new(manager, settings, identity))
+    })
 }
 
 /// Factory that randomly selects one of the five built-in decoy providers per invocation.
@@ -50,11 +55,26 @@ where
     AE: AsyncExecutor + 'static,
 {
     Arc::new(|manager, settings, identity| match get_rng().gen_range(0u8..5) {
-        0 => Box::new(SimpleDecoyProvider::new(manager, settings, identity)),
-        1 => Box::new(SparseDecoyProvider::new(manager, settings, identity)),
-        2 => Box::new(NoisyDecoyProvider::new(manager, settings, identity)),
-        3 => Box::new(SmoothDecoyProvider::new(manager, settings, identity)),
-        4 => Box::new(HeavyDecoyProvider::new(manager, settings, identity)),
+        0 => {
+            info!("decoy provider: {}", <SimpleDecoyProvider as DecoyCommunicationMode<T, AE>>::name());
+            Box::new(SimpleDecoyProvider::new(manager, settings, identity))
+        }
+        1 => {
+            info!("decoy provider: {}", <SparseDecoyProvider<T, AE> as DecoyCommunicationMode<T, AE>>::name());
+            Box::new(SparseDecoyProvider::new(manager, settings, identity))
+        }
+        2 => {
+            info!("decoy provider: {}", <NoisyDecoyProvider<T, AE>  as DecoyCommunicationMode<T, AE>>::name());
+            Box::new(NoisyDecoyProvider::new(manager, settings, identity))
+        }
+        3 => {
+            info!("decoy provider: {}", <SmoothDecoyProvider<T, AE> as DecoyCommunicationMode<T, AE>>::name());
+            Box::new(SmoothDecoyProvider::new(manager, settings, identity))
+        }
+        4 => {
+            info!("decoy provider: {}", <HeavyDecoyProvider<T, AE>  as DecoyCommunicationMode<T, AE>>::name());
+            Box::new(HeavyDecoyProvider::new(manager, settings, identity))
+        }
         _ => unreachable!(),
     })
 }

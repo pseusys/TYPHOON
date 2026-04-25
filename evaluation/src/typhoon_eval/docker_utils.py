@@ -85,6 +85,38 @@ def _parse_delivery(dc: DockerClient, protocol_name: str) -> float | None:
     return None
 
 
+def _parse_timing(dc: DockerClient, protocol_name: str) -> tuple[float | None, float | None]:
+    """
+    Extract transfer_time_s from the client log and recv_time_s from the server log.
+    Both are printed as 'transfer_time_s=<float>' / 'recv_time_s=<float>'.
+    """
+    client_name = f"{_project_name(protocol_name)}-client-1"
+    server_name = f"{_project_name(protocol_name)}-server-1"
+
+    transfer_time_s: float | None = None
+    recv_time_s: float | None = None
+
+    try:
+        logs: str = dc.container.logs(client_name)
+        for line in logs.splitlines():
+            m = re.search(r"transfer_time_s=([\d.]+)", line)
+            if m:
+                transfer_time_s = float(m.group(1))
+    except Exception:
+        pass
+
+    try:
+        logs = dc.container.logs(server_name)
+        for line in logs.splitlines():
+            m = re.search(r"recv_time_s=([\d.]+)", line)
+            if m:
+                recv_time_s = float(m.group(1))
+    except Exception:
+        pass
+
+    return transfer_time_s, recv_time_s
+
+
 def _make_client(protocol_name: str, env_file: Path, chaos: bool) -> DockerClient:
     """
     Build a DockerClient for one protocol run.
@@ -219,6 +251,7 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
             if _up_thread is not None:
                 _up_thread.join(timeout=10)
             delivery_pct = _parse_delivery(dc, protocol_name)
+            transfer_time_s, recv_time_s = _parse_timing(dc, protocol_name)
             if log_dir is not None:
                 _save_logs(dc, protocol_name, log_dir)
             try:
@@ -226,4 +259,4 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
             except DockerException:
                 pass
 
-    return success, delivery_pct
+    return success, delivery_pct, transfer_time_s, recv_time_s

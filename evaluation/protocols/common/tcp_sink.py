@@ -14,6 +14,7 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 
 observer_gw = os.environ.get("OBSERVER_GW")
 return_subnet = os.environ.get("RETURN_SUBNET", "172.20.0.0/24")
@@ -45,12 +46,17 @@ print(f"TCP sink ready on :{port}", flush=True)
 conn, _ = srv.accept()
 conn.settimeout(idle_timeout)
 
+first_byte_time = None
+last_byte_time = None
 try:
     while received < transfer_bytes:
         data = conn.recv(65536)
         if not data:
             break
+        if first_byte_time is None:
+            first_byte_time = time.monotonic()
         received += len(data)
+        last_byte_time = time.monotonic()
 except (socket.timeout, OSError):
     pass
 finally:
@@ -61,4 +67,6 @@ finally:
 
 pct = received / transfer_bytes * 100
 print(f"received {received}/{transfer_bytes} bytes ({pct:.1f}%)", flush=True)
+if first_byte_time is not None and last_byte_time is not None:
+    print(f"recv_time_s={last_byte_time - first_byte_time:.3f}", flush=True)
 sys.exit(0)

@@ -5,13 +5,14 @@ mod tests;
 use std::cmp::min;
 use std::ops::AddAssign;
 
+use log::info;
 use rand::Rng;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
 
 use crate::bytes::{ByteBufferMut, DynamicByteBuffer};
 use crate::flow::error::FlowControllerError;
-use crate::settings::{Settings, keys};
+use crate::settings::{Settings, consts, keys};
 use crate::utils::random::get_rng;
 use crate::utils::sync::AsyncExecutor;
 use crate::utils::unix_timestamp_ms;
@@ -252,24 +253,47 @@ impl FlowConfig {
             } else {
                 rng.gen_range(min_len..=max_len)
             };
-            let fields = (0..len).map(|_| FieldTypeHolder::U8(FieldType::Random)).collect();
+            let fields = (0..len).map(|_| {
+                FieldTypeHolder::U8(match rng.gen_range(0u8..5) {
+                    0 => FieldType::Random,
+                    1 => FieldType::Constant { value: rng.r#gen::<u8>() },
+                    2 => FieldType::Volatile {
+                        value: rng.r#gen::<u8>(),
+                        change_probability: rng.gen_range(0.01..=0.20),
+                    },
+                    3 => {
+                        let switch_timeout = rng.gen_range(1_000u64..=30_000);
+                        FieldType::Switching {
+                            value: rng.r#gen::<u8>(),
+                            next_switch: unix_timestamp_ms() + switch_timeout as u128,
+                            switch_timeout,
+                        }
+                    }
+                    4 => FieldType::Incremental { value: rng.r#gen::<u8>() },
+                    _ => unreachable!(),
+                    })
+                }).collect();
             FakeHeaderConfig::new(fields)
         } else {
             FakeHeaderConfig::new(vec![])
         };
 
-        let fake_body_mode = if rng.r#gen::<bool>() {
-            let min_len = settings.get(&keys::FAKE_BODY_LENGTH_MIN) as usize;
-            let max_len = settings.get(&keys::FAKE_BODY_LENGTH_MAX) as usize;
-            FakeBodyMode::Random {
-                min_length: min_len,
-                max_length: max_len,
-                service: false,
-            }
-        } else {
+        let min_len = settings.get(&keys::FAKE_BODY_LENGTH_MIN) as usize;
+        let max_len = settings.get(&keys::FAKE_BODY_LENGTH_MAX) as usize;
+        let service_weight = settings.get(&keys::FAKE_BODY_SERVICE_PROBABILITY);
+        let total_weight = 3.0 + service_weight;
+        let roll = rng.gen_range(0.0..total_weight);
+        let fake_body_mode = if roll < 1.0 {
             FakeBodyMode::Empty
+        } else if roll < 2.0 {
+            FakeBodyMode::Random { min_length: min_len, max_length: max_len, service: false }
+        } else if roll < 3.0 {
+            FakeBodyMode::Constant { packet_length: consts::DEFAULT_TYPHOON_MTU_LENGTH }
+        } else {
+            FakeBodyMode::Random { min_length: min_len, max_length: max_len, service: true }
         };
 
+        info!("flow_config: fake_body={:?}, fake_header_len={}", fake_body_mode, fake_header_mode.len());
         Self {
             fake_body_mode,
             fake_header_mode,

@@ -37,6 +37,8 @@ for attempt in range(retries):
             s.settimeout(None)
             sent = 0
             packets = 0
+            total_sleep = 0.0
+            transfer_start = time.monotonic()
             while sent < transfer_bytes:
                 n = min(chunk_size, transfer_bytes - sent)
                 s.sendall(chunk[:n])
@@ -44,6 +46,8 @@ for attempt in range(retries):
                 packets += 1
                 if delay_ms > 0 and packets % delay_every == 0:
                     time.sleep(delay_ms / 1000)
+                    total_sleep += delay_ms / 1000
+            transfer_time_s = time.monotonic() - transfer_start - total_sleep
             try:
                 s.shutdown(socket.SHUT_WR)
                 s.settimeout(120)
@@ -52,6 +56,7 @@ for attempt in range(retries):
             except OSError:
                 pass
         print(f"sent {sent} bytes", flush=True)
+        print(f"transfer_time_s={transfer_time_s:.3f}", flush=True)
         sys.exit(0)
     except (ConnectionRefusedError, OSError):
         if attempt < retries - 1:

@@ -142,7 +142,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
         table.add_column("Pkts", justify="right", style="dim")
         table.add_column("Delivery%", justify="right")
         table.add_column("IAT p5/p50/p95 (ms)", justify="right", style="dim")
-        table.add_column("Entropy\nall / hs / data / size", justify="right")
+        table.add_column("Entropy\nall / hs / data / size / iat", justify="right")
         table.add_column("Size p50/p99 (B)", justify="right")
     else:
         title = "Analysis summary"
@@ -179,7 +179,8 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                     f"{_fmt_entropy(ent.get('all'))} / "
                     f"{_fmt_entropy(ent.get('handshake'))} / "
                     f"{_fmt_entropy(ent.get('data'))} / "
-                    f"{_fmt_entropy(ps.get('entropy'))}"
+                    f"{_fmt_entropy(ps.get('entropy'))} / "
+                    f"{_fmt_entropy(iat.get('entropy'))}"
                 )
                 table.add_row(
                     name if first else "",
@@ -191,9 +192,13 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                     f"{p50} / {p99}",
                 )
             else:
-                meta_eff = metadata.get(proto_key, {}).get("effective_time_s")
-                if meta_eff is not None:
-                    eff_s = float(meta_eff)
+                meta = metadata.get(proto_key, {})
+                if meta.get("transfer_time_s") is not None:
+                    eff_s = float(meta["transfer_time_s"])
+                elif meta.get("recv_time_s") is not None:
+                    eff_s = float(meta["recv_time_s"])
+                elif meta.get("effective_time_s") is not None:
+                    eff_s = float(meta["effective_time_s"])
                 else:
                     t_s = s.get("transmission_time_s", 0)
                     eff_s = max(t_s - injected_delay_s, 0.0) if injected_delay_s > 0 else t_s

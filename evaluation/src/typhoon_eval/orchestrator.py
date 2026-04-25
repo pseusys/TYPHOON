@@ -43,10 +43,10 @@ def _run_one(
     delay_every: int,
     captures_dir: Path,
     log_dir: Path,
-) -> tuple[bool, str, float | None]:
+) -> tuple[bool, str, float | None, float | None, float | None]:
     """
     Run a single protocol capture.
-    Returns (success, error_message, delivery_pct).
+    Returns (success, error_message, delivery_pct, transfer_time_s, recv_time_s).
     """
     env_file = ENV_DIR / f".env.{protocol.name}"
     if not env_file.exists():
@@ -75,7 +75,7 @@ def _run_one(
         "DELAY_EVERY_N": str(delay_every),
     }
 
-    success, delivery_pct = compose_up(
+    success, delivery_pct, transfer_time_s, recv_time_s = compose_up(
         protocol_name=protocol.name,
         env_file=env_file,
         extra_env=extra_env,
@@ -87,11 +87,11 @@ def _run_one(
     pcap = captures_dir / f"{protocol.name}{suffix}.pcap"
     if success:
         if not pcap.exists():
-            return False, "observer did not write pcap", None
+            return False, "observer did not write pcap", None, None, None
         if pcap.stat().st_size < 100:
-            return False, f"pcap is empty ({pcap.stat().st_size} bytes)", None
+            return False, f"pcap is empty ({pcap.stat().st_size} bytes)", None, None, None
 
-    return success, "" if success else "non-zero exit or timeout", delivery_pct
+    return success, "" if success else "non-zero exit or timeout", delivery_pct, transfer_time_s, recv_time_s
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
@@ -199,7 +199,7 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
                 )
                 started_at = datetime.datetime.now(datetime.UTC)
 
-                success, error, delivery_pct = _run_one(
+                success, error, delivery_pct, transfer_time_s, recv_time_s = _run_one(
                     protocol=protocol,
                     chaos=chaos,
                     timeout=timeout,
@@ -211,12 +211,12 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
                 )
 
                 elapsed = (datetime.datetime.now(datetime.UTC) - started_at).total_seconds()
-                effective_time_s = round(elapsed - injected_delay_s, 1) if injected_delay_s > 0 else None
                 run_results[protocol.name] = {
                     "success": success,
                     "error": error,
                     "elapsed_s": round(elapsed, 1),
-                    "effective_time_s": effective_time_s,
+                    "transfer_time_s": round(transfer_time_s, 3) if transfer_time_s is not None else None,
+                    "recv_time_s": round(recv_time_s, 3) if recv_time_s is not None else None,
                     "chaos": chaos,
                     "transfer_bytes": transfer_bytes,
                     "delivery_pct": delivery_pct,
@@ -239,7 +239,7 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
     _purge_stale_stacks()
 
     # Summary table
-    show_eff = injected_delay_s > 0
+    show_eff = True
     table = Table(title="Capture summary", show_lines=True)
     table.add_column("Protocol", style="cyan", no_wrap=True)
     table.add_column("Transport", style="dim")
@@ -264,8 +264,8 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
             delivery = f"[red]{pct:.1f}%[/red]"
         row = [p.name, p.transport, status, delivery, str(r["elapsed_s"])]
         if show_eff:
-            eff = r.get("effective_time_s")
-            row.append(str(eff) if eff is not None else "[dim]—[/dim]")
+            eff = r.get("transfer_time_s")
+            row.append(f"{eff:.3f}" if eff is not None else "[dim]—[/dim]")
         table.add_row(*row)
         if r["success"]:
             ok += 1

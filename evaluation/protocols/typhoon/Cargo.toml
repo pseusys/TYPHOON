@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-typhoon = { path = "../typhoon", features = ["client", "server", "tokio", "fast_software"] }
-tokio   = { version = "^1", features = ["rt-multi-thread", "macros", "time"] }
+typhoon     = { path = "../typhoon", features = ["client", "server", "tokio", "fast_software"] }
+tokio       = { version = "^1", features = ["rt-multi-thread", "macros", "time"] }
+env_logger  = "^0.11"
+log         = "^0.4"
 
 [[bin]]
 name = "eval-server"

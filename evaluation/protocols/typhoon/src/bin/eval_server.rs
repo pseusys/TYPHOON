@@ -5,17 +5,19 @@
 /// accepts one connection and receives TRANSFER_BYTES bytes in chunks, then exits 0.
 use std::env::var;
 use std::net::SocketAddr;
-use std::process;
+use std::process::exit;
 use std::process::Command;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use env_logger::{Builder, Env};
+use log::info;
 use tokio::time::timeout;
 
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{DefaultExecutor, DefaultServerConnectionHandler};
-use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
+use typhoon::flow::FlowConfig;
 use typhoon::settings::SettingsBuilder;
 use typhoon::socket::{ListenerBuilder, ServerFlowConfiguration};
 
@@ -24,6 +26,8 @@ const PORTS: [u16; 3] = [19999, 19998, 19997];
 
 #[tokio::main]
 async fn main() {
+    Builder::from_env(Env::default().default_filter_or("typhoon=debug")).init();
+
     // Route setup: add return route to client subnet via observer gateway
     if let Ok(gw) = var("OBSERVER_GW") {
         let _ = Command::new("ip")
@@ -36,6 +40,11 @@ async fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(104_857_600);
 
+    let idle_timeout_s: u64 = var("IDLE_TIMEOUT_S").ok().and_then(|v| v.parse().ok()).unwrap_or(120);
+    let cert_host = var("CERT_HOST").unwrap_or_else(|_| "172.21.0.10".to_string());
+
+    info!("config: transfer_bytes={transfer_bytes}, idle_timeout_s={idle_timeout_s}, cert_host={cert_host}, ports={PORTS:?}");
+
     let settings = Arc::new(
         SettingsBuilder::<DefaultExecutor>::new()
             .build()
@@ -44,10 +53,9 @@ async fn main() {
 
     // The certificate must contain the server's externally reachable address so the client
     // knows where to connect.
-    let cert_ip = var("CERT_HOST").unwrap_or_else(|_| "172.21.0.10".to_string());
     let cert_addrs: Vec<SocketAddr> = PORTS
         .iter()
-        .map(|p| format!("{cert_ip}:{p}").parse().unwrap())
+        .map(|p| format!("{cert_host}:{p}").parse().unwrap())
         .collect();
     let bind_addrs: Vec<SocketAddr> = PORTS
         .iter()
@@ -62,7 +70,7 @@ async fn main() {
         .expect("save cert to /keys/typhoon.cert");
     println!("Certificate saved to {CERT_PATH}");
 
-    let flow_config = FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![]));
+    let flow_config = FlowConfig::random(&settings);
     let flows: Vec<ServerFlowConfiguration<StaticByteBuffer, DefaultExecutor>> = bind_addrs
         .into_iter()
         .map(|addr| ServerFlowConfiguration::with_address(flow_config.clone(), addr))
@@ -81,18 +89,22 @@ async fn main() {
     listener.start().await;
     println!("TYPHOON eval server listening on ports {:?}", PORTS);
 
-    let idle_timeout = Duration::from_secs(
-        var("IDLE_TIMEOUT_S").ok().and_then(|v| v.parse().ok()).unwrap_or(120),
-    );
+    let idle_timeout = Duration::from_secs(idle_timeout_s);
 
     let client = listener.accept().await.expect("accept");
     println!("Client connected");
 
     let mut received: usize = 0;
+    let mut first_byte_time: Option<Instant> = None;
+    let mut last_byte_time: Option<Instant> = None;
     loop {
         match timeout(idle_timeout, client.receive_bytes()).await {
             Ok(Ok(data)) => {
+                if first_byte_time.is_none() {
+                    first_byte_time = Some(Instant::now());
+                }
                 received += data.len();
+                last_byte_time = Some(Instant::now());
                 if received >= transfer_bytes {
                     break;
                 }
@@ -104,5 +116,8 @@ async fn main() {
 
     let pct = received as f64 / transfer_bytes as f64 * 100.0;
     println!("Received {received}/{transfer_bytes} bytes ({pct:.1}%) — done");
-    process::exit(0);
+    if let (Some(first), Some(last)) = (first_byte_time, last_byte_time) {
+        println!("recv_time_s={:.3}", last.duration_since(first).as_secs_f64());
+    }
+    exit(0);
 }

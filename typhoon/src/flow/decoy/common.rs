@@ -9,7 +9,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use log::{debug, warn};
+use log::{debug, info, warn};
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand_distr::{Distribution, Exp, Normal};
@@ -137,6 +137,8 @@ impl DecoyFeatureConfig {
             Some(generate_random_fake_header(min_len, max_len))
         };
 
+        info!("decoy feature config: maintenance={maintenance_mode:?}, replication={replication_mode:?}, replication_prob={replication_probability:.4}, subheader={subheader_mode:?}");
+
         Self {
             maintenance_mode,
             replication_mode,
@@ -238,6 +240,13 @@ pub trait DecoyProvider: Send + Sync {
 /// Construction contract for decoy providers. Extends `DecoyProvider` so that any
 /// `DecoyCommunicationMode` can be stored as `Box<dyn DecoyProvider>`.
 pub trait DecoyCommunicationMode<T: IdentityType + Clone, AE: AsyncExecutor>: DecoyProvider + Sized {
+    /// Short name of this provider, derived from the type name (no path, no generics).
+    fn name() -> &'static str {
+        let full = std::any::type_name::<Self>();
+        let without_generics = full.split('<').next().unwrap_or(full);
+        without_generics.split("::").last().unwrap_or(without_generics)
+    }
+
     /// Create a new decoy provider with the given manager, settings, and identity.
     fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T) -> Self;
 }
