@@ -431,7 +431,7 @@ Even though replication is only applied to the decoy packets, it does not result
 Also note that only the decoy packet "bodies" are replicated, while [fake headers](#fake-header) and [fake bodies](#fake-body) are generated anew; this represents lower-level protocol headers.
 
 Packet duplicates are sent with a probability within `TYPHOON_DECOY_REPLICATION_PROBABILITY_MIN` and `TYPHOON_DECOY_REPLICATION_PROBABILITY_MAX`, selected upon a flow manager initialization.
-After the first duplication, the subsequent duplication probability is multiplied by `TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE`, becoming effectively lower.
+After the first duplication, the subsequent duplication probability is divided by `TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE`, becoming effectively lower.
 Packet duplicates are sent within `TYPHOON_DECOY_REPLICATION_DELAY_MIN` and `TYPHOON_DECOY_REPLICATION_DELAY_MAX` milliseconds since the original packet departure.
 
 The replication mode can have these values:
@@ -667,11 +667,11 @@ For the packets going from client to server, tailors are encrypted using the fol
 3. Client performs X25519 key exchange using `EphSecKey` and `OPK`, deriving a shared secret (`ShrSec`).
 4. Client obfuscates the `EphPubKey` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OPK` and `Nnc`), producing `EphPubKeyObf`.
 5. Client encrypts the `Tailor` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `TailorEnc`.
-6. Client constructs the encrypted tail by concatenating `Nnc`, `EphPubKeyObf` and `TailorEnc`.
+6. Client constructs the encrypted tail by concatenating `TailorEnc`, `EphPubKeyObf` and `Nnc`.
 
 The tailors are decrypted using the following steps:
 
-0. Server extracts `Nnc`, `EphPubKeyObf` and `TailorEnc` from the client message.
+0. Server extracts `TailorEnc`, `EphPubKeyObf` and `Nnc` from the client message.
 1. Server deobfuscates the `EphPubKeyObf` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OPK` and `Nnc`), producing `EphPubKey`.
 2. Server performs X25519 key exchange using `EphPubKey` and `OSK`, deriving a shared secret (`ShrSec`).
 3. Server decrypts the `TailorEnc` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `Tailor`.

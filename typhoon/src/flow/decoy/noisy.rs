@@ -32,7 +32,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> NoisyDecoyProvider<T, AE> {
         let rate = base_rate * quietness * (-state.packet_rate / state.reference_rate).exp();
 
         let delay = if rate > 0.0 {
-            exponential_variance(rate * (1.0 + state.packet_rate / state.reference_rate))
+            exponential_variance(rate * (1.0 + state.packet_rate / state.reference_rate)) * 1000.0
         } else {
             delay_default as f64
         };

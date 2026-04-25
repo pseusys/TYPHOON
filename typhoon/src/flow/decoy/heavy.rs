@@ -33,7 +33,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> HeavyDecoyProvider<T, AE> {
         let rate = base_rate * quietness.powf(quietness_factor) * (-state.packet_rate / state.reference_rate).exp();
 
         let delay = if rate > 0.0 {
-            exponential_variance(rate)
+            exponential_variance(rate) * 1000.0
         } else {
             delay_default as f64
         };

@@ -36,14 +36,23 @@ def _entropy(data: bytes) -> float:
         return 0.0
     counts = Counter(data)
     n = len(data)
-    return -sum((c / n) * math.log2(c / n) for c in counts.values())
+    return max(0.0, -sum((c / n) * math.log2(c / n) for c in counts.values()))
 
 
 def _size_entropy(sizes: np.ndarray) -> float:
-    """Shannon entropy of the packet-size distribution in bits."""
+    """Normalized Shannon entropy of the packet-size distribution, scaled to [0, 8].
+
+    Divides raw entropy by log2(n_unique_sizes) so the result is always in [0, 8]
+    regardless of how many distinct sizes appear.  A value of 8 means the observed
+    sizes are as uniformly distributed as possible; 0 means all packets share one size.
+    """
     counts = Counter(int(s) for s in sizes)
+    n_unique = len(counts)
+    if n_unique <= 1:
+        return 0.0
     n = len(sizes)
-    return -sum((c / n) * math.log2(c / n) for c in counts.values())
+    raw = -sum((c / n) * math.log2(c / n) for c in counts.values())
+    return raw / math.log2(n_unique) * 8.0
 
 
 def _app_payload(pkt: Packet) -> bytes:
@@ -101,6 +110,7 @@ def _stats_for(
         "iat_ms": {
             "mean": float(iats_ms.mean()) if len(iats_ms) else 0.0,
             "std":  float(iats_ms.std())  if len(iats_ms) else 0.0,
+            "p5":   float(np.percentile(iats_ms,  5)) if len(iats_ms) else 0.0,
             "p50":  float(np.percentile(iats_ms, 50)) if len(iats_ms) else 0.0,
             "p95":  float(np.percentile(iats_ms, 95)) if len(iats_ms) else 0.0,
             "p99":  float(np.percentile(iats_ms, 99)) if len(iats_ms) else 0.0,
