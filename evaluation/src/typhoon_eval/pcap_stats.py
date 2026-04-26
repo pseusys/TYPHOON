@@ -100,6 +100,7 @@ def _stats_for(
             "std":     float(sz_arr.std()),
             "min":     int(sz_arr.min()),
             "max":     int(sz_arr.max()),
+            "p5":      float(np.percentile(sz_arr,  5)),
             "p25":     float(np.percentile(sz_arr, 25)),
             "p50":     float(np.percentile(sz_arr, 50)),
             "p75":     float(np.percentile(sz_arr, 75)),

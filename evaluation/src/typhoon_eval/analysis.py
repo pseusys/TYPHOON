@@ -143,7 +143,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
         table.add_column("Delivery%", justify="right")
         table.add_column("IAT p5/p50/p95 (ms)", justify="right", style="dim")
         table.add_column("Entropy\nall / hs / data / size / iat", justify="right")
-        table.add_column("Size p50/p99 (B)", justify="right")
+        table.add_column("Size p5/p50/p99 (B)", justify="right")
     else:
         title = "Analysis summary"
         table = Table(title=title, show_lines=True)
@@ -153,6 +153,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
         table.add_column("Eff.Time (s)", justify="right")
         table.add_column("Throughput", justify="right")
         table.add_column("Overhead", justify="right")
+        table.add_column("Size p5/p50/p99 (B)", justify="right")
 
     for name, dirs in sorted(all_stats.items()):
         proto_key = name.removesuffix("_chaos")
@@ -165,6 +166,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
             iat = s.get("iat_ms", {})
             ent = s.get("entropy", {})
 
+            p5  = f"{ps.get('p5',  0):.0f}" if ps else "—"
             p50 = f"{ps.get('p50', 0):.0f}" if ps else "—"
             p99 = f"{ps.get('p99', 0):.0f}" if ps else "—"
             ip5  = f"{iat.get('p5',  0):.2f}" if iat else "—"
@@ -189,7 +191,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                     _fmt_delivery(delivery_pct) if first else "",
                     f"{ip5} / {ip50} / {ip95}",
                     ent_str,
-                    f"{p50} / {p99}",
+                    f"{p5} / {p50} / {p99}",
                 )
             else:
                 meta = metadata.get(proto_key, {})
@@ -202,7 +204,11 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                 else:
                     t_s = s.get("transmission_time_s", 0)
                     eff_s = max(t_s - injected_delay_s, 0.0) if injected_delay_s > 0 else t_s
-                if eff_s > 0 and byte_count > 0:
+                transfer_bytes_meta = meta.get("transfer_bytes")
+                if eff_s > 0 and direction == "c2s" and transfer_bytes_meta:
+                    mbps = transfer_bytes_meta * 8 / eff_s / 1_000_000
+                    throughput = f"{mbps:.1f} Mbps"
+                elif eff_s > 0 and direction == "c2s" and byte_count > 0:
                     mbps = byte_count * 8 / eff_s / 1_000_000
                     throughput = f"{mbps:.1f} Mbps"
                 else:
@@ -215,6 +221,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                     f"{eff_s:.1f}" if eff_s > 0 else "[dim]—[/dim]",
                     throughput,
                     overhead,
+                    f"{p5} / {p50} / {p99}" if ps else "[dim]—[/dim]",
                 )
             first = False
 
