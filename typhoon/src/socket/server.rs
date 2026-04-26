@@ -385,6 +385,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         };
 
         if let Some(session) = session {
+            self.flows[flow_index].ensure_user(identity.clone(), raw_packet.source_addr).await;
             session.note_active_flow(flow_index);
 
             let incoming = IncomingPacket {
@@ -424,6 +425,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 let mut users = self.users.lock().await;
                 users.remove(&client_version_identity).await;
             }
+            self.flows[flow_index].remove_user(&client_version_identity).await;
             return;
         }
 
@@ -461,14 +463,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         }
 
         self.flows[flow_index].register_user_addr(identity.clone(), raw_packet.source_addr).await;
-
-        for flow in &self.flows {
-            flow.register_user(identity.clone()).await;
-        }
+        self.flows[flow_index].register_user(identity.clone()).await;
 
         if let Err(err) = self.flows[flow_index].send_packet(response_packet, false).await {
             warn!("failed to send handshake response: {err}");
-            // Clean up: remove user from shared map and all flow decoy providers.
             self.users.lock().await.remove(&identity).await;
             for flow in &self.flows {
                 flow.remove_user(&identity).await;
