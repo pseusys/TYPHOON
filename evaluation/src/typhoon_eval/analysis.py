@@ -143,7 +143,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
         table.add_column("Delivery%", justify="right")
         table.add_column("IAT p5/p50/p95 (ms)", justify="right", style="dim")
         table.add_column("Entropy\nall / hs / data / size / iat", justify="right")
-        table.add_column("Size p5/p50/p99 (B)", justify="right")
+        table.add_column("Size p5/p50/p95 (B)", justify="right")
     else:
         title = "Analysis summary"
         table = Table(title=title, show_lines=True)
@@ -153,7 +153,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
         table.add_column("Eff.Time (s)", justify="right")
         table.add_column("Throughput", justify="right")
         table.add_column("Overhead", justify="right")
-        table.add_column("Size p5/p50/p99 (B)", justify="right")
+        table.add_column("Size p5/p50/p95 (B)", justify="right")
 
     for name, dirs in sorted(all_stats.items()):
         proto_key = name.removesuffix("_chaos")
@@ -168,7 +168,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
 
             p5  = f"{ps.get('p5',  0):.0f}" if ps else "—"
             p50 = f"{ps.get('p50', 0):.0f}" if ps else "—"
-            p99 = f"{ps.get('p99', 0):.0f}" if ps else "—"
+            p95 = f"{ps.get('p95', 0):.0f}" if ps else "—"
             ip5  = f"{iat.get('p5',  0):.2f}" if iat else "—"
             ip50 = f"{iat.get('p50', 0):.2f}" if iat else "—"
             ip95 = f"{iat.get('p95', 0):.2f}" if iat else "—"
@@ -191,7 +191,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                     _fmt_delivery(delivery_pct) if first else "",
                     f"{ip5} / {ip50} / {ip95}",
                     ent_str,
-                    f"{p5} / {p50} / {p99}",
+                    f"{p5} / {p50} / {p95}",
                 )
             else:
                 meta = metadata.get(proto_key, {})
@@ -221,7 +221,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                     f"{eff_s:.1f}" if eff_s > 0 else "[dim]—[/dim]",
                     throughput,
                     overhead,
-                    f"{p5} / {p50} / {p99}" if ps else "[dim]—[/dim]",
+                    f"{p5} / {p50} / {p95}" if ps else "[dim]—[/dim]",
                 )
             first = False
 
