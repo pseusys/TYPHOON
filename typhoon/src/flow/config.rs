@@ -3,7 +3,6 @@
 mod tests;
 
 use std::cmp::min;
-use std::ops::AddAssign;
 
 use log::info;
 use rand::Rng;
@@ -108,7 +107,20 @@ pub enum FieldType<L> {
     },
 }
 
-impl<L: Copy + AddAssign<L> + From<u8>> FieldType<L> {
+trait WrappingIncrement: Copy {
+    fn wrapping_inc(self) -> Self;
+}
+macro_rules! impl_wrapping_increment {
+    ($($t:ty)*) => { $(
+        impl WrappingIncrement for $t {
+            #[inline] fn wrapping_inc(self) -> Self { self.wrapping_add(1) }
+        }
+    )* };
+}
+impl_wrapping_increment!(u8 u16 u32 u64);
+
+#[allow(private_bounds)]
+impl<L: Copy + WrappingIncrement> FieldType<L> {
     pub fn apply(&mut self) -> L
     where
         Standard: Distribution<L>,
@@ -141,7 +153,7 @@ impl<L: Copy + AddAssign<L> + From<u8>> FieldType<L> {
             FieldType::Incremental {
                 value,
             } => {
-                *value += L::from(1);
+                *value = value.wrapping_inc();
                 *value
             }
         }
