@@ -280,17 +280,17 @@ impl FlowConfig {
 
         let min_len = settings.get(&keys::FAKE_BODY_LENGTH_MIN) as usize;
         let max_len = settings.get(&keys::FAKE_BODY_LENGTH_MAX) as usize;
-        let service_weight = settings.get(&keys::FAKE_BODY_SERVICE_PROBABILITY);
-        let total_weight = 3.0 + service_weight;
+        let random_weight = settings.get(&keys::FAKE_BODY_RANDOM_PROBABILITY);
+        let total_weight = 3.0 + random_weight;
         let roll = rng.gen_range(0.0..total_weight);
         let fake_body_mode = if roll < 1.0 {
             FakeBodyMode::Empty
         } else if roll < 2.0 {
-            FakeBodyMode::Random { min_length: min_len, max_length: max_len, service: false }
+            FakeBodyMode::Random { min_length: min_len, max_length: max_len, service: true }
         } else if roll < 3.0 {
             FakeBodyMode::Constant { packet_length: consts::DEFAULT_TYPHOON_MTU_LENGTH }
         } else {
-            FakeBodyMode::Random { min_length: min_len, max_length: max_len, service: true }
+            FakeBodyMode::Random { min_length: min_len, max_length: max_len, service: false }
         };
 
         info!("flow_config: fake_body={:?}, fake_header_len={}", fake_body_mode, fake_header_mode.len());
@@ -300,9 +300,22 @@ impl FlowConfig {
         }
     }
 
-    /// Maximum bytes this flow config can add on top of payload: fake header + worst-case fake body.
+    /// Maximum bytes this flow config can prepend to a packet (fake header + worst-case fake body).
+    /// Used to reserve before_capacity in packet buffers. Conservative for Constant mode.
     pub fn max_overhead(&self) -> usize {
         self.fake_header_mode.len() + self.fake_body_mode.max_len()
+    }
+
+    /// Maximum user-data bytes per packet given MTU and the per-packet crypto/tailor overhead.
+    /// For Constant mode the wire size is fixed to `packet_length`, so the data budget is
+    /// `min(packet_length, mtu) - (fake_header + crypto + tailor)`.
+    /// For other modes it is `mtu - (fake_header + fake_body_max + crypto + tailor)`.
+    pub fn max_user_payload(&self, mtu: usize, crypto_overhead: usize, tailor_len: usize) -> usize {
+        let fixed = self.fake_header_mode.len() + crypto_overhead + tailor_len;
+        match &self.fake_body_mode {
+            FakeBodyMode::Constant { packet_length } => packet_length.min(&mtu).saturating_sub(fixed),
+            _ => mtu.saturating_sub(self.max_overhead() + crypto_overhead + tailor_len),
+        }
     }
 
     /// Validate that the flow configuration is consistent with the given max packet size.

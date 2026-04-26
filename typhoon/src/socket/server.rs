@@ -154,8 +154,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         for flow_config in self.flow_configs.drain(..) {
             flow_config.config.assert(settings.mtu()).map_err(ServerSocketError::FlowError)?;
 
-            let flow_overhead = flow_config.config.max_overhead() + PAYLOAD_CRYPTO_OVERHEAD + tailor_wire_len;
-            max_data_payload = max_data_payload.min(settings.mtu().saturating_sub(flow_overhead));
+            max_data_payload = max_data_payload.min(flow_config.config.max_user_payload(settings.mtu(), PAYLOAD_CRYPTO_OVERHEAD, tailor_wire_len));
 
             let socks: Vec<Arc<Socket>> = if let Some(socket) = flow_config.socket {
                 vec![Arc::new(socket)]
@@ -224,8 +223,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         for flow_config in self.flow_configs.drain(..) {
             flow_config.config.assert(settings.mtu()).map_err(ServerSocketError::FlowError)?;
 
-            let flow_overhead = flow_config.config.max_overhead() + PAYLOAD_CRYPTO_OVERHEAD + tailor_wire_len;
-            max_data_payload = max_data_payload.min(settings.mtu().saturating_sub(flow_overhead));
+            max_data_payload = max_data_payload.min(flow_config.config.max_user_payload(settings.mtu(), PAYLOAD_CRYPTO_OVERHEAD, tailor_wire_len));
 
             let socks: Vec<Arc<Socket>> = match flow_config.socket {
                 Some(socket) => vec![Arc::new(socket)],

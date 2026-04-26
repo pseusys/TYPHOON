@@ -70,10 +70,9 @@ async fn main() {
         .expect("save cert to /keys/typhoon.cert");
     println!("Certificate saved to {CERT_PATH}");
 
-    let flow_config = FlowConfig::random(&settings);
     let flows: Vec<ServerFlowConfiguration<StaticByteBuffer, DefaultExecutor>> = bind_addrs
         .into_iter()
-        .map(|addr| ServerFlowConfiguration::with_address(flow_config.clone(), addr))
+        .map(|addr| ServerFlowConfiguration::with_address(FlowConfig::random(&settings), addr))
         .collect();
     let listener: Arc<_> = Arc::new(
         ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(

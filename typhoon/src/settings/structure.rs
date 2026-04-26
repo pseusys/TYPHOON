@@ -207,7 +207,7 @@ impl<AE: AsyncExecutor> Settings<AE> {
         assert_unit_inclusive(&keys::FAKE_HEADER_PROBABILITY)?;
 
         // Positive multipliers
-        assert_positive(&keys::FAKE_BODY_SERVICE_PROBABILITY)?;
+        assert_positive(&keys::FAKE_BODY_RANDOM_PROBABILITY)?;
         assert_positive(&keys::DECOY_MAINTENANCE_MODE_NONE_PROBABILITY)?;
         assert_positive(&keys::DECOY_REPLICATION_MODE_NONE_PROBABILITY)?;
         assert_positive(&keys::TIMEOUT_RTT_FACTOR)?;

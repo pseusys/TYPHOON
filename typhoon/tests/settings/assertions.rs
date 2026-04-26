@@ -86,10 +86,10 @@ fn test_settings_decoy_current_alpha_exceeds_one() {
     assert!(result.is_err());
 }
 
-// Test: negative FAKE_BODY_SERVICE_PROBABILITY fails assertion.
+// Test: negative FAKE_BODY_RANDOM_PROBABILITY fails assertion.
 #[test]
 fn test_settings_negative_service_probability() {
-    let result = builder().set(&FAKE_BODY_SERVICE_PROBABILITY, -1.0).build();
+    let result = builder().set(&FAKE_BODY_RANDOM_PROBABILITY, -1.0).build();
     assert!(result.is_err());
 }
 
