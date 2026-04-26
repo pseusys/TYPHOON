@@ -65,7 +65,7 @@ While it is technically possible for client flow managers to operate using diffe
  ◄──────────────── wire packet (left = start) ───────────────────►
 
  ┌───────────────┬───────────────┬───────────────────┬─────────────┐
- │   Fake Body   │  Fake Header  │ Encrypted Payload │  Encrypted  │
+ │  Fake Header  │   Fake Body   │ Encrypted Payload │  Encrypted  │
  │   see below   │   see below   │ (data/hs packets) │   Tailor    │
  │  (optional)   │  (optional)   │    variable len   │  fixed len  │
  └───────────────┴───────────────┴───────────────────┴─────────────┘
@@ -139,7 +139,7 @@ It can be either empty, random or constant:
 > Handling `constant` body length might not be trivial, as it imposes a strict limit on packet data contents length.
 > TYPHOON protocol specifically does not support data fragmentation, so `constant` body length just won't have any effect if real packet body length is not always strictly limited.
 
-By default, fake body mode is chosen with equal probability for every option except for `service`, which is `TYPHOON_FAKE_BODY_SERVICE_PROBABILITY` heavier than the others.
+By default, fake body mode is chosen with equal probability for every option except for `random`, which is `TYPHOON_FAKE_BODY_RANDOM_PROBABILITY` heavier than the others.
 
 ### Fake header
 
@@ -961,11 +961,11 @@ These constants are used in some of the protocol values computation:
 
 | Constant | Meaning | Default |
 | --- | --- | :---: |
-| `TYPHOON_FAKE_BODY_LENGTH_MIN` | Minimum length of the fake body random byte string | `0` |
-| `TYPHOON_FAKE_BODY_LENGTH_MAX` | Maximum length of the fake body random byte string | `256` |
-| `TYPHOON_FAKE_BODY_SERVICE_PROBABILITY` | Multiplier of `service` fake body mode probability | `5` |
+| `TYPHOON_FAKE_BODY_LENGTH_MIN` | Minimum length of the fake body random byte string | `32` |
+| `TYPHOON_FAKE_BODY_LENGTH_MAX` | Maximum length of the fake body random byte string | `512` |
+| `TYPHOON_FAKE_BODY_RANDOM_PROBABILITY` | Multiplier of `random` fake body mode probability | `3` |
 | `TYPHOON_FAKE_HEADER_LENGTH_MIN` | Minimum length of the fake header structure | `4` |
-| `TYPHOON_FAKE_HEADER_PROBABILITY` | Probability of fake header presence | `0.35` |
+| `TYPHOON_FAKE_HEADER_PROBABILITY` | Probability of fake header presence | `0.6` |
 | `TYPHOON_FAKE_HEADER_LENGTH_MAX` | Maximum length of the fake header structure | `32` |
 | `TYPHOON_HEALTH_CHECK_NEXT_IN_MIN` | Minimum delay between health checking packets | `64000` |
 | `TYPHOON_HEALTH_CHECK_NEXT_IN_MAX` | Maximum delay between health checking packets | `256000` |
@@ -981,26 +981,26 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_RTT_MIN` | Minimum RTT value (in milliseconds) | `200` |
 | `TYPHOON_RTT_MAX` | Maximum RTT value (in milliseconds) | `8000` |
 | `TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT` | Default reference packet rate (in milliseconds) | `200` |
-| `TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT` | Default current packet rate (in milliseconds) | `200` |
+| `TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT` | Default current packet rate (in milliseconds) | `1` |
 | `TYPHOON_DECOY_CURRENT_BYTE_RATE_DEFAULT` | Default reference byte rate (in bytes) | `5000` |
 | `TYPHOON_DECOY_BYTE_RATE_CAP` | Maximum bytes that can be sent in a flow per second | `1000000` |
 | `TYPHOON_DECOY_BYTE_RATE_FACTOR` | Multiplier of bytes per second cap for bursts | `3` |
 | `TYPHOON_DECOY_CURRENT_ALPHA` | Current byte rate calculation multiplier (updates fast) | `0.05` |
 | `TYPHOON_DECOY_REFERENCE_ALPHA` | Reference byte rate calculation multiplier (updates slowly) | `0.001` |
-| `TYPHOON_DECOY_LENGTH_MAX` | Maximum length of a decoy packet | `1024` |
+| `TYPHOON_DECOY_LENGTH_MAX` | Maximum length of a decoy packet | `512` |
 | `TYPHOON_DECOY_LENGTH_MIN` | Minimum length of a decoy packet | `16` |
 | `TYPHOON_DECOY_BASE_RATE_RND` | Randomization jitter for decoy modes | `0.25` |
 | `TYPHOON_DECOY_HEAVY_BASE_RATE` | Base rate of the heavy decoy mode | `0.05` |
 | `TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR` | Quietness score factor that is used for heavy decoy mode rate calculation | `3` |
 | `TYPHOON_DECOY_HEAVY_DELAY_MIN` | Minimum delay for heavy decoy mode (in milliseconds) | `5000` |
-| `TYPHOON_DECOY_HEAVY_DELAY_MAX` | Maximum delay for heavy decoy mode (in milliseconds) | `120000` |
+| `TYPHOON_DECOY_HEAVY_DELAY_MAX` | Maximum delay for heavy decoy mode (in milliseconds) | `300000` |
 | `TYPHOON_DECOY_HEAVY_DELAY_DEFAULT` | Default delay for heavy decoy mode (in milliseconds) | `64000` |
 | `TYPHOON_DECOY_HEAVY_BASE_LENGTH` | The size of a heavy decoy mode packet (as a fraction of MTU) | `0.7` |
 | `TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH` | The size of a heavy decoy mode packet (multiplied by quietness index) | `0.3` |
 | `TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR` | Random heavy decoy mode packet length jitter | `0.8` |
 | `TYPHOON_DECOY_NOISY_BASE_RATE` | Base rate of the noisy decoy mode | `3` |
 | `TYPHOON_DECOY_NOISY_DELAY_MIN` | Minimum delay for noisy decoy mode (in milliseconds) | `10` |
-| `TYPHOON_DECOY_NOISY_DELAY_MAX` | Maximum delay for noisy decoy mode (in milliseconds) | `1000` |
+| `TYPHOON_DECOY_NOISY_DELAY_MAX` | Maximum delay for noisy decoy mode (in milliseconds) | `2000` |
 | `TYPHOON_DECOY_NOISY_DELAY_DEFAULT` | Default delay for noisy decoy mode (in milliseconds) | `500` |
 | `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` | Minimum packet size for noisy decoy mode (in bytes) | `128` |
 | `TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER` | Random noisy decoy mode packet length jitter multiplier | `0.3` |
@@ -1009,7 +1009,7 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_DECOY_SPARSE_JITTER` | Delay jitter for sparse decoy mode | `0.15` |
 | `TYPHOON_DECOY_SPARSE_DELAY_FACTOR` | Reference delay of the sparse decoy mode multiplier | `3` |
 | `TYPHOON_DECOY_SPARSE_DELAY_MIN` | Minimum delay for sparse decoy mode (in milliseconds) | `20` |
-| `TYPHOON_DECOY_SPARSE_DELAY_MAX` | Maximum delay for sparse decoy mode (in milliseconds) | `150` |
+| `TYPHOON_DECOY_SPARSE_DELAY_MAX` | Maximum delay for sparse decoy mode (in milliseconds) | `2000` |
 | `TYPHOON_DECOY_SPARSE_DELAY_DEFAULT` | Default delay for sparse decoy mode (in milliseconds) | `100` |
 | `TYPHOON_DECOY_SPARSE_LENGTH_FACTOR` | Mean multiplier for sparse decoy mode packet length computation | `120` |
 | `TYPHOON_DECOY_SPARSE_LENGTH_SIGMA` | Random sparse decoy mode packet length jitter | `20` |
@@ -1021,7 +1021,7 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_DECOY_SMOOTH_JITTER` | Delay jitter for smooth decoy mode | `0.2` |
 | `TYPHOON_DECOY_SMOOTH_DELAY_FACTOR` | Reference delay of the smooth decoy mode multiplier | `2` |
 | `TYPHOON_DECOY_SMOOTH_DELAY_MIN` | Minimum delay for smooth decoy mode (in milliseconds) | `300` |
-| `TYPHOON_DECOY_SMOOTH_DELAY_MAX` | Maximum delay for smooth decoy mode (in milliseconds) | `10000` |
+| `TYPHOON_DECOY_SMOOTH_DELAY_MAX` | Maximum delay for smooth decoy mode (in milliseconds) | `300000` |
 | `TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT` | Default delay for smooth decoy mode (in milliseconds) | `5000` |
 | `TYPHOON_DECOY_SMOOTH_LENGTH_MIN` | Minimum packet size for smooth decoy mode (in bytes) | `48` |
 | `TYPHOON_DECOY_SMOOTH_LENGTH_MAX` | Maximum packet size for smooth decoy mode (in bytes) | `512` |
@@ -1140,7 +1140,7 @@ Getters (`flags`, `code`, `time`, `packet_number`, `payload_length`, `identity`)
 The `flow` module owns the UDP send/receive paths and decoy injection.
 
 `ClientFlowManager<T, AE>` holds one UDP socket (connected to a server address) and one `Box<dyn DecoyProvider>`.
-Its send path prepends fake body + fake header and appends the encrypted tailor before writing to the socket.
+Its send path prepends fake header + fake body and appends the encrypted tailor before writing to the socket.
 Its receive path strips those same regions after reading from the socket.
 
 `ServerFlowManager<T, AE>` manages a pool of `SO_REUSEPORT` sockets and a per-client address table (`Arc<RwLock<HashMap<T, SocketAddr>>>`).
