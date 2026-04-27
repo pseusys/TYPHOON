@@ -11,7 +11,7 @@ use rand::prelude::Distribution;
 
 use crate::bytes::{ByteBufferMut, DynamicByteBuffer};
 use crate::flow::error::FlowControllerError;
-use crate::settings::{Settings, consts, keys};
+use crate::settings::{Settings, keys};
 use crate::utils::random::get_rng;
 use crate::utils::sync::AsyncExecutor;
 use crate::utils::unix_timestamp_ms;
@@ -251,8 +251,10 @@ impl FlowConfig {
     /// - Headers: included with probability `FAKE_HEADER_PROBABILITY`; if included, a random number
     ///   of U8-random fields are packed to fill a length sampled from
     ///   `[FAKE_HEADER_LENGTH_MIN, FAKE_HEADER_LENGTH_MAX]`.
-    /// - Body: 50 % chance of `FakeBodyMode::Random` with lengths from
-    ///   `[FAKE_BODY_LENGTH_MIN, FAKE_BODY_LENGTH_MAX]`; otherwise `FakeBodyMode::Empty`.
+    /// - Body: chosen uniformly from four modes weighted by `FAKE_BODY_RANDOM_PROBABILITY`
+    ///   (Empty / Random{service} / Constant / Random — each with equal base weight, Random heavier).
+    ///   In `Constant` mode `packet_length` comes from `FAKE_BODY_CONSTANT_LENGTH`, clamped to
+    ///   `[FAKE_BODY_LENGTH_MIN, mtu]`.
     pub fn random<AE: AsyncExecutor>(settings: &Settings<AE>) -> Self {
         let mut rng = get_rng();
 
@@ -310,9 +312,8 @@ impl FlowConfig {
                 service: true,
             }
         } else if roll < 3.0 {
-            FakeBodyMode::Constant {
-                packet_length: consts::DEFAULT_TYPHOON_MTU_LENGTH,
-            }
+            let packet_length = (settings.get(&keys::FAKE_BODY_CONSTANT_LENGTH) as usize).clamp(min_len, settings.mtu());
+            FakeBodyMode::Constant { packet_length }
         } else {
             FakeBodyMode::Random {
                 min_length: min_len,

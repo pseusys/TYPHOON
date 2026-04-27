@@ -2,6 +2,43 @@
 
 This document describes TYPHOON protocol design, goals and proposed implementation in rust.
 
+## Design philosophy
+
+TYPHOON is designed to be **flexible and false-fingerprintable** rather than uniformly high-entropy.
+
+Uniform randomness is itself an identifiable pattern, and a static traffic profile — even a well-obfuscated one — can eventually be fingerprinted once an adversary has collected enough samples.
+TYPHOON instead aims to look like _different things to different observers_.
+Configuration is randomized independently **per [communication channel](#architecture)**, at a finer granularity than a typical connection: even within a single user's activity, different channels can exhibit completely different statistical properties — varying packet sizes, padding strategies, decoy rates, and cleartext header layouts.
+Because configuration is re-randomized every time a new channel is established, two sessions between the same endpoints will not share a common traffic profile, even without restarting the server.
+
+The [fake header](#fake-header) mechanism reinforces this: cleartext header fields can be made to resemble headers of arbitrary known protocols, making the traffic false-fingerprintable rather than merely hard to classify.
+Combined with independently randomized [fake bodies](#fake-body) and [decoy traffic](#decoy-packets), the result is a protocol whose traffic signature is intentionally unstable and hard to pin to a single classification.
+
+Because no single configuration is universally best, the protocol exposes a set of [tunable constants](#constants-and-defaults) that govern the probability distributions used when generating channel configurations.
+Users are encouraged to adapt them to their threat model and performance requirements.
+The following scenarios illustrate the trade-off space:
+
+- **Throughput-critical** (e.g. private infrastructure over a trusted or monitored-but-not-filtered link):
+  minimize or disable padding and decoy traffic. The protocol still provides strong encryption but makes no attempt to disguise statistical properties. Overhead drops to near the cryptographic minimum.
+
+- **Low-latency interactive** (e.g. a remote shell, collaborative editing, or real-time control):
+  keep packet padding light and decoy injection sparse to avoid adding per-packet delay.
+  Traffic volume stays close to actual application demand.
+
+- **Protocol-transparent operation** (e.g. managed networks or transit infrastructure that classifies and policies traffic by protocol fingerprint):
+  enable [fake headers](#fake-header) to match the expected traffic profile of a locally common protocol, and keep decoy traffic at a moderate rate.
+  The goal is to appear indistinguishable from permitted traffic rather than to resist deep analysis.
+
+- **High-security / traffic-analysis-resistant** (e.g. communicating under active network surveillance):
+  maximize padding, decoy traffic rates, and fake-header randomization.
+  Overhead increases substantially, but the traffic becomes hardest to characterize, correlate, or block.
+
+- **Default (balanced)**:
+  a random mix of configurations is chosen per channel at startup, producing varied traffic that resists classification without being tuned for any single adversary model.
+
+The defaults documented throughout this specification represent a reasonable starting point for the balanced mode and are not optimized for any particular scenario.
+Explicit configuration always takes precedence over the defaults.
+
 ## Assumptions and limitations
 
 There is one important assumption, required for proceeding with this protocol.
@@ -134,7 +171,7 @@ It can be either empty, random or constant:
 - `empty`: body is always empty, `0` bytes length.
 - `random`: body length is random, it is bound between `TYPHOON_FAKE_BODY_LENGTH_MIN` and `TYPHOON_FAKE_BODY_LENGTH_MAX` constant values, making all the packets different in size.
 - `service`: same as `random`, but is only applied to [health check](#health-check-packets) and [handshake](#handshake-packets) packets.
-- `constant`: body length depends on the lengths of the other packet parts and complement them to a constant size.
+- `constant`: body length depends on the lengths of the other packet parts and complement them to a constant size equal to `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` (clamped to `[TYPHOON_FAKE_BODY_LENGTH_MIN, MTU]`).
 
 > Handling `constant` body length might not be trivial, as it imposes a strict limit on packet data contents length.
 > TYPHOON protocol specifically does not support data fragmentation, so `constant` body length just won't have any effect if real packet body length is not always strictly limited.
@@ -963,6 +1000,7 @@ These constants are used in some of the protocol values computation:
 | --- | --- | :---: |
 | `TYPHOON_FAKE_BODY_LENGTH_MIN` | Minimum length of the fake body random byte string | `32` |
 | `TYPHOON_FAKE_BODY_LENGTH_MAX` | Maximum length of the fake body random byte string | `512` |
+| `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` | Target packet length for `constant` fake body mode; clamped to `[FAKE_BODY_LENGTH_MIN, MTU]` | `1500` |
 | `TYPHOON_FAKE_BODY_RANDOM_PROBABILITY` | Multiplier of `random` fake body mode probability | `3` |
 | `TYPHOON_FAKE_HEADER_LENGTH_MIN` | Minimum length of the fake header structure | `4` |
 | `TYPHOON_FAKE_HEADER_PROBABILITY` | Probability of fake header presence | `0.6` |
