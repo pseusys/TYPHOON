@@ -313,7 +313,9 @@ impl FlowConfig {
             }
         } else if roll < 3.0 {
             let packet_length = (settings.get(&keys::FAKE_BODY_CONSTANT_LENGTH) as usize).clamp(min_len, settings.mtu());
-            FakeBodyMode::Constant { packet_length }
+            FakeBodyMode::Constant {
+                packet_length,
+            }
         } else {
             FakeBodyMode::Random {
                 min_length: min_len,
