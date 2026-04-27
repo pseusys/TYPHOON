@@ -19,13 +19,12 @@ use std::sync::{Arc, Weak};
 
 pub use common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider};
 pub use heavy::HeavyDecoyProvider;
+use log::info;
 pub use noisy::NoisyDecoyProvider;
 use rand::Rng;
 pub use simple::SimpleDecoyProvider;
 pub use smooth::SmoothDecoyProvider;
 pub use sparse::SparseDecoyProvider;
-
-use log::info;
 
 use crate::settings::Settings;
 use crate::tailor::IdentityType;
@@ -64,7 +63,7 @@ where
             Box::new(SparseDecoyProvider::new(manager, settings, identity))
         }
         2 => {
-            info!("decoy provider: {}", <NoisyDecoyProvider<T, AE>  as DecoyCommunicationMode<T, AE>>::name());
+            info!("decoy provider: {}", <NoisyDecoyProvider<T, AE> as DecoyCommunicationMode<T, AE>>::name());
             Box::new(NoisyDecoyProvider::new(manager, settings, identity))
         }
         3 => {
@@ -72,7 +71,7 @@ where
             Box::new(SmoothDecoyProvider::new(manager, settings, identity))
         }
         4 => {
-            info!("decoy provider: {}", <HeavyDecoyProvider<T, AE>  as DecoyCommunicationMode<T, AE>>::name());
+            info!("decoy provider: {}", <HeavyDecoyProvider<T, AE> as DecoyCommunicationMode<T, AE>>::name());
             Box::new(HeavyDecoyProvider::new(manager, settings, identity))
         }
         _ => unreachable!(),

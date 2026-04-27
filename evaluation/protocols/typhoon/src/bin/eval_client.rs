@@ -49,7 +49,9 @@ async fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(1);
 
-    info!("config: transfer_bytes={transfer_bytes}, chunk={CHUNK}, delay_ms={delay_ms}, delay_every={delay_every}");
+    info!(
+        "config: transfer_bytes={transfer_bytes}, chunk={CHUNK}, delay_ms={delay_ms}, delay_every={delay_every}"
+    );
 
     // Wait for server to write the certificate
     println!("Waiting for {CERT_PATH}...");

@@ -5,8 +5,8 @@
 /// accepts one connection and receives TRANSFER_BYTES bytes in chunks, then exits 0.
 use std::env::var;
 use std::net::SocketAddr;
-use std::process::exit;
 use std::process::Command;
+use std::process::exit;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -40,10 +40,15 @@ async fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(104_857_600);
 
-    let idle_timeout_s: u64 = var("IDLE_TIMEOUT_S").ok().and_then(|v| v.parse().ok()).unwrap_or(120);
+    let idle_timeout_s: u64 = var("IDLE_TIMEOUT_S")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(120);
     let cert_host = var("CERT_HOST").unwrap_or_else(|_| "172.21.0.10".to_string());
 
-    info!("config: transfer_bytes={transfer_bytes}, idle_timeout_s={idle_timeout_s}, cert_host={cert_host}, ports={PORTS:?}");
+    info!(
+        "config: transfer_bytes={transfer_bytes}, idle_timeout_s={idle_timeout_s}, cert_host={cert_host}, ports={PORTS:?}"
+    );
 
     let settings = Arc::new(
         SettingsBuilder::<DefaultExecutor>::new()
@@ -116,7 +121,10 @@ async fn main() {
     let pct = received as f64 / transfer_bytes as f64 * 100.0;
     println!("Received {received}/{transfer_bytes} bytes ({pct:.1}%) — done");
     if let (Some(first), Some(last)) = (first_byte_time, last_byte_time) {
-        println!("recv_time_s={:.3}", last.duration_since(first).as_secs_f64());
+        println!(
+            "recv_time_s={:.3}",
+            last.duration_since(first).as_secs_f64()
+        );
     }
     exit(0);
 }

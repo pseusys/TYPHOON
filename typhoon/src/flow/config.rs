@@ -265,26 +265,32 @@ impl FlowConfig {
             } else {
                 rng.gen_range(min_len..=max_len)
             };
-            let fields = (0..len).map(|_| {
-                FieldTypeHolder::U8(match rng.gen_range(0u8..5) {
-                    0 => FieldType::Random,
-                    1 => FieldType::Constant { value: rng.r#gen::<u8>() },
-                    2 => FieldType::Volatile {
-                        value: rng.r#gen::<u8>(),
-                        change_probability: rng.gen_range(0.01..=0.20),
-                    },
-                    3 => {
-                        let switch_timeout = rng.gen_range(1_000u64..=30_000);
-                        FieldType::Switching {
+            let fields = (0..len)
+                .map(|_| {
+                    FieldTypeHolder::U8(match rng.gen_range(0u8..5) {
+                        0 => FieldType::Random,
+                        1 => FieldType::Constant {
                             value: rng.r#gen::<u8>(),
-                            next_switch: unix_timestamp_ms() + switch_timeout as u128,
-                            switch_timeout,
+                        },
+                        2 => FieldType::Volatile {
+                            value: rng.r#gen::<u8>(),
+                            change_probability: rng.gen_range(0.01..=0.20),
+                        },
+                        3 => {
+                            let switch_timeout = rng.gen_range(1_000u64..=30_000);
+                            FieldType::Switching {
+                                value: rng.r#gen::<u8>(),
+                                next_switch: unix_timestamp_ms() + switch_timeout as u128,
+                                switch_timeout,
+                            }
                         }
-                    }
-                    4 => FieldType::Incremental { value: rng.r#gen::<u8>() },
-                    _ => unreachable!(),
+                        4 => FieldType::Incremental {
+                            value: rng.r#gen::<u8>(),
+                        },
+                        _ => unreachable!(),
                     })
-                }).collect();
+                })
+                .collect();
             FakeHeaderConfig::new(fields)
         } else {
             FakeHeaderConfig::new(vec![])
@@ -298,11 +304,21 @@ impl FlowConfig {
         let fake_body_mode = if roll < 1.0 {
             FakeBodyMode::Empty
         } else if roll < 2.0 {
-            FakeBodyMode::Random { min_length: min_len, max_length: max_len, service: true }
+            FakeBodyMode::Random {
+                min_length: min_len,
+                max_length: max_len,
+                service: true,
+            }
         } else if roll < 3.0 {
-            FakeBodyMode::Constant { packet_length: consts::DEFAULT_TYPHOON_MTU_LENGTH }
+            FakeBodyMode::Constant {
+                packet_length: consts::DEFAULT_TYPHOON_MTU_LENGTH,
+            }
         } else {
-            FakeBodyMode::Random { min_length: min_len, max_length: max_len, service: false }
+            FakeBodyMode::Random {
+                min_length: min_len,
+                max_length: max_len,
+                service: false,
+            }
         };
 
         info!("flow_config: fake_body={:?}, fake_header_len={}", fake_body_mode, fake_header_mode.len());
@@ -325,7 +341,9 @@ impl FlowConfig {
     pub fn max_user_payload(&self, mtu: usize, crypto_overhead: usize, tailor_len: usize) -> usize {
         let fixed = self.fake_header_mode.len() + crypto_overhead + tailor_len;
         match &self.fake_body_mode {
-            FakeBodyMode::Constant { packet_length } => packet_length.min(&mtu).saturating_sub(fixed),
+            FakeBodyMode::Constant {
+                packet_length,
+            } => packet_length.min(&mtu).saturating_sub(fixed),
             _ => mtu.saturating_sub(self.max_overhead() + crypto_overhead + tailor_len),
         }
     }
