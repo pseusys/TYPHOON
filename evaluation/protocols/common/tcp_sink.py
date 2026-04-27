@@ -57,7 +57,7 @@ try:
             first_byte_time = time.monotonic()
         received += len(data)
         last_byte_time = time.monotonic()
-except (socket.timeout, OSError):
+except (TimeoutError, OSError):
     pass
 finally:
     try:

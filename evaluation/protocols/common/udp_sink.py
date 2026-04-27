@@ -32,7 +32,7 @@ first = True
 while received < transfer_bytes:
     try:
         data, _ = sock.recvfrom(65536)
-    except socket.timeout:
+    except TimeoutError:
         break
     if first:
         first = False

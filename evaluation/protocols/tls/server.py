@@ -68,7 +68,7 @@ try:
         if not data:
             break
         received += len(data)
-except (ssl.SSLError, OSError, socket.timeout):
+except (ssl.SSLError, OSError, TimeoutError):
     pass
 finally:
     try:

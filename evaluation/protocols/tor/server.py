@@ -79,7 +79,7 @@ try:
         if len(cell) < CELL:
             break
         received_data += DATA_PER_CELL
-except (ssl.SSLError, OSError, socket.timeout):
+except (ssl.SSLError, OSError, TimeoutError):
     pass
 
 finally:
