@@ -20,8 +20,8 @@ NOTE — sequential-only:
 import contextlib
 import os
 import re
-import time
 import threading
+import time
 from collections.abc import Generator
 from pathlib import Path
 
