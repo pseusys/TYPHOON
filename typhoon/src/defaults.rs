@@ -1,22 +1,25 @@
 //! Default concrete types and re-exports for the most common TYPHOON configurations.
 //!
 //! Provides [`DefaultExecutor`] (backed by the active runtime feature flag), the
-//! [`DefaultServerConnectionHandler`] / [`DefaultClientConnectionHandler`] pair, and
-//! re-exports [`DecoyFactory`], [`decoy_factory`], and [`random_decoy_factory`] so callers
-//! do not need to import from the deeper `flow::decoy` path.
+//! [`DefaultServerConnectionHandler`] / [`DefaultClientConnectionHandler`] pair,
+//! [`NoopProbeHandler`] (the default no-op active-probing handler), and re-exports
+//! [`DecoyFactory`], [`decoy_factory`], and [`random_decoy_factory`] so callers do not need to
+//! import from the deeper `flow::decoy` path.
 
 use std::future::Future;
+use std::net::SocketAddr;
 use std::str::from_utf8;
-#[cfg(feature = "async-std")]
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
+use async_trait::async_trait;
 use cfg_if::cfg_if;
 use log::{debug, warn};
 #[cfg(feature = "tokio")]
 use tokio::spawn;
 
-use crate::bytes::{ByteBuffer, StaticByteBuffer};
+use crate::bytes::{ByteBuffer, DynamicByteBuffer, StaticByteBuffer};
 pub use crate::flow::decoy::{DecoyFactory, decoy_factory, random_decoy_factory};
+pub use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender, probe_factory};
 use crate::settings::Settings;
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 pub use crate::tailor::{ClientConnectionHandler, ServerConnectionHandler};
@@ -142,6 +145,17 @@ impl ServerConnectionHandler<StaticByteBuffer> for DefaultServerConnectionHandle
             true
         }
     }
+}
+
+/// No-op active probe handler. Both [`start`] and [`process`] do nothing;
+/// unidentified packets are dropped silently.
+#[derive(Default)]
+pub struct NoopProbeHandler;
+
+#[async_trait]
+impl<AE: AsyncExecutor + 'static> ActiveProbeHandler<AE> for NoopProbeHandler {
+    async fn start(&mut self, _: Weak<dyn ProbeFlowSender>, _: Arc<Settings<AE>>) {}
+    async fn process(&mut self, _: DynamicByteBuffer, _: Option<SocketAddr>) {}
 }
 
 /// Client connection handler with no custom initial data that encodes `CARGO_PKG_VERSION`

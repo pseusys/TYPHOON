@@ -12,6 +12,7 @@ mod common;
 pub mod config;
 pub mod decoy;
 mod error;
+pub mod probe;
 #[cfg(feature = "server")]
 pub mod server;
 
@@ -20,3 +21,4 @@ pub(crate) use common::FlowCryptoProvider;
 pub(crate) use common::FlowManager;
 pub use config::{FakeBodyMode, FakeHeaderConfig, FieldType, FieldTypeHolder, FlowConfig};
 pub use error::FlowControllerError;
+pub use probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender, probe_factory};

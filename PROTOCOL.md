@@ -30,7 +30,9 @@ flowchart LR
         CS --> CFM2["FlowManager → addr 2"]
         CSM --> CHCP["HealthCheckProvider"]
         CFM1 --> CDP1["DecoyProvider"]
+        CFM1 --> CAPH1["ActiveProbeHandler"]
         CFM2 --> CDP2["DecoyProvider"]
+        CFM2 --> CAPH2["ActiveProbeHandler"]
     end
 
     subgraph Server
@@ -39,7 +41,9 @@ flowchart LR
         L --> SFM1["FlowManager :port 1"]
         L --> SFM2["FlowManager :port 2"]
         SFM1 --> SDP1["DecoyProvider (per user)"]
+        SFM1 --> SAPH1["ActiveProbeHandler"]
         SFM2 --> SDP2["DecoyProvider (per user)"]
+        SFM2 --> SAPH2["ActiveProbeHandler"]
         L --> SSM1["SessionManager (User A)"]
         L --> SSM2["SessionManager (User B)"]
         SSM1 --> SHCP1["HealthCheckProvider"]
@@ -125,6 +129,7 @@ The tailor is the only part of the message that should be decrypted by the flow 
 It always starts at `packet_length - tailor_length - tailor_encryption_overhead` and ends at the end of the packet.
 If the data flag is set, the payload should be read starting from `packet_length - tailor_length - tailor_encryption_overhead - payload_length` and until the start of the tailor.
 If the decoy flag is set, the packet should be discarded right away by the flow manager.
+If tailor decryption or authentication fails, the raw (still-encrypted) packet is forwarded to the flow manager's [active probe handler](#active-probing-protection) instead of being silently dropped.
 
 ### Fake body
 
@@ -193,10 +198,14 @@ sequenceDiagram
 
     FM-->>FM: receive UDP datagram
     FM->>FM: Strip FakeHeader + FakeBody
-    FM->>FM: Decrypt tailor → verify identity + PN
-    FM-->>SM: deliver(body)
-    SM->>SM: Decrypt body (session key)
-    SM-->>App: recv() → plaintext payload
+    alt tailor decryption / authentication ok
+        FM->>FM: Decrypt tailor → verify identity + PN
+        FM-->>SM: deliver(body)
+        SM->>SM: Decrypt body (session key)
+        SM-->>App: recv() → plaintext payload
+    else tailor decryption / authentication fail
+        FM->>FM: ActiveProbeHandler::process(raw packet)
+    end
 ```
 
 The simplest pattern affects data packets: they are sent directly and completely, without any delays, jitter, splitting or combination - as soon as possible, providing maximum efficiency.
@@ -459,6 +468,23 @@ The subheader mode can have these values:
 
 By default, subheader mode is chosen with equal probability for every option.
 
+### Active probing protection
+
+Active probing is a technique used by censors and network auditors to probe a suspected TYPHOON endpoint directly: they send crafted packets and observe whether the server responds in a way that reveals the protocol.
+To resist this, the flow manager must handle packets that fail tailor authentication gracefully rather than closing the socket or producing a distinctive error response.
+
+Every flow manager has a single **active probe handler** (one per flow, not per user) that receives every packet the flow manager could not identify:
+
+- **Tailor decryption or authentication failure**: any packet whose encrypted tailor cannot be deciphered or whose BLAKE3/AEAD authentication tag does not verify is forwarded to the handler. This covers both random garbage and deliberately crafted probe packets.
+- **Server only — unregistered user**: a non-handshake, non-decoy packet arriving with a valid-looking tailor but an identity not present in the registered-user table is also forwarded. This catches replayed or forged post-handshake packets sent by an active prober who has observed legitimate traffic.
+
+The handler receives the raw (still encrypted) wire packet together with the UDP source address (`Some(addr)` on the server, `None` on the client whose socket is already connected to a fixed peer).
+It can choose to silently drop the packet, log it, or send a raw response through the flow manager socket using `ProbeFlowSender::send_raw` — completely bypassing TYPHOON framing — to mimic whatever protocol the operator wants to impersonate.
+
+The default implementation (`NoopProbeHandler`) drops all unidentified packets silently.
+Custom handlers implement `ActiveProbeHandler<AE>` directly; the `start` method receives a `Weak<dyn ProbeFlowSender>` (for raw send access) and an `Arc<Settings<AE>>` so that expensive construction is deferred to startup and the hot `process` path stays allocation-free.
+Handler instances are created by a `ProbeFactory<AE>` — a simple no-arg closure stored in `ServerFlowConfiguration` or `ClientSocketBuilder` — and attached to the flow manager during `ServerFlowManager::new` / `ClientFlowManager::new`.
+
 ## Cryptography
 
 The following requirements are taken into account for TYPHOON protocol cryptography suite selection:
@@ -559,17 +585,22 @@ flowchart TD
     A([UDP socket · recv]) --> B[Flow layer: strip FakeHeader ‖ FakeBody]
     B --> TM{Feature mode}
     TM -- fast_software / fast_hardware --> C1[BLAKE3 verify MAC\nover obfuscated tailor]
-    C1 --> C2[Stream-cipher deobfuscate tailor\nXChaCha20 or AES-256-CTR\nusing OBFS key]
+    C1 -- fail --> X([ActiveProbeHandler::process\nunidentified packet])
+    C1 -- ok --> C2[Stream-cipher deobfuscate tailor\nXChaCha20 or AES-256-CTR\nusing OBFS key]
     TM -- full_software / full_hardware --> D1[Ephemeral X25519 key-exchange\nwith server static OSK]
     D1 --> D2[Anonymous-decrypt tailor\nAEAD with derived key]
+    D2 -- fail --> X
 
     C2 --> E[Parse Tailor fields\nflags · identity · payload_length · PN]
-    D2 --> E
-    E --> F{flags}
+    D2 -- ok --> E
+    E --> V{Verify tailor\nauthentication}
+    V -- fail --> X
+    V -- ok --> F{flags}
     F -- DATA or SHADOWRIDE --> G[Slice ciphertext via payload_length\ndecrypt_payload with session AEAD key]
     G --> H([Plaintext delivered to application])
     F -- HEALTH_CHECK only --> I([Feed to HealthProvider])
     F -- TERMINATION --> J([Session teardown])
+    F -- DECOY --> K([Silently discard])
 ```
 
 ### Handshake encryption
@@ -776,6 +807,7 @@ In short, these are the main TYPHOON implementation parts:
 - Health check provider (one per session): attached to session controller, keeps internal protocol state, manages handshake message timers and injects handshake messages themselves if necessary.
 - Flow controller (one per flow): accepts data, prepends a mock header to it and sends it to the flow partner using a UDP socket.
 - Decoy provider (one per flow): attached to flow controller, observes (and probably mutates) flow packet stream and injects decoy packets whenever necessary.
+- Active probe handler (one per flow): attached to flow controller, receives every packet that could not be identified (tailor authentication failed, or — on the server — packet from an unregistered user), and may send a raw response via the flow socket to mimic another protocol.
 
 #### Identification and rebinding
 
@@ -1153,6 +1185,11 @@ This design allows each flow manager (or each per-user slot within a server flow
 The construction trait `DecoyCommunicationMode<T, AE>` extends `DecoyProvider` with a single `new()` constructor and is the target of `decoy_factory::<T, AE, DP>()`.
 `random_decoy_factory()` selects randomly among all five built-in providers on every invocation and is the default when no override is supplied.
 
+Active probe handlers implement `ActiveProbeHandler<AE>` (generic in the async executor, object-safe because `AE` is fixed at the usage site) and are constructed through a `ProbeFactory<AE>` — a simple no-arg closure `Arc<dyn Fn() -> Box<dyn ActiveProbeHandler<AE>> + Send + Sync>`.
+Unlike decoy providers, which receive their context at construction time, probe handlers receive a `Weak<dyn ProbeFlowSender>` and an `Arc<Settings<AE>>` in a single async `start()` call made after the flow manager's `Arc` is fully initialised (post `Arc::new_cyclic`).
+`ProbeFlowSender` is the raw-send interface exposed to handlers: `ClientFlowManager` implements it by calling `Socket::send` (ignoring the target address, since the socket is already connected), while `ServerFlowManager` calls `Socket::send_to` with the supplied `SocketAddr`.
+`probe_factory::<AE, PH>()` constructs a factory for any `PH: ActiveProbeHandler<AE> + Default + 'static`, and `NoopProbeHandler` (the default when no factory is supplied) is a zero-cost `Default`-derived stub.
+
 ### Session module
 
 The `session` module owns session lifecycle, health checks, and the user-visible data pipe.
@@ -1316,3 +1353,21 @@ Certificates in such a setup could either embed a stable relay address (the list
 **The challenge**: Dynamic plug/unplug of flow managers while sessions are live requires atomic consistency guarantees between the session state (held by the listener) and the per-flow address tables.
 Any message routed to a flow manager that has just gone offline must be either retried on another flow or transparently dropped, while avoiding split-brain scenarios where the listener believes a flow is active but packets are silently lost.
 The synchronization protocol, failure detection timeout, and certificate invalidation strategy all need careful co-design to keep the overall system both correct and efficient.
+
+### Periodic server fake header/body mode rotation
+
+In the current design, the fake header field layout and fake body mode for each flow are fixed at construction time (encoded in `FlowConfig`) and never change for the lifetime of the flow.
+A long-lived session therefore produces traffic with a statistically consistent structure — the distribution of packet lengths and of fake header field widths remains constant — which may allow a patient observer to fingerprint TYPHOON flows over time even without breaking the cryptography.
+
+Because fake headers and fake bodies are purely decorative and do not affect how the receiving side locates or parses the tailor (the tailor position is always derived from known length constants, not from the fake header contents), neither side needs to know or agree on the other side's current configuration.
+Each flow manager can therefore rotate its own `FlowConfig` independently and at its own pace — switching to a freshly sampled layout after a random interval — without any protocol signaling or cross-side coordination.
+
+This is analogous to the _protocol polymorphism_ mechanism in [OBFS4](https://gitlab.com/yawning/obfs4/-/blob/master/doc/obfs4-spec.txt), where the server periodically shifts its observable traffic characteristics to frustrate long-term statistical classifiers.
+The key difference is that OBFS4 achieves this by exchanging explicit polymorphism messages on the wire, whereas TYPHOON requires no such messages: since the two sides are fully decoupled, each can resample its `FlowConfig` unilaterally using `FlowConfig::random`, with the change taking effect on the very next outgoing packet.
+
+Rotation is opt-in and configured per flow: `FlowConfig` carries an optional rotation interval range — `None` disables rotation entirely, while `Some((min_ms, max_ms))` enables it and bounds the random delay between successive resamples.
+`FlowConfig::random` enables rotation with `TYPHOON_FLOW_ROTATION_PROBABILITY` probability, sampling the interval bounds from `[TYPHOON_FLOW_ROTATION_INTERVAL_MIN, TYPHOON_FLOW_ROTATION_INTERVAL_MAX]`.
+
+**The challenge**:
+The rotation interval itself must not become a new fingerprint.
+A fixed period (e.g. every _N_ seconds) would create detectable periodic discontinuities in the packet-length or field-width distributions.

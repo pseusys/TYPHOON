@@ -13,6 +13,7 @@ use crate::crypto::{ClientCryptoTool, KEY_LENGTH, PAYLOAD_CRYPTO_OVERHEAD};
 use crate::flow::FlowConfig;
 use crate::flow::client::ClientFlowManager;
 use crate::flow::decoy::{DecoyFactory, random_decoy_factory};
+use crate::flow::probe::ProbeFactory;
 use crate::session::{ClientSessionManager, SessionManager};
 use crate::settings::Settings;
 use crate::socket::error::ClientSocketError;
@@ -29,6 +30,7 @@ pub struct ClientSocketBuilder<T: IdentityType + Clone, AE: AsyncExecutor + 'sta
     certificate: ClientCertificate,
     initial_data_generator: CC,
     decoy_factory: DecoyFactory<T, AE>,
+    probe_factory: Option<ProbeFactory<AE>>,
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientConnectionHandler + 'static> ClientSocketBuilder<T, AE, CC> {
@@ -49,6 +51,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
             certificate,
             initial_data_generator,
             decoy_factory: random_decoy_factory(),
+            probe_factory: None,
         }
     }
 
@@ -67,6 +70,18 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
     /// Set a fixed decoy provider type for all flows.
     pub fn with_decoy<DP: crate::flow::decoy::DecoyCommunicationMode<T, AE> + 'static>(mut self) -> Self {
         self.decoy_factory = crate::flow::decoy::decoy_factory::<T, AE, DP>();
+        self
+    }
+
+    /// Set the active probe handler factory for all flows.
+    pub fn with_probe_factory(mut self, factory: ProbeFactory<AE>) -> Self {
+        self.probe_factory = Some(factory);
+        self
+    }
+
+    /// Set a fixed active probe handler type for all flows.
+    pub fn with_probe<PM: crate::flow::probe::ActiveProbeHandler<AE> + Default + 'static>(mut self) -> Self {
+        self.probe_factory = Some(crate::flow::probe::probe_factory::<AE, PM>());
         self
     }
 
@@ -120,7 +135,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
 
             let sock = Socket::new(addr, None).await.map_err(ClientSocketError::SocketError)?;
             let cipher_cache = cipher.create_cache();
-            let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock, &self.decoy_factory).await.map_err(ClientSocketError::FlowError)?;
+            let flow = ClientFlowManager::new(config, self.probe_factory.as_ref(), cipher_cache, settings.clone(), sock, &self.decoy_factory).await.map_err(ClientSocketError::FlowError)?;
             flows.push(flow);
         }
         let max_data_payload = if max_data_payload == usize::MAX {

@@ -200,10 +200,9 @@ pub async fn run_debug(certificate: ClientCertificate, mode: DebugMode, settings
     // Build client socket — if this fails the server is unreachable.
     // Use empty flow config for all addresses: fake body/header would prepend bytes that the
     // server's handshake parser cannot strip, causing a crypto overflow on decapsulation.
-    let empty_config = FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![]));
     let mut builder = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DebugClientConnectionHandler>::new(certificate.clone(), DebugClientConnectionHandler).with_settings(settings.clone());
     for &addr in certificate.addresses() {
-        builder = builder.with_flow_config(addr, empty_config.clone());
+        builder = builder.with_flow_config(addr, FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![])));
     }
     let socket = match builder.build().await {
         Ok(s) => s,

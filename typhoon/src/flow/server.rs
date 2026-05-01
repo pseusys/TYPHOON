@@ -1,7 +1,9 @@
 /// Server-side flow manager implementation.
 use std::collections::HashMap;
+use std::future::Future;
 use std::hash::Hash;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::{Arc, Weak};
 
 use log::{debug, warn};
@@ -9,15 +11,17 @@ use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::crypto::ServerCryptoTool;
+use crate::defaults::NoopProbeHandler;
 use crate::flow::common::FlowManager;
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
+use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender};
 use crate::settings::Settings;
 use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::random::get_rng;
-use crate::utils::socket::Socket;
+use crate::utils::socket::{Socket, SocketError};
 use crate::utils::sync::{AsyncExecutor, Mutex, RwLock};
 
 /// Raw received packet from the server flow manager before session-level processing.
@@ -48,6 +52,8 @@ pub struct ServerFlowManager<T: IdentityType + Clone + Eq + Hash + Send + ToStri
     socks: Vec<Arc<Socket>>,
     mtu: usize,
     settings: Arc<Settings<AE>>,
+    /// Handler for unidentified packets. Locked only for rare unexpected arrivals.
+    probe_handler: Mutex<Box<dyn ActiveProbeHandler<AE>>>,
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> ServerFlowManager<T, AE> {
@@ -56,21 +62,35 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// on the same `SharedMap`) so their mutexes never contend between the send and receive paths.
     /// `socks` must contain at least one socket; on Linux with SO_REUSEPORT multiple sockets may be
     /// supplied so that the listener can spawn one drain task per socket.
-    pub(crate) fn new(config: FlowConfig, crypto_send: ServerCryptoTool<T>, crypto_recv: ServerCryptoTool<T>, settings: Arc<Settings<AE>>, socks: Vec<Arc<Socket>>, decoy_factory: DecoyFactory<T, AE>) -> Arc<Self> {
+    pub(crate) async fn new(config: FlowConfig, probe_factory: Option<&ProbeFactory<AE>>, crypto_send: ServerCryptoTool<T>, crypto_recv: ServerCryptoTool<T>, settings: Arc<Settings<AE>>, socks: Vec<Arc<Socket>>, decoy_factory: DecoyFactory<T, AE>) -> Arc<Self> {
         let max_overhead = config.max_overhead();
-        Arc::new(ServerFlowManager {
-            user_addrs: RwLock::new(HashMap::new()),
-            decoy_providers: RwLock::new(HashMap::new()),
-            decoy_factory,
-            crypto_send: Mutex::new(crypto_send),
-            crypto_recv: Mutex::new(crypto_recv),
-            fake_body_mode: config.fake_body_mode,
-            fake_header_mode: Mutex::new(config.fake_header_mode),
-            max_overhead,
-            socks,
-            mtu: settings.mtu(),
-            settings,
-        })
+        let handler_factory = probe_factory.cloned();
+        let settings_for_start = Arc::clone(&settings);
+
+        let manager = Arc::new_cyclic(|_: &Weak<ServerFlowManager<T, AE>>| {
+            let handler: Box<dyn ActiveProbeHandler<AE>> = match &handler_factory {
+                Some(f) => f(),
+                None => Box::new(NoopProbeHandler),
+            };
+            let mtu = settings.mtu();
+            ServerFlowManager {
+                user_addrs: RwLock::new(HashMap::new()),
+                decoy_providers: RwLock::new(HashMap::new()),
+                decoy_factory,
+                crypto_send: Mutex::new(crypto_send),
+                crypto_recv: Mutex::new(crypto_recv),
+                fake_body_mode: config.fake_body_mode,
+                fake_header_mode: Mutex::new(config.fake_header_mode),
+                max_overhead,
+                socks,
+                mtu,
+                settings,
+                probe_handler: Mutex::new(handler),
+            }
+        });
+        let weak: Weak<dyn ProbeFlowSender> = Arc::downgrade(&manager) as Weak<dyn ProbeFlowSender>;
+        manager.probe_handler.lock().await.start(weak, settings_for_start).await;
+        manager
     }
 
     /// Return the slice of sockets owned by this flow manager.
@@ -119,6 +139,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     Ok(result) => result,
                     Err(err) => {
                         warn!("server flow: tailor decryption failed from {}: {}", source_addr, err);
+                        self.probe_handler.lock().await.process(
+                            encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr),
+                        ).await;
                         continue;
                     }
                 };
@@ -127,6 +150,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     let identity = tailor.identity();
                     if let Err(err) = crypto.verify_tailor(&identity, transcript).await {
                         debug!("error verifying packet tailor: {}", err);
+                        self.probe_handler.lock().await.process(
+                            encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr),
+                        ).await;
                         continue;
                     }
                 }
@@ -156,6 +182,12 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     if notified.is_none() {
                         continue;
                     }
+                } else {
+                    // Non-handshake, non-decoy packet from an unregistered user.
+                    self.probe_handler.lock().await.process(
+                        encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr),
+                    ).await;
+                    continue;
                 }
             }
 
@@ -175,6 +207,16 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 source_addr,
             });
         }
+    }
+}
+
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> ProbeFlowSender for ServerFlowManager<T, AE> {
+    fn send_raw<'a>(
+        &'a self,
+        packet: DynamicByteBuffer,
+        target: SocketAddr,
+    ) -> Pin<Box<dyn Future<Output = Result<(), SocketError>> + Send + 'a>> {
+        Box::pin(async move { self.socks[0].send_to(packet, target).await.map(|_| ()) })
     }
 }
 

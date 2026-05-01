@@ -1,16 +1,21 @@
 /// Client-side flow manager implementation.
+use std::future::Future;
+use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::{Arc, Weak};
 
 use crate::bytes::DynamicByteBuffer;
 use crate::cache::CachedValue;
 use crate::crypto::ClientCryptoTool;
-use crate::flow::common::{FlowManager, FlowReceiveInternal, FlowSendInternal};
+use crate::defaults::NoopProbeHandler;
+use crate::flow::common::{FlowManager, FlowReceiveInternal, FlowSendInternal, ProcessIncomingResult};
 use crate::flow::config::FlowConfig;
 use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
+use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender};
 use crate::settings::Settings;
 use crate::tailor::IdentityType;
-use crate::utils::socket::Socket;
+use crate::utils::socket::{Socket, SocketError};
 use crate::utils::sync::{AsyncExecutor, Mutex};
 
 /// Client-side flow manager that handles packet encryption, decoy traffic, and socket I/O.
@@ -21,18 +26,27 @@ pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor> {
     sock: Socket,
     mtu: usize,
     settings: Arc<Settings<AE>>,
+    /// Handler for unidentified packets. Locked only for rare unexpected arrivals.
+    probe_handler: Mutex<Box<dyn ActiveProbeHandler<AE>>>,
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowManager<T, AE> {
     /// Create a new client flow manager.
-    pub(crate) async fn new(config: FlowConfig, mut cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, sock: Socket, factory: &DecoyFactory<T, AE>) -> Result<Arc<Self>, FlowControllerError> {
+    pub(crate) async fn new(config: FlowConfig, probe_factory: Option<&ProbeFactory<AE>>, mut cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, sock: Socket, factory: &DecoyFactory<T, AE>) -> Result<Arc<Self>, FlowControllerError> {
         let identity = cipher.get_mut().map_err(FlowControllerError::MissingCache)?.identity();
         let send_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
         let receive_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
+        let handler_factory = probe_factory.cloned();
+        let settings_for_start = Arc::clone(&settings);
 
         let manager_ref = Arc::new_cyclic(|m: &Weak<ClientFlowManager<T, AE>>| {
             let mgr: Weak<dyn DecoyFlowSender> = m.clone();
             let decoy = factory(mgr, settings.clone(), identity);
+            let probe_handler: Box<dyn ActiveProbeHandler<AE>> = match &handler_factory {
+                Some(f) => f(),
+                None => Box::new(NoopProbeHandler),
+            };
+            let mtu = settings.mtu();
             ClientFlowManager {
                 decoy_provider: Mutex::new(decoy),
                 send_internal: Mutex::new(FlowSendInternal {
@@ -43,12 +57,25 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowM
                     provider: receive_provider,
                 }),
                 sock,
-                mtu: settings.mtu(),
+                mtu,
                 settings,
+                probe_handler: Mutex::new(probe_handler),
             }
         });
         manager_ref.decoy_provider.lock().await.start().await;
+        let weak: Weak<dyn ProbeFlowSender> = Arc::downgrade(&manager_ref) as Weak<dyn ProbeFlowSender>;
+        manager_ref.probe_handler.lock().await.start(weak, settings_for_start).await;
         Ok(manager_ref)
+    }
+}
+
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ProbeFlowSender for ClientFlowManager<T, AE> {
+    fn send_raw<'a>(
+        &'a self,
+        packet: DynamicByteBuffer,
+        _target: SocketAddr,
+    ) -> Pin<Box<dyn Future<Output = Result<(), SocketError>> + Send + 'a>> {
+        Box::pin(async move { self.sock.send(packet).await.map(|_| ()) })
     }
 }
 
@@ -78,13 +105,19 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager
                 if notified_packet.is_none() {
                     continue;
                 }
-                notified_packet
+                notified_packet.unwrap()
             };
 
-            let mut lock = self.receive_internal.lock().await;
-            match lock.process_incoming(notified_packet.unwrap(), self.settings.pool())? {
-                Some(result) => return Ok(result),
-                None => continue,
+            {
+                let mut lock = self.receive_internal.lock().await;
+                match lock.process_incoming(notified_packet, self.settings.pool())? {
+                    ProcessIncomingResult::Valid(result) => return Ok(result),
+                    ProcessIncomingResult::Decoy => continue,
+                    ProcessIncomingResult::Unexpected(pkt) => {
+                        drop(lock);
+                        self.probe_handler.lock().await.process(pkt, None).await;
+                    }
+                }
             }
         }
     }
