@@ -16,7 +16,7 @@ concurrency:
 jobs:
   typhoon-build:
     name: Build and Run TYPHOON Binaries and Examples
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout 🛎️

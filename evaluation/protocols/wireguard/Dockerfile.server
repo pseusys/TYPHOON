@@ -1,0 +1,10 @@
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        wireguard-tools iproute2 python3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY wireguard/server-entrypoint.sh /entrypoint.sh
+COPY common/udp_sink.py /app/server.py
+RUN chmod +x /entrypoint.sh
+HEALTHCHECK --interval=1s --timeout=3s --retries=20 --start-period=5s \
+    CMD ip link show wg0 >/dev/null 2>&1 && ss -uln | grep -q ':9000'
+ENTRYPOINT ["/entrypoint.sh"]

@@ -153,7 +153,7 @@ fn test_partial_eq() {
 fn test_debug() {
     let data = vec![1u8, 2, 3];
     let buf: StaticByteBuffer = data.into();
-    let debug_str = format!("{:?}", buf);
+    let debug_str = format!("{buf:?}");
     assert!(debug_str.contains("StaticByteBuffer"));
     assert!(debug_str.contains("length"));
 }

@@ -49,7 +49,7 @@ impl<const N: usize> ByteBuffer for FixedByteBuffer<N> {
 
     #[inline]
     fn get(&self, at: usize) -> &u8 {
-        assert!(at < N, "index out of bounds: {} >= {}", at, N);
+        assert!(at < N, "index out of bounds: {at} >= {N}");
         &self.data[at]
     }
 
@@ -141,7 +141,7 @@ impl<const N: usize> Hash for FixedByteBuffer<N> {
 impl<const N: usize> Display for FixedByteBuffer<N> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         for byte in &self.data {
-            write!(f, "{:02x}", byte)?;
+            write!(f, "{byte:02x}")?;
         }
         Ok(())
     }

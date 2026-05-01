@@ -1,0 +1,212 @@
+# Build-only compose file.  Run with:
+#
+#   docker compose -f compose/docker-compose.build.yml build
+#
+# Each service maps to one Docker image.  The run-time compose file
+# (docker-compose.yml) references these images by name via ${CLIENT_IMAGE}
+# and ${SERVER_IMAGE} substitutions.
+#
+# Context paths are relative to this file (evaluation/compose/).
+#
+# Typhoon server/client use the repository root as context so the Dockerfile
+# can COPY both the typhoon library source and the eval crate.
+
+name: typhoon-eval-build
+
+services:
+
+  # ── Observer ──────────────────────────────────────────────────────────────
+  observer:
+    build:
+      context: ../observer
+    image: typhoon-eval-observer
+
+  # ── Chaos (netem overlay) ─────────────────────────────────────────────────
+  chaos:
+    build:
+      context: ../chaos
+    image: typhoon-eval-chaos
+
+  # ── raw_udp ───────────────────────────────────────────────────────────────
+  raw-udp-server:
+    build:
+      context: ../protocols/raw_udp
+      dockerfile: Dockerfile.server
+    image: typhoon-eval-raw-udp-server
+
+  raw-udp-client:
+    build:
+      context: ../protocols/raw_udp
+      dockerfile: Dockerfile.client
+    image: typhoon-eval-raw-udp-client
+
+  # ── raw_tcp ───────────────────────────────────────────────────────────────
+  raw-tcp-server:
+    build:
+      context: ../protocols
+      dockerfile: raw_tcp/Dockerfile.server
+    image: typhoon-eval-raw-tcp-server
+
+  raw-tcp-client:
+    build:
+      context: ../protocols
+      dockerfile: raw_tcp/Dockerfile.client
+    image: typhoon-eval-raw-tcp-client
+
+  # ── tls ───────────────────────────────────────────────────────────────────
+  tls-server:
+    build:
+      context: ../protocols/tls
+      dockerfile: Dockerfile.server
+    image: typhoon-eval-tls-server
+
+  tls-client:
+    build:
+      context: ../protocols/tls
+      dockerfile: Dockerfile.client
+    image: typhoon-eval-tls-client
+
+  # ── wireguard ─────────────────────────────────────────────────────────────
+  wireguard-server:
+    build:
+      context: ../protocols
+      dockerfile: wireguard/Dockerfile.server
+    image: typhoon-eval-wireguard-server
+
+  wireguard-client:
+    build:
+      context: ../protocols
+      dockerfile: wireguard/Dockerfile.client
+    image: typhoon-eval-wireguard-client
+
+  # ── quic ──────────────────────────────────────────────────────────────────
+  quic-server:
+    build:
+      context: ../protocols/quic
+      dockerfile: Dockerfile.server
+    image: typhoon-eval-quic-server
+
+  quic-client:
+    build:
+      context: ../protocols/quic
+      dockerfile: Dockerfile.client
+    image: typhoon-eval-quic-client
+
+  # ── obfs4 ─────────────────────────────────────────────────────────────────
+  obfs4-server:
+    build:
+      context: ../protocols
+      dockerfile: obfs4/Dockerfile.server
+    image: typhoon-eval-obfs4-server
+
+  obfs4-client:
+    build:
+      context: ../protocols
+      dockerfile: obfs4/Dockerfile.client
+    image: typhoon-eval-obfs4-client
+
+  # ── shadowsocks ───────────────────────────────────────────────────────────
+  shadowsocks-server:
+    build:
+      context: ../protocols
+      dockerfile: shadowsocks/Dockerfile.server
+    image: typhoon-eval-shadowsocks-server
+
+  shadowsocks-client:
+    build:
+      context: ../protocols
+      dockerfile: shadowsocks/Dockerfile.client
+    image: typhoon-eval-shadowsocks-client
+
+  # ── tor ───────────────────────────────────────────────────────────────────
+  tor-server:
+    build:
+      context: ../protocols/tor
+      dockerfile: Dockerfile.server
+    image: typhoon-eval-tor-server
+
+  tor-client:
+    build:
+      context: ../protocols/tor
+      dockerfile: Dockerfile.client
+    image: typhoon-eval-tor-client
+
+  # ── vless_reality ─────────────────────────────────────────────────────────
+  vless-reality-server:
+    build:
+      context: ../protocols
+      dockerfile: vless_reality/Dockerfile.server
+    image: typhoon-eval-vless-reality-server
+
+  vless-reality-client:
+    build:
+      context: ../protocols
+      dockerfile: vless_reality/Dockerfile.client
+    image: typhoon-eval-vless-reality-client
+
+  # ── amneziawg ─────────────────────────────────────────────────────────────
+  amneziawg-server:
+    build:
+      context: ../protocols
+      dockerfile: amneziawg/Dockerfile.server
+    image: typhoon-eval-amneziawg-server
+
+  amneziawg-client:
+    build:
+      context: ../protocols
+      dockerfile: amneziawg/Dockerfile.client
+    image: typhoon-eval-amneziawg-client
+
+  # ── hysteria2 ─────────────────────────────────────────────────────────────
+  hysteria2-server:
+    build:
+      context: ../protocols
+      dockerfile: hysteria2/Dockerfile.server
+    image: typhoon-eval-hysteria2-server
+
+  hysteria2-client:
+    build:
+      context: ../protocols
+      dockerfile: hysteria2/Dockerfile.client
+    image: typhoon-eval-hysteria2-client
+
+  # ── openvpn ───────────────────────────────────────────────────────────────
+  openvpn-server:
+    build:
+      context: ../protocols
+      dockerfile: openvpn/Dockerfile.server
+    image: typhoon-eval-openvpn-server
+
+  openvpn-client:
+    build:
+      context: ../protocols
+      dockerfile: openvpn/Dockerfile.client
+    image: typhoon-eval-openvpn-client
+
+  # ── wireguard_daita ───────────────────────────────────────────────────────
+  wireguard-daita-server:
+    build:
+      context: ../protocols
+      dockerfile: wireguard_daita/Dockerfile.server
+    image: typhoon-eval-wireguard-daita-server
+
+  wireguard-daita-client:
+    build:
+      context: ../protocols
+      dockerfile: wireguard_daita/Dockerfile.client
+    image: typhoon-eval-wireguard-daita-client
+
+  # ── typhoon ───────────────────────────────────────────────────────────────
+  # Context is the repository root so the Dockerfile can access both
+  # typhoon/ (library) and evaluation/protocols/typhoon/ (eval crate).
+  typhoon-server:
+    build:
+      context: ../..
+      dockerfile: evaluation/protocols/typhoon/Dockerfile.server
+    image: typhoon-eval-typhoon-server
+
+  typhoon-client:
+    build:
+      context: ../..
+      dockerfile: evaluation/protocols/typhoon/Dockerfile.client
+    image: typhoon-eval-typhoon-client

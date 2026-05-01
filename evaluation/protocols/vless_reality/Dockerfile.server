@@ -1,0 +1,14 @@
+FROM ghcr.io/xtls/xray-core AS xray
+
+FROM debian:bookworm-slim
+COPY --from=xray /usr/local/bin/xray /usr/local/bin/xray
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        iproute2 openssl python3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /etc/xray
+COPY vless_reality/server-entrypoint.sh /entrypoint.sh
+COPY common/tcp_sink.py /app/server.py
+RUN chmod +x /entrypoint.sh
+HEALTHCHECK --interval=1s --timeout=5s --retries=30 --start-period=8s \
+    CMD ss -tln | grep -q ':443' && test -f /keys/vless_public_key
+ENTRYPOINT ["/entrypoint.sh"]

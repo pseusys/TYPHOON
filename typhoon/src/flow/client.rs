@@ -110,7 +110,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager
 
             {
                 let mut lock = self.receive_internal.lock().await;
-                match lock.process_incoming(notified_packet, self.settings.pool())? {
+                match lock.process_incoming(notified_packet.unwrap(), self.settings.pool())? {
                     ProcessIncomingResult::Valid(result) => return Ok(result),
                     ProcessIncomingResult::Decoy => continue,
                     ProcessIncomingResult::Unexpected(pkt) => {

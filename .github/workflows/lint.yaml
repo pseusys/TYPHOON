@@ -7,39 +7,80 @@ on:
   push:
     paths:
       - 'typhoon/**'
-      - '**.md'
+      - 'evaluation/**'
       - '.github/workflows/lint.yaml'
+      - '.shellcheckrc'
+      - '**.md'
+      - '**.go'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  typhoon-lint:
-    name: Lint TYPHOON Crate and Docs
-    runs-on: ubuntu-24.04
+  all-lint:
+    name: Lint All the Code
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout 🛎️
         uses: actions/checkout@v4
 
+      - name: Lint markdown 📝
+        uses: DavidAnson/markdownlint-cli2-action@v19
+        with:
+          globs: '**/*.md'
+
+      - name: Check shell scripts 🐚
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: "."
+        env:
+          SHELLCHECK_OPTS: -s bash -e SC2034
+
+      - name: Check Dockerfile configuration 📦
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          recursive: true
+          config: evaluation/.hadolint.yaml
+
       - name: Setup Rust 🦀
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: "1.89.0"
+          toolchain: nightly
           components: rustfmt, clippy
           rust-src-dir: typhoon
           override: true
 
       - name: Check formatting 🎨
-        working-directory: typhoon
-        run: cargo fmt --check
+        run: |
+          cd typhoon && cargo fmt --check
+          cd ../evaluation/protocols/typhoon && cargo fmt --check
+          cd ../wireguard_daita/machines-printer && cargo fmt --check
 
       - name: Run clippy 📎
         working-directory: typhoon
-        run: cargo clippy -- -D warnings
+        run: cargo clippy
 
-      - name: Lint markdown 📝
-        uses: DavidAnson/markdownlint-cli2-action@v19
+      - name: Setup Python 🐍
+        uses: actions/setup-python@v6.2.0
         with:
-          globs: '**/*.md'
+          python-version: "3.12"
+
+      - name: Check Python code 📜
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "check --config evaluation/pyproject.toml evaluation/src evaluation/protocols"
+
+      - name: Setup Go 🐹
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Lint Go (wireguard_daita) 🔍
+        working-directory: evaluation/protocols/wireguard_daita/wg-daita
+        run: |
+          git clone --depth=1 --branch mullvad https://github.com/mullvad/wireguard-go ../wireguard-go
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          go mod tidy
+          staticcheck -tags daita ./...

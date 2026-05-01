@@ -185,25 +185,23 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         for flow_config in self.flow_configs.drain(..) {
             flow_config.config.assert(settings.mtu()).map_err(ServerSocketError::FlowError)?;
 
-            let flow_overhead = flow_config.config.max_overhead() + PAYLOAD_CRYPTO_OVERHEAD + tailor_wire_len;
-            max_data_payload = max_data_payload.min(settings.mtu().saturating_sub(flow_overhead));
+            max_data_payload = max_data_payload.min(flow_config.config.max_user_payload(settings.mtu(), PAYLOAD_CRYPTO_OVERHEAD, tailor_wire_len));
 
-            let socks: Vec<Arc<Socket>> = match flow_config.socket {
-                Some(socket) => vec![Arc::new(socket)],
-                None => {
-                    let address = flow_config.address.expect("ServerFlowConfiguration must have either socket or address");
-                    cfg_if::cfg_if! {
-                        if #[cfg(target_os = "linux")] {
-                            if flow_config.reader_count > 1 {
-                                Socket::bind_reuse_port(address, flow_config.reader_count)
-                                    .map_err(ServerSocketError::SocketError)?
-                                    .into_iter().map(Arc::new).collect()
-                            } else {
-                                vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
-                            }
+            let socks: Vec<Arc<Socket>> = if let Some(socket) = flow_config.socket {
+                vec![Arc::new(socket)]
+            } else {
+                let address = flow_config.address.expect("ServerFlowConfiguration must have either socket or address");
+                cfg_if::cfg_if! {
+                    if #[cfg(target_os = "linux")] {
+                        if flow_config.reader_count > 1 {
+                            Socket::bind_reuse_port(address, flow_config.reader_count)
+                                .map_err(ServerSocketError::SocketError)?
+                                .into_iter().map(Arc::new).collect()
                         } else {
                             vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
                         }
+                    } else {
+                        vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
                     }
                 }
             };
@@ -257,8 +255,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         for flow_config in self.flow_configs.drain(..) {
             flow_config.config.assert(settings.mtu()).map_err(ServerSocketError::FlowError)?;
 
-            let flow_overhead = flow_config.config.max_overhead() + PAYLOAD_CRYPTO_OVERHEAD + tailor_wire_len;
-            max_data_payload = max_data_payload.min(settings.mtu().saturating_sub(flow_overhead));
+            max_data_payload = max_data_payload.min(flow_config.config.max_user_payload(settings.mtu(), PAYLOAD_CRYPTO_OVERHEAD, tailor_wire_len));
 
             let socks: Vec<Arc<Socket>> = match flow_config.socket {
                 Some(socket) => vec![Arc::new(socket)],
@@ -386,7 +383,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                         match flow_drain.receive_raw(recv_buf, &sock).await {
                             Ok(raw_packet) => drain_tx.push(raw_packet),
                             Err(err) => {
-                                warn!("flow manager {} socket {}: receive error: {}", index, sock_index, err);
+                                warn!("flow manager {index} socket {sock_index}: receive error: {err}");
                                 break;
                             }
                         }
@@ -419,6 +416,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         };
 
         if let Some(session) = session {
+            self.flows[flow_index].ensure_user(identity.clone(), raw_packet.source_addr).await;
             session.note_active_flow(flow_index);
 
             let incoming = IncomingPacket {
@@ -452,12 +450,13 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             let buf = self.settings.pool().allocate(Some(T::length()));
             let tailor = Tailor::termination(buf, &client_version_identity, ReturnCode::VersionMismatch, pn);
             if let Err(err) = self.flows[flow_index].send_packet(tailor.into_buffer(), true).await {
-                warn!("failed to send version mismatch rejection: {}", err);
+                warn!("failed to send version mismatch rejection: {err}");
             }
             {
                 let mut users = self.users.lock().await;
                 users.remove(&client_version_identity).await;
             }
+            self.flows[flow_index].remove_user(&client_version_identity).await;
             return;
         }
 
@@ -481,7 +480,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             match result {
                 Ok((session, response_packet)) => (session, response_packet, replacing),
                 Err(err) => {
-                    warn!("handshake failed: {}", err);
+                    warn!("handshake failed: {err}");
                     return;
                 }
             }
@@ -495,13 +494,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         }
 
         self.flows[flow_index].register_user_addr(identity.clone(), raw_packet.source_addr).await;
-
-        for flow in &self.flows {
-            flow.register_user(identity.clone()).await;
-        }
+        self.flows[flow_index].register_user(identity.clone()).await;
 
         if let Err(err) = self.flows[flow_index].send_packet(response_packet, false).await {
-            warn!("failed to send handshake response: {}", err);
+            warn!("failed to send handshake response: {err}");
             self.users.lock().await.remove(&identity).await;
             for flow in &self.flows {
                 flow.remove_user(&identity).await;
@@ -547,7 +543,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 return Ok(handle);
             }
             match self.accept_signal_rx.lock().await.recv().await {
-                Some(()) => continue,
+                Some(()) => {}
                 None => return Err(ServerSocketError::ListenerStopped),
             }
         }

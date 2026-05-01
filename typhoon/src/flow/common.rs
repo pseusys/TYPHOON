@@ -137,9 +137,9 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
             Ok(cipher) => match cipher.deobfuscate_tailor(encrypted_tailor, pool) {
                 Ok((tailor, transcript)) => {
                     match cipher.verify_tailor(transcript) {
-                        Ok(_) => {}
+                        Ok(()) => {}
                         Err(err) => {
-                            warn!("client flow: tailor verification failed: {}", err);
+                            warn!("client flow: tailor verification failed: {err}");
                             return Ok(ProcessIncomingResult::Unexpected(
                                 encrypted_packet.expand_end(encrypted_tailor_len),
                             ));
@@ -148,7 +148,7 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
                     tailor
                 }
                 Err(err) => {
-                    warn!("client flow: tailor decryption failed: {}", err);
+                    warn!("client flow: tailor decryption failed: {err}");
                     return Ok(ProcessIncomingResult::Unexpected(
                         encrypted_packet.expand_end(encrypted_tailor_len),
                     ));

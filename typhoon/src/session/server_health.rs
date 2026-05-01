@@ -112,7 +112,7 @@ impl ServerHealthProvider {
 
                     // Expect the client's next health check within server_next_in + timeout.
                     current_timeout = server_next_in as u64 + timeout;
-                    debug!("ServerHealthProvider: response sent (server_next_in={}ms), next timeout={}ms", server_next_in, current_timeout);
+                    debug!("ServerHealthProvider: response sent (server_next_in={server_next_in}ms), next timeout={current_timeout}ms");
                 }
                 ServerDecayEvent::Timeout => {
                     retry_count += 1;
@@ -120,7 +120,7 @@ impl ServerHealthProvider {
                         debug!("ServerHealthProvider: health check timeout, retry {}/{}", retry_count, settings.get(&MAX_RETRIES));
                         continue;
                     }
-                    debug!("ServerHealthProvider: connection decayed after {} retries", retry_count);
+                    debug!("ServerHealthProvider: connection decayed after {retry_count} retries");
                     if let Some(r) = router.upgrade() {
                         let pn = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
                         let buf = settings.pool().allocate(Some(T::length()));

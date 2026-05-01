@@ -3,7 +3,7 @@
 /// across them. All messages must arrive regardless of which flow handles each packet.
 use std::sync::Arc;
 
-use env_logger;
+use env_logger::init;
 use futures::channel::oneshot::channel;
 #[cfg(not(feature = "tokio"))]
 use futures::executor::block_on;
@@ -30,7 +30,7 @@ fn main() {
 }
 
 async fn run() {
-    env_logger::init();
+    init();
 
     let settings = Arc::new(SettingsBuilder::<DefaultExecutor>::new().build().expect("default settings should be valid"));
 
@@ -48,7 +48,7 @@ async fn run() {
     // Omitting `.with_decoy()` on a flow uses the listener-level default (random selection).
     let listener: Arc<_> = Arc::new(ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow1_addr).with_decoy::<SparseDecoyProvider<StaticByteBuffer, DefaultExecutor>>()).add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow2_addr).with_decoy::<HeavyDecoyProvider<StaticByteBuffer, DefaultExecutor>>()).with_settings(settings.clone()).build().await.expect("listener should build"));
     listener.start().await;
-    println!("Server: listening on {} and {}", flow1_addr, flow2_addr);
+    println!("Server: listening on {flow1_addr} and {flow2_addr}");
 
     let (done_tx, done_rx) = channel::<usize>();
     // The server holds `client` alive until the client signals it has finished
@@ -65,7 +65,7 @@ async fn run() {
             client.send_bytes(&data).await.expect("echo send should succeed");
             echoed += 1;
         }
-        println!("Server: echoed {} messages", echoed);
+        println!("Server: echoed {echoed} messages");
         let _ = done_tx.send(echoed);
         // Keep `client` alive until the client confirms receipt.
         let _ = ack_rx.await;
@@ -77,10 +77,10 @@ async fn run() {
     println!("Client: connected (2 flows)");
 
     for i in 0..MESSAGE_COUNT {
-        let msg = format!("msg-{:03}", i);
+        let msg = format!("msg-{i:03}");
         socket.send_bytes(msg.as_bytes()).await.expect("send should succeed");
     }
-    println!("Client: sent {} messages", MESSAGE_COUNT);
+    println!("Client: sent {MESSAGE_COUNT} messages");
 
     let mut received = 0;
     for _ in 0..MESSAGE_COUNT {
@@ -94,5 +94,5 @@ async fn run() {
     let _ = ack_tx.send(());
     assert_eq!(server_count, MESSAGE_COUNT, "server echoed wrong count");
     assert_eq!(received, MESSAGE_COUNT, "client received wrong count");
-    println!("Success! All {} messages round-tripped across 2 flows.", MESSAGE_COUNT);
+    println!("Success! All {MESSAGE_COUNT} messages round-tripped across 2 flows.");
 }

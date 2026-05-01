@@ -9,7 +9,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use log::{debug, warn};
+use log::{debug, info, warn};
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand_distr::{Distribution, Exp, Normal};
@@ -129,13 +129,15 @@ impl DecoyFeatureConfig {
             _ => SubheaderMode::All,
         };
 
-        let subheader_config = if subheader_mode != SubheaderMode::None {
+        let subheader_config = if subheader_mode == SubheaderMode::None {
+            None
+        } else {
             let min_len = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
             let max_len = settings.get(&DECOY_SUBHEADER_LENGTH_MAX) as usize;
             Some(generate_random_fake_header(min_len, max_len))
-        } else {
-            None
         };
+
+        info!("decoy feature config: maintenance={maintenance_mode:?}, replication={replication_mode:?}, replication_prob={replication_probability:.4}, subheader={subheader_mode:?}");
 
         Self {
             maintenance_mode,
@@ -238,6 +240,13 @@ pub trait DecoyProvider: Send + Sync {
 /// Construction contract for decoy providers. Extends `DecoyProvider` so that any
 /// `DecoyCommunicationMode` can be stored as `Box<dyn DecoyProvider>`.
 pub trait DecoyCommunicationMode<T: IdentityType + Clone, AE: AsyncExecutor>: DecoyProvider + Sized {
+    /// Short name of this provider, derived from the type name (no path, no generics).
+    fn name() -> &'static str {
+        let full = std::any::type_name::<Self>();
+        let without_generics = full.split('<').next().unwrap_or(full);
+        without_generics.split("::").last().unwrap_or(without_generics)
+    }
+
     /// Create a new decoy provider with the given manager, settings, and identity.
     fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T) -> Self;
 }
@@ -287,12 +296,12 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
         let features = DecoyFeatureConfig::random(&settings);
 
         // Initial maintenance scheduling.
-        let (maint_time, maint_len) = if features.maintenance_mode != MaintenanceMode::None {
+        let (maint_time, maint_len) = if features.maintenance_mode == MaintenanceMode::None {
+            (u128::MAX, 0)
+        } else {
             let delay = maintenance_delay_for(&features.maintenance_mode, &settings);
             let length = maintenance_length_for(&features.maintenance_mode, &settings);
             (now + delay as u128, length)
-        } else {
-            (u128::MAX, 0)
         };
 
         Self {
@@ -425,7 +434,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
             SubheaderMode::All => true,
         };
         if should_apply {
-            self.features.subheader_config.as_ref().map_or(0, |c| c.len())
+            self.features.subheader_config.as_ref().map_or(0, super::super::config::FakeHeaderConfig::len)
         } else {
             0
         }
@@ -524,10 +533,10 @@ where
         // Allocate body bytes for replication only when actually needed (outside write lock).
         let body_bytes = should_rep.then(|| packet.slice_end(body_length).to_vec());
 
-        debug!("Maintenance: generated packet (len={})", body_length);
+        debug!("Maintenance: generated packet (len={body_length})");
 
         if let Err(err) = manager_arc.send_decoy_packet(packet).await {
-            warn!("Maintenance: failed to send: {:?}", err);
+            warn!("Maintenance: failed to send: {err:?}");
         } else if let Some(bytes) = body_bytes {
             try_replicate(&state, &manager, true, bytes).await;
         }

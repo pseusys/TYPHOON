@@ -8,7 +8,7 @@ set -uo pipefail
 
 # Treat every compiler warning as an error, matching the default behaviour of
 # actions-rust-lang/setup-rust-toolchain on GitHub runners.
-export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-D warnings"
+export RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }-D warnings"
 
 CRYPTO_IMPLS=(fast_software fast_hardware full_software full_hardware)
 PROTOCOL_PARTS=(server client "server,client")
@@ -50,7 +50,7 @@ run_step() {
         local rc=$?
         echo "::endgroup::"
         failures+=("${phase}: ${label}")
-        return $rc
+        return "${rc}"
     fi
 }
 

@@ -1,0 +1,122 @@
+name: typhoon-eval
+
+volumes:
+  eval_keys: {}
+
+networks:
+  net_left:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+  net_right:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
+
+
+services:
+
+  observer:
+    init: true
+    image: typhoon-eval-observer
+    build:
+      context: ../observer
+    environment:
+      PROTOCOL:        ${PROTOCOL}
+      PROTOCOL_SUFFIX: ${PROTOCOL_SUFFIX:-}
+    networks:
+      net_left:
+        ipv4_address: 172.20.0.2
+      net_right:
+        ipv4_address: 172.21.0.2
+    privileged: true
+    pid: "host"
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.disable_ipv6=1
+    volumes:
+      - ${CAPTURES_DIR}:/captures
+    healthcheck:
+      test: ["CMD", "pgrep", "-x", "tcpdump"]
+      interval: 1s
+      timeout: 3s
+      retries: 15
+      start_period: 3s
+
+  server:
+    init: true
+    image: ${SERVER_IMAGE}
+    networks:
+      net_right:
+        ipv4_address: 172.21.0.10
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    environment:
+      # Observer's net_right IP — server adds return route via this gateway
+      OBSERVER_GW: 172.21.0.2
+      # Server's own externally-reachable IP — embedded in the TYPHOON certificate
+      # so the client knows where to connect (0.0.0.0 is unroutable as a peer address)
+      CERT_HOST:   172.21.0.10
+      # obfs4_iat: when set, obfs4proxy uses the given IAT mode (0=off, 1=on, 2=paranoid)
+      OBFS4_IAT_MODE: ${OBFS4_IAT_MODE:-}
+      TRANSFER_BYTES: ${TRANSFER_BYTES:-10485760}
+      RUST_LOG: ${RUST_LOG:-}
+    volumes:
+      - eval_keys:/keys
+    depends_on:
+      observer:
+        condition: service_healthy
+
+  client:
+    init: true
+    image: ${CLIENT_IMAGE}
+    networks:
+      net_left:
+        ipv4_address: 172.20.0.10
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    environment:
+      SERVER_HOST:    172.21.0.10
+      # Observer's net_left IP — client adds forward route via this gateway
+      OBSERVER_GW:    172.20.0.2
+      TRANSFER_BYTES:        ${TRANSFER_BYTES:-10485760}
+      INTER_PACKET_DELAY_MS:  ${INTER_PACKET_DELAY_MS:-40}
+      DELAY_EVERY_N:          ${DELAY_EVERY_N:-10}
+      QUIC_WAIT_TIMEOUT_S:    ${QUIC_WAIT_TIMEOUT_S:-240}
+      RUST_LOG: ${RUST_LOG:-}
+    volumes:
+      - eval_keys:/keys
+    depends_on:
+      observer:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    restart: "no"
+
+  chaos:
+    init: true
+    profiles: ["chaos"]
+    image: typhoon-eval-chaos
+    build:
+      context: ../chaos
+    environment:
+      CHAOS_DELAY_MS:
+      CHAOS_JITTER_MS:
+      CHAOS_LOSS_PCT:
+    network_mode: "service:observer"
+    cap_add:
+      - NET_ADMIN
+    depends_on:
+      observer:
+        condition: service_healthy
