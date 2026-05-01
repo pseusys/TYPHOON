@@ -57,13 +57,13 @@ async fn run() {
     // --- Build and start the server ---
     let listener: Arc<_> = Arc::new(ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(flow_config, server_addr)).with_settings(settings.clone()).build().await.expect("listener should build"));
     listener.start().await;
-    println!("Server: listening on {}", server_addr);
+    println!("Server: listening on {server_addr}");
 
     let (done_tx, done_rx) = channel::<usize>();
     let listener_handle = listener.clone();
     settings.executor().spawn(async move {
         let client = listener_handle.accept().await.expect("accept should succeed");
-        println!("Server: client connected, running echo loop for {} round trips", ROUND_TRIPS);
+        println!("Server: client connected, running echo loop for {ROUND_TRIPS} round trips");
         let mut count = 0;
         while count < ROUND_TRIPS {
             let data = client.receive_bytes().await.expect("receive should succeed");
@@ -78,7 +78,7 @@ async fn run() {
     println!("Client: connected, running {} round trips", ROUND_TRIPS);
 
     for i in 0..ROUND_TRIPS {
-        let sent = format!("round-{:04}", i);
+        let sent = format!("round-{i:04}");
         socket.send_bytes(sent.as_bytes()).await.expect("send should succeed");
 
         let received = socket.receive_bytes().await.expect("receive should succeed");
@@ -93,5 +93,5 @@ async fn run() {
 
     let server_count = done_rx.await.expect("server task should complete");
     assert_eq!(server_count, ROUND_TRIPS);
-    println!("Success! All {} round trips completed with correct payloads.", ROUND_TRIPS);
+    println!("Success! All {ROUND_TRIPS} round trips completed with correct payloads.");
 }

@@ -40,7 +40,7 @@ async fn run() {
     let server_flow = ServerFlowConfiguration::with_address(flow_config, server_addr);
     let listener: Arc<_> = Arc::new(ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(server_flow).with_settings(settings.clone()).build().await.expect("listener should build"));
     listener.start().await;
-    println!("Server listening on {}", server_addr);
+    println!("Server listening on {server_addr}");
 
     // Spawn server handler: accept one client, echo back what it receives.
     let listener_handle = listener.clone();
@@ -52,7 +52,7 @@ async fn run() {
 
         let received = client.receive_bytes().await.expect("receive should succeed");
         let msg = String::from_utf8_lossy(&received).to_string();
-        println!("Server: received '{}'", msg);
+        println!("Server: received '{msg}'");
 
         client.send_bytes(format!("echo: {}", msg).as_bytes()).await.expect("send should succeed");
         println!("Server: sent echo response");

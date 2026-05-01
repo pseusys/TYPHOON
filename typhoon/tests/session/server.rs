@@ -184,5 +184,5 @@ async fn test_process_incoming_health_check_no_payload() {
         tailor,
     };
     let result = session.process_incoming(incoming).await;
-    assert!(result.is_ok(), "health-check-only packet must return Ok, got: {:?}", result);
+    assert!(result.is_ok(), "health-check-only packet must return Ok, got: {result:?}");
 }

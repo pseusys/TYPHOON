@@ -32,7 +32,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> NoisyDecoyProvider<T, AE> {
         let rate = base_rate * quietness * (-state.packet_rate / state.reference_rate).exp();
 
         let delay = if rate > 0.0 {
-            exponential_variance(rate * (1.0 + state.packet_rate / state.reference_rate))
+            exponential_variance(rate * (1.0 + state.packet_rate / state.reference_rate)) * 1000.0
         } else {
             delay_default as f64
         };
@@ -78,7 +78,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> NoisyDecoyProvider<T, AE> {
                     // Allocate body bytes for replication only when actually needed (outside write lock).
                     let body_bytes = should_rep.then(|| decoy_packet.slice_end(decoy_length).to_vec());
                     if let Err(err) = manager_arc.send_decoy_packet(decoy_packet).await {
-                        warn!("NoisyDecoyProvider: failed to send decoy packet: {:?}", err);
+                        warn!("NoisyDecoyProvider: failed to send decoy packet: {err:?}");
                     } else if let Some(bytes) = body_bytes {
                         try_replicate(&state, &manager, false, bytes).await;
                     }

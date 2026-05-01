@@ -94,9 +94,21 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         self.decoy_providers.write().await.insert(id, Arc::new(Mutex::new(dp)));
     }
 
-    /// Remove a user's decoy provider from this flow manager.
+    /// Lazily register a user on this flow if not already present.
+    /// Called from the route task when a non-handshake packet from a known session arrives
+    /// on a flow that has not yet seen this user. Registers both the source address and the
+    /// decoy provider atomically so `send_packet` can never fire before the addr is known.
+    pub async fn ensure_user(self: &Arc<Self>, id: T, addr: SocketAddr) {
+        if !self.decoy_providers.read().await.contains_key(&id) {
+            self.register_user_addr(id.clone(), addr).await;
+            self.register_user(id).await;
+        }
+    }
+
+    /// Remove a user's decoy provider and source address from this flow manager.
     pub async fn remove_user(&self, id: &T) {
         self.decoy_providers.write().await.remove(id);
+        self.user_addrs.write().await.remove(id);
     }
 
     /// Receive a raw packet, deobfuscating the tailor but returning the full body + tailor view.
@@ -118,7 +130,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 let (tailor_buf, transcript) = match crypto.deobfuscate_tailor(encrypted_tailor, self.settings.pool()) {
                     Ok(result) => result,
                     Err(err) => {
-                        warn!("server flow: tailor decryption failed from {}: {}", source_addr, err);
+                        warn!("server flow: tailor decryption failed from {source_addr}: {err}");
                         continue;
                     }
                 };
@@ -126,7 +138,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 if !tailor.flags().is_discardable() && !tailor.flags().contains(PacketFlags::HANDSHAKE) {
                     let identity = tailor.identity();
                     if let Err(err) = crypto.verify_tailor(&identity, transcript).await {
-                        debug!("error verifying packet tailor: {}", err);
+                        debug!("error verifying packet tailor: {err}");
                         continue;
                     }
                 }
@@ -134,29 +146,32 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             };
 
             let packet_flags = tailor.flags();
-
-            // Decoy packets are always discarded at flow level.
-            if packet_flags.is_discardable() {
-                continue;
-            }
-
             let identity = tailor.identity();
 
+            // For non-handshake packets, feed decoy provider and update source address if changed.
             if !packet_flags.contains(PacketFlags::HANDSHAKE) {
-                // Update source address only if changed (NAT rebinding). Read-first avoids a
-                // write lock on every packet, which would block concurrent send_packet reads.
-                if self.user_addrs.read().await.get(&identity).copied() != Some(source_addr) {
-                    self.user_addrs.write().await.insert(identity.clone(), source_addr);
-                }
-
-                // Feed the user's decoy provider (per-user lock, not global).
-                let dp = self.decoy_providers.read().await.get(&identity).cloned();
+                let dp = {
+                    let providers = self.decoy_providers.read().await;
+                    if providers.contains_key(&identity) {
+                        providers.get(&identity).cloned()
+                    } else {
+                        None
+                    }
+                };
                 if let Some(dp) = dp {
+                    if self.user_addrs.read().await.get(&identity).copied() != Some(source_addr) {
+                        self.user_addrs.write().await.insert(identity.clone(), source_addr);
+                    }
                     let notified = dp.lock().await.feed_input(packet.clone()).await;
                     if notified.is_none() {
                         continue;
                     }
                 }
+            }
+
+            // Decoy packets are always discarded at flow level.
+            if packet_flags.is_discardable() {
+                continue;
             }
 
             // For handshake packets, strip fake header/body using payload_length so the
@@ -168,7 +183,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 encrypted_packet
             };
 
-            debug!("server flow: received {:?} packet from {}", packet_flags, source_addr);
+            debug!("server flow: received {packet_flags:?} packet from {source_addr}");
             return Ok(RawReceivedPacket {
                 body,
                 tailor,
@@ -236,7 +251,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             full_packet
         };
 
-        debug!("server flow: sending {:?} packet to {}", packet_flags, addr);
+        debug!("server flow: sending {packet_flags:?} packet to {addr}");
         self.socks[0].send_to(full_packet, addr).await.map_err(FlowControllerError::SocketError)?;
         Ok(())
     }

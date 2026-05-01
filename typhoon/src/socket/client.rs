@@ -115,8 +115,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
         for (addr, config) in addr_configs {
             config.assert(settings.mtu()).map_err(ClientSocketError::FlowError)?;
 
-            let flow_overhead = config.max_overhead() + PAYLOAD_CRYPTO_OVERHEAD + tailor_wire_len;
-            max_data_payload = max_data_payload.min(settings.mtu().saturating_sub(flow_overhead));
+            max_data_payload = max_data_payload.min(config.max_user_payload(settings.mtu(), PAYLOAD_CRYPTO_OVERHEAD, tailor_wire_len));
 
             let sock = Socket::new(addr, None).await.map_err(ClientSocketError::SocketError)?;
             let cipher_cache = cipher.create_cache();
@@ -142,7 +141,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
                         incoming_tx.push(buffer);
                     }
                     Err(err) => {
-                        debug!("client bg-recv: terminated: {}", err);
+                        debug!("client bg-recv: terminated: {err}");
                         break;
                     }
                 }

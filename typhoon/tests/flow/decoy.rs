@@ -188,7 +188,7 @@ fn test_try_spend_budget_insufficient() {
 fn test_random_uniform_range() {
     for _ in 0..100 {
         let val = random_uniform(10.0, 20.0);
-        assert!(val >= 10.0 && val <= 20.0, "value {val} outside [10, 20]");
+        assert!((10.0..=20.0).contains(&val), "value {val} outside [10, 20]");
     }
 }
 
