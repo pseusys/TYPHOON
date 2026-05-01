@@ -1316,3 +1316,18 @@ Certificates in such a setup could either embed a stable relay address (the list
 **The challenge**: Dynamic plug/unplug of flow managers while sessions are live requires atomic consistency guarantees between the session state (held by the listener) and the per-flow address tables.
 Any message routed to a flow manager that has just gone offline must be either retried on another flow or transparently dropped, while avoiding split-brain scenarios where the listener believes a flow is active but packets are silently lost.
 The synchronization protocol, failure detection timeout, and certificate invalidation strategy all need careful co-design to keep the overall system both correct and efficient.
+
+### UDP datagram batching
+
+On Linux, the `sendmmsg(2)` syscall allows multiple UDP datagrams to be submitted in a single kernel call, reducing context-switch overhead when a burst of packets needs to be sent at once.
+
+On the client side, when a user message is split into multiple wire packets because it exceeds `max_data_payload`, the entire batch can be prepared in userspace and handed to the OS in one syscall.
+This path is fully implemented: the send lock is acquired once for the whole batch, all wire packets are prepared, and a single `sendmmsg` call is issued on Linux with a sequential fallback on other platforms.
+
+On the server side, batching is harder because outgoing packets are routed to per-user source addresses via the `OutgoingRouter`, so packets destined for different clients cannot trivially be coalesced.
+A shared queue that accumulates `(payload, addr)` pairs across concurrent session send calls is needed, with a background task flushing them in a single `sendmmsg` call either when the queue reaches a threshold or after a short deadline.
+
+**The challenge**: Coalescing across multiple users and flows introduces tension between latency and throughput.
+Flushing too eagerly (on every packet) eliminates the syscall reduction; flushing too lazily (large threshold or long deadline) adds artificial delay that interferes with health-check timing.
+The queue must also account for the fact that `sendmmsg` batches datagrams for a single socket, while the server may manage multiple sockets simultaneously (one per flow on SO_REUSEPORT platforms), meaning coalescing must happen per-socket.
+The right flush policy — fixed threshold, fixed deadline, or adaptive — requires empirical benchmarking under realistic load patterns.

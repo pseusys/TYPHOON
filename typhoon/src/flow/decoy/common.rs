@@ -351,7 +351,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
     pub(super) fn create_decoy_packet(&mut self, body_length: usize, is_maintenance: bool) -> DynamicByteBuffer {
         let subheader_len = self.subheader_length(is_maintenance);
         let total_length = body_length + TAILOR_LENGTH + T::length();
-        let packet = self.settings.pool().allocate_precise(total_length, subheader_len, 0);
+        let packet = self.settings.pool().allocate(Some(total_length));
 
         get_rng().fill(packet.slice_end_mut(body_length));
 
@@ -374,7 +374,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
         let subheader_len = self.subheader_length(is_maintenance);
         let body_length = original_body.len();
         let total_length = body_length + TAILOR_LENGTH + T::length();
-        let packet = self.settings.pool().allocate_precise(total_length, subheader_len, 0);
+        let packet = self.settings.pool().allocate(Some(total_length));
 
         packet.slice_end_mut(body_length).copy_from_slice(original_body);
 
@@ -521,15 +521,15 @@ where
             (packet, length, should_rep)
         };
 
-        // Allocate body bytes for replication only when actually needed (outside write lock).
-        let body_bytes = should_rep.then(|| packet.slice_end(body_length).to_vec());
+        // Clone before consuming: Arc refcount bump (zero-copy) for optional replication.
+        let body_ref = should_rep.then(|| packet.clone());
 
         debug!("Maintenance: generated packet (len={})", body_length);
 
         if let Err(err) = manager_arc.send_decoy_packet(packet).await {
             warn!("Maintenance: failed to send: {:?}", err);
-        } else if let Some(bytes) = body_bytes {
-            try_replicate(&state, &manager, true, bytes).await;
+        } else if let Some(body) = body_ref {
+            try_replicate(&state, &manager, true, body, body_length).await;
         }
 
         {
@@ -541,7 +541,9 @@ where
 
 /// Attempt replication of a decoy packet. If replication mode applies, spawns a cascading
 /// task that re-sends the packet body with diminishing probability.
-pub(super) async fn try_replicate<T, AE>(state: &Arc<RwLock<DecoyState<T, AE>>>, manager: &Weak<dyn DecoyFlowSender>, is_maintenance: bool, body_bytes: Vec<u8>)
+/// `body` is a zero-copy clone of the sent packet; `body_length` is the payload byte count
+/// (excluding tailor and any subheader prefix).
+pub(super) async fn try_replicate<T, AE>(state: &Arc<RwLock<DecoyState<T, AE>>>, manager: &Weak<dyn DecoyFlowSender>, is_maintenance: bool, body: DynamicByteBuffer, body_length: usize)
 where
     T: IdentityType + Clone + 'static,
     AE: AsyncExecutor + 'static,
@@ -573,10 +575,10 @@ where
 
             let packet = {
                 let mut guard = state_clone.write().await;
-                if !guard.try_spend_budget(body_bytes.len()) {
+                if !guard.try_spend_budget(body_length) {
                     break;
                 }
-                guard.create_replica_packet(&body_bytes, is_maintenance)
+                guard.create_replica_packet(body.slice_end(body_length), is_maintenance)
             };
 
             if manager_arc.send_decoy_packet(packet).await.is_err() {

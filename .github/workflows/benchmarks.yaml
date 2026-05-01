@@ -1,0 +1,49 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'typhoon/**'
+      - '.github/workflows/benchmarks.yaml'
+  pull_request:
+    paths:
+      - 'typhoon/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  benchmark:
+    name: Run and Store TYPHOON Benchmarks
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v4
+
+      - name: Setup Rust 🦀
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.89.0"
+          rust-src-dir: typhoon
+          override: true
+
+      - name: Pre-generate server key pair 🔑
+        working-directory: typhoon
+        run: cargo run --quiet --bin typhoon-gen-key --no-default-features --features fast_software,server,tokio,clap -- .bench_keys/server_fast.key
+        env:
+          RUSTFLAGS: "-D warnings"
+
+      - name: Run benchmarks 📊
+        working-directory: typhoon
+        env:
+          TYPHOON_TEST_SERVER_KEY_FAST: .bench_keys/server_fast.key
+        run: cargo bench --bench roundtrip -- --output-format bencher | tee ../bench-output.txt
+
+      - name: Store benchmark results 📈
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench-output.txt

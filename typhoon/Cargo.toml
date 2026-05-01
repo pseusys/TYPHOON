@@ -10,7 +10,6 @@ authors = [
 
 [features]
 default = ["fast_software", "server", "client", "tokio"]
-# default = ["full_hardware", "server", "client", "async-std"]
 fast_software = ["dep:chacha20"]
 fast_hardware = ["dep:aes", "dep:ctr"]
 full_software = ["dep:chacha20", "dep:chacha20poly1305"]
@@ -51,7 +50,11 @@ rand_distr = "^0.4.3"
 socket2 = { version = "^0.5", features = ["all"], optional = true }
 x25519-dalek = { version = "^2.0.1", features = ["static_secrets"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "^0.2"
+
 [dev-dependencies]
+criterion = { version = "^0.5", features = ["async_tokio"] }
 env_logger = "^0.11"
 tempfile = "^3.15"
 
@@ -70,6 +73,13 @@ required-features = ["debug"]
 name = "typhoon-gen-key"
 path = "src/bin/typhoon_gen_key.rs"
 required-features = ["server", "clap"]
+
+[[bench]]
+name = "roundtrip"
+path = "benches/roundtrip.rs"
+harness = false
+required-features = ["client", "server", "tokio"]
+
 
 [[example]]
 name = "hello_world"
@@ -95,3 +105,14 @@ required-features = ["client", "server"]
 name = "multi_client"
 path = "example/multi_client.rs"
 required-features = ["client", "server"]
+
+[[example]]
+name = "heavy_traffic"
+path = "example/heavy_traffic.rs"
+required-features = ["client", "server"]
+
+
+# Retain line-level debug symbols in release builds for flamegraph / perf profiling.
+# Cargo ignores [profile] from dependency crates, so this has no effect on downstream users.
+[profile.release]
+debug = 1

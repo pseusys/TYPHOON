@@ -83,6 +83,22 @@ cargo clippy
 cargo clippy --no-default-features --features "full_hardware,server,client,async-std"
 ```
 
+### Benchmarks
+
+Criterion benchmarks measure pipelined echo throughput: 20 concurrent 1400 B messages round-tripped
+under realistic traffic obfuscation (`FlowConfig::random`), matching the `heavy_traffic` example.
+
+```shell
+# Run all benchmarks (default features)
+cargo bench --bench roundtrip
+
+# Re-use a pre-generated key pair to skip expensive McEliece keygen on each run
+TYPHOON_TEST_SERVER_KEY_FAST=server.key cargo bench --bench roundtrip
+```
+
+CI runs benchmarks on every push to `main` and on pull requests that touch `typhoon/**`.
+Results are stored as a workflow artifact (`bench-results`) on each run.
+
 ### Coverage
 
 ```shell
@@ -107,6 +123,9 @@ cargo run --example multi_client
 
 # Long-running session with repeated health-check cycles
 cargo run --example long_session
+
+# Sustained high-throughput traffic across multiple flows (~5 min)
+cargo run --example heavy_traffic
 
 # Debug probe (reachability, RTT, throughput) — requires the debug feature
 cargo run --example debug_probe --features debug
