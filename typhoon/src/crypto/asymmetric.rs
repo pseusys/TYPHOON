@@ -86,13 +86,13 @@ impl ClientCertificate {
         let handshake_buffer = pool.allocate_precise(0, 0, CLIENT_HANDSHAKE_HEADER_SIZE);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append_buf(&ciphertext_obfuscated).append_buf(&nonce);
 
-        let handshake_secret = if !initial_data.is_empty() {
+        let handshake_secret = if initial_data.is_empty() {
+            handshake_secret
+        } else {
             let plaintext = pool.allocate_precise_from_slice_with_capacity(initial_data, 0, 0);
             let mut cipher = Symmetric::new(&initial_encryption_key);
             let encrypted = cipher.encrypt_auth(plaintext, None::<&DynamicByteBuffer>).expect("initial data encryption failed");
             handshake_secret.append_buf(&encrypted)
-        } else {
-            handshake_secret
         };
 
         (client_data, handshake_secret, initial_encryption_key)
@@ -124,7 +124,7 @@ impl ClientCertificate {
         let transcript = Hasher::new().update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(data.nonce.slice()).update(nonce.slice()).finalize();
         if let Err(err) = self.vpk.verify_strict(transcript.as_bytes(), &transcript_signed) {
             return Err(HandshakeError::handshake_authentication_error(&format!("server identity verification error: {err}")));
-        };
+        }
 
         let session_key_hash = Hasher::new_keyed(&hash_derive_key_context(SESSION_KEY)).update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(transcript.as_bytes()).finalize();
         let session_key = FixedByteBuffer::from(*session_key_hash.as_bytes());
@@ -162,7 +162,7 @@ impl ClientCertificate {
 }
 
 #[cfg(feature = "server")]
-impl<'a> ServerSecret<'a> {
+impl ServerSecret<'_> {
     /// Server decapsulate client handshake: deobfuscate, decapsulate McEliece, derive key.
     /// If the handshake contains encrypted initial data beyond the crypto header, decrypts it with the initial key.
     /// Args: client handshake_secret, pool. Returns: (ServerData, initial_encryption_key, client_initial_data).
@@ -232,13 +232,13 @@ impl<'a> ServerSecret<'a> {
         let handshake_buffer = pool.allocate_precise(0, 0, SERVER_HANDSHAKE_HEADER_SIZE);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append(&transcript_signed.to_bytes()).append_buf(&nonce);
 
-        let handshake_secret = if !initial_data.is_empty() {
+        let handshake_secret = if initial_data.is_empty() {
+            handshake_secret
+        } else {
             let plaintext = pool.allocate_precise_from_slice_with_capacity(initial_data, 0, 0);
             let mut cipher = Symmetric::new(initial_key);
             let encrypted = cipher.encrypt_auth(plaintext, None::<&DynamicByteBuffer>).expect("server initial data encryption failed");
             handshake_secret.append_buf(&encrypted)
-        } else {
-            handshake_secret
         };
 
         (handshake_secret, session_key)

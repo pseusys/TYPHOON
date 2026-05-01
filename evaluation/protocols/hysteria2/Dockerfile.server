@@ -1,0 +1,14 @@
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates iproute2 python3 openssl \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL \
+       https://github.com/apernet/hysteria/releases/download/app%2Fv2.6.1/hysteria-linux-amd64 \
+       -o /usr/local/bin/hysteria \
+    && chmod +x /usr/local/bin/hysteria
+COPY hysteria2/server-entrypoint.sh /entrypoint.sh
+COPY common/tcp_sink.py              /app/server.py
+RUN chmod +x /entrypoint.sh
+HEALTHCHECK --interval=2s --timeout=5s --retries=30 --start-period=15s \
+    CMD ss -ulnp | grep -q ':443' && test -f /keys/hysteria_ready
+ENTRYPOINT ["/entrypoint.sh"]

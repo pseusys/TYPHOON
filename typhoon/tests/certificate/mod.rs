@@ -109,7 +109,7 @@ fn test_server_key_pair_bad_magic() {
     std::fs::write(&path, &bytes).expect("write tampered file");
 
     let err = ServerKeyPair::load(&path).expect_err("should fail");
-    assert!(matches!(err, CertificateError::InvalidMagic), "expected InvalidMagic, got {:?}", err);
+    assert!(matches!(err, CertificateError::InvalidMagic), "expected InvalidMagic, got {err:?}");
 }
 
 // Test: loading a client certificate file as a server key pair returns InvalidType.
@@ -119,7 +119,7 @@ fn test_server_key_pair_wrong_type() {
     ServerKeyPair::for_tests().to_client_certificate(vec![]).save(&path).expect("save should succeed");
 
     let err = ServerKeyPair::load(&path).expect_err("should fail");
-    assert!(matches!(err, CertificateError::InvalidType { .. }), "expected InvalidType, got {:?}", err);
+    assert!(matches!(err, CertificateError::InvalidType { .. }), "expected InvalidType, got {err:?}");
 }
 
 // Test: loading a file with an unsupported version byte returns UnsupportedVersion.
@@ -132,7 +132,7 @@ fn test_server_key_pair_unsupported_version() {
     std::fs::write(&path, &bytes).expect("write tampered file");
 
     let err = ServerKeyPair::load(&path).expect_err("should fail");
-    assert!(matches!(err, CertificateError::UnsupportedVersion(99)), "expected UnsupportedVersion(99), got {:?}", err);
+    assert!(matches!(err, CertificateError::UnsupportedVersion(99)), "expected UnsupportedVersion(99), got {err:?}");
 }
 
 // ── ClientCertificate ─────────────────────────────────────────────────────────
@@ -185,7 +185,7 @@ fn test_client_certificate_file_layout_fast() {
     // IPv6 entry: family=6, 16 octets, 2-byte port.
     let a1 = a0 + 7;
     assert_eq!(bytes[a1], 6, "IPv6 family byte");
-    assert_eq!(&bytes[a1 + 1..a1 + 17], Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1).octets().as_ref(), "IPv6 octets");
+    assert_eq!(&bytes[a1 + 1..a1 + 17], Ipv6Addr::LOCALHOST.octets().as_ref(), "IPv6 octets");
     assert_eq!(u16::from_be_bytes([bytes[a1 + 17], bytes[a1 + 18]]), 20000, "IPv6 port");
     assert_eq!(bytes.len(), a1 + 19, "total file size");
 }
@@ -231,7 +231,7 @@ fn test_client_certificate_wrong_type() {
     ServerKeyPair::for_tests().save(&path).expect("save should succeed");
 
     let err = ClientCertificate::load(&path).expect_err("should fail");
-    assert!(matches!(err, CertificateError::InvalidType { .. }), "expected InvalidType, got {:?}", err);
+    assert!(matches!(err, CertificateError::InvalidType { .. }), "expected InvalidType, got {err:?}");
 }
 
 // Test: loading a file with an unsupported version byte returns UnsupportedVersion.
@@ -244,7 +244,7 @@ fn test_client_certificate_unsupported_version() {
     std::fs::write(&path, &bytes).expect("write tampered file");
 
     let err = ClientCertificate::load(&path).expect_err("should fail");
-    assert!(matches!(err, CertificateError::UnsupportedVersion(42)), "expected UnsupportedVersion(42), got {:?}", err);
+    assert!(matches!(err, CertificateError::UnsupportedVersion(42)), "expected UnsupportedVersion(42), got {err:?}");
 }
 
 // Test: two certificates derived from the same key pair contain identical public material.

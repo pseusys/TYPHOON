@@ -1,0 +1,18 @@
+FROM rust:1.95-slim AS builder
+WORKDIR /build
+COPY typhoon/src/                      typhoon/src/
+COPY typhoon/Cargo.toml                typhoon/Cargo.toml
+COPY evaluation/protocols/typhoon/     eval/
+WORKDIR /build/eval
+RUN cargo build --release --bin eval-server
+
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /build/eval/target/release/eval-server /usr/local/bin/eval-server
+
+# Health: all 3 UDP ports bound AND cert written to shared volume
+HEALTHCHECK --interval=2s --timeout=5s --retries=30 --start-period=10s \
+    CMD ss -u -l -n | grep -q ':19999' && ss -u -l -n | grep -q ':19998' && ss -u -l -n | grep -q ':19997' && test -f /keys/typhoon.cert
+CMD ["eval-server"]

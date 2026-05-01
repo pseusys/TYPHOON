@@ -2,6 +2,43 @@
 
 This document describes TYPHOON protocol design, goals and proposed implementation in rust.
 
+## Design philosophy
+
+TYPHOON is designed to be **flexible and false-fingerprintable** rather than uniformly high-entropy.
+
+Uniform randomness is itself an identifiable pattern, and a static traffic profile — even a well-obfuscated one — can eventually be fingerprinted once an adversary has collected enough samples.
+TYPHOON instead aims to look like _different things to different observers_.
+Configuration is randomized independently **per [communication channel](#architecture)**, at a finer granularity than a typical connection: even within a single user's activity, different channels can exhibit completely different statistical properties — varying packet sizes, padding strategies, decoy rates, and cleartext header layouts.
+Because configuration is re-randomized every time a new channel is established, two sessions between the same endpoints will not share a common traffic profile, even without restarting the server.
+
+The [fake header](#fake-header) mechanism reinforces this: cleartext header fields can be made to resemble headers of arbitrary known protocols, making the traffic false-fingerprintable rather than merely hard to classify.
+Combined with independently randomized [fake bodies](#fake-body) and [decoy traffic](#decoy-packets), the result is a protocol whose traffic signature is intentionally unstable and hard to pin to a single classification.
+
+Because no single configuration is universally best, the protocol exposes a set of [tunable constants](#constants-and-defaults) that govern the probability distributions used when generating channel configurations.
+Users are encouraged to adapt them to their threat model and performance requirements.
+The following scenarios illustrate the trade-off space:
+
+- **Throughput-critical** (e.g. private infrastructure over a trusted or monitored-but-not-filtered link):
+  minimize or disable padding and decoy traffic. The protocol still provides strong encryption but makes no attempt to disguise statistical properties. Overhead drops to near the cryptographic minimum.
+
+- **Low-latency interactive** (e.g. a remote shell, collaborative editing, or real-time control):
+  keep packet padding light and decoy injection sparse to avoid adding per-packet delay.
+  Traffic volume stays close to actual application demand.
+
+- **Protocol-transparent operation** (e.g. managed networks or transit infrastructure that classifies and policies traffic by protocol fingerprint):
+  enable [fake headers](#fake-header) to match the expected traffic profile of a locally common protocol, and keep decoy traffic at a moderate rate.
+  The goal is to appear indistinguishable from permitted traffic rather than to resist deep analysis.
+
+- **High-security / traffic-analysis-resistant** (e.g. communicating under active network surveillance):
+  maximize padding, decoy traffic rates, and fake-header randomization.
+  Overhead increases substantially, but the traffic becomes hardest to characterize, correlate, or block.
+
+- **Default (balanced)**:
+  a random mix of configurations is chosen per channel at startup, producing varied traffic that resists classification without being tuned for any single adversary model.
+
+The defaults documented throughout this specification represent a reasonable starting point for the balanced mode and are not optimized for any particular scenario.
+Explicit configuration always takes precedence over the defaults.
+
 ## Assumptions and limitations
 
 There is one important assumption, required for proceeding with this protocol.
@@ -65,7 +102,7 @@ While it is technically possible for client flow managers to operate using diffe
  ◄──────────────── wire packet (left = start) ───────────────────►
 
  ┌───────────────┬───────────────┬───────────────────┬─────────────┐
- │   Fake Body   │  Fake Header  │ Encrypted Payload │  Encrypted  │
+ │  Fake Header  │   Fake Body   │ Encrypted Payload │  Encrypted  │
  │   see below   │   see below   │ (data/hs packets) │   Tailor    │
  │  (optional)   │  (optional)   │    variable len   │  fixed len  │
  └───────────────┴───────────────┴───────────────────┴─────────────┘
@@ -134,12 +171,12 @@ It can be either empty, random or constant:
 - `empty`: body is always empty, `0` bytes length.
 - `random`: body length is random, it is bound between `TYPHOON_FAKE_BODY_LENGTH_MIN` and `TYPHOON_FAKE_BODY_LENGTH_MAX` constant values, making all the packets different in size.
 - `service`: same as `random`, but is only applied to [health check](#health-check-packets) and [handshake](#handshake-packets) packets.
-- `constant`: body length depends on the lengths of the other packet parts and complement them to a constant size.
+- `constant`: body length depends on the lengths of the other packet parts and complement them to a constant size equal to `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` (clamped to `[TYPHOON_FAKE_BODY_LENGTH_MIN, MTU]`).
 
 > Handling `constant` body length might not be trivial, as it imposes a strict limit on packet data contents length.
 > TYPHOON protocol specifically does not support data fragmentation, so `constant` body length just won't have any effect if real packet body length is not always strictly limited.
 
-By default, fake body mode is chosen with equal probability for every option except for `service`, which is `TYPHOON_FAKE_BODY_SERVICE_PROBABILITY` heavier than the others.
+By default, fake body mode is chosen with equal probability for every option except for `random`, which is `TYPHOON_FAKE_BODY_RANDOM_PROBABILITY` heavier than the others.
 
 ### Fake header
 
@@ -431,7 +468,7 @@ Even though replication is only applied to the decoy packets, it does not result
 Also note that only the decoy packet "bodies" are replicated, while [fake headers](#fake-header) and [fake bodies](#fake-body) are generated anew; this represents lower-level protocol headers.
 
 Packet duplicates are sent with a probability within `TYPHOON_DECOY_REPLICATION_PROBABILITY_MIN` and `TYPHOON_DECOY_REPLICATION_PROBABILITY_MAX`, selected upon a flow manager initialization.
-After the first duplication, the subsequent duplication probability is multiplied by `TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE`, becoming effectively lower.
+After the first duplication, the subsequent duplication probability is divided by `TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE`, becoming effectively lower.
 Packet duplicates are sent within `TYPHOON_DECOY_REPLICATION_DELAY_MIN` and `TYPHOON_DECOY_REPLICATION_DELAY_MAX` milliseconds since the original packet departure.
 
 The replication mode can have these values:
@@ -667,11 +704,11 @@ For the packets going from client to server, tailors are encrypted using the fol
 3. Client performs X25519 key exchange using `EphSecKey` and `OPK`, deriving a shared secret (`ShrSec`).
 4. Client obfuscates the `EphPubKey` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OPK` and `Nnc`), producing `EphPubKeyObf`.
 5. Client encrypts the `Tailor` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `TailorEnc`.
-6. Client constructs the encrypted tail by concatenating `Nnc`, `EphPubKeyObf` and `TailorEnc`.
+6. Client constructs the encrypted tail by concatenating `TailorEnc`, `EphPubKeyObf` and `Nnc`.
 
 The tailors are decrypted using the following steps:
 
-0. Server extracts `Nnc`, `EphPubKeyObf` and `TailorEnc` from the client message.
+0. Server extracts `TailorEnc`, `EphPubKeyObf` and `Nnc` from the client message.
 1. Server deobfuscates the `EphPubKeyObf` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OPK` and `Nnc`), producing `EphPubKey`.
 2. Server performs X25519 key exchange using `EphPubKey` and `OSK`, deriving a shared secret (`ShrSec`).
 3. Server decrypts the `TailorEnc` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `Tailor`.
@@ -961,11 +998,12 @@ These constants are used in some of the protocol values computation:
 
 | Constant | Meaning | Default |
 | --- | --- | :---: |
-| `TYPHOON_FAKE_BODY_LENGTH_MIN` | Minimum length of the fake body random byte string | `0` |
-| `TYPHOON_FAKE_BODY_LENGTH_MAX` | Maximum length of the fake body random byte string | `256` |
-| `TYPHOON_FAKE_BODY_SERVICE_PROBABILITY` | Multiplier of `service` fake body mode probability | `5` |
+| `TYPHOON_FAKE_BODY_LENGTH_MIN` | Minimum length of the fake body random byte string | `32` |
+| `TYPHOON_FAKE_BODY_LENGTH_MAX` | Maximum length of the fake body random byte string | `512` |
+| `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` | Target packet length for `constant` fake body mode; clamped to `[FAKE_BODY_LENGTH_MIN, MTU]` | `1500` |
+| `TYPHOON_FAKE_BODY_RANDOM_PROBABILITY` | Multiplier of `random` fake body mode probability | `3` |
 | `TYPHOON_FAKE_HEADER_LENGTH_MIN` | Minimum length of the fake header structure | `4` |
-| `TYPHOON_FAKE_HEADER_PROBABILITY` | Probability of fake header presence | `0.35` |
+| `TYPHOON_FAKE_HEADER_PROBABILITY` | Probability of fake header presence | `0.6` |
 | `TYPHOON_FAKE_HEADER_LENGTH_MAX` | Maximum length of the fake header structure | `32` |
 | `TYPHOON_HEALTH_CHECK_NEXT_IN_MIN` | Minimum delay between health checking packets | `64000` |
 | `TYPHOON_HEALTH_CHECK_NEXT_IN_MAX` | Maximum delay between health checking packets | `256000` |
@@ -981,26 +1019,26 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_RTT_MIN` | Minimum RTT value (in milliseconds) | `200` |
 | `TYPHOON_RTT_MAX` | Maximum RTT value (in milliseconds) | `8000` |
 | `TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT` | Default reference packet rate (in milliseconds) | `200` |
-| `TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT` | Default current packet rate (in milliseconds) | `200` |
+| `TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT` | Default current packet rate (in milliseconds) | `1` |
 | `TYPHOON_DECOY_CURRENT_BYTE_RATE_DEFAULT` | Default reference byte rate (in bytes) | `5000` |
 | `TYPHOON_DECOY_BYTE_RATE_CAP` | Maximum bytes that can be sent in a flow per second | `1000000` |
 | `TYPHOON_DECOY_BYTE_RATE_FACTOR` | Multiplier of bytes per second cap for bursts | `3` |
 | `TYPHOON_DECOY_CURRENT_ALPHA` | Current byte rate calculation multiplier (updates fast) | `0.05` |
 | `TYPHOON_DECOY_REFERENCE_ALPHA` | Reference byte rate calculation multiplier (updates slowly) | `0.001` |
-| `TYPHOON_DECOY_LENGTH_MAX` | Maximum length of a decoy packet | `1024` |
+| `TYPHOON_DECOY_LENGTH_MAX` | Maximum length of a decoy packet | `512` |
 | `TYPHOON_DECOY_LENGTH_MIN` | Minimum length of a decoy packet | `16` |
 | `TYPHOON_DECOY_BASE_RATE_RND` | Randomization jitter for decoy modes | `0.25` |
 | `TYPHOON_DECOY_HEAVY_BASE_RATE` | Base rate of the heavy decoy mode | `0.05` |
 | `TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR` | Quietness score factor that is used for heavy decoy mode rate calculation | `3` |
 | `TYPHOON_DECOY_HEAVY_DELAY_MIN` | Minimum delay for heavy decoy mode (in milliseconds) | `5000` |
-| `TYPHOON_DECOY_HEAVY_DELAY_MAX` | Maximum delay for heavy decoy mode (in milliseconds) | `120000` |
+| `TYPHOON_DECOY_HEAVY_DELAY_MAX` | Maximum delay for heavy decoy mode (in milliseconds) | `300000` |
 | `TYPHOON_DECOY_HEAVY_DELAY_DEFAULT` | Default delay for heavy decoy mode (in milliseconds) | `64000` |
 | `TYPHOON_DECOY_HEAVY_BASE_LENGTH` | The size of a heavy decoy mode packet (as a fraction of MTU) | `0.7` |
 | `TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH` | The size of a heavy decoy mode packet (multiplied by quietness index) | `0.3` |
 | `TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR` | Random heavy decoy mode packet length jitter | `0.8` |
 | `TYPHOON_DECOY_NOISY_BASE_RATE` | Base rate of the noisy decoy mode | `3` |
 | `TYPHOON_DECOY_NOISY_DELAY_MIN` | Minimum delay for noisy decoy mode (in milliseconds) | `10` |
-| `TYPHOON_DECOY_NOISY_DELAY_MAX` | Maximum delay for noisy decoy mode (in milliseconds) | `1000` |
+| `TYPHOON_DECOY_NOISY_DELAY_MAX` | Maximum delay for noisy decoy mode (in milliseconds) | `2000` |
 | `TYPHOON_DECOY_NOISY_DELAY_DEFAULT` | Default delay for noisy decoy mode (in milliseconds) | `500` |
 | `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` | Minimum packet size for noisy decoy mode (in bytes) | `128` |
 | `TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER` | Random noisy decoy mode packet length jitter multiplier | `0.3` |
@@ -1009,7 +1047,7 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_DECOY_SPARSE_JITTER` | Delay jitter for sparse decoy mode | `0.15` |
 | `TYPHOON_DECOY_SPARSE_DELAY_FACTOR` | Reference delay of the sparse decoy mode multiplier | `3` |
 | `TYPHOON_DECOY_SPARSE_DELAY_MIN` | Minimum delay for sparse decoy mode (in milliseconds) | `20` |
-| `TYPHOON_DECOY_SPARSE_DELAY_MAX` | Maximum delay for sparse decoy mode (in milliseconds) | `150` |
+| `TYPHOON_DECOY_SPARSE_DELAY_MAX` | Maximum delay for sparse decoy mode (in milliseconds) | `2000` |
 | `TYPHOON_DECOY_SPARSE_DELAY_DEFAULT` | Default delay for sparse decoy mode (in milliseconds) | `100` |
 | `TYPHOON_DECOY_SPARSE_LENGTH_FACTOR` | Mean multiplier for sparse decoy mode packet length computation | `120` |
 | `TYPHOON_DECOY_SPARSE_LENGTH_SIGMA` | Random sparse decoy mode packet length jitter | `20` |
@@ -1021,7 +1059,7 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_DECOY_SMOOTH_JITTER` | Delay jitter for smooth decoy mode | `0.2` |
 | `TYPHOON_DECOY_SMOOTH_DELAY_FACTOR` | Reference delay of the smooth decoy mode multiplier | `2` |
 | `TYPHOON_DECOY_SMOOTH_DELAY_MIN` | Minimum delay for smooth decoy mode (in milliseconds) | `300` |
-| `TYPHOON_DECOY_SMOOTH_DELAY_MAX` | Maximum delay for smooth decoy mode (in milliseconds) | `10000` |
+| `TYPHOON_DECOY_SMOOTH_DELAY_MAX` | Maximum delay for smooth decoy mode (in milliseconds) | `300000` |
 | `TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT` | Default delay for smooth decoy mode (in milliseconds) | `5000` |
 | `TYPHOON_DECOY_SMOOTH_LENGTH_MIN` | Minimum packet size for smooth decoy mode (in bytes) | `48` |
 | `TYPHOON_DECOY_SMOOTH_LENGTH_MAX` | Maximum packet size for smooth decoy mode (in bytes) | `512` |
@@ -1140,7 +1178,7 @@ Getters (`flags`, `code`, `time`, `packet_number`, `payload_length`, `identity`)
 The `flow` module owns the UDP send/receive paths and decoy injection.
 
 `ClientFlowManager<T, AE>` holds one UDP socket (connected to a server address) and one `Box<dyn DecoyProvider>`.
-Its send path prepends fake body + fake header and appends the encrypted tailor before writing to the socket.
+Its send path prepends fake header + fake body and appends the encrypted tailor before writing to the socket.
 Its receive path strips those same regions after reading from the socket.
 
 `ServerFlowManager<T, AE>` manages a pool of `SO_REUSEPORT` sockets and a per-client address table (`Arc<RwLock<HashMap<T, SocketAddr>>>`).

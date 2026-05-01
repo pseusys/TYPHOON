@@ -119,7 +119,7 @@ async fn test_send_packet_empty_payload_succeeds() {
 
     let buf = settings.pool().allocate(Some(0));
     let result = session.send_packet(buf, false).await;
-    assert!(result.is_ok(), "send_packet with empty payload must succeed, got: {:?}", result);
+    assert!(result.is_ok(), "send_packet with empty payload must succeed, got: {result:?}");
 }
 
 // Test: send_packet with a non-empty payload succeeds.
@@ -132,5 +132,5 @@ async fn test_send_packet_with_payload_succeeds() {
     let buf = settings.pool().allocate(Some(16));
     buf.slice_mut().copy_from_slice(b"hello typhoon!!!");
     let result = session.send_packet(buf, false).await;
-    assert!(result.is_ok(), "send_packet with payload must succeed, got: {:?}", result);
+    assert!(result.is_ok(), "send_packet with payload must succeed, got: {result:?}");
 }

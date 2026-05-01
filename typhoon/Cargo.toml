@@ -59,6 +59,57 @@ env_logger = "^0.11"
 tempfile = "^3.15"
 
 
+[lints.clippy]
+all      = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# intentional in protocol/crypto byte manipulation
+cast_possible_truncation   = "allow"
+cast_sign_loss             = "allow"
+cast_precision_loss        = "allow"
+cast_lossless              = "allow"
+# crate is not yet formally documented
+missing_errors_doc         = "allow"
+missing_panics_doc         = "allow"
+doc_markdown               = "allow"
+# internal library — #[must_use] on every getter is noise
+must_use_candidate         = "allow"
+# standard crypto/protocol abbreviations (esk, epk, spk, …)
+similar_names              = "allow"
+# protocol state-machine functions and constructors exceed defaults
+too_many_lines             = "allow"
+too_many_arguments         = "allow"
+# unavoidable in protocol generics
+type_complexity            = "allow"
+# passing small types by ref is a style preference here
+trivially_copy_pass_by_ref = "allow"
+# `use super::*` is idiomatic in Rust test modules
+wildcard_imports           = "allow"
+# protocol enum variants are sized by design
+large_enum_variant         = "allow"
+# builder methods returning Self — caller is responsible for chaining
+return_self_not_must_use   = "allow"
+# API signature stability; callers expect owned values
+needless_pass_by_value     = "allow"
+# interior mutability through raw pointers in byte buffer traits
+mut_from_ref               = "allow"
+# crypto operations use large fixed-size stack arrays
+large_stack_arrays         = "allow"
+# exact equality checks in decoy statistical tests are intentional
+float_cmp                  = "allow"
+# free_ptr reconstructs a Vec with len == cap by design
+same_length_and_capacity   = "allow"
+# settings sub-module follows this naming convention
+module_inception           = "allow"
+# crypto structs intentionally redact sensitive fields from Debug
+missing_fields_in_debug    = "allow"
+# Result return type kept for forward compatibility
+unnecessary_wraps          = "allow"
+# FakeHeaderConfig is test-only, is_empty not needed
+len_without_is_empty       = "allow"
+# public async API methods kept async for consistency even without direct awaits
+unused_async               = "allow"
+
+
 [[test]]
 name = "network"
 path = "tests/network/main.rs"

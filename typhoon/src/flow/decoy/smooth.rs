@@ -36,7 +36,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> SmoothDecoyProvider<T, AE> {
         let rate = base_rate * quietness.powf(quietness_factor) * (-rate_factor * state.packet_rate / state.reference_rate).exp();
 
         let delay = if rate > 0.0 {
-            random_uniform(1.0 - jitter, 1.0 + jitter) * (1.0 + delay_factor * (state.packet_rate / state.reference_rate)) / rate
+            random_uniform(1.0 - jitter, 1.0 + jitter) * (1.0 + delay_factor * (state.packet_rate / state.reference_rate)) / rate * 1000.0
         } else {
             delay_default as f64
         };
@@ -80,11 +80,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> SmoothDecoyProvider<T, AE> {
                     drop(state_guard);
 
                     // Clone before consuming: Arc refcount bump (zero-copy) for optional replication.
-                    let body_ref = should_rep.then(|| decoy_packet.clone());
+                    let body_bytes = should_rep.then(|| decoy_packet.slice_end(decoy_length).to_vec());
                     if let Err(err) = manager_arc.send_decoy_packet(decoy_packet).await {
-                        warn!("SmoothDecoyProvider: failed to send decoy packet: {:?}", err);
-                    } else if let Some(body) = body_ref {
-                        try_replicate(&state, &manager, false, body, decoy_length).await;
+                        warn!("SmoothDecoyProvider: failed to send decoy packet: {err:?}");
+                    } else if let Some(bytes) = body_bytes {
+                        try_replicate(&state, &manager, false, bytes).await;
                     }
                 }
             }

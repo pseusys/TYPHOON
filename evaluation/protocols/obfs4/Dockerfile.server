@@ -1,0 +1,10 @@
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        obfs4proxy iproute2 python3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY obfs4/server-entrypoint.sh /entrypoint.sh
+COPY common/tcp_sink.py /app/server.py
+RUN chmod +x /entrypoint.sh
+HEALTHCHECK --interval=1s --timeout=3s --retries=30 --start-period=5s \
+    CMD ss -tln | grep -q ':9000' && test -f /keys/obfs4_args.txt
+ENTRYPOINT ["/entrypoint.sh"]

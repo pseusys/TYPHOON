@@ -48,7 +48,7 @@ pub(crate) struct ServerSecret<'a> {
     pub obfs: FixedByteBuffer<ED25519_BYTES>,
 }
 
-impl<'a> ObfuscationBufferContainer for ServerSecret<'a> {
+impl ObfuscationBufferContainer for ServerSecret<'_> {
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     #[inline]
     fn obfuscation_buffer(&self) -> FixedByteBuffer<ED25519_BYTES> {

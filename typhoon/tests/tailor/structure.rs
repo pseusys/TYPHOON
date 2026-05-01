@@ -16,7 +16,7 @@ fn pool_empty(pool: &BytePool, size: usize) -> DynamicByteBuffer {
 fn test_tailor_roundtrip() {
     let identity = StaticByteBuffer::from_slice(&[0xAB; DEFAULT_TYPHOON_ID_LENGTH]);
     let buffer = pool_empty(&TEST_POOL, TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
-    let tailor = Tailor::<StaticByteBuffer>::data(buffer, &identity, 1024, 0x12345678_ABCD0001);
+    let tailor = Tailor::<StaticByteBuffer>::data(buffer, &identity, 1024, 0x1234_5678_ABCD_0001);
     tailor.set_code(42);
     tailor.set_flags(PacketFlags::DATA);
     tailor.set_time(64000);
@@ -38,10 +38,10 @@ fn test_packet_number_components() {
     let identity = StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH);
     let buffer = pool_empty(&TEST_POOL, TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
     let tailor = Tailor::<StaticByteBuffer>::data(buffer, &identity, 0, 0);
-    tailor.set_packet_number(0x12345678, 0xABCD0001);
+    tailor.set_packet_number(0x1234_5678, 0xABCD_0001);
 
-    assert_eq!(tailor.timestamp(), 0x12345678);
-    assert_eq!(tailor.incremental(), 0xABCD0001);
+    assert_eq!(tailor.timestamp(), 0x1234_5678);
+    assert_eq!(tailor.incremental(), 0xABCD_0001);
 }
 
 #[test]
@@ -68,12 +68,12 @@ fn test_health_check_tailor() {
 fn test_shadowride_tailor() {
     let identity = StaticByteBuffer::from_slice(&[3; DEFAULT_TYPHOON_ID_LENGTH]);
     let buffer = pool_empty(&TEST_POOL, TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
-    let tailor = Tailor::<StaticByteBuffer>::shadowride(buffer, &identity, 256, 128000, 12345);
+    let tailor = Tailor::<StaticByteBuffer>::shadowride(buffer, &identity, 256, 128_000, 12345);
 
     assert!(tailor.flags().is_shadowride());
     assert!(tailor.flags().has_payload());
     assert_eq!(tailor.payload_length(), 256);
-    assert_eq!(tailor.time(), 128000);
+    assert_eq!(tailor.time(), 128_000);
 }
 
 #[test]
@@ -113,11 +113,11 @@ fn test_termination_tailor() {
 fn test_debug_probe_tailor_roundtrip() {
     let identity = StaticByteBuffer::from_slice(&[7; DEFAULT_TYPHOON_ID_LENGTH]);
     let buffer = pool_empty(&TEST_POOL, TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
-    let tailor = Tailor::<StaticByteBuffer>::debug_probe(buffer, &identity, 42, 0xDEADBEEF, 99, 1, 1024);
+    let tailor = Tailor::<StaticByteBuffer>::debug_probe(buffer, &identity, 42, 0xDEAD_BEEF, 99, 1, 1024);
 
     assert_eq!(tailor.flags(), PacketFlags::DATA);
     assert_eq!(tailor.debug_ref_num(), 42);
-    assert_eq!(tailor.debug_send_time(), 0xDEADBEEF);
+    assert_eq!(tailor.debug_send_time(), 0xDEAD_BEEF);
     assert_eq!(tailor.debug_sequence(), 99);
     assert_eq!(tailor.debug_phase(), 1);
     assert_eq!(tailor.payload_length(), 1024);

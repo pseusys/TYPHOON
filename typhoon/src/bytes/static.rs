@@ -166,7 +166,7 @@ impl Hash for StaticByteBuffer {
 impl Display for StaticByteBuffer {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         for byte in self.data.iter() {
-            write!(f, "{:02x}", byte)?;
+            write!(f, "{byte:02x}")?;
         }
         Ok(())
     }

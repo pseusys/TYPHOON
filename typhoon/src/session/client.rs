@@ -164,10 +164,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
                 let mut recv_lock = self.receive_internal.lock().await;
                 match recv_lock.cipher.get_mut().decrypt_payload(payload_part, None) {
                     Ok(decrypted) => return Ok(decrypted),
-                    Err(err) => {
-                        warn!("client session: payload decryption failed: {}", err);
-                        continue;
-                    }
+                    Err(err) => warn!("client session: payload decryption failed: {err}"),
                 }
             }
         }

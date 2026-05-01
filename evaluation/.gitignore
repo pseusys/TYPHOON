@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+dist/
+*.egg-info/
+
+## Poetry
+poetry.lock
+
+## Capture results (pcaps can be hundreds of MB)
+results/
