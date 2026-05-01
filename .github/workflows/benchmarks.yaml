@@ -53,7 +53,7 @@ jobs:
           retention-days: 5
 
   flamegraph:
-    name: Generate Example Flamegraphs
+    name: Generate TYPHOON Example Flamegraphs
     runs-on: ubuntu-24.04
 
     steps:
