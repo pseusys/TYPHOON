@@ -187,8 +187,8 @@ impl FakeHeaderConfig {
     /// Create a random header configuration drawn from the default probability distributions.
     ///
     /// Includes a header with probability `FAKE_HEADER_PROBABILITY`; if included, a random number
-    /// of U8-random fields are packed to fill a length sampled from
-    /// `[FAKE_HEADER_LENGTH_MIN, FAKE_HEADER_LENGTH_MAX]`; otherwise returns an empty config.
+    /// of fields are packed to fill a length sampled from `[FAKE_HEADER_LENGTH_MIN, FAKE_HEADER_LENGTH_MAX]`.
+    /// Each field is independently assigned one of the five `FieldType` variants with equal probability.
     pub fn random<AE: AsyncExecutor>(settings: &Settings<AE>) -> Self {
         let mut rng = get_rng();
         let header_prob = settings.get(&keys::FAKE_HEADER_PROBABILITY);
@@ -196,7 +196,21 @@ impl FakeHeaderConfig {
             let min_len = settings.get(&keys::FAKE_HEADER_LENGTH_MIN) as usize;
             let max_len = settings.get(&keys::FAKE_HEADER_LENGTH_MAX) as usize;
             let len = if min_len >= max_len { max_len } else { rng.gen_range(min_len..=max_len) };
-            let fields = (0..len).map(|_| FieldTypeHolder::U8(FieldType::Random)).collect();
+            let fields = (0..len)
+                .map(|_| {
+                    FieldTypeHolder::U8(match rng.gen_range(0u8..5) {
+                        0 => FieldType::Random,
+                        1 => FieldType::Constant { value: rng.r#gen::<u8>() },
+                        2 => FieldType::Volatile { value: rng.r#gen::<u8>(), change_probability: rng.gen_range(0.01..=0.20) },
+                        3 => {
+                            let switch_timeout = rng.gen_range(1_000u64..=30_000);
+                            FieldType::Switching { value: rng.r#gen::<u8>(), next_switch: unix_timestamp_ms() + switch_timeout as u128, switch_timeout }
+                        }
+                        4 => FieldType::Incremental { value: rng.r#gen::<u8>() },
+                        _ => unreachable!(),
+                    })
+                })
+                .collect();
             Self::new(fields)
         } else {
             Self::new(vec![])
@@ -276,46 +290,7 @@ impl FlowConfig {
     ///   `[FAKE_BODY_LENGTH_MIN, mtu]`.
     pub fn random<AE: AsyncExecutor>(settings: &Settings<AE>) -> Self {
         let mut rng = get_rng();
-
-        let header_prob = settings.get(&keys::FAKE_HEADER_PROBABILITY);
-        let fake_header_mode = if rng.r#gen::<f64>() < header_prob {
-            let min_len = settings.get(&keys::FAKE_HEADER_LENGTH_MIN) as usize;
-            let max_len = settings.get(&keys::FAKE_HEADER_LENGTH_MAX) as usize;
-            let len = if min_len >= max_len {
-                max_len
-            } else {
-                rng.gen_range(min_len..=max_len)
-            };
-            let fields = (0..len)
-                .map(|_| {
-                    FieldTypeHolder::U8(match rng.gen_range(0u8..5) {
-                        0 => FieldType::Random,
-                        1 => FieldType::Constant {
-                            value: rng.r#gen::<u8>(),
-                        },
-                        2 => FieldType::Volatile {
-                            value: rng.r#gen::<u8>(),
-                            change_probability: rng.gen_range(0.01..=0.20),
-                        },
-                        3 => {
-                            let switch_timeout = rng.gen_range(1_000u64..=30_000);
-                            FieldType::Switching {
-                                value: rng.r#gen::<u8>(),
-                                next_switch: unix_timestamp_ms() + switch_timeout as u128,
-                                switch_timeout,
-                            }
-                        }
-                        4 => FieldType::Incremental {
-                            value: rng.r#gen::<u8>(),
-                        },
-                        _ => unreachable!(),
-                    })
-                })
-                .collect();
-            FakeHeaderConfig::new(fields)
-        } else {
-            FakeHeaderConfig::new(vec![])
-        };
+        let fake_header_mode = FakeHeaderConfig::random(settings);
 
         let min_len = settings.get(&keys::FAKE_BODY_LENGTH_MIN) as usize;
         let max_len = settings.get(&keys::FAKE_BODY_LENGTH_MAX) as usize;

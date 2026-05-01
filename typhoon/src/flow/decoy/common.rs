@@ -516,7 +516,7 @@ where
             break;
         };
 
-        let (packet, body_length, should_rep) = {
+        let (packet, body_length, should_rep, settings) = {
             let mut guard = state.write().await;
             let length = guard.pending_maintenance_length;
 
@@ -527,18 +527,18 @@ where
 
             let packet = guard.create_decoy_packet(length, true);
             let should_rep = guard.should_replicate(true);
-            (packet, length, should_rep)
+            let settings = Arc::clone(&guard.settings);
+            (packet, length, should_rep, settings)
         };
 
-        // Clone before consuming: Arc refcount bump (zero-copy) for optional replication.
-        let body_bytes = should_rep.then(|| packet.slice_end(body_length).to_vec());
+        let body_buf = should_rep.then(|| settings.pool().allocate_precise_from_slice_with_capacity(packet.slice_end(body_length), 0, 0));
 
         debug!("Maintenance: generated packet (len={body_length})");
 
         if let Err(err) = manager_arc.send_decoy_packet(packet).await {
             warn!("Maintenance: failed to send: {err:?}");
-        } else if let Some(bytes) = body_bytes {
-            try_replicate(&state, &manager, true, bytes).await;
+        } else if let Some(body) = body_buf {
+            try_replicate(&state, &manager, true, body).await;
         }
 
         {
@@ -550,7 +550,7 @@ where
 
 /// Attempt replication of a decoy packet. If replication mode applies, spawns a cascading
 /// task that re-sends the packet body with diminishing probability.
-pub(super) async fn try_replicate<T, AE>(state: &Arc<RwLock<DecoyState<T, AE>>>, manager: &Weak<dyn DecoyFlowSender>, is_maintenance: bool, body_bytes: Vec<u8>)
+pub(super) async fn try_replicate<T, AE>(state: &Arc<RwLock<DecoyState<T, AE>>>, manager: &Weak<dyn DecoyFlowSender>, is_maintenance: bool, body: DynamicByteBuffer)
 where
     T: IdentityType + Clone + 'static,
     AE: AsyncExecutor + 'static,
@@ -582,10 +582,10 @@ where
 
             let packet = {
                 let mut guard = state_clone.write().await;
-                if !guard.try_spend_budget(body_bytes.len()) {
+                if !guard.try_spend_budget(body.slice().len()) {
                     break;
                 }
-                guard.create_replica_packet(&body_bytes, is_maintenance)
+                guard.create_replica_packet(body.slice(), is_maintenance)
             };
 
             if manager_arc.send_decoy_packet(packet).await.is_err() {

@@ -73,14 +73,14 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> NoisyDecoyProvider<T, AE> {
                 if state_guard.try_spend_budget(decoy_length) {
                     let decoy_packet = state_guard.create_decoy_packet(decoy_length, false);
                     let should_rep = state_guard.should_replicate(false);
+                    let settings = Arc::clone(&state_guard.settings);
                     drop(state_guard);
 
-                    // Clone before consuming: Arc refcount bump (zero-copy) for optional replication.
-                    let body_bytes = should_rep.then(|| decoy_packet.slice_end(decoy_length).to_vec());
+                    let body_buf = should_rep.then(|| settings.pool().allocate_precise_from_slice_with_capacity(decoy_packet.slice_end(decoy_length), 0, 0));
                     if let Err(err) = manager_arc.send_decoy_packet(decoy_packet).await {
                         warn!("NoisyDecoyProvider: failed to send decoy packet: {err:?}");
-                    } else if let Some(bytes) = body_bytes {
-                        try_replicate(&state, &manager, false, bytes).await;
+                    } else if let Some(body) = body_buf {
+                        try_replicate(&state, &manager, false, body).await;
                     }
                 }
             }
