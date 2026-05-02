@@ -23,11 +23,7 @@ use crate::utils::sync::AsyncExecutor;
 /// `ClientFlowManager` (forwards to `send` on the connected socket, ignoring `target`).
 pub trait ProbeFlowSender: Send + Sync {
     /// Send `packet` as raw bytes to `target`, bypassing all TYPHOON framing.
-    fn send_raw<'a>(
-        &'a self,
-        packet: DynamicByteBuffer,
-        target: SocketAddr,
-    ) -> Pin<Box<dyn Future<Output = Result<(), SocketError>> + Send + 'a>>;
+    fn send_raw<'a>(&'a self, packet: DynamicByteBuffer, target: SocketAddr) -> Pin<Box<dyn Future<Output = Result<(), SocketError>> + Send + 'a>>;
 }
 
 /// Handler for packets the flow manager could not identify (active probing protection).

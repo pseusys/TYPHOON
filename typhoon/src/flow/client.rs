@@ -70,11 +70,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowM
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ProbeFlowSender for ClientFlowManager<T, AE> {
-    fn send_raw<'a>(
-        &'a self,
-        packet: DynamicByteBuffer,
-        _target: SocketAddr,
-    ) -> Pin<Box<dyn Future<Output = Result<(), SocketError>> + Send + 'a>> {
+    fn send_raw<'a>(&'a self, packet: DynamicByteBuffer, _target: SocketAddr) -> Pin<Box<dyn Future<Output = Result<(), SocketError>> + Send + 'a>> {
         Box::pin(async move { self.sock.send(packet).await.map(|_| ()) })
     }
 }
@@ -110,7 +106,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager
 
             {
                 let mut lock = self.receive_internal.lock().await;
-                match lock.process_incoming(notified_packet.unwrap(), self.settings.pool())? {
+                match lock.process_incoming(notified_packet, self.settings.pool())? {
                     ProcessIncomingResult::Valid(result) => return Ok(result),
                     ProcessIncomingResult::Decoy => continue,
                     ProcessIncomingResult::Unexpected(pkt) => {

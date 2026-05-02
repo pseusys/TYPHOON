@@ -140,18 +140,14 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
                         Ok(()) => {}
                         Err(err) => {
                             warn!("client flow: tailor verification failed: {err}");
-                            return Ok(ProcessIncomingResult::Unexpected(
-                                encrypted_packet.expand_end(encrypted_tailor_len),
-                            ));
+                            return Ok(ProcessIncomingResult::Unexpected(encrypted_packet.expand_end(encrypted_tailor_len)));
                         }
                     }
                     tailor
                 }
                 Err(err) => {
                     warn!("client flow: tailor decryption failed: {err}");
-                    return Ok(ProcessIncomingResult::Unexpected(
-                        encrypted_packet.expand_end(encrypted_tailor_len),
-                    ));
+                    return Ok(ProcessIncomingResult::Unexpected(encrypted_packet.expand_end(encrypted_tailor_len)));
                 }
             },
             Err(err) => return Err(FlowControllerError::MissingCache(err)),
@@ -163,8 +159,6 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
         }
 
         let payload_len = tailor.payload_length() as usize;
-        Ok(ProcessIncomingResult::Valid(
-            encrypted_packet.rebuffer_start(encrypted_packet.len() - payload_len).expand_end(full_tailor_len),
-        ))
+        Ok(ProcessIncomingResult::Valid(encrypted_packet.rebuffer_start(encrypted_packet.len() - payload_len).expand_end(full_tailor_len)))
     }
 }

@@ -151,9 +151,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     Ok(result) => result,
                     Err(err) => {
                         warn!("server flow: tailor decryption failed from {source_addr}: {err}");
-                        self.probe_handler.lock().await.process(
-                            encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr),
-                        ).await;
+                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr)).await;
                         continue;
                     }
                 };
@@ -162,9 +160,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     let identity = tailor.identity();
                     if let Err(err) = crypto.verify_tailor(&identity, transcript).await {
                         debug!("error verifying packet tailor: {err}");
-                        self.probe_handler.lock().await.process(
-                            encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr),
-                        ).await;
+                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr)).await;
                         continue;
                     }
                 }
@@ -194,9 +190,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     }
                 } else {
                     // Non-handshake, non-decoy packet from an unregistered user.
-                    self.probe_handler.lock().await.process(
-                        encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr),
-                    ).await;
+                    self.probe_handler.lock().await.process(encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr)).await;
                     continue;
                 }
             }
@@ -226,11 +220,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> ProbeFlowSender for ServerFlowManager<T, AE> {
-    fn send_raw<'a>(
-        &'a self,
-        packet: DynamicByteBuffer,
-        target: SocketAddr,
-    ) -> Pin<Box<dyn Future<Output = Result<(), SocketError>> + Send + 'a>> {
+    fn send_raw<'a>(&'a self, packet: DynamicByteBuffer, target: SocketAddr) -> Pin<Box<dyn Future<Output = Result<(), SocketError>> + Send + 'a>> {
         Box::pin(async move { self.socks[0].send_to(packet, target).await.map(|_| ()) })
     }
 }
