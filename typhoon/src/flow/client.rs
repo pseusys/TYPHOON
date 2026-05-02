@@ -104,16 +104,14 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager
                 notified_packet.unwrap()
             };
 
-            {
+            let incoming_packet = {
                 let mut lock = self.receive_internal.lock().await;
-                match lock.process_incoming(notified_packet, self.settings.pool())? {
-                    ProcessIncomingResult::Valid(result) => return Ok(result),
-                    ProcessIncomingResult::Decoy => continue,
-                    ProcessIncomingResult::Unexpected(pkt) => {
-                        drop(lock);
-                        self.probe_handler.lock().await.process(pkt, None).await;
-                    }
-                }
+                lock.process_incoming(notified_packet, self.settings.pool())?
+            };
+            if let ProcessIncomingResult::Unexpected(pkt) = incoming_packet {
+                self.probe_handler.lock().await.process(pkt, None).await;
+            } else if let ProcessIncomingResult::Valid(result) = incoming_packet {
+                return Ok(result);
             }
         }
     }
