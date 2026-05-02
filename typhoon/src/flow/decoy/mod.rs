@@ -42,7 +42,7 @@ where
     DP: DecoyCommunicationMode<T, AE> + 'static,
 {
     Arc::new(|manager, settings, identity| {
-        info!("decoy provider: {}", DP::name());
+        info!("decoy provider: {}", <DP as DecoyCommunicationMode<T, AE>>::name());
         Box::new(DP::new(manager, settings, identity))
     })
 }

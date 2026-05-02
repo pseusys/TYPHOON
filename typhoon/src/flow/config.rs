@@ -37,6 +37,16 @@ pub enum FakeBodyMode {
 }
 
 impl FakeBodyMode {
+    /// Human-readable description of this mode for capture log records.
+    #[inline]
+    pub(crate) fn description(&self) -> String {
+        match self {
+            FakeBodyMode::Empty => "Empty".to_string(),
+            FakeBodyMode::Random { min_length, max_length, service } => format!("Random({min_length}..{max_length},svc={service})"),
+            FakeBodyMode::Constant { packet_length } => format!("Constant({packet_length})"),
+        }
+    }
+
     /// Maximum fake body length this mode can produce — used to bound MTU calculations.
     pub fn max_len(&self) -> usize {
         match self {

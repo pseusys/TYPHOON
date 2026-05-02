@@ -227,6 +227,9 @@ impl<T: FlowManager + Send + Sync> DecoyFlowSender for T {
 /// flow managers. All async methods are boxed automatically by `async_trait`.
 #[async_trait]
 pub trait DecoyProvider: Send + Sync {
+    /// Short display name of this provider (e.g. "SparseDecoyProvider").
+    fn name(&self) -> &'static str;
+
     /// Start the background decoy generation timer.
     async fn start(&mut self);
 

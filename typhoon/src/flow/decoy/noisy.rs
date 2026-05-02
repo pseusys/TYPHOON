@@ -97,6 +97,9 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> NoisyDecoyProvider<T, AE> {
 
 #[async_trait]
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvider for NoisyDecoyProvider<T, AE> {
+    #[inline]
+    fn name(&self) -> &'static str { "NoisyDecoyProvider" }
+
     async fn start(&mut self) {
         let executor = {
             let lock = self.state.read().await;

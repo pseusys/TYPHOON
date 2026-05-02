@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 
 use crate::bytes::DynamicByteBuffer;
 use crate::cache::CachedValue;
-use crate::capture::CaptureContext;
+use crate::capture::{CaptureContext, record_flow_config};
 use crate::crypto::ClientCryptoTool;
 use crate::flow::common::{FlowManager, FlowReceiveInternal, FlowSendInternal};
 use crate::flow::config::FlowConfig;
@@ -35,6 +35,9 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowM
         let manager_ref = Arc::new_cyclic(|m: &Weak<ClientFlowManager<T, AE>>| {
             let mgr: Weak<dyn DecoyFlowSender> = m.clone();
             let decoy = factory(mgr, settings.clone(), identity);
+            record_flow_config(addr, "c2s", || {
+                (config.fake_body_mode.description(), config.fake_header_mode.len(), decoy.name())
+            });
             ClientFlowManager {
                 decoy_provider: Mutex::new(decoy),
                 send_internal: Mutex::new(FlowSendInternal {

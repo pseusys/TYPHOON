@@ -52,9 +52,16 @@ _COLORS = {
 }
 
 
-def _parse_lines(lines: list[str]) -> list[dict]:
-    """Extract capture JSONL records from env_logger output lines."""
-    records = []
+def _parse_lines(lines: list[str]) -> tuple[list[dict], list[dict]]:
+    """
+    Extract capture JSONL records from env_logger output lines.
+
+    Returns (packet_records, config_records) separated by ``kind``.
+    Config records (kind="Config") carry flow configuration metadata;
+    all other records are per-packet measurements.
+    """
+    packets: list[dict] = []
+    configs: list[dict] = []
     for line in lines:
         if "typhoon::capture" not in line:
             continue
@@ -62,14 +69,18 @@ def _parse_lines(lines: list[str]) -> list[dict]:
         if brace == -1:
             continue
         try:
-            records.append(json.loads(line[brace:]))
+            rec = json.loads(line[brace:])
         except json.JSONDecodeError:
-            pass
-    return records
+            continue
+        if rec.get("kind") == "Config":
+            configs.append(rec)
+        else:
+            packets.append(rec)
+    return packets, configs
 
 
-def _run_example(example: str, typhoon_dir: Path, timeout: int) -> list[dict]:
-    """Build and run a TYPHOON example with capture logging; return parsed records."""
+def _run_example(example: str, typhoon_dir: Path, timeout: int) -> tuple[list[dict], list[dict]]:
+    """Build and run a TYPHOON example with capture logging; return (packets, configs)."""
     env = {**os.environ, "RUST_LOG": "typhoon::capture=trace"}
     try:
         result = subprocess.run(
@@ -229,15 +240,57 @@ def _compute_xpos(timestamps: list[int]) -> np.ndarray:
     return xpos
 
 
-def _subplot_title(c2s_addr: str | None, s2c_addr: str | None) -> str:
+def _config_annotation(
+    c2s_addr: str | None,
+    s2c_addr: str | None,
+    configs: list[dict],
+) -> str:
+    """
+    Build a compact config annotation string for a subplot.
+
+    Looks up Config records matching each flow address and direction,
+    then formats: ``body=… header=…B decoy=…`` per direction.
+    Returns an empty string if no config records are found.
+    """
+    by_key: dict[tuple[str, str], dict] = {
+        (r.get("flow", ""), r.get("dir", "")): r for r in configs
+    }
+
+    def _fmt(addr: str | None, direction: str) -> str:
+        if addr is None:
+            return ""
+        rec = by_key.get((addr, direction))
+        if rec is None:
+            return ""
+        body = rec.get("body_mode", "?")
+        hdr = rec.get("header_len", "?")
+        decoy = rec.get("decoy", "?")
+        return f"{direction}: body={body}  header={hdr}B  decoy={decoy}"
+
+    parts = [p for p in (_fmt(c2s_addr, "c2s"), _fmt(s2c_addr, "s2c")) if p]
+    return "\n".join(parts)
+
+
+def _subplot_title(
+    c2s_addr: str | None,
+    s2c_addr: str | None,
+    configs: list[dict] | None = None,
+) -> str:
     if c2s_addr == s2c_addr:
-        return c2s_addr or "unknown"
-    parts = []
-    if c2s_addr:
-        parts.append(f"→ {c2s_addr} (c2s)")
-    if s2c_addr:
-        parts.append(f"← {s2c_addr} (s2c)")
-    return "   ".join(parts)
+        base = c2s_addr or "unknown"
+    else:
+        parts = []
+        if c2s_addr:
+            parts.append(f"→ {c2s_addr} (c2s)")
+        if s2c_addr:
+            parts.append(f"← {s2c_addr} (s2c)")
+        base = "   ".join(parts)
+
+    if configs:
+        annotation = _config_annotation(c2s_addr, s2c_addr, configs)
+        if annotation:
+            return f"{base}\n{annotation}"
+    return base
 
 
 def _draw_bars(ax, times_or_xpos, values_by_direction: dict[str, dict[int | float, dict]]) -> None:
@@ -279,6 +332,7 @@ def _plot_all(
     out_dir: Path,
     bucket_ms: int,
     name: str,
+    configs: list[dict] | None = None,
 ) -> None:
     """Render all paired flows as bucketed stacked-bar subplots in a single PNG."""
     pairs = [(c, s, b) for c, s, b in pairs if b]
@@ -309,7 +363,7 @@ def _plot_all(
         ax.axhline(0, color="black", linewidth=0.8)
         ax.set_xlabel(f"Time ({bucket_ms} ms buckets)")
         ax.set_ylabel("Bytes")
-        ax.set_title(_subplot_title(c2s_addr, s2c_addr))
+        ax.set_title(_subplot_title(c2s_addr, s2c_addr, configs), fontsize=8)
         ax.legend(handles=component_patches + direction_patches, loc="upper right", fontsize=8)
 
     fig.suptitle(name, fontsize=13, fontweight="bold")
@@ -326,6 +380,7 @@ def _plot_all_per_packet(
     pairs_with_records: list[tuple[str | None, str | None, list[dict]]],
     out_dir: Path,
     name: str,
+    configs: list[dict] | None = None,
 ) -> None:
     """
     Render all paired flows as per-packet stacked-bar subplots in a single PNG.
@@ -359,7 +414,7 @@ def _plot_all_per_packet(
 
         ax.axhline(0, color="black", linewidth=0.8)
         ax.set_ylabel("Bytes")
-        ax.set_title(_subplot_title(c2s_addr, s2c_addr))
+        ax.set_title(_subplot_title(c2s_addr, s2c_addr, configs), fontsize=8)
         ax.legend(handles=component_patches + direction_patches, loc="upper right", fontsize=8)
 
         # Place ~10 time-reference ticks labelled with ms-since-start.
@@ -399,13 +454,13 @@ def main(example: str, log_file: str, out_dir: str, typhoon_dir: str, timeout: i
         raise click.UsageError("--example and --log are mutually exclusive.")
 
     if example:
-        records = _run_example(example, Path(typhoon_dir), timeout)
+        records, configs = _run_example(example, Path(typhoon_dir), timeout)
         name = example
     elif log_file == "-":
-        records = _parse_lines(sys.stdin.readlines())
+        records, configs = _parse_lines(sys.stdin.readlines())
         name = "capture"
     else:
-        records = _parse_lines(Path(log_file).read_text().splitlines())
+        records, configs = _parse_lines(Path(log_file).read_text().splitlines())
         name = Path(log_file).stem
 
     if not records:
@@ -420,12 +475,12 @@ def main(example: str, log_file: str, out_dir: str, typhoon_dir: str, timeout: i
     out = Path(out_dir)
     if per_packet:
         pairs = _pair_records(records)
-        _plot_all_per_packet(pairs, out, name)
+        _plot_all_per_packet(pairs, out, name, configs)
     else:
         bms = bucket_ms if bucket_ms > 0 else _auto_bucket_ms(records)
         flows = _bucket(records, bms)
         pairs = _pair_flows(flows)
-        _plot_all(pairs, out, bms, name)
+        _plot_all(pairs, out, bms, name, configs)
 
 
 if __name__ == "__main__":

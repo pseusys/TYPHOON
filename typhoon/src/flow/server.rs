@@ -8,7 +8,7 @@ use log::{debug, warn};
 use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
-use crate::capture::record_server_send;
+use crate::capture::{record_flow_config, record_server_send};
 use crate::crypto::ServerCryptoTool;
 use crate::flow::common::FlowManager;
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
@@ -92,7 +92,12 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let mgr: Weak<dyn DecoyFlowSender> = weak;
         let mut dp = (self.decoy_factory)(mgr, self.settings.clone(), id.clone());
         dp.start().await;
-        self.decoy_providers.write().await.insert(id, Arc::new(Mutex::new(dp)));
+        let decoy_name = dp.name();
+        self.decoy_providers.write().await.insert(id.clone(), Arc::new(Mutex::new(dp)));
+        if let Some(addr) = self.user_addrs.read().await.get(&id).copied() {
+            let header_len = self.max_overhead - self.fake_body_mode.max_len();
+            record_flow_config(addr, "s2c", || (self.fake_body_mode.description(), header_len, decoy_name));
+        }
     }
 
     /// Lazily register a user on this flow if not already present.
@@ -256,8 +261,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         debug!("server flow: sending {packet_flags:?} packet to {addr}");
         self.socks[0].send_to(full_packet, addr).await.map_err(FlowControllerError::SocketError)?;
-        let kind = if packet_flags.is_discardable() { "Decoy" } else if packet_flags.is_service() { "Service" } else { "Data" };
-        record_server_send(addr, kind, identity_len + TAILOR_LENGTH, encrypted_tailor.len() - identity_len, cap_header, data_len, cap_body);
+        record_server_send(addr, || {
+            let kind = if packet_flags.is_discardable() { "Decoy" } else if packet_flags.is_service() { "Service" } else { "Data" };
+            (kind, identity_len + TAILOR_LENGTH, encrypted_tailor.len() - identity_len, cap_header, data_len, cap_body)
+        });
         Ok(())
     }
 

@@ -101,6 +101,9 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> SmoothDecoyProvider<T, AE> {
 
 #[async_trait]
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvider for SmoothDecoyProvider<T, AE> {
+    #[inline]
+    fn name(&self) -> &'static str { "SmoothDecoyProvider" }
+
     async fn start(&mut self) {
         let executor = {
             let lock = self.state.read().await;

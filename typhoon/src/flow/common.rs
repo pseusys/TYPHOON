@@ -111,8 +111,10 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
         self.config.fake_header_mode.fill(full_packet.rebuffer_end(fake_header_len));
         get_rng().fill(&mut full_packet.rebuffer_both(fake_header_len, full_packet_len));
 
-        let kind = if packet_flags.is_discardable() { "Decoy" } else if packet_flags.is_service() { "Service" } else { "Data" };
-        self.capture.record_send(kind, full_tailor_len, CP::tailor_overhead(), fake_header_len, data_len, full_packet_len - fake_header_len);
+        self.capture.record_send(|| {
+            let kind = if packet_flags.is_discardable() { "Decoy" } else if packet_flags.is_service() { "Service" } else { "Data" };
+            (kind, full_tailor_len, CP::tailor_overhead(), fake_header_len, data_len, full_packet_len - fake_header_len)
+        });
 
         Ok(full_packet)
     }
