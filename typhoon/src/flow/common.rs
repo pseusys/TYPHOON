@@ -4,6 +4,7 @@ use std::sync::Arc;
 use cfg_if::cfg_if;
 
 use crate::bytes::DynamicByteBuffer;
+use crate::capture::CaptureContext;
 use crate::flow::error::FlowControllerError;
 cfg_if! {
     if #[cfg(feature = "client")] {
@@ -66,6 +67,7 @@ pub(crate) trait FlowCryptoProvider: Clone + Send + Sync {
 pub(crate) struct FlowSendInternal<CP: FlowCryptoProvider> {
     pub(crate) provider: CachedValue<CP>,
     pub(crate) config: FlowConfig,
+    pub(crate) capture: CaptureContext,
 }
 
 /// Shared receive-side state for flow managers.
@@ -95,6 +97,7 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
 
         let (packet_data, packet_tailor) = packet.split_buf(packet.len() - full_tailor_len);
         let packet_flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
+        let data_len = packet_data.len();
         let encrypted_packet = match self.provider.get_mut().map_err(FlowControllerError::MissingCache)?.obfuscate_tailor(packet_tailor, pool) {
             Ok(res) => packet_data.expand_end(res.len()),
             Err(err) => return Err(FlowControllerError::TailorEncryption(err)),
@@ -107,6 +110,9 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
 
         self.config.fake_header_mode.fill(full_packet.rebuffer_end(fake_header_len));
         get_rng().fill(&mut full_packet.rebuffer_both(fake_header_len, full_packet_len));
+
+        let kind = if packet_flags.is_discardable() { "Decoy" } else if packet_flags.is_service() { "Service" } else { "Data" };
+        self.capture.record_send(kind, full_tailor_len, CP::tailor_overhead(), fake_header_len, data_len, full_packet_len - fake_header_len);
 
         Ok(full_packet)
     }

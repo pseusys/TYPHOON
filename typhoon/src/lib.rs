@@ -21,6 +21,7 @@
 //! | `server` | Server-side listener and session management |
 //! | `client` | Client-side socket and session management |
 //! | `debug` | Debug probe tools (requires `client` + `server`) |
+//! | `capture` | Per-packet trace logging to `typhoon::capture` at `TRACE` level |
 //! | `tokio` | Tokio async runtime |
 //! | `async-std` | async-std runtime |
 
@@ -47,6 +48,7 @@ compile_error!("one of the features 'server' and 'client' should be selected");
 
 pub mod bytes;
 pub(crate) mod cache;
+pub(crate) mod capture;
 pub mod certificate;
 pub(crate) mod crypto;
 #[cfg(feature = "debug")]

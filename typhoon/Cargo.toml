@@ -17,6 +17,7 @@ full_hardware = ["dep:aes", "dep:ctr", "dep:aes-gcm"]
 server = ["dep:socket2"]
 client = []
 debug = ["client", "server"]
+capture = []
 async-std = ["dep:async-channel", "dep:async-executor", "dep:async-io", "dep:async-lock"]
 tokio = ["dep:tokio"]
 

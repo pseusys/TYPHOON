@@ -8,6 +8,7 @@ use log::{debug, warn};
 use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+use crate::capture::record_server_send;
 use crate::crypto::ServerCryptoTool;
 use crate::flow::common::FlowManager;
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
@@ -233,6 +234,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         let (packet_data, packet_tailor) = notified_packet.split_buf(notified_packet.len() - identity_len - TAILOR_LENGTH);
         let packet_flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
+        let data_len = packet_data.len();
 
         let encrypted_tailor = {
             let mut crypto = self.crypto_send.lock().await;
@@ -241,18 +243,21 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let encrypted_packet = packet_data.expand_end(encrypted_tailor.len());
 
         // Add fake header and body (single lock scope: len + fill must be consistent).
-        let full_packet = {
+        let (full_packet, cap_header, cap_body) = {
             let mut mode = self.fake_header_mode.lock().await;
             let fake_header_len = mode.len();
-            let full_packet_len = fake_header_len + self.fake_body_mode.get_length(self.mtu, fake_header_len + encrypted_packet.len(), packet_flags.is_service());
+            let body_len = self.fake_body_mode.get_length(self.mtu, fake_header_len + encrypted_packet.len(), packet_flags.is_service());
+            let full_packet_len = fake_header_len + body_len;
             let full_packet = encrypted_packet.expand_start(full_packet_len);
             mode.fill(full_packet.rebuffer_end(fake_header_len));
             get_rng().fill(&mut full_packet.rebuffer_both(fake_header_len, full_packet_len));
-            full_packet
+            (full_packet, fake_header_len, body_len)
         };
 
         debug!("server flow: sending {packet_flags:?} packet to {addr}");
         self.socks[0].send_to(full_packet, addr).await.map_err(FlowControllerError::SocketError)?;
+        let kind = if packet_flags.is_discardable() { "Decoy" } else if packet_flags.is_service() { "Service" } else { "Data" };
+        record_server_send(addr, kind, identity_len + TAILOR_LENGTH, encrypted_tailor.len() - identity_len, cap_header, data_len, cap_body);
         Ok(())
     }
 

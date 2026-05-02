@@ -25,6 +25,7 @@ The crate defines the following features:
 - `server`: include TYPHOON server implementation.
 - `client`: include TYPHOON client implementation.
 - `debug`: include [debug diagnostic tools](PROTOCOL.md#debug-mode) (`DebugMode`, `DebugResult`, `run_debug`, `DebugServerConnectionHandler`); requires `client` and `server`.
+- `capture`: emit per-packet JSONL records to the `typhoon::capture` log target at `TRACE` level; enable at runtime with `RUST_LOG=typhoon::capture=trace`.
 - `tokio`: use [tokio](https://tokio.rs/) async runtime.
 - `async-std`: use [async-std](https://async.rs/) async runtime.
 
@@ -98,6 +99,24 @@ TYPHOON_TEST_SERVER_KEY_FAST=server.key cargo bench --bench roundtrip
 
 CI runs benchmarks on every push to `main` and on pull requests that touch `typhoon/**`.
 Results are stored as a workflow artifact (`bench-results`) on each run.
+The CI also generates per-example flamegraph SVGs and per-flow packet structure diagrams
+(stored as `flamegraphs` and `flow-diagrams` artifacts respectively, retained for 5 days).
+
+### Flow capture
+
+The `capture` feature emits per-packet JSONL records (component sizes, direction, flow address)
+to the `typhoon::capture` log target at `TRACE` level.  The `evaluation/` tool can turn these
+into stacked-bar SVG diagrams:
+
+```shell
+# Run an example, capture traffic, generate diagrams
+cd evaluation
+poe plot --example heavy_traffic --out-dir out/
+
+# Or generate from an existing log file
+RUST_LOG=typhoon::capture=trace cargo run --features capture --example hello_world 2>trace.log
+poe plot --log trace.log --out-dir out/
+```
 
 ### Coverage
 
