@@ -68,9 +68,6 @@ async fn test_echo_binary_payload() {
     let addr = free_addr();
     let (listener, cert) = setup_server(addr, settings.clone()).await;
 
-    let payload: Vec<u8> = (0u8..=255).cycle().take(512).collect();
-    let expected = payload.clone();
-
     let lh = listener.clone();
     settings.executor().spawn(async move {
         let client = lh.accept().await.expect("accept");
@@ -79,9 +76,11 @@ async fn test_echo_binary_payload() {
     });
 
     let socket = connect_simple(cert, settings, DefaultClientConnectionHandler).await;
+    let payload: Vec<u8> = (0u8..=255).cycle().take(socket.max_data_payload()).collect();
+
     socket.send_bytes(&payload).await.expect("send");
     let resp = socket.receive_bytes().await.expect("recv");
-    assert_eq!(resp, expected);
+    assert_eq!(resp, payload);
 }
 
 // Test: max_data_payload() reports a non-zero value.
