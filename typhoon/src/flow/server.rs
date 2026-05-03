@@ -188,10 +188,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     if notified.is_none() {
                         continue;
                     }
-                } else {
-                    // Non-handshake, non-decoy packet from an unregistered user.
-                    self.probe_handler.lock().await.process(encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr)).await;
-                    continue;
                 }
             }
 
