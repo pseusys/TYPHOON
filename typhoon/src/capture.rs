@@ -125,7 +125,7 @@ where
     );
 }
 
-#[cfg(not(feature = "capture"))]
+#[cfg(all(not(feature = "capture"), feature = "server"))]
 #[inline(always)]
 pub(crate) fn record_server_send<F>(_: SocketAddr, _: F)
 where
