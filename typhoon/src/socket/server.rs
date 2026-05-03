@@ -4,7 +4,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use crossbeam::queue::SegQueue;
 use log::{debug, info, warn};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
@@ -23,7 +22,7 @@ use crate::settings::{Settings, keys};
 use crate::socket::error::ServerSocketError;
 use crate::tailor::{IdentityType, PacketFlags, ReturnCode, ServerConnectionHandler, Tailor};
 use crate::utils::socket::Socket;
-use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, RwLock, WatchReceiver, WatchSender, create_bounded_notify_queue, create_notify_queue, create_watch};
+use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, NotifyQueueSender, RwLock, create_bounded_notify_queue, create_notify_queue};
 use crate::utils::unix_timestamp_ms;
 
 /// Configuration for a single server flow manager.
@@ -220,7 +219,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         };
         info!("listener built: max_data_payload={}B (mtu={}B, {} flow(s))", max_data_payload, settings.mtu(), flows.len());
 
-        let (accept_signal_tx, accept_signal_rx) = create_watch();
+        let (accept_tx, accept_rx) = create_notify_queue::<ClientHandle<T, AE>>();
 
         Ok(Listener {
             flows,
@@ -228,9 +227,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             users: Mutex::new(users),
             secret: self.secret,
             identity_generator: self.identity_generator,
-            accept_queue: SegQueue::new(),
-            accept_signal_tx,
-            accept_signal_rx: Mutex::new(accept_signal_rx),
+            accept_tx,
+            accept_rx: Mutex::new(accept_rx),
             max_data_payload,
             settings,
         })
@@ -291,7 +289,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         };
         info!("listener built: max_data_payload={}B (mtu={}B, {} flow(s))", max_data_payload, settings.mtu(), flows.len());
 
-        let (accept_signal_tx, accept_signal_rx) = create_watch();
+        let (accept_tx, accept_rx) = create_notify_queue::<ClientHandle<T, AE>>();
 
         Ok(Listener {
             flows,
@@ -299,9 +297,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             users: Mutex::new(users),
             secret: secret_arc,
             identity_generator: self.identity_generator,
-            accept_queue: SegQueue::new(),
-            accept_signal_tx,
-            accept_signal_rx: Mutex::new(accept_signal_rx),
+            accept_tx,
+            accept_rx: Mutex::new(accept_rx),
             max_data_payload,
             settings,
         })
@@ -318,9 +315,8 @@ pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'sta
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     secret: Arc<ServerSecret<'static>>,
     identity_generator: IG,
-    accept_queue: SegQueue<ClientHandle<T, AE>>,
-    accept_signal_tx: WatchSender<()>,
-    accept_signal_rx: Mutex<WatchReceiver<()>>,
+    accept_tx: NotifyQueueSender<ClientHandle<T, AE>>,
+    accept_rx: Mutex<NotifyQueueReceiver<ClientHandle<T, AE>>>,
     /// Maximum user-data bytes per packet so the wire packet fits within MTU.
     max_data_payload: usize,
     settings: Arc<Settings<AE>>,
@@ -530,23 +526,14 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             max_data_payload: self.max_data_payload,
             settings: self.settings.clone(),
         };
-        self.accept_queue.push(client_handle);
-        self.accept_signal_tx.send(());
+        self.accept_tx.push(client_handle);
 
         info!("new client connected: {}", identity.to_string());
     }
 
     /// Wait for the next client connection and return a handle to it.
     pub async fn accept(&self) -> Result<ClientHandle<T, AE>, ServerSocketError> {
-        loop {
-            if let Some(handle) = self.accept_queue.pop() {
-                return Ok(handle);
-            }
-            match self.accept_signal_rx.lock().await.recv().await {
-                Some(()) => {}
-                None => return Err(ServerSocketError::ListenerStopped),
-            }
-        }
+        self.accept_rx.lock().await.recv().await.ok_or(ServerSocketError::ListenerStopped)
     }
 }
 
