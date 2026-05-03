@@ -314,7 +314,7 @@ def _draw_bars(ax, times_or_xpos, values_by_direction: dict[str, dict[int | floa
                 linewidth=0.3,
                 width=0.8,
             )
-            for x, h in zip(xs, heights):
+            for x, h in zip(xs, heights, strict=True):
                 bottoms[x] = bottoms.get(x, 0.0) + h
 
 
@@ -352,7 +352,7 @@ def _plot_all(
     def _empty_dirs() -> dict:
         return {"c2s": {c: 0 for c in _COMPONENTS}, "s2c": {c: 0 for c in _COMPONENTS}}
 
-    for ax, (c2s_addr, s2c_addr, buckets) in zip(axes_flat, pairs):
+    for ax, (c2s_addr, s2c_addr, buckets) in zip(axes_flat, pairs, strict=True):
         values_by_dir: dict[str, dict] = {"c2s": {}, "s2c": {}}
         for t in times:
             dirs = buckets.get(t, _empty_dirs())
@@ -401,12 +401,12 @@ def _plot_all_per_packet(
 
     component_patches, direction_patches = _make_legend()
 
-    for ax, (c2s_addr, s2c_addr, pair_records) in zip(axes_flat, pairs_with_records):
+    for ax, (c2s_addr, s2c_addr, pair_records) in zip(axes_flat, pairs_with_records, strict=True):
         timestamps = [r["t"] for r in pair_records]
         xpos = _compute_xpos(timestamps)
 
         values_by_dir: dict[str, dict] = {"c2s": {}, "s2c": {}}
-        for xi, r in zip(xpos, pair_records):
+        for xi, r in zip(xpos, pair_records, strict=True):
             direction = r.get("dir", "c2s")
             values_by_dir[direction][xi] = {comp: r.get(comp, 0) for comp in _COMPONENTS}
         # Ensure both directions have entries (empty dicts are fine for _draw_bars)
