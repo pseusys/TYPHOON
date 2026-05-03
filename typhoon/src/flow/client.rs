@@ -6,6 +6,7 @@ use std::sync::{Arc, Weak};
 
 use crate::bytes::DynamicByteBuffer;
 use crate::cache::CachedValue;
+use crate::capture::{CaptureContext, record_flow_config};
 use crate::crypto::ClientCryptoTool;
 use crate::defaults::NoopProbeHandler;
 use crate::flow::common::{FlowManager, FlowReceiveInternal, FlowSendInternal, ProcessIncomingResult};
@@ -32,7 +33,7 @@ pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor> {
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowManager<T, AE> {
     /// Create a new client flow manager.
-    pub(crate) async fn new(config: FlowConfig, probe_factory: Option<&ProbeFactory<AE>>, mut cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, sock: Socket, factory: &DecoyFactory<T, AE>) -> Result<Arc<Self>, FlowControllerError> {
+    pub(crate) async fn new(config: FlowConfig, mut cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, sock: Socket, probe_factory: Option<&ProbeFactory<AE>>, decoy_factory: &DecoyFactory<T, AE>, addr: SocketAddr) -> Result<Arc<Self>, FlowControllerError> {
         let identity = cipher.get_mut().map_err(FlowControllerError::MissingCache)?.identity();
         let send_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
         let receive_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
@@ -41,17 +42,19 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowM
 
         let manager_ref = Arc::new_cyclic(|m: &Weak<ClientFlowManager<T, AE>>| {
             let mgr: Weak<dyn DecoyFlowSender> = m.clone();
-            let decoy = factory(mgr, settings.clone(), identity);
+            let decoy = decoy_factory(mgr, settings.clone(), identity);
             let probe_handler: Box<dyn ActiveProbeHandler<AE>> = match &handler_factory {
                 Some(f) => f(),
                 None => Box::new(NoopProbeHandler),
             };
             let mtu = settings.mtu();
+            record_flow_config(addr, "c2s", || (config.fake_body_mode.description(), config.fake_header_mode.len(), decoy.name()));
             ClientFlowManager {
                 decoy_provider: Mutex::new(decoy),
                 send_internal: Mutex::new(FlowSendInternal {
                     provider: send_provider,
                     config,
+                    capture: CaptureContext::new(addr),
                 }),
                 receive_internal: Mutex::new(FlowReceiveInternal {
                     provider: receive_provider,

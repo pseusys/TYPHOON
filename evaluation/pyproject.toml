@@ -12,6 +12,7 @@ rich               = "^13.0"
 python-on-whales   = "^0.73"
 scapy              = "^2.6"
 numpy              = "^2.0"
+matplotlib         = "^3.9"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.11"
@@ -47,6 +48,10 @@ select = ["E", "F", "I", "UP", "B"]
   [tool.poe.tasks.analyze]
   cmd  = "python -m typhoon_eval.analysis"
   help = "Analyze captured pcap files — pass --run <YYYYMMDD_HHMMSS> or omit for latest"
+
+  [tool.poe.tasks.plot]
+  cmd  = "python -m typhoon_eval.flow_plot"
+  help = "Generate per-flow packet structure diagrams — pass --example <name> or --log <file>, and --out-dir <dir>"
 
   [tool.poe.tasks.clean]
   shell = "rm -rf results/captures results/logs"

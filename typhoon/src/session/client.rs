@@ -3,7 +3,9 @@
 mod tests;
 
 /// Client-side session manager implementation.
+use std::future::Future;
 use std::mem::take;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -12,7 +14,7 @@ use log::{debug, warn};
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::SharedValue;
 use crate::crypto::ClientCryptoTool;
-use crate::flow::FlowManager;
+use crate::flow::{FlowControllerError, FlowManager};
 use crate::session::client_health::ClientHealthProvider;
 use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
@@ -21,6 +23,8 @@ use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{ClientConnectionHandler, IdentityType, PacketFlags, Tailor};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::{AsyncExecutor, Mutex, create_watch};
+
+type RecvFut = Pin<Box<dyn Future<Output = Result<DynamicByteBuffer, FlowControllerError>> + Send>>;
 
 struct ClientSessionManagerInternalSend<T: IdentityType + Clone> {
     cipher: SharedValue<ClientCryptoTool<T>>,
@@ -31,16 +35,18 @@ struct ClientSessionManagerInternalReceive<T: IdentityType + Clone> {
 }
 
 /// Client-side session manager that encrypts data and manages health checking.
-pub struct ClientSessionManager<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> {
+pub struct ClientSessionManager<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, FM: FlowManager + Clone + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> {
     health_provider: ClientHealthProvider<T, AE, Self, CC>,
     send_internal: Mutex<ClientSessionManagerInternalSend<T>>,
     receive_internal: Mutex<ClientSessionManagerInternalReceive<T>>,
     incremental_counter: AtomicU32,
     flows: Vec<FM>,
     settings: Arc<Settings<AE>>,
+    /// Persistent per-flow receive futures and their flow indices, reused across `receive_packet` calls.
+    recv_state: Mutex<Option<(Vec<RecvFut>, Vec<usize>)>>,
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, CC: ClientConnectionHandler + 'static> ClientSessionManager<T, AE, FM, CC> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send + Sync, CC: ClientConnectionHandler + 'static> ClientSessionManager<T, AE, FM, CC> {
     /// Create a new client session manager without starting the handshake.
     /// Call `start()` after the background receive loop is running.
     pub fn new(cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>, initial_data_generator: CC) -> Result<Arc<Self>, SessionControllerError> {
@@ -65,6 +71,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
                 incremental_counter: AtomicU32::new(0),
                 flows,
                 settings,
+                recv_state: Mutex::new(None),
             }
         });
 
@@ -91,7 +98,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
     }
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, CC: ClientConnectionHandler + 'static> SessionManager for ClientSessionManager<T, AE, FM, CC> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> SessionManager for ClientSessionManager<T, AE, FM, CC> {
     async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), SessionControllerError> {
         let full_packet = if generated {
             packet
@@ -130,15 +137,34 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
                 let recv_buf = self.settings.pool().allocate_for_recv();
                 self.flows[0].receive_packet(recv_buf).await.map_err(SessionControllerError::FlowError)?
             } else {
-                let futs: Vec<_> = self
-                    .flows
-                    .iter()
-                    .map(|flow| {
-                        let buf = self.settings.pool().allocate_for_recv();
-                        Box::pin(flow.receive_packet(buf))
+                // Take the persistent future state (releasing the lock before awaiting).
+                let (futs, mut flow_indices) = {
+                    let mut guard = self.recv_state.lock().await;
+                    guard.take().unwrap_or_else(|| {
+                        let mut futs: Vec<RecvFut> = Vec::with_capacity(self.flows.len());
+                        let mut indices: Vec<usize> = Vec::with_capacity(self.flows.len());
+                        for (i, flow) in self.flows.iter().enumerate() {
+                            let f = flow.clone();
+                            let buf = self.settings.pool().allocate_for_recv();
+                            futs.push(Box::pin(async move { f.receive_packet(buf).await }));
+                            indices.push(i);
+                        }
+                        (futs, indices)
                     })
-                    .collect();
-                futures::future::select_all(futs).await.0.map_err(SessionControllerError::FlowError)?
+                };
+
+                let (result, completed_pos, mut remaining_futs) = futures::future::select_all(futs).await;
+                let completed_flow_idx = flow_indices.remove(completed_pos);
+
+                // Replenish a new future for the flow that just completed.
+                let f = self.flows[completed_flow_idx].clone();
+                let buf = self.settings.pool().allocate_for_recv();
+                remaining_futs.push(Box::pin(async move { f.receive_packet(buf).await }));
+                flow_indices.push(completed_flow_idx);
+
+                *self.recv_state.lock().await = Some((remaining_futs, flow_indices));
+
+                result.map_err(SessionControllerError::FlowError)?
             };
 
             // The flow manager returns: encrypted_payload || plaintext_tailor (full TAILOR_LENGTH + T::length() bytes).
@@ -171,7 +197,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, 
     }
 }
 
-impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Send + Sync, CC: ClientConnectionHandler + 'static> Drop for ClientSessionManager<T, AE, FM, CC> {
+impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> Drop for ClientSessionManager<T, AE, FM, CC> {
     fn drop(&mut self) {
         drop(take(&mut self.flows));
     }

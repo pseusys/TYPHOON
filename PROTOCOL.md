@@ -180,6 +180,7 @@ It can be either empty, random or constant:
 
 > Handling `constant` body length might not be trivial, as it imposes a strict limit on packet data contents length.
 > TYPHOON protocol specifically does not support data fragmentation, so `constant` body length just won't have any effect if real packet body length is not always strictly limited.
+> If `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` is set so large that the fixed protocol overhead consumes the entire packet budget, leaving zero bytes for user data, the client socket builder will refuse to construct the socket and return an error.
 
 By default, fake body mode is chosen with equal probability for every option except for `random`, which is `TYPHOON_FAKE_BODY_RANDOM_PROBABILITY` heavier than the others.
 
@@ -1032,7 +1033,7 @@ These constants are used in some of the protocol values computation:
 | --- | --- | :---: |
 | `TYPHOON_FAKE_BODY_LENGTH_MIN` | Minimum length of the fake body random byte string | `32` |
 | `TYPHOON_FAKE_BODY_LENGTH_MAX` | Maximum length of the fake body random byte string | `512` |
-| `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` | Target packet length for `constant` fake body mode; clamped to `[FAKE_BODY_LENGTH_MIN, MTU]` | `1500` |
+| `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` | Target packet length for `constant` fake body mode; clamped to `[FAKE_BODY_LENGTH_MIN, MTU]` | `512` |
 | `TYPHOON_FAKE_BODY_RANDOM_PROBABILITY` | Multiplier of `random` fake body mode probability | `3` |
 | `TYPHOON_FAKE_HEADER_LENGTH_MIN` | Minimum length of the fake header structure | `4` |
 | `TYPHOON_FAKE_HEADER_PROBABILITY` | Probability of fake header presence | `0.6` |
@@ -1409,3 +1410,18 @@ Rotation is opt-in and configured per flow: `FlowConfig` carries an optional rot
 **The challenge**:
 The rotation interval itself must not become a new fingerprint.
 A fixed period (e.g. every _N_ seconds) would create detectable periodic discontinuities in the packet-length or field-width distributions.
+
+### UDP datagram batching
+
+On Linux, the `sendmmsg(2)` syscall allows multiple UDP datagrams to be submitted in a single kernel call, reducing context-switch overhead when a burst of packets needs to be sent at once.
+
+On the client side, when a user message is split into multiple wire packets because it exceeds `max_data_payload`, the entire batch can be prepared in userspace and handed to the OS in one syscall.
+This path is fully implemented: the send lock is acquired once for the whole batch, all wire packets are prepared, and a single `sendmmsg` call is issued on Linux with a sequential fallback on other platforms.
+
+On the server side, batching is harder because outgoing packets are routed to per-user source addresses via the `OutgoingRouter`, so packets destined for different clients cannot trivially be coalesced.
+A shared queue that accumulates `(payload, addr)` pairs across concurrent session send calls is needed, with a background task flushing them in a single `sendmmsg` call either when the queue reaches a threshold or after a short deadline.
+
+**The challenge**: Coalescing across multiple users and flows introduces tension between latency and throughput.
+Flushing too eagerly (on every packet) eliminates the syscall reduction; flushing too lazily (large threshold or long deadline) adds artificial delay that interferes with health-check timing.
+The queue must also account for the fact that `sendmmsg` batches datagrams for a single socket, while the server may manage multiple sockets simultaneously (one per flow on SO_REUSEPORT platforms), meaning coalescing must happen per-socket.
+The right flush policy — fixed threshold, fixed deadline, or adaptive — requires empirical benchmarking under realistic load patterns.

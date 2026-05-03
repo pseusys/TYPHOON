@@ -14,6 +14,11 @@ pub struct SimpleDecoyProvider;
 
 #[async_trait]
 impl DecoyProvider for SimpleDecoyProvider {
+    #[inline]
+    fn name(&self) -> &'static str {
+        "SimpleDecoyProvider"
+    }
+
     async fn start(&mut self) {}
 
     async fn feed_input(&mut self, packet: DynamicByteBuffer) -> Option<DynamicByteBuffer> {

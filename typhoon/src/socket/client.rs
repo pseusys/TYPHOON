@@ -10,10 +10,10 @@ use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::SharedValue;
 use crate::certificate::{CertificateError, ClientCertificate};
 use crate::crypto::{ClientCryptoTool, KEY_LENGTH, PAYLOAD_CRYPTO_OVERHEAD};
-use crate::flow::FlowConfig;
 use crate::flow::client::ClientFlowManager;
 use crate::flow::decoy::{DecoyFactory, random_decoy_factory};
 use crate::flow::probe::ProbeFactory;
+use crate::flow::{FlowConfig, FlowControllerError};
 use crate::session::{ClientSessionManager, SessionManager};
 use crate::settings::Settings;
 use crate::socket::error::ClientSocketError;
@@ -97,6 +97,11 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
     }
 
     /// Build the client socket, validating all flow configs and creating underlying managers.
+    ///
+    /// Returns [`ClientSocketError::FlowError`] wrapping [`FlowControllerError::AssertionFailed`]
+    /// if the combined flow configuration leaves zero bytes available for user data
+    /// (e.g. `constant` fake-body mode with a `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` larger than
+    /// the remaining packet budget after protocol overhead).
     pub async fn build(mut self) -> Result<ClientSocket<T, AE, CC>, ClientSocketError> {
         let cert_addrs = self.certificate.addresses();
         if cert_addrs.is_empty() {
@@ -134,7 +139,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
 
             let sock = Socket::new(addr, None).await.map_err(ClientSocketError::SocketError)?;
             let cipher_cache = cipher.create_cache();
-            let flow = ClientFlowManager::new(config, self.probe_factory.as_ref(), cipher_cache, settings.clone(), sock, &self.decoy_factory).await.map_err(ClientSocketError::FlowError)?;
+            let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock, self.probe_factory.as_ref(), &self.decoy_factory, addr).await.map_err(ClientSocketError::FlowError)?;
             flows.push(flow);
         }
         let max_data_payload = if max_data_payload == usize::MAX {
@@ -142,6 +147,11 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
         } else {
             max_data_payload
         };
+        if max_data_payload == 0 {
+            return Err(ClientSocketError::FlowError(FlowControllerError::AssertionFailed {
+                message: "flow configuration leaves no room for user data (max_data_payload = 0); reduce fake-body constant length or increase MTU".to_string(),
+            }));
+        }
         info!("client socket built: max_data_payload={}B (mtu={}B, {} flow(s))", max_data_payload, settings.mtu(), flows.len());
 
         let session = ClientSessionManager::new(cipher, flows, settings.clone(), self.initial_data_generator).map_err(ClientSocketError::SessionError)?;

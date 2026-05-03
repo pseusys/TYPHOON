@@ -15,3 +15,21 @@ typhoon/.test_keys
 
 evaluation/protocols/wireguard_daita/wg-daita/go.sum
 evaluation/protocols/wireguard_daita/wireguard-go
+
+# Python
+evaluation/**/__pycache__/
+evaluation/**/*.pyc
+evaluation/**/*.pyo
+evaluation/.venv/
+evaluation/dist/
+evaluation/**/*.egg-info/
+
+# Poetry
+evaluation/poetry.lock
+
+# Capture results (pcaps can be hundreds of MB)
+evaluation/results/
+
+# Diagrams and graphs
+flamegraphs
+flow-diagrams
