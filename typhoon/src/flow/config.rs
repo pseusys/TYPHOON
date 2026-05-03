@@ -42,8 +42,14 @@ impl FakeBodyMode {
     pub(crate) fn description(&self) -> String {
         match self {
             FakeBodyMode::Empty => "Empty".to_string(),
-            FakeBodyMode::Random { min_length, max_length, service } => format!("Random({min_length}..{max_length},svc={service})"),
-            FakeBodyMode::Constant { packet_length } => format!("Constant({packet_length})"),
+            FakeBodyMode::Random {
+                min_length,
+                max_length,
+                service,
+            } => format!("Random({min_length}..{max_length},svc={service})"),
+            FakeBodyMode::Constant {
+                packet_length,
+            } => format!("Constant({packet_length})"),
         }
     }
 
@@ -205,18 +211,33 @@ impl FakeHeaderConfig {
         if rng.r#gen::<f64>() < header_prob {
             let min_len = settings.get(&keys::FAKE_HEADER_LENGTH_MIN) as usize;
             let max_len = settings.get(&keys::FAKE_HEADER_LENGTH_MAX) as usize;
-            let len = if min_len >= max_len { max_len } else { rng.gen_range(min_len..=max_len) };
+            let len = if min_len >= max_len {
+                max_len
+            } else {
+                rng.gen_range(min_len..=max_len)
+            };
             let fields = (0..len)
                 .map(|_| {
                     FieldTypeHolder::U8(match rng.gen_range(0u8..5) {
                         0 => FieldType::Random,
-                        1 => FieldType::Constant { value: rng.r#gen::<u8>() },
-                        2 => FieldType::Volatile { value: rng.r#gen::<u8>(), change_probability: rng.gen_range(0.01..=0.20) },
+                        1 => FieldType::Constant {
+                            value: rng.r#gen::<u8>(),
+                        },
+                        2 => FieldType::Volatile {
+                            value: rng.r#gen::<u8>(),
+                            change_probability: rng.gen_range(0.01..=0.20),
+                        },
                         3 => {
                             let switch_timeout = rng.gen_range(1_000u64..=30_000);
-                            FieldType::Switching { value: rng.r#gen::<u8>(), next_switch: unix_timestamp_ms() + switch_timeout as u128, switch_timeout }
+                            FieldType::Switching {
+                                value: rng.r#gen::<u8>(),
+                                next_switch: unix_timestamp_ms() + switch_timeout as u128,
+                                switch_timeout,
+                            }
                         }
-                        4 => FieldType::Incremental { value: rng.r#gen::<u8>() },
+                        4 => FieldType::Incremental {
+                            value: rng.r#gen::<u8>(),
+                        },
                         _ => unreachable!(),
                     })
                 })

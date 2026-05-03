@@ -11,8 +11,8 @@ use tokio::runtime::Runtime;
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
-use typhoon::flow::config::{FakeBodyMode, FakeHeaderConfig};
 use typhoon::flow::FlowConfig;
+use typhoon::flow::config::{FakeBodyMode, FakeHeaderConfig};
 use typhoon::settings::SettingsBuilder;
 use typhoon::socket::{ClientSocketBuilder, ListenerBuilder, ServerFlowConfiguration};
 
@@ -60,14 +60,7 @@ fn bench_batch(c: &mut Criterion) {
     let key_pair = load_or_generate_key();
     let certificate = key_pair.to_client_certificate(vec![addr]);
 
-    let listener = Arc::new(rt.block_on(async {
-        ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler)
-            .add_flow(ServerFlowConfiguration::with_address(FlowConfig::random(&settings), addr))
-            .with_settings(settings.clone())
-            .build()
-            .await
-            .expect("listener")
-    }));
+    let listener = Arc::new(rt.block_on(async { ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(FlowConfig::random(&settings), addr)).with_settings(settings.clone()).build().await.expect("listener") }));
     rt.block_on(async { listener.start().await });
 
     let listener_echo = listener.clone();
@@ -75,20 +68,15 @@ fn bench_batch(c: &mut Criterion) {
         let client = listener_echo.accept().await.expect("accept");
         loop {
             match client.receive_bytes().await {
-                Ok(data) => { let _ = client.send_bytes(&data).await; }
+                Ok(data) => {
+                    let _ = client.send_bytes(&data).await;
+                }
                 Err(_) => break,
             }
         }
     });
 
-    let socket = rt.block_on(async {
-        ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DefaultClientConnectionHandler>::new(certificate, DefaultClientConnectionHandler)
-            .with_flow_config(addr, FlowConfig::random(&settings))
-            .with_settings(settings.clone())
-            .build()
-            .await
-            .expect("socket")
-    });
+    let socket = rt.block_on(async { ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DefaultClientConnectionHandler>::new(certificate, DefaultClientConnectionHandler).with_flow_config(addr, FlowConfig::random(&settings)).with_settings(settings.clone()).build().await.expect("socket") });
 
     let payload: Vec<u8> = (0..BATCH_PAYLOAD).map(|i| (i % 256) as u8).collect();
     let mut group = c.benchmark_group("batch");
@@ -120,18 +108,15 @@ fn bench_single(c: &mut Criterion) {
     // service: true — data packets carry no fake body; random body only on health-check packets.
     // max_length = 128 keeps max_data_payload above SINGLE_PAYLOAD_MAX for all feature sets.
     let flow_config = FlowConfig::new(
-        FakeBodyMode::Random { min_length: 0, max_length: 128, service: true },
+        FakeBodyMode::Random {
+            min_length: 0,
+            max_length: 128,
+            service: true,
+        },
         FakeHeaderConfig::random(&settings),
     );
 
-    let listener = Arc::new(rt.block_on(async {
-        ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler)
-            .add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), addr))
-            .with_settings(settings.clone())
-            .build()
-            .await
-            .expect("listener")
-    }));
+    let listener = Arc::new(rt.block_on(async { ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), addr)).with_settings(settings.clone()).build().await.expect("listener") }));
     rt.block_on(async { listener.start().await });
 
     let listener_echo = listener.clone();
@@ -139,20 +124,15 @@ fn bench_single(c: &mut Criterion) {
         let client = listener_echo.accept().await.expect("accept");
         loop {
             match client.receive_bytes().await {
-                Ok(data) => { let _ = client.send_bytes(&data).await; }
+                Ok(data) => {
+                    let _ = client.send_bytes(&data).await;
+                }
                 Err(_) => break,
             }
         }
     });
 
-    let socket = Arc::new(rt.block_on(async {
-        ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DefaultClientConnectionHandler>::new(certificate, DefaultClientConnectionHandler)
-            .with_flow_config(addr, flow_config)
-            .with_settings(settings.clone())
-            .build()
-            .await
-            .expect("socket")
-    }));
+    let socket = Arc::new(rt.block_on(async { ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DefaultClientConnectionHandler>::new(certificate, DefaultClientConnectionHandler).with_flow_config(addr, flow_config).with_settings(settings.clone()).build().await.expect("socket") }));
 
     let mut group = c.benchmark_group("single");
     group.bench_function("rtt", |b| {

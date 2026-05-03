@@ -102,7 +102,9 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> SparseDecoyProvider<T, AE> {
 #[async_trait]
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvider for SparseDecoyProvider<T, AE> {
     #[inline]
-    fn name(&self) -> &'static str { "SparseDecoyProvider" }
+    fn name(&self) -> &'static str {
+        "SparseDecoyProvider"
+    }
 
     async fn start(&mut self) {
         let executor = {

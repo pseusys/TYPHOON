@@ -262,7 +262,13 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         debug!("server flow: sending {packet_flags:?} packet to {addr}");
         self.socks[0].send_to(full_packet, addr).await.map_err(FlowControllerError::SocketError)?;
         record_server_send(addr, || {
-            let kind = if packet_flags.is_discardable() { "Decoy" } else if packet_flags.is_service() { "Service" } else { "Data" };
+            let kind = if packet_flags.is_discardable() {
+                "Decoy"
+            } else if packet_flags.is_service() {
+                "Service"
+            } else {
+                "Data"
+            };
             (kind, identity_len + TAILOR_LENGTH, encrypted_tailor.len() - identity_len, cap_header, data_len, cap_body)
         });
         Ok(())

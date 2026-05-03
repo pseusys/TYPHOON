@@ -100,7 +100,9 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> HeavyDecoyProvider<T, AE> {
 #[async_trait]
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvider for HeavyDecoyProvider<T, AE> {
     #[inline]
-    fn name(&self) -> &'static str { "HeavyDecoyProvider" }
+    fn name(&self) -> &'static str {
+        "HeavyDecoyProvider"
+    }
 
     async fn start(&mut self) {
         let executor = {

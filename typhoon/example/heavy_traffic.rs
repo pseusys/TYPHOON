@@ -20,8 +20,8 @@ use tokio::time::sleep;
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler, decoy_factory};
-use typhoon::flow::decoy::{NoisyDecoyProvider, SmoothDecoyProvider, SparseDecoyProvider};
 use typhoon::flow::FlowConfig;
+use typhoon::flow::decoy::{NoisyDecoyProvider, SmoothDecoyProvider, SparseDecoyProvider};
 use typhoon::settings::SettingsBuilder;
 use typhoon::socket::{ClientSocketBuilder, ListenerBuilder, ServerFlowConfiguration};
 
@@ -64,7 +64,16 @@ async fn run() {
     let key_pair = ServerKeyPair::generate();
     let certificate = key_pair.to_client_certificate(vec![flow1_addr, flow2_addr]);
 
-    let listener: Arc<_> = Arc::new(ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(FlowConfig::random(&*settings), flow1_addr).with_decoy::<NoisyDecoyProvider<StaticByteBuffer, DefaultExecutor>>()).add_flow(ServerFlowConfiguration::with_address(FlowConfig::random(&*settings), flow2_addr).with_decoy::<SmoothDecoyProvider<StaticByteBuffer, DefaultExecutor>>()).add_flow(ServerFlowConfiguration::with_address(FlowConfig::random(&*settings), flow3_addr).with_decoy::<SparseDecoyProvider<StaticByteBuffer, DefaultExecutor>>()).with_settings(settings.clone()).build().await.expect("listener should build"));
+    let listener: Arc<_> = Arc::new(
+        ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler)
+            .add_flow(ServerFlowConfiguration::with_address(FlowConfig::random(&*settings), flow1_addr).with_decoy::<NoisyDecoyProvider<StaticByteBuffer, DefaultExecutor>>())
+            .add_flow(ServerFlowConfiguration::with_address(FlowConfig::random(&*settings), flow2_addr).with_decoy::<SmoothDecoyProvider<StaticByteBuffer, DefaultExecutor>>())
+            .add_flow(ServerFlowConfiguration::with_address(FlowConfig::random(&*settings), flow3_addr).with_decoy::<SparseDecoyProvider<StaticByteBuffer, DefaultExecutor>>())
+            .with_settings(settings.clone())
+            .build()
+            .await
+            .expect("listener should build"),
+    );
     listener.start().await;
     println!("Server: listening on {flow1_addr}, {flow2_addr}, {flow3_addr} (client uses first two)");
 

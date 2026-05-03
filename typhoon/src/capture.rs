@@ -44,11 +44,13 @@ impl CaptureContext {
     #[cfg(feature = "capture")]
     #[inline]
     pub(crate) fn new(flow_addr: SocketAddr) -> Self {
-        Self { flow_addr }
+        Self {
+            flow_addr,
+        }
     }
 
     #[cfg(not(feature = "capture"))]
-    #[inline(always)]
+    #[inline]
     pub(crate) fn new(_: SocketAddr) -> Self {
         Self
     }
@@ -72,6 +74,7 @@ impl CaptureContext {
         );
     }
 
+    #[allow(clippy::unused_self)]
     #[cfg(not(feature = "capture"))]
     #[inline(always)]
     pub(crate) fn record_send<F>(&self, _: F)
