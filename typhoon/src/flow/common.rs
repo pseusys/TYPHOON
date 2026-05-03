@@ -74,6 +74,17 @@ pub(crate) struct FlowReceiveInternal<CP: FlowCryptoProvider> {
     pub(crate) provider: CachedValue<CP>,
 }
 
+/// Outcome of processing an incoming packet through tailor decryption and verification.
+#[cfg(feature = "client")]
+pub(crate) enum ProcessIncomingResult {
+    /// Tailor verified: packet returned for session-layer processing.
+    Valid(DynamicByteBuffer),
+    /// Decoy flag set: packet should be silently discarded.
+    Decoy,
+    /// Tailor decryption or verification failed: packet forwarded to the probe handler.
+    Unexpected(DynamicByteBuffer),
+}
+
 #[cfg(feature = "client")]
 impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
     /// Encrypt tailor, add fake header and body, return assembled packet ready for socket send.
@@ -114,15 +125,14 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
 
 #[cfg(feature = "client")]
 impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
-    /// Decrypt tailor, verify, check if discardable. Returns processed packet or None if decoy.
-    pub(crate) fn process_incoming(&mut self, packet: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<Option<DynamicByteBuffer>, FlowControllerError> {
+    /// Decrypt tailor and verify. Returns `Valid`, `Decoy`, or `Unexpected` (crypto failure).
+    /// On failure the original (possibly partially modified) buffer is returned inside `Unexpected`
+    /// so the caller can forward it to the active probe handler.
+    pub(crate) fn process_incoming(&mut self, packet: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<ProcessIncomingResult, FlowControllerError> {
         let identity_len = <CP::Identity as IdentityType>::length();
         let full_tailor_len = TAILOR_LENGTH + identity_len;
         let encrypted_tailor_len = identity_len + CP::tailor_overhead();
         let (encrypted_packet, encrypted_tailor) = packet.split_buf(packet.len() - encrypted_tailor_len);
-        // Deobfuscation decrypts in-place on the shared underlying buffer.
-        // The decrypted tailor sits at the start of the encrypted_tailor region,
-        // reachable via encrypted_packet.expand_end(full_tailor_len).
         let tailor = match self.provider.get_mut() {
             Ok(cipher) => match cipher.deobfuscate_tailor(encrypted_tailor, pool) {
                 Ok((tailor, transcript)) => {
@@ -130,14 +140,14 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
                         Ok(()) => {}
                         Err(err) => {
                             warn!("client flow: tailor verification failed: {err}");
-                            return Ok(None);
+                            return Ok(ProcessIncomingResult::Unexpected(encrypted_packet.expand_end(encrypted_tailor_len)));
                         }
                     }
                     tailor
                 }
                 Err(err) => {
                     warn!("client flow: tailor decryption failed: {err}");
-                    return Ok(None);
+                    return Ok(ProcessIncomingResult::Unexpected(encrypted_packet.expand_end(encrypted_tailor_len)));
                 }
             },
             Err(err) => return Err(FlowControllerError::MissingCache(err)),
@@ -145,14 +155,10 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
 
         let tailor = Tailor::<CP::Identity>::new(tailor);
         if tailor.flags().is_discardable() {
-            return Ok(None);
+            return Ok(ProcessIncomingResult::Decoy);
         }
 
         let payload_len = tailor.payload_length() as usize;
-
-        // For all packets, use payload_length to strip fake body/header from the front.
-        // Handshake packets encode the handshake body length in payload_length so that
-        // fake prefixes can be stripped the same way as data packets.
-        Ok(Some(encrypted_packet.rebuffer_start(encrypted_packet.len() - payload_len).expand_end(full_tailor_len)))
+        Ok(ProcessIncomingResult::Valid(encrypted_packet.rebuffer_start(encrypted_packet.len() - payload_len).expand_end(full_tailor_len)))
     }
 }
