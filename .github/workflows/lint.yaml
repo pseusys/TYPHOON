@@ -72,7 +72,7 @@ jobs:
         with:
           args: "check --config evaluation/pyproject.toml evaluation/src evaluation/protocols"
 
-      - name: Setup Go 🐹
+      - name: Setup Go 🦫
         uses: actions/setup-go@v5
         with:
           go-version: "1.22"
