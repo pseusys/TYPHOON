@@ -35,9 +35,10 @@ pub(crate) struct CaptureContext {
 }
 
 /// Zero-sized stand-in used when the `capture` feature is disabled.
-#[cfg(not(feature = "capture"))]
+#[cfg(all(not(feature = "capture"), feature = "client"))]
 pub(crate) struct CaptureContext;
 
+#[cfg(any(feature = "capture", feature = "client"))]
 impl CaptureContext {
     /// Create a context for the given flow address.
     #[cfg(feature = "capture")]

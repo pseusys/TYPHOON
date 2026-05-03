@@ -30,3 +30,6 @@ evaluation/poetry.lock
 # Capture results (pcaps can be hundreds of MB)
 evaluation/results/
 
+# Diagrams and graphs
+flamegraphs
+flow-diagrams

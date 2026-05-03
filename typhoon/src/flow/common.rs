@@ -4,6 +4,7 @@ use std::sync::Arc;
 use cfg_if::cfg_if;
 
 use crate::bytes::DynamicByteBuffer;
+#[cfg(feature = "client")]
 use crate::capture::CaptureContext;
 use crate::flow::error::FlowControllerError;
 cfg_if! {
