@@ -175,6 +175,7 @@ It can be either empty, random or constant:
 
 > Handling `constant` body length might not be trivial, as it imposes a strict limit on packet data contents length.
 > TYPHOON protocol specifically does not support data fragmentation, so `constant` body length just won't have any effect if real packet body length is not always strictly limited.
+> If `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` is set so large that the fixed protocol overhead consumes the entire packet budget, leaving zero bytes for user data, the client socket builder will refuse to construct the socket and return an error.
 
 By default, fake body mode is chosen with equal probability for every option except for `random`, which is `TYPHOON_FAKE_BODY_RANDOM_PROBABILITY` heavier than the others.
 
@@ -1000,7 +1001,7 @@ These constants are used in some of the protocol values computation:
 | --- | --- | :---: |
 | `TYPHOON_FAKE_BODY_LENGTH_MIN` | Minimum length of the fake body random byte string | `32` |
 | `TYPHOON_FAKE_BODY_LENGTH_MAX` | Maximum length of the fake body random byte string | `512` |
-| `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` | Target packet length for `constant` fake body mode; clamped to `[FAKE_BODY_LENGTH_MIN, MTU]` | `1500` |
+| `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` | Target packet length for `constant` fake body mode; clamped to `[FAKE_BODY_LENGTH_MIN, MTU]` | `512` |
 | `TYPHOON_FAKE_BODY_RANDOM_PROBABILITY` | Multiplier of `random` fake body mode probability | `3` |
 | `TYPHOON_FAKE_HEADER_LENGTH_MIN` | Minimum length of the fake header structure | `4` |
 | `TYPHOON_FAKE_HEADER_PROBABILITY` | Probability of fake header presence | `0.6` |
