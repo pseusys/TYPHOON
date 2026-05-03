@@ -14,6 +14,7 @@ use crate::certificate::ObfuscationBufferContainer;
 use crate::certificate::{ServerKeyPair, ServerSecret};
 use crate::crypto::{PAYLOAD_CRYPTO_OVERHEAD, ServerCryptoTool, UserCryptoState, UserServerState};
 use crate::flow::decoy::{DecoyFactory, random_decoy_factory};
+use crate::flow::probe::ProbeFactory;
 use crate::flow::server::{RawReceivedPacket, ServerFlowManager};
 use crate::flow::{FlowConfig, FlowManager};
 use crate::session::server::{IncomingPacket, OutgoingRouter, ServerSessionManager};
@@ -35,6 +36,8 @@ pub struct ServerFlowConfiguration<T: IdentityType + Clone, AE: AsyncExecutor> {
     reader_count: usize,
     /// Optional per-flow decoy factory. Falls back to the listener's default when `None`.
     decoy_factory: Option<DecoyFactory<T, AE>>,
+    /// Optional per-flow probe factory. Falls back to the listener's default when `None`.
+    probe_factory: Option<ProbeFactory<AE>>,
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ServerFlowConfiguration<T, AE> {
@@ -46,6 +49,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ServerFlowC
             config,
             reader_count: 1,
             decoy_factory: None,
+            probe_factory: None,
         }
     }
 
@@ -57,6 +61,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ServerFlowC
             config,
             reader_count: 1,
             decoy_factory: None,
+            probe_factory: None,
         }
     }
 
@@ -81,6 +86,18 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ServerFlowC
         self.decoy_factory = Some(crate::flow::decoy::decoy_factory::<T, AE, DP>());
         self
     }
+
+    /// Override the active probe handler factory for this flow.
+    pub fn with_probe_factory(mut self, factory: ProbeFactory<AE>) -> Self {
+        self.probe_factory = Some(factory);
+        self
+    }
+
+    /// Override the active probe handler type for this flow.
+    pub fn with_probe<PM: crate::flow::probe::ActiveProbeHandler<AE> + Default + 'static>(mut self) -> Self {
+        self.probe_factory = Some(crate::flow::probe::probe_factory::<AE, PM>());
+        self
+    }
 }
 
 /// Builder for constructing a `Listener`.
@@ -90,6 +107,7 @@ pub struct ListenerBuilder<T: IdentityType + Clone + Eq + Hash + Send + ToString
     secret: ServerSecret<'static>,
     identity_generator: IG,
     default_decoy_factory: DecoyFactory<T, AE>,
+    default_probe_factory: Option<ProbeFactory<AE>>,
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> ListenerBuilder<T, AE, IG> {
@@ -102,6 +120,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             secret: key_pair.into_server_secret(),
             identity_generator,
             default_decoy_factory: random_decoy_factory(),
+            default_probe_factory: None,
         }
     }
 
@@ -120,6 +139,18 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Override the default decoy provider type for all flows without a per-flow override.
     pub fn with_decoy<DP: crate::flow::decoy::DecoyCommunicationMode<T, AE> + 'static>(mut self) -> Self {
         self.default_decoy_factory = crate::flow::decoy::decoy_factory::<T, AE, DP>();
+        self
+    }
+
+    /// Set the default active probe handler factory for flows that have no per-flow override.
+    pub fn with_probe_factory(mut self, factory: ProbeFactory<AE>) -> Self {
+        self.default_probe_factory = Some(factory);
+        self
+    }
+
+    /// Set the default active probe handler type for flows without a per-flow override.
+    pub fn with_probe<PM: crate::flow::probe::ActiveProbeHandler<AE> + Default + 'static>(mut self) -> Self {
+        self.default_probe_factory = Some(crate::flow::probe::probe_factory::<AE, PM>());
         self
     }
 
@@ -175,10 +206,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 }
             };
 
-            let factory = flow_config.decoy_factory.unwrap_or_else(|| Arc::clone(&self.default_decoy_factory));
+            let decoy_factory = flow_config.decoy_factory.unwrap_or_else(|| Arc::clone(&self.default_decoy_factory));
+            let probe_factory = flow_config.probe_factory.as_ref().or(self.default_probe_factory.as_ref());
             let crypto_send = ServerCryptoTool::new(users.create_cache(), obfs_buffer);
             let crypto_recv = ServerCryptoTool::new(users.create_cache(), obfs_buffer);
-            let flow = ServerFlowManager::new(flow_config.config, crypto_send, crypto_recv, settings.clone(), socks, factory);
+            let flow = ServerFlowManager::new(flow_config.config, probe_factory, crypto_send, crypto_recv, settings.clone(), socks, decoy_factory).await;
             flows.push(flow);
         }
         let max_data_payload = if max_data_payload == usize::MAX {
@@ -245,10 +277,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 }
             };
 
-            let factory = flow_config.decoy_factory.unwrap_or_else(|| Arc::clone(&self.default_decoy_factory));
+            let decoy_factory = flow_config.decoy_factory.unwrap_or_else(|| Arc::clone(&self.default_decoy_factory));
+            let probe_factory = flow_config.probe_factory.as_ref().or(self.default_probe_factory.as_ref());
             let crypto_send = ServerCryptoTool::new(users.create_cache(), Arc::clone(&secret_arc));
             let crypto_recv = ServerCryptoTool::new(users.create_cache(), Arc::clone(&secret_arc));
-            let flow = ServerFlowManager::new(flow_config.config, crypto_send, crypto_recv, settings.clone(), socks, factory);
+            let flow = ServerFlowManager::new(flow_config.config, probe_factory, crypto_send, crypto_recv, settings.clone(), socks, decoy_factory).await;
             flows.push(flow);
         }
         let max_data_payload = if max_data_payload == usize::MAX {
