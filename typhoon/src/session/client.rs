@@ -126,7 +126,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
             encrypted_payload.expand_end(TAILOR_LENGTH + T::length())
         };
 
-        self.select_flow().send_packet(full_packet, false).await.map_err(SessionControllerError::FlowError)
+        self.select_flow().send_packet(full_packet).await.map_err(SessionControllerError::FlowError)
     }
 
     async fn receive_packet(&self) -> Result<DynamicByteBuffer, SessionControllerError> {

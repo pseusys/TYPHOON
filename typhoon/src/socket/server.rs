@@ -445,7 +445,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             let pn = ((unix_timestamp_ms() / 1000) as u64) << 32;
             let buf = self.settings.pool().allocate(Some(T::length()));
             let tailor = Tailor::termination(buf, &client_version_identity, ReturnCode::VersionMismatch, pn);
-            if let Err(err) = self.flows[flow_index].send_packet(tailor.into_buffer(), true).await {
+            if let Err(err) = self.flows[flow_index].send_packet(tailor.into_buffer()).await {
                 warn!("failed to send version mismatch rejection: {err}");
             }
             {
@@ -492,7 +492,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         self.flows[flow_index].register_user_addr(identity.clone(), raw_packet.source_addr).await;
         self.flows[flow_index].register_user(identity.clone()).await;
 
-        if let Err(err) = self.flows[flow_index].send_packet(response_packet, false).await {
+        if let Err(err) = self.flows[flow_index].send_packet(response_packet).await {
             warn!("failed to send handshake response: {err}");
             self.users.lock().await.remove(&identity).await;
             for flow in &self.flows {
@@ -550,7 +550,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + Sync + ToString + 'static, AE:
         };
         let flow_idx = session.select_active_flow(self.flows.len());
         if flow_idx < self.flows.len() {
-            self.flows[flow_idx].send_packet(packet, false).await.is_ok()
+            self.flows[flow_idx].send_packet(packet).await.is_ok()
         } else {
             false
         }

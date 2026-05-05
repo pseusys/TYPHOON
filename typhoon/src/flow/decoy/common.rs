@@ -219,7 +219,7 @@ pub trait DecoyFlowSender: Send + Sync {
 
 impl<T: FlowManager + Send + Sync> DecoyFlowSender for T {
     fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>> {
-        Box::pin(self.send_packet(packet, true))
+        Box::pin(self.send_packet(packet))
     }
 }
 
@@ -234,10 +234,12 @@ pub trait DecoyProvider: Send + Sync {
     async fn start(&mut self);
 
     /// Process an incoming packet, updating internal rate tracking.
-    async fn feed_input(&mut self, packet: DynamicByteBuffer) -> Option<DynamicByteBuffer>;
+    /// `tailor_buf` is the deobfuscated tailor for the packet (flags, packet number, etc.).
+    async fn feed_input(&mut self, packet: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer>;
 
-    /// Process an outgoing packet, updating internal rate tracking.
-    async fn feed_output(&mut self, packet: DynamicByteBuffer, generated: bool) -> Option<DynamicByteBuffer>;
+    /// Process an outgoing packet body and its plaintext tailor, updating internal rate tracking.
+    /// Returns the (possibly modified) body, or `None` to suppress the packet entirely.
+    async fn feed_output(&mut self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer>;
 }
 
 /// Construction contract for decoy providers. Extends `DecoyProvider` so that any

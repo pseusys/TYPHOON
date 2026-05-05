@@ -8,8 +8,9 @@ use log::warn;
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DecoyState, exponential_variance, maintenance_timer_task, random_uniform, try_replicate};
 use crate::settings::Settings;
+use crate::settings::consts::FG_OFFSET;
 use crate::settings::keys::*;
-use crate::tailor::IdentityType;
+use crate::tailor::{IdentityType, PacketFlags};
 use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
 use crate::utils::unix_timestamp_ms;
 
@@ -116,18 +117,19 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         executor.spawn(maintenance_timer_task(manager, state));
     }
 
-    async fn feed_input(&mut self, packet: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_input(&mut self, packet: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         let mut state = self.state.write().await;
         state.update(packet.len());
         Some(packet)
     }
 
-    async fn feed_output(&mut self, packet: DynamicByteBuffer, generated: bool) -> Option<DynamicByteBuffer> {
-        if !generated {
+    async fn feed_output(&mut self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+        let flags = PacketFlags::from_bits_truncate(*tailor_buf.get(FG_OFFSET));
+        if !flags.is_discardable() {
             let mut state = self.state.write().await;
-            state.update(packet.len());
+            state.update(body.len() + tailor_buf.len());
         }
-        Some(packet)
+        Some(body)
     }
 }
 

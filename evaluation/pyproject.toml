@@ -53,6 +53,26 @@ select = ["E", "F", "I", "UP", "B"]
   cmd  = "python -m typhoon_eval.flow_plot"
   help = "Generate per-flow packet structure diagrams — pass --example <name> or --log <file>, and --out-dir <dir>"
 
+  [tool.poe.tasks.self-compare]
+  cmd  = "python -m typhoon_eval.self_compare"
+  help = "Run TYPHOON N times and compare runs (variability analysis)"
+
+  [tool.poe.tasks.use-case-compare]
+  cmd  = "python -m typhoon_eval.use_case_compare"
+  help = "Run TYPHOON for each PROTOCOL.md use case and compare profiles"
+
+  [tool.poe.tasks.traffic-compare]
+  cmd  = "python -m typhoon_eval.traffic_compare"
+  help = "Run TYPHOON with all 4 payload×wait traffic modes and compare results"
+
+  [tool.poe.tasks.proto-flow-plot]
+  cmd  = "python -m typhoon_eval.pcap_flow_plot"
+  help = "Per-packet timeline grid from pcap captures — pass --run <YYYYMMDD_HHMMSS> or omit for latest"
+
+  [tool.poe.tasks.proto-compare]
+  cmd  = "python -m typhoon_eval.proto_compare_plots"
+  help = "Multi-protocol comparison plots from pcap captures — pass --run <YYYYMMDD_HHMMSS> or omit for latest"
+
   [tool.poe.tasks.clean]
   shell = "rm -rf results/captures results/logs"
   help  = "Delete all captured pcap files and logs"

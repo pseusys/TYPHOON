@@ -315,7 +315,7 @@ impl FlowConfig {
     /// - Headers: included with probability `FAKE_HEADER_PROBABILITY`; if included, a random number
     ///   of U8-random fields are packed to fill a length sampled from
     ///   `[FAKE_HEADER_LENGTH_MIN, FAKE_HEADER_LENGTH_MAX]`.
-    /// - Body: chosen uniformly from four modes weighted by `FAKE_BODY_RANDOM_PROBABILITY`
+    /// - Body: chosen uniformly from four modes weighted by `FAKE_BODY_SERVICE_PROBABILITY`
     ///   (Empty / Random{service} / Constant / Random — each with equal base weight, Random heavier).
     ///   In `Constant` mode `packet_length` comes from `FAKE_BODY_CONSTANT_LENGTH`, clamped to
     ///   `[FAKE_BODY_LENGTH_MIN, mtu]`.
@@ -325,8 +325,8 @@ impl FlowConfig {
 
         let min_len = settings.get(&keys::FAKE_BODY_LENGTH_MIN) as usize;
         let max_len = settings.get(&keys::FAKE_BODY_LENGTH_MAX) as usize;
-        let random_weight = settings.get(&keys::FAKE_BODY_RANDOM_PROBABILITY);
-        let total_weight = 3.0 + random_weight;
+        let service_weight = settings.get(&keys::FAKE_BODY_SERVICE_PROBABILITY);
+        let total_weight = 3.0 + service_weight;
         let roll = rng.gen_range(0.0..total_weight);
         let fake_body_mode = if roll < 1.0 {
             FakeBodyMode::Empty
@@ -334,7 +334,7 @@ impl FlowConfig {
             FakeBodyMode::Random {
                 min_length: min_len,
                 max_length: max_len,
-                service: true,
+                service: false,
             }
         } else if roll < 3.0 {
             let packet_length = (settings.get(&keys::FAKE_BODY_CONSTANT_LENGTH) as usize).clamp(min_len, settings.mtu());
@@ -345,7 +345,7 @@ impl FlowConfig {
             FakeBodyMode::Random {
                 min_length: min_len,
                 max_length: max_len,
-                service: false,
+                service: true,
             }
         };
 

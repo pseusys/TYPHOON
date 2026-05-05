@@ -15,6 +15,7 @@ was captured on, so no deduplication is needed.
 import math
 from collections import Counter
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 from scapy.layers.inet import IP, UDP
@@ -24,9 +25,8 @@ from scapy.utils import PcapReader
 CLIENT_IP = "172.20.0.10"
 SERVER_IP = "172.21.0.10"
 
-# All packets captured within this many seconds of the first packet are
-# considered part of the handshake phase (covers decoy traffic, obfuscated
-# handshakes, and key-exchange rounds for all supported protocols).
+# Fallback: all packets captured within this many seconds of the first packet
+# are considered part of the handshake phase when no per-protocol sniffer is set.
 _HANDSHAKE_WINDOW_S = 5.0
 
 
@@ -130,12 +130,13 @@ def _stats_for(
     return result
 
 
-def analyze_pcap(path: Path, transfer_bytes: int | None = None) -> dict[str, dict]:
+def parse_pcap(path: Path) -> tuple[list[tuple[float, int, bytes]], list[tuple[float, int, bytes]]]:
     """
-    Parse *path* and return {"c2s": {...}, "s2c": {...}, "all": {...}}.
+    Parse *path* and return (c2s, s2c) lists of (timestamp_s, ip_size, app_payload).
 
-    Each value is a dict of computed metrics (empty dict if no packets in that
-    direction).  transfer_bytes is used only for the overhead_ratio field.
+    Direction is determined by IP address:
+      c2s: src=CLIENT_IP, dst=SERVER_IP
+      s2c: src=SERVER_IP, dst=CLIENT_IP
     """
     c2s: list[tuple[float, int, bytes]] = []
     s2c: list[tuple[float, int, bytes]] = []
@@ -156,12 +157,42 @@ def analyze_pcap(path: Path, transfer_bytes: int | None = None) -> dict[str, dic
 
             bucket.append((float(pkt.time), len(ip), _app_payload(pkt)))
 
-    all_ts = [ts for ts, _, _ in c2s] + [ts for ts, _, _ in s2c]
-    handshake_end_ts: float | None = (min(all_ts) + _HANDSHAKE_WINDOW_S) if all_ts else None
+    return c2s, s2c
+
+
+def handshake_end(
+    all_records: list[tuple[float, int, bytes]],
+    sniffer: Callable[[list[tuple[float, int, bytes]]], float | None] | None = None,
+) -> float | None:
+    """Return handshake end timestamp, using *sniffer* if given or the global window."""
+    if not all_records:
+        return None
+    if sniffer is not None:
+        result = sniffer(all_records)
+        if result is not None:
+            return result
+    return min(r[0] for r in all_records) + _HANDSHAKE_WINDOW_S
+
+
+def analyze_pcap(
+    path: Path,
+    transfer_bytes: int | None = None,
+    handshake_sniffer: Callable[[list[tuple[float, int, bytes]]], float | None] | None = None,
+) -> dict[str, dict]:
+    """
+    Parse *path* and return {"c2s": {...}, "s2c": {...}, "all": {...}}.
+
+    Each value is a dict of computed metrics (empty dict if no packets in that
+    direction).  transfer_bytes is used only for the overhead_ratio field.
+    handshake_sniffer overrides the default time-window handshake detection.
+    """
+    c2s, s2c = parse_pcap(path)
 
     all_records = c2s + s2c
+    hs_end_ts = handshake_end(all_records, handshake_sniffer)
+
     return {
-        "c2s": _stats_for(c2s,         transfer_bytes, handshake_end_ts),
-        "s2c": _stats_for(s2c,         None,           handshake_end_ts),
-        "all": _stats_for(all_records, transfer_bytes, handshake_end_ts),
+        "c2s": _stats_for(c2s,         transfer_bytes, hs_end_ts),
+        "s2c": _stats_for(s2c,         None,           hs_end_ts),
+        "all": _stats_for(all_records, transfer_bytes, hs_end_ts),
     }

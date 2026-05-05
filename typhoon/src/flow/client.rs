@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
 
-use crate::bytes::DynamicByteBuffer;
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::CachedValue;
 use crate::capture::{CaptureContext, record_flow_config};
 use crate::crypto::ClientCryptoTool;
@@ -15,6 +15,7 @@ use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
 use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender};
 use crate::settings::Settings;
+use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::IdentityType;
 use crate::utils::socket::{Socket, SocketError};
 use crate::utils::sync::{AsyncExecutor, Mutex};
@@ -79,42 +80,55 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ProbeFlowSe
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager for ClientFlowManager<T, AE> {
-    async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {
-        let notified_packet = {
+    async fn send_packet(&self, packet: DynamicByteBuffer) -> Result<(), FlowControllerError> {
+        let tailor_len = TAILOR_LENGTH + T::length();
+        let (body, tailor_buf) = packet.split_buf(packet.len() - tailor_len);
+
+        let notified_body = {
             let mut lock = self.decoy_provider.lock().await;
-            let notified_packet = lock.feed_output(packet, generated).await;
-            if notified_packet.is_none() {
-                return Ok(());
+            match lock.feed_output(body, tailor_buf.clone()).await {
+                None => return Ok(()),
+                Some(b) => b,
             }
-            notified_packet
         };
 
         let mut lock = self.send_internal.lock().await;
-        let full_packet = lock.prepare_outgoing(notified_packet.unwrap(), self.mtu, self.settings.pool())?;
+        let full_packet = lock.prepare_outgoing(notified_body.expand_end(tailor_buf.len()), self.mtu, self.settings.pool())?;
         self.sock.send(full_packet).await.map_err(FlowControllerError::SocketError)?;
         Ok(())
     }
 
     async fn receive_packet(&self, packet: DynamicByteBuffer) -> Result<DynamicByteBuffer, FlowControllerError> {
         loop {
-            let packet = self.sock.recv(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
-            let notified_packet = {
-                let mut lock = self.decoy_provider.lock().await;
-                let notified_packet = lock.feed_input(packet).await;
-                if notified_packet.is_none() {
-                    continue;
+            let wire_packet = self.sock.recv(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
+
+            let (body, tailor_buf) = {
+                let mut lock = self.receive_internal.lock().await;
+                match lock.deobfuscate_incoming(wire_packet.clone(), self.settings.pool())? {
+                    None => {
+                        self.probe_handler.lock().await.process(wire_packet, None).await;
+                        continue;
+                    }
+                    Some(pair) => pair,
                 }
-                notified_packet.unwrap()
+            };
+
+            let notified_body = {
+                let mut lock = self.decoy_provider.lock().await;
+                match lock.feed_input(body.clone(), tailor_buf.clone()).await {
+                    None => continue,
+                    Some(b) => b,
+                }
             };
 
             let incoming_packet = {
-                let mut lock = self.receive_internal.lock().await;
-                lock.process_incoming(notified_packet, self.settings.pool())?
+                let lock = self.receive_internal.lock().await;
+                lock.process_with_tailor(notified_body, tailor_buf)
             };
-            if let ProcessIncomingResult::Unexpected(pkt) = incoming_packet {
-                self.probe_handler.lock().await.process(pkt, None).await;
-            } else if let ProcessIncomingResult::Valid(result) = incoming_packet {
-                return Ok(result);
+            match incoming_packet {
+                ProcessIncomingResult::Unexpected(pkt) => self.probe_handler.lock().await.process(pkt, None).await,
+                ProcessIncomingResult::Decoy => {}
+                ProcessIncomingResult::Valid(result) => return Ok(result),
             }
         }
     }

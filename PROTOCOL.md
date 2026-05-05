@@ -55,6 +55,9 @@ If imitating a specific protocol is required, encrypted data should be embedded 
 Finally, flow control and reliable data delivery are not goals of this protocol — they should be implemented by user applications.
 Still, the protocol partly facilitates this goal by providing a health checking mechanism, so that a connection won't go down silently.
 
+By default, TYPHOON makes no attempt to hide the **inter-arrival timing** or **length distribution** of the user's own traffic: it neither fragments large packets into smaller ones nor introduces artificial send delays, delivering data on a best-effort basis.
+What it does conceal instead is **its own protocol signature** — the decoy traffic patterns, packet framing, and header layouts that would otherwise make TYPHOON itself identifiable, regardless of what the user is sending.
+
 ## Architecture
 
 ```mermaid
@@ -182,7 +185,7 @@ It can be either empty, random or constant:
 > TYPHOON protocol specifically does not support data fragmentation, so `constant` body length just won't have any effect if real packet body length is not always strictly limited.
 > If `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` is set so large that the fixed protocol overhead consumes the entire packet budget, leaving zero bytes for user data, the client socket builder will refuse to construct the socket and return an error.
 
-By default, fake body mode is chosen with equal probability for every option except for `random`, which is `TYPHOON_FAKE_BODY_RANDOM_PROBABILITY` heavier than the others.
+By default, fake body mode is chosen with equal probability for every option except for `service`, which is `TYPHOON_FAKE_BODY_SERVICE_PROBABILITY` heavier than the others.
 
 ### Fake header
 
@@ -1034,7 +1037,7 @@ These constants are used in some of the protocol values computation:
 | `TYPHOON_FAKE_BODY_LENGTH_MIN` | Minimum length of the fake body random byte string | `32` |
 | `TYPHOON_FAKE_BODY_LENGTH_MAX` | Maximum length of the fake body random byte string | `512` |
 | `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` | Target packet length for `constant` fake body mode; clamped to `[FAKE_BODY_LENGTH_MIN, MTU]` | `512` |
-| `TYPHOON_FAKE_BODY_RANDOM_PROBABILITY` | Multiplier of `random` fake body mode probability | `3` |
+| `TYPHOON_FAKE_BODY_SERVICE_PROBABILITY` | Multiplier of `service` fake body mode probability | `2` |
 | `TYPHOON_FAKE_HEADER_LENGTH_MIN` | Minimum length of the fake header structure | `4` |
 | `TYPHOON_FAKE_HEADER_PROBABILITY` | Probability of fake header presence | `0.6` |
 | `TYPHOON_FAKE_HEADER_LENGTH_MAX` | Maximum length of the fake header structure | `32` |

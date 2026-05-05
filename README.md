@@ -37,7 +37,7 @@ All commands should be run from inside the `./typhoon` directory.
 
 ### Feature sets
 
-Two default feature configuration used for development and testing: `fast_software`, `server`, `client`, `tokio`.
+The default feature configuration used for development and testing: `fast_software`, `server`, `client`, `tokio`.
 
 Optional features:
 

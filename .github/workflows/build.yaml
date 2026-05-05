@@ -70,3 +70,15 @@ jobs:
         env:
           RUST_LOG: debug
         run: cargo run --example multi_client --features debug
+
+      - name: Run use_case example 🎭
+        working-directory: typhoon
+        env:
+          RUST_LOG: debug
+        run: cargo run --example use_case
+
+      - name: Run mirror_decoy example 🪞
+        working-directory: typhoon
+        env:
+          RUST_LOG: debug
+        run: cargo run --example mirror_decoy

@@ -23,6 +23,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from .pcap_stats import analyze_pcap
+from .protocols import BY_NAME
 
 console = Console()
 
@@ -95,8 +96,9 @@ def main(run_id: str | None) -> None:
             # transfer_bytes stored per protocol name in metadata (strip _chaos suffix)
             proto_key = name.removesuffix("_chaos")
             transfer_bytes: int | None = metadata.get(proto_key, {}).get("transfer_bytes")
+            sniffer = BY_NAME[proto_key].handshake_sniffer if proto_key in BY_NAME else None
 
-            stats = analyze_pcap(pcap, transfer_bytes=transfer_bytes)
+            stats = analyze_pcap(pcap, transfer_bytes=transfer_bytes, handshake_sniffer=sniffer)
             all_stats[name] = stats
 
             progress.update(task, total=1, completed=1,

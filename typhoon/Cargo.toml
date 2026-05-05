@@ -163,6 +163,16 @@ name = "heavy_traffic"
 path = "example/heavy_traffic.rs"
 required-features = ["client", "server"]
 
+[[example]]
+name = "use_case"
+path = "example/use_case.rs"
+required-features = ["client", "server"]
+
+[[example]]
+name = "mirror_decoy"
+path = "example/mirror_decoy.rs"
+required-features = ["client", "server"]
+
 
 # Retain line-level debug symbols in release builds for flamegraph / perf profiling.
 # Cargo ignores [profile] from dependency crates, so this has no effect on downstream users.

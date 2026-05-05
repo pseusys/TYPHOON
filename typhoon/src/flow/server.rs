@@ -190,7 +190,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     if self.user_addrs.read().await.get(&identity).copied() != Some(source_addr) {
                         self.user_addrs.write().await.insert(identity.clone(), source_addr);
                     }
-                    let notified = dp.lock().await.feed_input(packet.clone()).await;
+                    let notified = dp.lock().await.feed_input(encrypted_packet.clone(), tailor.buffer().clone()).await;
                     if notified.is_none() {
                         continue;
                     }
@@ -228,23 +228,23 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> FlowManager for ServerFlowManager<T, AE> {
-    async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {
+    async fn send_packet(&self, packet: DynamicByteBuffer) -> Result<(), FlowControllerError> {
         let identity_len = T::length();
-
-        let tailor_buf = packet.rebuffer_start(packet.len() - identity_len - TAILOR_LENGTH);
+        let tailor_len = identity_len + TAILOR_LENGTH;
+        let (body, tailor_buf) = packet.split_buf(packet.len() - tailor_len);
         let identity = ServerCryptoTool::<T>::extract_identity(&tailor_buf);
 
         // Feed decoy provider for rate tracking (per-user lock).
         let notified_packet = {
             let dp = self.decoy_providers.read().await.get(&identity).cloned();
             if let Some(dp) = dp {
-                let notified = dp.lock().await.feed_output(packet, generated).await;
+                let notified = dp.lock().await.feed_output(body, tailor_buf.clone()).await;
                 match notified {
                     None => return Ok(()),
-                    Some(p) => p,
+                    Some(b) => b.expand_end(tailor_len),
                 }
             } else {
-                packet
+                body.expand_end(tailor_len)
             }
         };
 

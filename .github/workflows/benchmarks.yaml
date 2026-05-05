@@ -79,7 +79,7 @@ jobs:
           RUSTFLAGS: "-D warnings"
         run: |
           mkdir -p ../flamegraphs
-          for example in hello_world multi_flow multi_client long_session heavy_traffic; do
+          for example in hello_world multi_flow multi_client long_session heavy_traffic use_case mirror_decoy; do
             cargo flamegraph --example "$example" -o "../flamegraphs/${example}.svg" || true
           done
 
@@ -107,7 +107,7 @@ jobs:
           PYTHONPATH: evaluation/src
         run: |
           mkdir -p flow-diagrams
-          for example in hello_world multi_flow multi_client long_session heavy_traffic; do
+          for example in hello_world multi_flow multi_client long_session heavy_traffic use_case mirror_decoy; do
             python -m typhoon_eval.flow_plot --example "$example" --typhoon-dir typhoon --out-dir "flow-diagrams/${example}" --per-packet || true
           done
 
