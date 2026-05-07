@@ -31,10 +31,10 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 
-from typhoon_eval.capture_stats import COMP_COLORS, COMPONENTS, pool_stats, stats_from_records
-from typhoon_eval.flow_plot import _DEFAULT_TYPHOON_DIR, _run_example
+from typhoon_eval.self.flow_plot import _DEFAULT_TYPHOON_DIR, _run_example
+from typhoon_eval.shared.capture_stats import COMP_COLORS, COMPONENTS, pool_stats, stats_from_records
 
-_DEFAULT_OUT_DIR = Path(__file__).parent.parent.parent / "results" / "traffic_compare"
+_DEFAULT_OUT_DIR = Path(__file__).parent.parent.parent.parent / "results" / "traffic_compare"
 
 _MODES: list[tuple[str, str, str, bool, bool]] = [
     ("1", "Const payload\nConst wait",   "const_const",   False, False),
@@ -52,7 +52,7 @@ def _mode_color(idx: int) -> str:
 def _plot_traffic_compare(pooled_by_mode: list[tuple[str, str, dict]], use_case: str, out_dir: Path) -> None:
     n = len(pooled_by_mode)
 
-    fig, axes = plt.subplots(4, n, figsize=(4 * n, 18), squeeze=False)
+    fig, axes = plt.subplots(5, n, figsize=(4 * n, 22), squeeze=False)
 
     for col, (label, _slug, ds) in enumerate(pooled_by_mode):
         color = _mode_color(col)
@@ -101,8 +101,20 @@ def _plot_traffic_compare(pooled_by_mode: list[tuple[str, str, dict]], use_case:
             bottom += val
         ax.set_xticks([])
 
+        # Row 4 — burstiness and size regularity
+        ax = axes[4][col]
+        burst = ds.get("burstiness", 0.0)
+        sreg  = ds.get("size_regularity", 0.0)
+        ax.bar([0], [burst], color="#9b59b6", alpha=0.8, label="Burstiness")
+        ax.bar([1], [sreg],  color="#e67e22", alpha=0.8, label="Size reg.")
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(["Burst.", "Reg."], fontsize=8)
+        ax.set_ylim(bottom=0)
+        if col == 0:
+            ax.legend(fontsize=7)
+
     # Shared y-axis labels
-    for row_ax, label in zip(axes[:, 0], ["Packet size (bytes)", "IAT (ms)", "Shannon entropy (bits)", "Mean bytes"]):
+    for row_ax, label in zip(axes[:, 0], ["Packet size (bytes)", "IAT (ms)", "Shannon entropy (bits)", "Mean bytes", "Metric value"]):
         row_ax.set_ylabel(label, fontsize=9)
 
     comp_patches = [mpatches.Patch(color=COMP_COLORS[c], label=c) for c in COMPONENTS]

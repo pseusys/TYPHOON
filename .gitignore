@@ -23,6 +23,7 @@ evaluation/**/*.pyo
 evaluation/.venv/
 evaluation/dist/
 evaluation/**/*.egg-info/
+evaluation/results/
 
 # Poetry
 evaluation/poetry.lock
@@ -32,4 +33,4 @@ evaluation/results/
 
 # Diagrams and graphs
 flamegraphs
-flow-diagrams
+diagrams

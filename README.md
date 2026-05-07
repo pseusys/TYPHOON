@@ -11,6 +11,8 @@ Indeed, if an attacker doesn't know _what_ protocol they're looking at, it makes
 
 For the full protocol specification, architecture, cryptographic details, and proposed implementation, see [PROTOCOL.md](PROTOCOL.md).
 
+For how TYPHOON compares against 15 other protocols, what traffic data is collected and how, and how ML classifiers attempt to fingerprint it, see [evaluation/EVALUATION.md](evaluation/EVALUATION.md).
+
 ## Code and tests
 
 The repository contains [example TYPHOON protocol implementation](./typhoon/) in `rust`.
@@ -213,3 +215,130 @@ let settings = Arc::new(
 - **Runtime agnostic**: async primitives are abstracted behind `AsyncExecutor` and the wrappers in `utils/sync.rs`; switching between `tokio` and `async-std` requires only a feature flag.
 - **Zero-copy by design**: payload bytes travel as views over pooled `ByteBuffer`s from allocation to the UDP socket; copies are introduced only at system boundaries (user API and OS socket calls).
 - **Lock-free hot paths**: per-packet paths use `CachedMap` snapshots (wait-free reads) and `AtomicBitSet` for active-flow tracking; `Mutex`/`RwLock` is confined to session lifecycle operations (handshake, teardown).
+
+## Evaluation
+
+The `evaluation/` directory contains a Docker-based traffic capture and analysis harness, organised into three independent parts:
+
+1. **TYPHOON self-comparison** — measure run-to-run and scenario-to-scenario variability of TYPHOON's own traffic profile.
+2. **Operational comparison** — capture all 16 protocols (TYPHOON + 15 comparators) under a controlled Docker network and compare their throughput, overhead, goodput efficiency, byte entropy, burstiness, and handshake characteristics. _Operational metrics, not detectability._
+3. **Background-blending evaluation** _(planned)_ — generate a corpus of natural UDP traffic (QUIC HTTPS, DNS, RTP voice/video, gaming, control plane), run TYPHOON alongside, and measure how often a passive classifier mistakes TYPHOON for benign background traffic.
+
+See [evaluation/EVALUATION.md](evaluation/EVALUATION.md) for a complete explanation of each part. The empirical grounding for the Part 3 background composition is in [evaluation/docs/TRAFFIC_CAPTURE_REFERENCE.md §7](evaluation/docs/TRAFFIC_CAPTURE_REFERENCE.md).
+
+### Requirements
+
+- **Docker** (or rootful Podman) — required to run the multi-container capture stacks; rootless Podman cannot grant `NET_ADMIN` to the observer container.
+- **Python 3.11+** with [Poetry](https://python-poetry.org/)
+- Built Docker images for all 16 protocol stacks (see setup below)
+
+Optional, for the ML utilities (re-used in Part 3):
+
+- `scikit-learn` — installed with the `ml` dependency group (default)
+- `torch` (PyTorch) — for 1D-CNN sequence and header-byte models
+- `xgboost` — for XGBoost gradient boosting
+- `umap-learn` — for UMAP 2D dimensionality reduction
+
+### Setup
+
+```shell
+cd evaluation
+
+# Install Python dependencies (core + ML group)
+poetry install --with ml
+
+# Build all 16 protocol Docker images (required once, before first capture)
+poetry poe build
+```
+
+### Poetry commands
+
+All commands run from the `evaluation/` directory.
+
+#### Shared (capture, parse, orchestrate)
+
+| Command | What it does |
+| --- | --- |
+| `poe build` | Build all 16 protocol Docker images. Required once before any captures. |
+| `poe capture --all` | Capture traffic from all 16 protocols (default: bulk transfer, 10 MB). |
+| `poe capture --all --chaos` | Same, with network chaos (latency + jitter via Pumba). |
+| `poe capture --protocol typhoon` | Capture a single protocol. |
+| `poe capture --all --scenario interactive` | Capture with a specific scenario. Scenarios apply meaningfully to TYPHOON (Part 1); for the cross-protocol operational comparison (Part 2), `bulk` is the right default. |
+| `poe analyze` | Parse all pcap files from the latest run and write `stats.json`. |
+| `poe analyze --run 20260501_120000` | Analyze a specific run by timestamp. |
+| `poe lint` | Lint Python sources with ruff. |
+| `poe clean` | Delete all captured pcap files and logs. |
+
+#### Part 1 — TYPHOON self-comparison
+
+| Command | What it does |
+| --- | --- |
+| `poe self-compare` | Run TYPHOON N times under identical config; overlay size and IAT distributions across runs. |
+| `poe traffic-compare` | Run TYPHOON across the four payload×wait scenario combinations; compare profiles. |
+| `poe use-case-compare` | Run TYPHOON once per PROTOCOL.md use case (throughput / interactive / transparent / security). |
+| `poe plot` | Per-flow stacked-bar diagrams from the TYPHOON crate's `capture` log target. |
+
+#### Part 2 — Operational comparison vs other protocols
+
+| Command | What it does |
+| --- | --- |
+| `poe proto-compare` | Generate operational comparison plots and the markdown table from the latest run. |
+| `poe proto-flow-plot` | Per-packet timeline grid from the latest run's pcap captures (auxiliary). |
+
+Outputs land in `results/plots/`:
+
+- `<run>_proto_compare.png` — six-panel operational figure (size CDF, IAT CDF, throughput-vs-efficiency scatter, overhead bars, byte-entropy phases, normalised metric heatmap)
+- `<run>_handshake.png` — handshake duration / packet count / byte fraction
+- `<run>_compare_table.md` — markdown comparison table
+
+#### Part 3 — Background-blending evaluation _(planned)_
+
+To be added under `evaluation/background/` (Docker contexts for natural-UDP generators) and `src/typhoon_eval/background/` (eval-host orchestration + open-world detector).
+
+#### ML utilities (used by Part 3, callable standalone)
+
+| Command | What it does |
+| --- | --- |
+| `poe ml-features` | Extract ML feature matrix (`features.npz`) from `stats.json`. |
+| `poe ml-classify` | RF / SVM / GB / XGBoost on scalar features. |
+| `poe ml-cluster` | k-Means / DBSCAN clustering + PCA/UMAP visualisation. |
+| `poe ml-sequence` | MLP + 1D-CNN on first-100 packet size and IAT sequences. |
+| `poe ml-bytes` | RF + 1D-CNN on IP+UDP header bytes. |
+
+These were retained from the legacy framing for re-use as components inside Part 3's open-world detector. They are **not** part of the default operational comparison.
+
+#### Pipeline orchestrator
+
+| Command | What it does |
+| --- | --- |
+| `poe evaluate` | Run captures, analysis, Part 1 + Part 2 plots, ML, and report generation. |
+
+### Quick start
+
+```shell
+cd evaluation
+
+# 1. Build images (once)
+poetry poe build
+
+# 2a. Operational comparison only (Part 2)
+poetry poe capture --all
+poetry poe analyze
+poetry poe proto-compare
+
+# 2b. TYPHOON self-comparison (Part 1)
+poetry poe self-compare
+poetry poe traffic-compare
+poetry poe use-case-compare
+
+# 2c. Full pipeline (Parts 1 + 2 + ML utilities + report)
+poetry poe evaluate --classification-runs 3 --chaos
+```
+
+Outputs under `results/`:
+
+- `captures/run_*/` — pcaps + `stats.json` + container logs
+- `plots/` — Part 2 operational figures and comparison table
+- `self_compare/`, `traffic_compare/`, `use_case_compare/` — Part 1 figures
+- `ml/` — feature matrices, model weights, ML diagrams
+- `report.md` — pipeline summary report

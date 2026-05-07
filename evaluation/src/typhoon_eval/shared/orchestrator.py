@@ -30,8 +30,11 @@ from .protocols import ALL, BY_NAME, Protocol
 
 console = Console()
 
-RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
+RESULTS_DIR = Path(__file__).parent.parent.parent.parent / "results"
 ENV_DIR = COMPOSE_DIR / "env"
+
+
+_VALID_SCENARIOS = ("bulk", "interactive", "streaming", "burst", "idle", "echo")
 
 
 def _run_one(
@@ -41,6 +44,9 @@ def _run_one(
     transfer_bytes: int,
     delay_ms: float,
     delay_every: int,
+    scenario: str,
+    loss_pct: float,
+    bw_mbps: float,
     captures_dir: Path,
     log_dir: Path,
 ) -> tuple[bool, str, float | None, float | None, float | None]:
@@ -73,6 +79,9 @@ def _run_one(
         "PUMBA_TARGET": pumba_target,
         "INTER_PACKET_DELAY_MS": str(delay_ms),
         "DELAY_EVERY_N": str(delay_every),
+        "TRAFFIC_SCENARIO": scenario,
+        "CHAOS_LOSS_PCT": str(loss_pct),
+        "CHAOS_BW_MBPS": str(bw_mbps),
     }
 
     success, delivery_pct, transfer_time_s, recv_time_s = compose_up(
@@ -134,7 +143,30 @@ def _run_one(
     type=int,
     help="Apply inter-packet delay after every N packets.",
 )
-def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, transfer_bytes: int, delay_ms: float, delay_every: int) -> None:
+@click.option(
+    "--scenario",
+    default="bulk",
+    show_default=True,
+    type=click.Choice(list(_VALID_SCENARIOS)),
+    help="Traffic scenario: bulk|interactive|streaming|burst|idle|echo.",
+)
+@click.option(
+    "--loss-pct",
+    "loss_pct",
+    default=0.0,
+    show_default=True,
+    type=float,
+    help="Chaos: packet loss percentage (0 = no extra loss beyond chaos default).",
+)
+@click.option(
+    "--bw-mbps",
+    "bw_mbps",
+    default=0.0,
+    show_default=True,
+    type=float,
+    help="Chaos: bandwidth cap in Mbps via tbf (0 = unlimited).",
+)
+def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, transfer_bytes: int, delay_ms: float, delay_every: int, scenario: str, loss_pct: float, bw_mbps: float) -> None:
     """TYPHOON evaluation — run traffic captures for protocol comparison."""
 
     if not run_all and not protocol_name:
@@ -159,6 +191,9 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
     console.print(f"  Protocols : {', '.join(p.name for p in protocols)}")
     console.print(f"  Timeout   : {timeout}s per run (env file may override per protocol)")
     console.print(f"  Transfer  : {transfer_bytes / 1_048_576:.0f} MB")
+    console.print(f"  Scenario  : {scenario}")
+    if chaos and (loss_pct > 0 or bw_mbps > 0):
+        console.print(f"  Chaos     : loss={loss_pct}%  bw={bw_mbps or 'unlimited'} Mbps")
     if delay_ms > 0:
         console.print(f"  Delay     : {delay_ms}ms every {delay_every} packets → {injected_delay_s:.1f}s injected\n")
     else:
@@ -179,6 +214,9 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
         "delay_ms": delay_ms,
         "delay_every": delay_every,
         "injected_delay_s": injected_delay_s,
+        "scenario": scenario,
+        "loss_pct": loss_pct,
+        "bw_mbps": bw_mbps,
     }
     (captures_dir / "config.json").write_text(json.dumps(config, indent=2))
 
@@ -206,6 +244,9 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
                     transfer_bytes=transfer_bytes,
                     delay_ms=delay_ms,
                     delay_every=delay_every,
+                    scenario=scenario,
+                    loss_pct=loss_pct,
+                    bw_mbps=bw_mbps,
                     captures_dir=captures_dir,
                     log_dir=captures_dir / "logs" / protocol.name,
                 )
@@ -238,16 +279,13 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
 
     _purge_stale_stacks()
 
-    # Summary table
-    show_eff = True
     table = Table(title="Capture summary", show_lines=True)
     table.add_column("Protocol", style="cyan", no_wrap=True)
     table.add_column("Transport", style="dim")
     table.add_column("Status")
     table.add_column("Delivery", justify="right")
     table.add_column("Elapsed (s)", justify="right", style="dim")
-    if show_eff:
-        table.add_column("Eff.Time (s)", justify="right")
+    table.add_column("Eff.Time (s)", justify="right")
 
     ok = 0
     for p in protocols:
@@ -262,11 +300,9 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
             delivery = f"[yellow]{pct:.1f}%[/yellow]"
         else:
             delivery = f"[red]{pct:.1f}%[/red]"
-        row = [p.name, p.transport, status, delivery, str(r["elapsed_s"])]
-        if show_eff:
-            eff = r.get("transfer_time_s")
-            row.append(f"{eff:.3f}" if eff is not None else "[dim]—[/dim]")
-        table.add_row(*row)
+        eff = r.get("transfer_time_s")
+        table.add_row(p.name, p.transport, status, delivery, str(r["elapsed_s"]),
+                      f"{eff:.3f}" if eff is not None else "[dim]—[/dim]")
         if r["success"]:
             ok += 1
 

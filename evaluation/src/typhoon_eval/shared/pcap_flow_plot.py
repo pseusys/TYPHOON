@@ -26,11 +26,11 @@ import numpy as np
 from scapy.layers.inet import IP
 from scapy.utils import PcapReader
 
-from typhoon_eval.analysis import CAPTURES_ROOT, _latest_run
-from typhoon_eval.pcap_stats import CLIENT_IP, SERVER_IP, handshake_end
-from typhoon_eval.protocols import BY_NAME
+from typhoon_eval.shared.analysis import CAPTURES_ROOT, _latest_run
+from typhoon_eval.shared.pcap_stats import CLIENT_IP, SERVER_IP, handshake_end
+from typhoon_eval.shared.protocols import BY_NAME
 
-_DEFAULT_OUT_DIR = Path(__file__).parent.parent.parent / "results" / "plots"
+_DEFAULT_OUT_DIR = Path(__file__).parent.parent.parent.parent / "results" / "plots"
 
 _C2S_COLOR = "#2980b9"
 _S2C_COLOR = "#e74c3c"
@@ -98,8 +98,9 @@ def _plot_timeline(run_dir: Path, out_dir: Path) -> None:
         # Handshake boundary.
         hs_end_ts: float | None = None
         if proto and proto.handshake_sniffer:
-            all_recs = sorted([(ts, sz, b"") for ts, sz in c2s + s2c], key=lambda r: r[0])
-            hs_end_ts = handshake_end(all_recs, proto.handshake_sniffer)
+            c2s_recs = [(ts, sz, b"") for ts, sz in c2s]
+            s2c_recs = [(ts, sz, b"") for ts, sz in s2c]
+            hs_end_ts = handshake_end(c2s_recs, s2c_recs, proto.handshake_sniffer)
 
         if c2s:
             ts_arr = np.array([ts - t0 for ts, _ in c2s])

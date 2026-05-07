@@ -38,7 +38,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Default path to the typhoon Rust crate, relative to this file.
-_DEFAULT_TYPHOON_DIR = Path(__file__).parent.parent.parent.parent / "typhoon"
+_DEFAULT_TYPHOON_DIR = Path(__file__).parent.parent.parent.parent.parent / "typhoon"
 
 # Wire-packet component order (bottom → top in each bar).
 _COMPONENTS = ["tailor", "crypto", "header", "payload", "body"]

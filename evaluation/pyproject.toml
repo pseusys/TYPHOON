@@ -17,6 +17,21 @@ matplotlib         = "^3.9"
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.11"
 
+[tool.poetry.group.ml.dependencies]
+scikit-learn = "^1.4"
+
+[tool.poetry.group.ml.dependencies.umap-learn]
+version  = "^0.5"
+optional = true
+
+[tool.poetry.group.ml.dependencies.torch]
+version  = "^2.2"
+optional = true
+
+[tool.poetry.group.ml.dependencies.xgboost]
+version  = "^2.0"
+optional = true
+
 [tool.poetry.requires-plugins]
 poethepoet = { version = ">=0.24", extras = ["poetry_plugin"] }
 
@@ -33,45 +48,74 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.poe.tasks]
 
+  # ── shared (capture / analyse / orchestrate) ─────────────────────────────
   [tool.poe.tasks.build]
   cmd  = "docker compose -f compose/docker-compose.build.yml build"
   help = "Build all protocol Docker images"
 
   [tool.poe.tasks.capture]
-  cmd  = "python -m typhoon_eval.orchestrator"
+  cmd  = "python -m typhoon_eval.shared.orchestrator"
   help = "Run captures — pass --all or --protocol <name>, optionally --chaos"
+
+  [tool.poe.tasks.analyze]
+  cmd  = "python -m typhoon_eval.shared.analysis"
+  help = "Analyze captured pcap files — pass --run <YYYYMMDD_HHMMSS> or omit for latest"
 
   [tool.poe.tasks.lint]
   cmd  = "ruff check src/ protocols/"
   help = "Lint Python sources with ruff"
 
-  [tool.poe.tasks.analyze]
-  cmd  = "python -m typhoon_eval.analysis"
-  help = "Analyze captured pcap files — pass --run <YYYYMMDD_HHMMSS> or omit for latest"
-
+  # ── PART 1 — TYPHOON self comparison (intrinsic) ─────────────────────────
   [tool.poe.tasks.plot]
-  cmd  = "python -m typhoon_eval.flow_plot"
+  cmd  = "python -m typhoon_eval.self.flow_plot"
   help = "Generate per-flow packet structure diagrams — pass --example <name> or --log <file>, and --out-dir <dir>"
 
   [tool.poe.tasks.self-compare]
-  cmd  = "python -m typhoon_eval.self_compare"
+  cmd  = "python -m typhoon_eval.self.self_compare"
   help = "Run TYPHOON N times and compare runs (variability analysis)"
 
   [tool.poe.tasks.use-case-compare]
-  cmd  = "python -m typhoon_eval.use_case_compare"
+  cmd  = "python -m typhoon_eval.self.use_case_compare"
   help = "Run TYPHOON for each PROTOCOL.md use case and compare profiles"
 
   [tool.poe.tasks.traffic-compare]
-  cmd  = "python -m typhoon_eval.traffic_compare"
+  cmd  = "python -m typhoon_eval.self.traffic_compare"
   help = "Run TYPHOON with all 4 payload×wait traffic modes and compare results"
 
+  # ── PART 2 — Operational comparison vs other protocols ───────────────────
   [tool.poe.tasks.proto-flow-plot]
-  cmd  = "python -m typhoon_eval.pcap_flow_plot"
+  cmd  = "python -m typhoon_eval.shared.pcap_flow_plot"
   help = "Per-packet timeline grid from pcap captures — pass --run <YYYYMMDD_HHMMSS> or omit for latest"
 
   [tool.poe.tasks.proto-compare]
-  cmd  = "python -m typhoon_eval.proto_compare_plots"
+  cmd  = "python -m typhoon_eval.protocols_op.proto_compare_plots"
   help = "Multi-protocol comparison plots from pcap captures — pass --run <YYYYMMDD_HHMMSS> or omit for latest"
+
+  # ── ML utilities (kept for reuse in PART 3 — background blending) ────────
+  [tool.poe.tasks.ml-features]
+  cmd  = "python -m typhoon_eval.ml.ml_features"
+  help = "Extract ML feature matrix from stats.json — pass --run or omit for latest"
+
+  [tool.poe.tasks.ml-classify]
+  cmd  = "python -m typhoon_eval.ml.ml_classify"
+  help = "Supervised protocol classification (RF, SVM, GB) from feature matrix"
+
+  [tool.poe.tasks.ml-cluster]
+  cmd  = "python -m typhoon_eval.ml.ml_cluster"
+  help = "Unsupervised clustering + PCA/UMAP visualisation from feature matrix"
+
+  [tool.poe.tasks.ml-sequence]
+  cmd  = "python -m typhoon_eval.ml.ml_sequence"
+  help = "Sequence-based classification (MLP / 1D-CNN) from first-100-packet sizes"
+
+  [tool.poe.tasks.ml-bytes]
+  cmd  = "python -m typhoon_eval.ml.ml_bytes"
+  help = "Header-byte classification (RF / 1D-CNN) from first-50-packet IP+UDP headers"
+
+  # ── Pipeline orchestrator ────────────────────────────────────────────────
+  [tool.poe.tasks.evaluate]
+  cmd  = "python -m typhoon_eval.pipeline"
+  help = "Run the full evaluation pipeline: capture → analyze → visualize → ML → report"
 
   [tool.poe.tasks.clean]
   shell = "rm -rf results/captures results/logs"

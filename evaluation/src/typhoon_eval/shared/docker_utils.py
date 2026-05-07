@@ -27,7 +27,7 @@ from pathlib import Path
 
 from python_on_whales import DockerClient, DockerException
 
-COMPOSE_DIR = Path(__file__).parent.parent.parent / "compose"
+COMPOSE_DIR = Path(__file__).parent.parent.parent.parent / "compose"
 BASE_COMPOSE = COMPOSE_DIR / "docker-compose.yml"
 
 
@@ -151,7 +151,14 @@ def _save_logs(dc: DockerClient, protocol_name: str, log_dir: Path) -> None:
             log_path.write_text(f"[log capture failed: {e}]\n")
 
 
-def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], chaos: bool, timeout: int, log_dir: Path | None = None) -> tuple[bool, float | None]:
+def _docker_op(fn, timeout_s: int = 60) -> None:
+    """Run a docker/compose operation in a daemon thread with a hard timeout."""
+    t = threading.Thread(target=fn, daemon=True)
+    t.start()
+    t.join(timeout=timeout_s)
+
+
+def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], chaos: bool, timeout: int, log_dir: Path | None = None) -> tuple[bool, float | None, float | None, float | None]:
     """
     Run `docker compose up` for a protocol capture.
 
@@ -176,10 +183,7 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
         success = False
         _up_thread: threading.Thread | None = None
 
-        try:
-            dc.compose.down(volumes=True, remove_orphans=True, quiet=True)
-        except DockerException:
-            pass
+        _docker_op(lambda: dc.compose.down(volumes=True, remove_orphans=True, quiet=True))
 
         try:
             if not chaos:
@@ -195,10 +199,7 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
 
                 if _up_thread.is_alive():
                     timed_out = True
-                    try:
-                        dc.compose.stop()
-                    except DockerException:
-                        pass
+                    _docker_op(lambda: dc.compose.stop(), timeout_s=30)
                     _up_thread.join(timeout=30)
 
             else:
@@ -223,10 +224,7 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
                     if _up_thread.is_alive():
                         timed_out = True
 
-                    try:
-                        dc.compose.stop()
-                    except DockerException:
-                        pass
+                    _docker_op(lambda: dc.compose.stop(), timeout_s=30)
                     # Brief pause so tcpdump flushes its write buffer before down.
                     time.sleep(2)
 
@@ -244,19 +242,13 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
                     pass
 
         finally:
-            try:
-                dc.compose.stop()
-            except DockerException:
-                pass
+            _docker_op(lambda: dc.compose.stop(), timeout_s=30)
             if _up_thread is not None:
                 _up_thread.join(timeout=10)
             delivery_pct = _parse_delivery(dc, protocol_name)
             transfer_time_s, recv_time_s = _parse_timing(dc, protocol_name)
             if log_dir is not None:
                 _save_logs(dc, protocol_name, log_dir)
-            try:
-                dc.compose.down(volumes=True, remove_orphans=True, quiet=True)
-            except DockerException:
-                pass
+            _docker_op(lambda: dc.compose.down(volumes=True, remove_orphans=True, quiet=True), timeout_s=60)
 
     return success, delivery_pct, transfer_time_s, recv_time_s

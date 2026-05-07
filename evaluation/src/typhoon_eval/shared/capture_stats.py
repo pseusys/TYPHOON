@@ -64,6 +64,13 @@ def _dist_stats(vals: np.ndarray, entropy_fn) -> dict:
     }
 
 
+def _burstiness_regularity(iats: np.ndarray, sizes: np.ndarray) -> tuple[float, float]:
+    iat_mean = float(np.mean(iats)) if len(iats) > 1 else 0.0
+    burstiness = float(np.std(iats) / iat_mean) if iat_mean > 0 else 0.0
+    size_regularity = float(len(np.unique(sizes.astype(int))) / len(sizes)) if len(sizes) > 0 else 0.0
+    return burstiness, size_regularity
+
+
 def _compute_dir_stats(records: list[dict]) -> dict:
     if not records:
         return {
@@ -95,6 +102,8 @@ def _compute_dir_stats(records: list[dict]) -> dict:
     payload_total = float(np.sum([r.get("payload", 0) for r in records]))
     overhead_ratio = 1.0 - payload_total / total if total > 0 else 0.0
 
+    burstiness, size_regularity = _burstiness_regularity(iats, sizes)
+
     return {
         "packet_count": len(records),
         "total_bytes": int(total),
@@ -102,6 +111,8 @@ def _compute_dir_stats(records: list[dict]) -> dict:
         "iat_ms": _dist_stats(iats, _iat_entropy),
         "components": components,
         "overhead_ratio": overhead_ratio,
+        "burstiness": burstiness,
+        "size_regularity": size_regularity,
     }
 
 
@@ -145,6 +156,8 @@ def pool_stats(run_stats_list: list[dict], direction: str = "all") -> dict:
     iats = np.array(all_iats, dtype=float)
     overhead_ratio = 1.0 - (sum(r.get(direction, {}).get("components", {}).get("payload", 0.0) * r.get(direction, {}).get("packet_count", 0) for r in run_stats_list) / max(total_bytes, 1))
 
+    burstiness, size_regularity = _burstiness_regularity(iats, sizes)
+
     return {
         "packet_count": len(all_sizes),
         "total_bytes": total_bytes,
@@ -152,5 +165,7 @@ def pool_stats(run_stats_list: list[dict], direction: str = "all") -> dict:
         "iat_ms": _dist_stats(iats, _iat_entropy),
         "components": {c: float(np.mean(all_components[c])) if all_components[c] else 0.0 for c in COMPONENTS},
         "overhead_ratio": overhead_ratio,
+        "burstiness": burstiness,
+        "size_regularity": size_regularity,
         "config": run_stats_list[0].get("config", []) if run_stats_list else [],
     }

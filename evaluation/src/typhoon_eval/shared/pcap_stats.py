@@ -10,17 +10,24 @@ Direction filtering uses original IP addresses only:
 
 This gives exactly one copy of each packet regardless of which interface it
 was captured on, so no deduplication is needed.
+
+Size measurement: the size field stored per packet is the *transport payload*
+length (UDP payload, or TCP segment data) — the bytes above the IP+UDP/TCP
+headers.  This excludes a constant 28 B (UDP) or 40+ B (TCP) per-packet
+overhead that would otherwise leak transport-layer signal into the
+protocol-level statistics.
 """
 
 import math
 from collections import Counter
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
-from scapy.layers.inet import IP, UDP
+from scapy.layers.inet import IP, TCP, UDP
 from scapy.packet import Packet, Raw
 from scapy.utils import PcapReader
+
+from typhoon_eval.shared.protocols import HandshakeSniffer, PacketRecord
 
 CLIENT_IP = "172.20.0.10"
 SERVER_IP = "172.21.0.10"
@@ -61,6 +68,8 @@ def _app_payload(pkt: Packet) -> bytes:
         return bytes(pkt[Raw])
     if UDP in pkt:
         return bytes(pkt[UDP].payload)
+    if TCP in pkt:
+        return bytes(pkt[TCP].payload)
     return b""
 
 
@@ -91,6 +100,9 @@ def _stats_for(
     else:
         hs_payload, data_payload = b"", all_payload
 
+    iat_mean = float(iats_ms.mean()) if len(iats_ms) else 0.0
+    iat_std  = float(iats_ms.std())  if len(iats_ms) else 0.0
+
     result: dict = {
         "packet_count": int(len(records)),
         "byte_count":   int(sz_arr.sum()),
@@ -109,8 +121,8 @@ def _stats_for(
             "entropy": _size_entropy(sz_arr),
         },
         "iat_ms": {
-            "mean":    float(iats_ms.mean()) if len(iats_ms) else 0.0,
-            "std":     float(iats_ms.std())  if len(iats_ms) else 0.0,
+            "mean":    iat_mean,
+            "std":     iat_std,
             "p5":      float(np.percentile(iats_ms,  5)) if len(iats_ms) else 0.0,
             "p50":     float(np.percentile(iats_ms, 50)) if len(iats_ms) else 0.0,
             "p95":     float(np.percentile(iats_ms, 95)) if len(iats_ms) else 0.0,
@@ -122,24 +134,32 @@ def _stats_for(
             "handshake": _entropy(hs_payload)   if hs_payload   else None,
             "data":      _entropy(data_payload) if data_payload else None,
         },
+        "burstiness":      iat_std / iat_mean if iat_mean > 0 else 0.0,
+        "size_regularity": float(len(np.unique(sz_arr))) / len(sz_arr),
     }
 
     if transfer_bytes:
-        result["overhead_ratio"] = (int(sz_arr.sum()) - transfer_bytes) / transfer_bytes
+        total = int(sz_arr.sum())
+        result["overhead_ratio"]      = (total - transfer_bytes) / transfer_bytes
+        result["goodput_efficiency"]  = transfer_bytes / total if total > 0 else 0.0
 
     return result
 
 
-def parse_pcap(path: Path) -> tuple[list[tuple[float, int, bytes]], list[tuple[float, int, bytes]]]:
+def parse_pcap(path: Path) -> tuple[list[PacketRecord], list[PacketRecord]]:
     """
-    Parse *path* and return (c2s, s2c) lists of (timestamp_s, ip_size, app_payload).
+    Parse *path* and return (c2s, s2c) lists of (timestamp_s, transport_payload_size, app_payload).
 
     Direction is determined by IP address:
       c2s: src=CLIENT_IP, dst=SERVER_IP
       s2c: src=SERVER_IP, dst=CLIENT_IP
+
+    The size field is the transport-layer payload length (UDP payload, or TCP
+    segment data).  Pure control packets (TCP SYN/ACK with no data) get size 0.
+    IP and UDP/TCP header bytes are excluded from the size statistic.
     """
-    c2s: list[tuple[float, int, bytes]] = []
-    s2c: list[tuple[float, int, bytes]] = []
+    c2s: list[PacketRecord] = []
+    s2c: list[PacketRecord] = []
 
     with PcapReader(str(path)) as reader:
         for pkt in reader:
@@ -155,29 +175,32 @@ def parse_pcap(path: Path) -> tuple[list[tuple[float, int, bytes]], list[tuple[f
             else:
                 continue
 
-            bucket.append((float(pkt.time), len(ip), _app_payload(pkt)))
+            payload = _app_payload(pkt)
+            bucket.append((float(pkt.time), len(payload), payload))
 
     return c2s, s2c
 
 
 def handshake_end(
-    all_records: list[tuple[float, int, bytes]],
-    sniffer: Callable[[list[tuple[float, int, bytes]]], float | None] | None = None,
+    c2s_records: list[PacketRecord],
+    s2c_records: list[PacketRecord],
+    sniffer: HandshakeSniffer | None = None,
 ) -> float | None:
     """Return handshake end timestamp, using *sniffer* if given or the global window."""
-    if not all_records:
+    if not c2s_records and not s2c_records:
         return None
     if sniffer is not None:
-        result = sniffer(all_records)
+        result = sniffer(c2s_records, s2c_records)
         if result is not None:
             return result
-    return min(r[0] for r in all_records) + _HANDSHAKE_WINDOW_S
+    first_ts = min(r[0] for r in (c2s_records + s2c_records))
+    return first_ts + _HANDSHAKE_WINDOW_S
 
 
 def analyze_pcap(
     path: Path,
     transfer_bytes: int | None = None,
-    handshake_sniffer: Callable[[list[tuple[float, int, bytes]]], float | None] | None = None,
+    handshake_sniffer: HandshakeSniffer | None = None,
 ) -> dict[str, dict]:
     """
     Parse *path* and return {"c2s": {...}, "s2c": {...}, "all": {...}}.
@@ -189,10 +212,61 @@ def analyze_pcap(
     c2s, s2c = parse_pcap(path)
 
     all_records = c2s + s2c
-    hs_end_ts = handshake_end(all_records, handshake_sniffer)
+    first_ts  = min(r[0] for r in all_records) if all_records else 0.0
+    hs_end_ts = handshake_end(c2s, s2c, handshake_sniffer)
 
-    return {
+    result = {
         "c2s": _stats_for(c2s,         transfer_bytes, hs_end_ts),
         "s2c": _stats_for(s2c,         None,           hs_end_ts),
         "all": _stats_for(all_records, transfer_bytes, hs_end_ts),
     }
+
+    # Direction-aware metrics (injected into "all" only).
+    all_stats = result["all"]
+    if all_stats:
+        c2s_bytes = result["c2s"].get("byte_count", 0)
+        s2c_bytes = result["s2c"].get("byte_count", 0)
+        all_stats["direction_asymmetry"] = c2s_bytes / s2c_bytes if s2c_bytes > 0 else 0.0
+
+        signed = sorted(
+            [(r[0], r[1]) for r in c2s] + [(r[0], -r[1]) for r in s2c],
+            key=lambda x: x[0],
+        )
+        first100 = [int(sz) for _, sz in signed[:100]]
+        all_stats["first_n_sizes"] = first100 + [0] * (100 - len(first100))
+
+        iat_seq: list[float] = [0.0]
+        for i in range(1, min(100, len(signed))):
+            dt_ms = (signed[i][0] - signed[i - 1][0]) * 1000.0
+            sign = 1.0 if signed[i][1] > 0 else -1.0
+            iat_seq.append(round(sign * dt_ms, 4))
+        all_stats["first_n_iats"] = iat_seq + [0.0] * (100 - len(iat_seq))
+
+        # Burst features: contiguous same-direction runs.
+        dirs = [1 if sz > 0 else -1 for _, sz in signed]
+        bursts: list[tuple[int, int]] = []
+        if dirs:
+            cur_dir, pkt_cnt, byte_cnt = dirs[0], 1, abs(signed[0][1])
+            for i in range(1, len(dirs)):
+                if dirs[i] == cur_dir:
+                    pkt_cnt += 1
+                    byte_cnt += abs(signed[i][1])
+                else:
+                    bursts.append((pkt_cnt, byte_cnt))
+                    cur_dir, pkt_cnt, byte_cnt = dirs[i], 1, abs(signed[i][1])
+            bursts.append((pkt_cnt, byte_cnt))
+
+        burst_count = len(bursts)
+        all_stats["burst_count"]      = burst_count
+        all_stats["mean_burst_pkt"]   = sum(b[0] for b in bursts) / burst_count if burst_count else 0.0
+        all_stats["mean_burst_bytes"] = sum(b[1] for b in bursts) / burst_count if burst_count else 0.0
+
+        if hs_end_ts is not None:
+            total_bytes = all_stats["byte_count"]
+            hs_bytes    = sum(abs(sz) for ts, sz in signed if ts < hs_end_ts)
+            hs_pkt_count = sum(1 for ts, _ in signed if ts < hs_end_ts)
+            all_stats["hs_duration_s"] = hs_end_ts - first_ts
+            all_stats["hs_pkt_count"]  = hs_pkt_count
+            all_stats["hs_byte_frac"]  = hs_bytes / total_bytes if total_bytes else 0.0
+
+    return result

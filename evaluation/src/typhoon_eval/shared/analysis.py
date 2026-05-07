@@ -27,7 +27,7 @@ from .protocols import BY_NAME
 
 console = Console()
 
-RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
+RESULTS_DIR = Path(__file__).parent.parent.parent.parent / "results"
 CAPTURES_ROOT = RESULTS_DIR / "captures"
 
 
@@ -156,6 +156,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
         table.add_column("Throughput", justify="right")
         table.add_column("Overhead", justify="right")
         table.add_column("Size p5/p50/p95 (B)", justify="right")
+        table.add_column("Burst / Reg / Eff", justify="right")
 
     for name, dirs in sorted(all_stats.items()):
         proto_key = name.removesuffix("_chaos")
@@ -216,6 +217,16 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                 else:
                     throughput = "[dim]—[/dim]"
                 overhead = _fmt_pct(s.get("overhead_ratio"))
+                if direction == "all":
+                    burst = s.get("burstiness")
+                    sreg  = s.get("size_regularity")
+                    geff  = s.get("goodput_efficiency")
+                    burst_str = f"{burst:.2f}" if burst is not None else "—"
+                    sreg_str  = f"{sreg:.2f}"  if sreg  is not None else "—"
+                    geff_str  = f"{geff:.2f}"  if geff  is not None else "—"
+                    fingerprint = f"{burst_str} / {sreg_str} / {geff_str}"
+                else:
+                    fingerprint = "[dim]—[/dim]"
                 table.add_row(
                     name if first else "",
                     direction,
@@ -224,6 +235,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                     throughput,
                     overhead,
                     f"{p5} / {p50} / {p95}" if ps else "[dim]—[/dim]",
+                    fingerprint,
                 )
             first = False
 

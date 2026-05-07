@@ -89,32 +89,3 @@ jobs:
           name: flamegraphs
           path: flamegraphs/
           retention-days: 5
-
-  plotting:
-    name: Generate TYPHOON Example Plots
-    runs-on: ubuntu-24.04
-
-    steps:
-      - name: Checkout 🛎️
-        uses: actions/checkout@v4
-
-      - name: Install Python and matplotlib 🐍
-        run: pip install matplotlib numpy click rich
-
-      - name: Generate flow diagrams 📉
-        env:
-          RUSTFLAGS: "-D warnings"
-          PYTHONPATH: evaluation/src
-        run: |
-          mkdir -p flow-diagrams
-          for example in hello_world multi_flow multi_client long_session heavy_traffic use_case mirror_decoy; do
-            python -m typhoon_eval.flow_plot --example "$example" --typhoon-dir typhoon --out-dir "flow-diagrams/${example}" --per-packet || true
-          done
-
-      - name: Upload flow diagrams 📈
-        uses: actions/upload-artifact@v4
-        with:
-          name: flow-diagrams
-          path: flow-diagrams/
-          retention-days: 5
-

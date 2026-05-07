@@ -22,10 +22,10 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 
-from typhoon_eval.capture_stats import COMP_COLORS, COMPONENTS, USE_CASE_COLORS, stats_from_records
-from typhoon_eval.flow_plot import _DEFAULT_TYPHOON_DIR, _run_example
+from typhoon_eval.self.flow_plot import _DEFAULT_TYPHOON_DIR, _run_example
+from typhoon_eval.shared.capture_stats import COMP_COLORS, COMPONENTS, USE_CASE_COLORS, stats_from_records
 
-_DEFAULT_OUT_DIR = Path(__file__).parent.parent.parent / "results" / "self_compare"
+_DEFAULT_OUT_DIR = Path(__file__).parent.parent.parent.parent / "results" / "self_compare"
 
 
 def _config_label(config_list: list[dict]) -> str:
@@ -46,8 +46,8 @@ def _plot_self_compare(run_stats: list[dict], use_case: str, out_dir: Path) -> N
     run_labels = [f"Run {i + 1}" for i in range(n)]
     color = USE_CASE_COLORS.get(use_case, "#888888")
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    (ax_size, ax_iat), (ax_ent, ax_comp) = axes
+    fig, axes = plt.subplots(3, 2, figsize=(14, 15))
+    (ax_size, ax_iat), (ax_ent, ax_comp), (ax_burst, ax_reg) = axes
 
     # Panel A — packet size violin plots
     size_data = [np.array(s["all"]["packet_size"]["raw"]) for s in run_stats]
@@ -109,6 +109,26 @@ def _plot_self_compare(run_stats: list[dict], use_case: str, out_dir: Path) -> N
     ax_comp.set_title("Mean packet composition per run")
     comp_patches = [mpatches.Patch(color=COMP_COLORS[c], label=c) for c in COMPONENTS]
     ax_comp.legend(handles=comp_patches, fontsize=8)
+
+    # Panel E — burstiness bar chart per run
+    burstinesses   = [s["all"].get("burstiness", 0.0) for s in run_stats]
+    size_regs      = [s["all"].get("size_regularity", 0.0) for s in run_stats]
+    x = np.arange(n)
+    ax_burst.bar(x, burstinesses, color=color, alpha=0.75)
+    ax_burst.set_xticks(x)
+    ax_burst.set_xticklabels(run_labels, rotation=20, ha="right")
+    ax_burst.set_ylabel("Burstiness (std/mean IAT)")
+    ax_burst.set_title("IAT burstiness per run")
+    ax_burst.grid(True, axis="y", alpha=0.3)
+
+    # Panel F — size regularity per run
+    ax_reg.bar(x, size_regs, color="#e67e22", alpha=0.75)
+    ax_reg.set_xticks(x)
+    ax_reg.set_xticklabels(run_labels, rotation=20, ha="right")
+    ax_reg.set_ylim(0, 1.05)
+    ax_reg.set_ylabel("Size regularity (unique/total)")
+    ax_reg.set_title("Packet size regularity per run")
+    ax_reg.grid(True, axis="y", alpha=0.3)
 
     # Footer: config labels
     config_lines = [f"  Run {i + 1}: {_config_label(s['config'])}" for i, s in enumerate(run_stats)]

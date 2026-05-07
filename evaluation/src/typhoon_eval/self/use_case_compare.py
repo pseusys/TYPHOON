@@ -25,11 +25,11 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 
-from typhoon_eval.capture_stats import COMP_COLORS, COMPONENTS, USE_CASE_COLORS, pool_stats, stats_from_records
-from typhoon_eval.flow_plot import _DEFAULT_TYPHOON_DIR, _run_example
+from typhoon_eval.self.flow_plot import _DEFAULT_TYPHOON_DIR, _run_example
+from typhoon_eval.shared.capture_stats import COMP_COLORS, COMPONENTS, USE_CASE_COLORS, pool_stats, stats_from_records
 
 _DEFAULT_CASES = ["throughput", "interactive", "transparent", "security", "default"]
-_DEFAULT_OUT_DIR = Path(__file__).parent.parent.parent / "results" / "use_case_compare"
+_DEFAULT_OUT_DIR = Path(__file__).parent.parent.parent.parent / "results" / "use_case_compare"
 
 
 def _short_title(use_case: str, pooled: dict) -> str:
