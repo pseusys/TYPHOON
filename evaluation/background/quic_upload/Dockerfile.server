@@ -1,0 +1,18 @@
+FROM python:3.12-alpine
+
+RUN apk add --no-cache iproute2 openssl \
+    && apk add --no-cache --virtual .build-deps gcc musl-dev libffi-dev openssl-dev cargo \
+    && pip install --no-cache-dir "aioquic>=0.9.25,<0.10" \
+    && apk del .build-deps
+
+RUN mkdir -p /keys && \
+    openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+        -keyout /keys/quic.key -out /keys/quic.pem \
+        -subj "/CN=quic-bg-upload" \
+        -addext "subjectAltName=DNS:quic-bg-upload,IP:172.21.0.12" 2>/dev/null
+
+COPY evaluation/background/common/ /common/
+COPY evaluation/background/quic_upload/quic_server.py /usr/local/bin/quic_server
+RUN chmod +x /usr/local/bin/quic_server
+
+CMD ["python3", "/usr/local/bin/quic_server"]

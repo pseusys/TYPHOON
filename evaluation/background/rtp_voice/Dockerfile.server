@@ -1,0 +1,10 @@
+FROM python:3.12-alpine
+
+RUN apk add --no-cache iproute2
+
+COPY evaluation/background/common/ /common/
+COPY evaluation/background/rtp_voice/rtp_voice.py /usr/local/bin/rtp_voice
+RUN chmod +x /usr/local/bin/rtp_voice
+
+ENV ROLE=server
+CMD ["python3", "/usr/local/bin/rtp_voice"]

@@ -70,7 +70,7 @@ def _mod(module: str, *args: str) -> list[str]:
 
 def _phase_capture(
     classification_runs: int,
-    scenarios: list[str],
+    profiles: list[str],
     chaos: bool,
     transfer_bytes: int,
     log_dir: Path,
@@ -87,7 +87,7 @@ def _phase_capture(
         console.print(f"\n  [cyan]Bulk classification run {i + 1}/{classification_runs}[/cyan]")
         ok = _run(
             "capture-bulk",
-            _mod("typhoon_eval.orchestrator", "--all", "--scenario", "bulk", "--bytes", str(transfer_bytes)),
+            _mod("typhoon_eval.shared.orchestrator", "--all", "--profile", "bulk_upload"),
             log_path,
         )
         if ok:
@@ -99,13 +99,13 @@ def _phase_capture(
             console.print("  [yellow]⚠ Bulk capture failed — continuing[/yellow]")
 
     # One run per non-bulk scenario.
-    for scenario in scenarios:
-        if scenario == "bulk":
+    for profile in profiles:
+        if profile == "bulk_upload":
             continue
-        console.print(f"\n  [cyan]Scenario run: {scenario}[/cyan]")
+        console.print(f"\n  [cyan]Profile run: {profile}[/cyan]")
         _run(
-            f"capture-{scenario}",
-            _mod("typhoon_eval.orchestrator", "--all", "--scenario", scenario, "--bytes", str(transfer_bytes)),
+            f"capture-{profile}",
+            _mod("typhoon_eval.shared.orchestrator", "--all", "--profile", profile),
             log_path,
         )
 
@@ -114,7 +114,7 @@ def _phase_capture(
         console.print("\n  [cyan]Chaos run (bulk + pumba)[/cyan]")
         _run(
             "capture-chaos",
-            _mod("typhoon_eval.orchestrator", "--all", "--chaos", "--scenario", "bulk", "--bytes", str(transfer_bytes)),
+            _mod("typhoon_eval.shared.orchestrator", "--all", "--chaos", "--profile", "bulk_upload"),
             log_path,
         )
 
@@ -137,7 +137,7 @@ def _phase_analyze(run_ids: list[str], log_dir: Path) -> None:
     for rd in all_runs:
         run_id = rd.name.removeprefix("run_")
         console.print(f"\n  Analyzing [dim]{rd.name}[/dim]…")
-        _run("analyze", _mod("typhoon_eval.analysis", "--run", run_id), log_path)
+        _run("analyze", _mod("typhoon_eval.shared.analysis", "--run", run_id), log_path)
 
 
 # ── Phase 3: protocol visualization ──────────────────────────────────────────
@@ -152,14 +152,14 @@ def _phase_visualize(bulk_run_ids: list[str], diagrams_dir: Path, log_dir: Path)
 
     for run_id in bulk_run_ids:
         console.print(f"\n  [cyan]proto-compare[/cyan] {run_id}")
-        _run("proto-compare", _mod("typhoon_eval.proto_compare_plots", "--run", run_id, "--out-dir", str(proto_cmp_dir)), log_path)
+        _run("proto-compare", _mod("typhoon_eval.protocols_op.proto_compare_plots", "--run", run_id, "--out-dir", str(proto_cmp_dir)), log_path)
         for suffix in ("_proto_compare.png", "_handshake.png", "_fingerprint.png"):
             p = proto_cmp_dir / f"run_{run_id}{suffix}"
             if p.exists():
                 generated.append(p)
 
         console.print(f"  [cyan]flow-plot[/cyan] {run_id}")
-        _run("flow-plot", _mod("typhoon_eval.pcap_flow_plot", "--run", run_id, "--out-dir", str(flow_plot_dir)), log_path)
+        _run("flow-plot", _mod("typhoon_eval.shared.pcap_flow_plot", "--run", run_id, "--out-dir", str(flow_plot_dir)), log_path)
         for p in flow_plot_dir.glob(f"run_{run_id}*.png"):
             generated.append(p)
 
@@ -183,17 +183,17 @@ def _phase_typhoon(
     traffic_cmp_dir = diagrams_dir / "traffic_compare"
 
     console.print(f"\n  [cyan]self-compare[/cyan] ({typhoon_runs} runs)")
-    ok = _run("self-compare", _mod("typhoon_eval.self_compare", "--runs", str(typhoon_runs), "--out-dir", str(self_cmp_dir)), log_path)
+    ok = _run("self-compare", _mod("typhoon_eval.self.self_compare", "--runs", str(typhoon_runs), "--out-dir", str(self_cmp_dir)), log_path)
     if ok:
         generated.extend(self_cmp_dir.glob("*.png"))
 
     console.print(f"\n  [cyan]use-case-compare[/cyan] ({typhoon_uc_runs} runs/case)")
-    ok = _run("uc-compare", _mod("typhoon_eval.use_case_compare", "--runs-per-case", str(typhoon_uc_runs), "--out-dir", str(uc_cmp_dir)), log_path)
+    ok = _run("uc-compare", _mod("typhoon_eval.self.use_case_compare", "--runs-per-case", str(typhoon_uc_runs), "--out-dir", str(uc_cmp_dir)), log_path)
     if ok:
         generated.extend(uc_cmp_dir.glob("*.png"))
 
     console.print("\n  [cyan]traffic-compare[/cyan]")
-    ok = _run("traffic-compare", _mod("typhoon_eval.traffic_compare", "--out-dir", str(traffic_cmp_dir)), log_path)
+    ok = _run("traffic-compare", _mod("typhoon_eval.self.traffic_compare", "--out-dir", str(traffic_cmp_dir)), log_path)
     if ok:
         generated.extend(traffic_cmp_dir.glob("*.png"))
 
@@ -222,7 +222,7 @@ def _phase_ml(
     features_path = results_dir / "ml" / "features.npz"
     features_path.parent.mkdir(parents=True, exist_ok=True)
     console.print("\n  [cyan]ml-features[/cyan] (all runs → aggregated feature matrix)")
-    _run("ml-features", _mod("typhoon_eval.ml_features", "--all-runs", "--out", str(features_path)), log_path)
+    _run("ml-features", _mod("typhoon_eval.ml.ml_features", "--all-runs", "--out", str(features_path)), log_path)
 
     if not features_path.exists():
         console.print("  [yellow]features.npz not found — skipping ML training.[/yellow]")
@@ -242,10 +242,10 @@ def _phase_ml(
     generated: list[Path] = []
 
     for label, module, extra_args in [
-        ("ml-classify",  "typhoon_eval.ml_classify", []),
-        ("ml-cluster",   "typhoon_eval.ml_cluster",  []),
-        ("ml-sequence",  "typhoon_eval.ml_sequence", []),
-        ("ml-bytes",     "typhoon_eval.ml_bytes",    []),
+        ("ml-classify",  "typhoon_eval.ml.ml_classify", []),
+        ("ml-cluster",   "typhoon_eval.ml.ml_cluster",  []),
+        ("ml-sequence",  "typhoon_eval.ml.ml_sequence", []),
+        ("ml-bytes",     "typhoon_eval.ml.ml_bytes",    []),
     ]:
         console.print(f"\n  [cyan]{label}[/cyan]")
         _run(
@@ -287,7 +287,7 @@ def _generate_report(
             if cfg_path.exists():
                 cfg: dict = json.loads(cfg_path.read_text())
                 chaos_flag = "yes" if cfg.get("chaos") else "no"
-                scenario   = cfg.get("scenario", "?")
+                scenario   = cfg.get("profile", cfg.get("scenario", "?"))
                 protos     = ", ".join(cfg.get("protocols", []))
                 tb_mb      = cfg.get("transfer_bytes", 0) / 1_048_576
                 lines.append(f"| `{rd.name}` | {scenario} | {chaos_flag} | {protos} | {tb_mb:.0f} MB |")
@@ -394,7 +394,7 @@ def _generate_report(
         "poe evaluate --skip capture,typhoon",
         "",
         "# Individual steps",
-        "poe capture --all --scenario bulk",
+        "poe capture --all --profile bulk_upload",
         "poe analyze",
         "poe proto-compare",
         "poe ml-features --all-runs",
@@ -418,8 +418,8 @@ def _generate_report(
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--classification-runs", default=3, show_default=True, type=int,
               help="Number of bulk all-protocol capture runs for ML training data.")
-@click.option("--scenarios", default="bulk,interactive,streaming,burst", show_default=True,
-              help="Comma-separated traffic scenarios to capture (one run each, beyond the bulk classification runs).")
+@click.option("--profiles", default="bulk_upload,tiny_session,medium_cbr,bulk_bursty", show_default=True,
+              help="Comma-separated profiles to capture (one run each, beyond the bulk classification runs).")
 @click.option("--chaos/--no-chaos", default=True, show_default=True,
               help="Run one chaos (pumba) capture.")
 @click.option("--bytes", "transfer_bytes", default=10_485_760, show_default=True, type=int,
@@ -434,7 +434,7 @@ def _generate_report(
               help=f"Comma-separated phases to skip: {', '.join(_ALL_PHASES)}.")
 def main(
     classification_runs: int,
-    scenarios: str,
+    profiles: str,
     chaos: bool,
     transfer_bytes: int,
     typhoon_runs: int,
@@ -451,7 +451,7 @@ def main(
         console.print(f"Valid phases: {', '.join(_ALL_PHASES)}")
         sys.exit(1)
 
-    scenario_list = [s.strip() for s in scenarios.split(",") if s.strip()]
+    profile_list = [s.strip() for s in profiles.split(",") if s.strip()]
     d_dir = Path(diagrams_dir)
     d_dir.mkdir(parents=True, exist_ok=True)
 
@@ -469,7 +469,7 @@ def main(
     bulk_run_ids: list[str] = []
 
     if "capture" not in skipped:
-        bulk_run_ids = _phase_capture(classification_runs, scenario_list, chaos, transfer_bytes, log_dir)
+        bulk_run_ids = _phase_capture(classification_runs, profile_list, chaos, transfer_bytes, log_dir)
     else:
         # Use the N most-recent bulk (non-chaos) runs.
         all_runs = sorted(CAPTURES_ROOT.glob("run_*")) if CAPTURES_ROOT.exists() else []
@@ -478,7 +478,7 @@ def main(
             if not cfg_path.exists():
                 continue
             cfg: dict = json.loads(cfg_path.read_text())
-            if not cfg.get("chaos") and cfg.get("scenario") == "bulk":
+            if not cfg.get("chaos") and cfg.get("profile", cfg.get("scenario")) == "bulk_upload":
                 bulk_run_ids.append(rd.name.removeprefix("run_"))
             if len(bulk_run_ids) >= classification_runs:
                 break

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-UDP sender — sends a traffic scenario to SERVER_HOST:9000, exits 0.
+UDP sender — sends the c2s portion of the active TRAFFIC_PROFILE to SERVER_HOST:9000, exits 0.
 
 Env vars:
   SERVER_HOST       destination IP or hostname (required)
-  TRANSFER_BYTES    bytes to send (default 100 MB)
-  TRAFFIC_SCENARIO  bulk|interactive|streaming|burst|idle|echo (default: bulk)
+  TRAFFIC_PROFILE   profile name (informational)
+  PROFILE_CHUNK_C2S, PROFILE_IAT_C2S_MS, PROFILE_BYTES_C2S, PROFILE_DURATION_S,
+  PROFILE_BURSTY, PROFILE_BURST_COUNT, PROFILE_BURST_IDLE_S
 """
 
 import os
@@ -14,13 +15,9 @@ import socket
 import sys
 import time
 
-from _scenario import run_scenario
+from _profile import run_profile
 
 server_host = os.environ["SERVER_HOST"]
-transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
-scenario = os.environ.get("TRAFFIC_SCENARIO", "bulk").lower()
-delay_ms = float(os.environ.get("INTER_PACKET_DELAY_MS", 0))
-delay_every = int(os.environ.get("DELAY_EVERY_N", 1))
 port = 9000
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -30,7 +27,7 @@ sock.connect((server_host, port))
 time.sleep(0.2)
 
 transfer_start = time.monotonic()
-sent, total_sleep = run_scenario(scenario, sock.send, transfer_bytes, delay_ms, delay_every)
+sent, total_sleep = run_profile(sock.send)
 transfer_time_s = time.monotonic() - transfer_start - total_sleep
 
 sock.send(b"DONE")

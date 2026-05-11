@@ -1,0 +1,9 @@
+FROM python:3.12-alpine
+
+RUN apk add --no-cache iproute2
+
+COPY evaluation/background/common/ /common/
+COPY evaluation/background/control_plane/control_server.py /usr/local/bin/control_server
+RUN chmod +x /usr/local/bin/control_server
+
+CMD ["python3", "/usr/local/bin/control_server"]

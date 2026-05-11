@@ -222,9 +222,9 @@ The `evaluation/` directory contains a Docker-based traffic capture and analysis
 
 1. **TYPHOON self-comparison** — measure run-to-run and scenario-to-scenario variability of TYPHOON's own traffic profile.
 2. **Operational comparison** — capture all 16 protocols (TYPHOON + 15 comparators) under a controlled Docker network and compare their throughput, overhead, goodput efficiency, byte entropy, burstiness, and handshake characteristics. _Operational metrics, not detectability._
-3. **Background-blending evaluation** _(planned)_ — generate a corpus of natural UDP traffic (QUIC HTTPS, DNS, RTP voice/video, gaming, control plane), run TYPHOON alongside, and measure how often a passive classifier mistakes TYPHOON for benign background traffic.
+3. **Background-blending evaluation** — generate a corpus of natural UDP traffic (QUIC HTTPS, DNS, RTP voice/video, gaming, control plane), run TYPHOON alongside, and measure how often a passive classifier mistakes TYPHOON for benign background traffic.
 
-See [evaluation/EVALUATION.md](evaluation/EVALUATION.md) for a complete explanation of each part. The empirical grounding for the Part 3 background composition is in [evaluation/docs/TRAFFIC_CAPTURE_REFERENCE.md §7](evaluation/docs/TRAFFIC_CAPTURE_REFERENCE.md).
+See [evaluation/EVALUATION.md](evaluation/EVALUATION.md) for a complete explanation of each part. The empirical grounding for the Part 3 background composition is in evaluation/docs/TRAFFIC_CAPTURE_REFERENCE.md §7.
 
 ### Requirements
 
@@ -291,9 +291,16 @@ Outputs land in `results/plots/`:
 - `<run>_handshake.png` — handshake duration / packet count / byte fraction
 - `<run>_compare_table.md` — markdown comparison table
 
-#### Part 3 — Background-blending evaluation _(planned)_
+#### Part 3 — Background-blending evaluation
 
-To be added under `evaluation/background/` (Docker contexts for natural-UDP generators) and `src/typhoon_eval/background/` (eval-host orchestration + open-world detector).
+| Command | What it does |
+| --- | --- |
+| `poe background-build` | Build all 8 generator Docker images (DNS, gaming, RTP voice/video, QUIC d/l, QUIC u/l, control plane, WG idle). |
+| `poe background-corpus` | Run the randomised corpus (default 20 runs) — each run picks a random TYPHOON profile, a random subset of generators, and random network chaos. |
+| `poe background-blending` | Compute primary metric: fraction of TYPHOON flows confidently classified as one of the natural background classes. |
+| `poe background-openworld` | Compute open-world metrics: one-class SVM novelty rate + TPR @ 0.1 % FPR. |
+
+Outputs land in `results/background/run_*/` — one directory per corpus run with the captured pcap and metadata.
 
 #### ML utilities (used by Part 3, callable standalone)
 

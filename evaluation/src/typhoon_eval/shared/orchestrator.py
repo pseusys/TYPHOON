@@ -5,6 +5,10 @@ Runs a Docker Compose capture session for each selected protocol, waits for
 the client container to finish transferring data, then tears down.  The
 observer container writes a pcap to results/captures/<protocol>[_chaos].pcap.
 
+Per-run profile parameters (chunk sizes, IATs, byte budgets, FlowConfig
+overrides) are sampled from `shared/profiles.py` and passed to client and
+server containers as `TRAFFIC_PROFILE` + `PROFILE_*` env vars.
+
 Usage (via poe):
     poe capture --all
     poe capture --all --chaos
@@ -12,11 +16,12 @@ Usage (via poe):
     poe capture --protocol wireguard --chaos --timeout 600
 
 Usage (direct):
-    python -m typhoon_eval.orchestrator --all [--chaos] [--timeout 300] [--bytes 10485760] [--delay-ms 40] [--delay-every 10]
+    python -m typhoon_eval.shared.orchestrator --all [--chaos] [--timeout 300] [--profile bulk_upload]
 """
 
 import datetime
 import json
+import random
 import sys
 from pathlib import Path
 
@@ -26,6 +31,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from .docker_utils import COMPOSE_DIR, _purge_stale_stacks, compose_up
+from .profiles import DEFAULT_PROFILE, PROFILES, profile_to_env
 from .protocols import ALL, BY_NAME, Protocol
 
 console = Console()
@@ -34,17 +40,11 @@ RESULTS_DIR = Path(__file__).parent.parent.parent.parent / "results"
 ENV_DIR = COMPOSE_DIR / "env"
 
 
-_VALID_SCENARIOS = ("bulk", "interactive", "streaming", "burst", "idle", "echo")
-
-
 def _run_one(
     protocol: Protocol,
     chaos: bool,
     timeout: int,
-    transfer_bytes: int,
-    delay_ms: float,
-    delay_every: int,
-    scenario: str,
+    profile_env: dict[str, str],
     loss_pct: float,
     bw_mbps: float,
     captures_dir: Path,
@@ -56,7 +56,7 @@ def _run_one(
     """
     env_file = ENV_DIR / f".env.{protocol.name}"
     if not env_file.exists():
-        return False, f"missing env file: {env_file}", None
+        return False, f"missing env file: {env_file}", None, None, None
 
     suffix = "_chaos" if chaos else ""
     pumba_target = f"re2:typhoon-eval-{protocol.name.replace('_', '-')}-client-1"
@@ -69,20 +69,20 @@ def _run_one(
         elif key == "TIMEOUT":
             effective_timeout = int(val)
 
-    extra_env = {
+    extra_env: dict[str, str] = {
         "PROTOCOL": protocol.name,
         "PROTOCOL_SUFFIX": suffix,
         "CLIENT_IMAGE": protocol.client_image,
         "SERVER_IMAGE": protocol.server_image,
-        "TRANSFER_BYTES": str(transfer_bytes),
+        # Compatibility key — TRANSFER_BYTES is read by legacy senders that have
+        # not yet migrated to PROFILE_BYTES_C2S.  Mirror the c2s budget here.
+        "TRANSFER_BYTES": profile_env["PROFILE_BYTES_C2S"],
         "CAPTURES_DIR": str(captures_dir.resolve()),
         "PUMBA_TARGET": pumba_target,
-        "INTER_PACKET_DELAY_MS": str(delay_ms),
-        "DELAY_EVERY_N": str(delay_every),
-        "TRAFFIC_SCENARIO": scenario,
         "CHAOS_LOSS_PCT": str(loss_pct),
         "CHAOS_BW_MBPS": str(bw_mbps),
     }
+    extra_env.update(profile_env)
 
     success, delivery_pct, transfer_time_s, recv_time_s = compose_up(
         protocol_name=protocol.name,
@@ -120,35 +120,17 @@ def _run_one(
     help="Per-protocol timeout in seconds before the run is killed.",
 )
 @click.option(
-    "--bytes",
-    "transfer_bytes",
-    default=10_485_760,
+    "--profile",
+    default=DEFAULT_PROFILE,
     show_default=True,
+    type=click.Choice(list(PROFILES.keys())),
+    help="Traffic profile (chunk sizes, IATs, byte budgets, FlowConfig overrides).",
+)
+@click.option(
+    "--seed",
+    default=None,
     type=int,
-    help="Payload bytes transferred by each client.",
-)
-@click.option(
-    "--delay-ms",
-    "delay_ms",
-    default=40.0,
-    show_default=True,
-    type=float,
-    help="Inter-packet sleep injected every --delay-every packets (ms). 0 = no delay.",
-)
-@click.option(
-    "--delay-every",
-    "delay_every",
-    default=10,
-    show_default=True,
-    type=int,
-    help="Apply inter-packet delay after every N packets.",
-)
-@click.option(
-    "--scenario",
-    default="bulk",
-    show_default=True,
-    type=click.Choice(list(_VALID_SCENARIOS)),
-    help="Traffic scenario: bulk|interactive|streaming|burst|idle|echo.",
+    help="RNG seed for sampling profile parameters (default: random).",
 )
 @click.option(
     "--loss-pct",
@@ -166,7 +148,7 @@ def _run_one(
     type=float,
     help="Chaos: bandwidth cap in Mbps via tbf (0 = unlimited).",
 )
-def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, transfer_bytes: int, delay_ms: float, delay_every: int, scenario: str, loss_pct: float, bw_mbps: float) -> None:
+def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, profile: str, seed: int | None, loss_pct: float, bw_mbps: float) -> None:
     """TYPHOON evaluation — run traffic captures for protocol comparison."""
 
     if not run_all and not protocol_name:
@@ -182,22 +164,19 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
     protocols = list(ALL) if run_all else [BY_NAME[protocol_name]]
     chaos_note = " [yellow](chaos mode)[/yellow]" if chaos else ""
 
-    # injected_delay_s is deterministic and identical for all senders with the same params
-    chunk_size = 500
-    n_sleep_points = (transfer_bytes // chunk_size) // delay_every
-    injected_delay_s = n_sleep_points * delay_ms / 1000 if delay_ms > 0 else 0.0
+    rng = random.Random(seed)
+    profile_obj = PROFILES[profile]
+    profile_env = profile_to_env(profile_obj, rng)
+    transfer_bytes = int(profile_env["PROFILE_BYTES_C2S"])
 
     console.print(f"\n[bold]TYPHOON evaluation{chaos_note}[/bold]")
     console.print(f"  Protocols : {', '.join(p.name for p in protocols)}")
     console.print(f"  Timeout   : {timeout}s per run (env file may override per protocol)")
-    console.print(f"  Transfer  : {transfer_bytes / 1_048_576:.0f} MB")
-    console.print(f"  Scenario  : {scenario}")
+    console.print(f"  Profile   : {profile}  ({profile_obj.description})")
+    console.print(f"  Transfer  : c2s={int(profile_env['PROFILE_BYTES_C2S']) / 1_048_576:.1f} MB / s2c={int(profile_env['PROFILE_BYTES_S2C']) / 1_048_576:.1f} MB")
     if chaos and (loss_pct > 0 or bw_mbps > 0):
         console.print(f"  Chaos     : loss={loss_pct}%  bw={bw_mbps or 'unlimited'} Mbps")
-    if delay_ms > 0:
-        console.print(f"  Delay     : {delay_ms}ms every {delay_every} packets → {injected_delay_s:.1f}s injected\n")
-    else:
-        console.print()
+    console.print()
 
     run_id = "run_" + datetime.datetime.now(datetime.UTC).strftime("%Y%m%d_%H%M%S")
     captures_dir = RESULTS_DIR / "captures" / run_id
@@ -210,11 +189,9 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
         "protocols": [p.name for p in protocols],
         "chaos": chaos,
         "timeout_s": timeout,
+        "profile": profile,
+        "profile_env": profile_env,
         "transfer_bytes": transfer_bytes,
-        "delay_ms": delay_ms,
-        "delay_every": delay_every,
-        "injected_delay_s": injected_delay_s,
-        "scenario": scenario,
         "loss_pct": loss_pct,
         "bw_mbps": bw_mbps,
     }
@@ -241,10 +218,7 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
                     protocol=protocol,
                     chaos=chaos,
                     timeout=timeout,
-                    transfer_bytes=transfer_bytes,
-                    delay_ms=delay_ms,
-                    delay_every=delay_every,
-                    scenario=scenario,
+                    profile_env=profile_env,
                     loss_pct=loss_pct,
                     bw_mbps=bw_mbps,
                     captures_dir=captures_dir,

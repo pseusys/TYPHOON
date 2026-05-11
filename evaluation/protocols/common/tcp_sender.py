@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-TCP sender — connects to SERVER_HOST:LISTEN_PORT, runs a traffic scenario, exits 0.
+TCP sender — connects to SERVER_HOST:LISTEN_PORT, runs the c2s portion of the
+active TRAFFIC_PROFILE, exits 0.
 
 Env vars:
   SERVER_HOST       destination IP or hostname (required)
   OBSERVER_GW       gateway IP for the route add
   FORWARD_SUBNET    subnet to route (default 172.21.0.0/24)
-  TRANSFER_BYTES    bytes to send (default 100 MB)
   LISTEN_PORT       destination port (default 9000)
   CONNECT_RETRIES   times to retry on connection refused (default 30)
-  TRAFFIC_SCENARIO  bulk|interactive|streaming|burst|idle|echo (default: bulk)
+  TRAFFIC_PROFILE   profile name (informational)
+  PROFILE_CHUNK_C2S, PROFILE_IAT_C2S_MS, PROFILE_BYTES_C2S, PROFILE_DURATION_S,
+  PROFILE_BURSTY, PROFILE_BURST_COUNT, PROFILE_BURST_IDLE_S
 """
 
 import os
@@ -18,17 +20,13 @@ import subprocess
 import sys
 import time
 
-from _scenario import run_scenario
+from _profile import run_profile
 
 observer_gw = os.environ.get("OBSERVER_GW")
 forward_subnet = os.environ.get("FORWARD_SUBNET", "172.21.0.0/24")
 server_host = os.environ["SERVER_HOST"]
 port = int(os.environ.get("LISTEN_PORT", 9000))
-transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
 retries = int(os.environ.get("CONNECT_RETRIES", 30))
-scenario = os.environ.get("TRAFFIC_SCENARIO", "bulk").lower()
-delay_ms = float(os.environ.get("INTER_PACKET_DELAY_MS", 0))
-delay_every = int(os.environ.get("DELAY_EVERY_N", 1))
 
 if observer_gw:
     subprocess.run(["ip", "route", "add", forward_subnet, "via", observer_gw], check=False, capture_output=True)
@@ -38,7 +36,7 @@ for attempt in range(retries):
         with socket.create_connection((server_host, port), timeout=5) as s:
             s.settimeout(None)
             transfer_start = time.monotonic()
-            sent, total_sleep = run_scenario(scenario, s.sendall, transfer_bytes, delay_ms, delay_every)
+            sent, total_sleep = run_profile(s.sendall)
             transfer_time_s = time.monotonic() - transfer_start - total_sleep
             try:
                 s.shutdown(socket.SHUT_WR)

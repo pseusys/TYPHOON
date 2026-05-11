@@ -112,6 +112,23 @@ select = ["E", "F", "I", "UP", "B"]
   cmd  = "python -m typhoon_eval.ml.ml_bytes"
   help = "Header-byte classification (RF / 1D-CNN) from first-50-packet IP+UDP headers"
 
+  # ── PART 3 — Background-blending evaluation ──────────────────────────────
+  [tool.poe.tasks.background-build]
+  cmd  = "docker compose -f background/compose/docker-compose.build.yml build"
+  help = "Build all background generator Docker images (DNS, gaming, RTP, QUIC, control plane, WG idle)"
+
+  [tool.poe.tasks.background-corpus]
+  cmd  = "python -m typhoon_eval.background.corpus"
+  help = "Run the randomised background-blending corpus (default 70 runs)"
+
+  [tool.poe.tasks.background-blending]
+  cmd  = "python -m typhoon_eval.background.ml_blending"
+  help = "Compute primary blending metric (confident-blend fraction) from corpus"
+
+  [tool.poe.tasks.background-openworld]
+  cmd  = "python -m typhoon_eval.background.ml_open_world"
+  help = "Held-out detectability — Test A (pair-binary AUC) + Test B (closed-world n+1, k-fold CV)"
+
   # ── Pipeline orchestrator ────────────────────────────────────────────────
   [tool.poe.tasks.evaluate]
   cmd  = "python -m typhoon_eval.pipeline"

@@ -147,9 +147,9 @@ poe proto-flow-plot        # per-packet timeline grid (auxiliary)
 
 ## 4 — Part 3 — Background-blending evaluation
 
-Status: **planned, not yet implemented**. This section describes the design.
+Status: **implemented** — `evaluation/background/` (Docker contexts) and `src/typhoon_eval/background/` (eval-host orchestration + open-world detector).
 
-Will live in `evaluation/background/` (Docker build contexts for natural-UDP traffic generators) and `src/typhoon_eval/background/` (eval-host orchestration and ML).
+Lives in [evaluation/background/](background/) (Docker build contexts) and [src/typhoon_eval/background/](src/typhoon_eval/background/) (eval-host orchestration + ML).
 
 ### Part 3 — Question
 
@@ -159,7 +159,7 @@ The right metric is **not** "TYPHOON-vs-tunnels classifier accuracy" but **"frac
 
 ### The background corpus
 
-The composition is grounded in real-world UDP traffic measurements catalogued in [docs/TRAFFIC_CAPTURE_REFERENCE.md §7](docs/TRAFFIC_CAPTURE_REFERENCE.md#7-real-world-udp-traffic-composition). Eight natural classes:
+The composition is grounded in real-world UDP traffic measurements catalogued in docs/TRAFFIC_CAPTURE_REFERENCE.md §7. Eight natural classes:
 
 | Class | Generator | Real-world share | Per-packet signature |
 | --- | --- | --- | --- |
@@ -176,17 +176,28 @@ The composition is grounded in real-world UDP traffic measurements catalogued in
 
 Each "background run" picks a randomised subset of generators (≥ 3 active simultaneously), randomises their parameters (object sizes, IATs, codec settings, query rates), captures for 90–180 s, and runs **TYPHOON in parallel** with one randomly chosen scenario from Part 1. Repeat 20–25 times under varying chaos conditions (latency 0–100 ms, jitter 0–20 ms, loss 0–2 %).
 
-### ML evaluation (open-world, not closed-world)
+Each background generator samples its parameters from its own per-class profile in `BACKGROUND_PROFILES` (see `shared/profiles.py`), independent of the TYPHOON profile being exercised. Earlier the corpus passed TYPHOON's `profile_env` to every container, which warped real flows (e.g. `quic_download` running with `as_voice` parameters became a tiny request-response, not real QUIC) and contaminated the bg-class distribution along profile axes. Sourcing each bg generator from its own distribution is required for the binary detectability metrics to be meaningful.
 
-Three metrics:
+### ML evaluation
 
-| Metric | Trained on | Tested on | Direction |
-| --- | --- | --- | --- |
-| Confident-blend fraction | Background only (8 classes) | TYPHOON flows | Higher = better for TYPHOON |
-| One-class-SVM novelty rate | Background only (1 class: "normal UDP") | TYPHOON flows | Lower = better for TYPHOON |
-| TPR @ 0.1 % FPR | Background + TYPHOON binary | Held-out flows | Lower = better for TYPHOON. WF-literature standard from [TRAFFIC_CAPTURE_REFERENCE.md §5.6](docs/TRAFFIC_CAPTURE_REFERENCE.md#56-evaluation-metrics). |
+Three tests, each answering a specific threat-model question with held-out splits:
 
-### Code layout (planned)
+| Test | Threat model | Trained on | Tested on | Direction |
+| --- | --- | --- | --- | --- |
+| **A — Pair-binary** | Censor *suspects* TYPHOON-as-X and trains a binary classifier on real X vs TYPHOON-as-X | Per-pair (TYPHOON-as-X, real X) flows, `StratifiedKFold(5)` | Out-of-fold predictions | AUC closer to 0.5 = better for TYPHOON; AUC = 1.0 = trivially detected |
+| **B — Closed-world (n+1)** | Censor has labels for natural classes *and* TYPHOON | All classes pooled, `StratifiedKFold(5)` | Out-of-fold predictions | Lower TYPHOON recall = better for TYPHOON (more often misclassified into a natural class) |
+| **C — Open-world threshold** | Censor has labels for natural classes only; flags low-confidence flows | Background only, 70/30 train/holdout | TYPHOON flows + bg holdout | Lower TPR @ 1 % FPR = better for TYPHOON. WF-literature standard from TRAFFIC_CAPTURE_REFERENCE.md §5.6. |
+
+### Part 3 — Commands
+
+```bash
+poe background-build       # build all 8 generator Docker images
+poe background-corpus      # run the randomised corpus (default 20 runs)
+poe background-blending    # primary metric: confident-blend fraction
+poe background-openworld   # secondary metrics: novelty rate + TPR @ 0.1% FPR
+```
+
+### Code layout
 
 ```text
 evaluation/background/                      # Docker build contexts for generators
@@ -219,7 +230,7 @@ Lives in [src/typhoon_eval/shared/](src/typhoon_eval/shared/) and is used by all
                                          <protocol>.pcap here
 ```
 
-The observer bridges two Docker networks and runs `tcpdump -i any`. Because it sits between client and server, every packet is seen exactly once regardless of NAT — consistent with passive ISP-level observation [tcpdump/libpcap ref](docs/TRAFFIC_CAPTURE_REFERENCE.md#11-core-capture-toolchain).
+The observer bridges two Docker networks and runs `tcpdump -i any`. Because it sits between client and server, every packet is seen exactly once regardless of NAT — consistent with passive ISP-level observation tcpdump/libpcap ref.
 
 ### Traffic scenarios
 
@@ -234,7 +245,7 @@ The observer bridges two Docker networks and runs `tcpdump -i any`. Because it s
 
 ### Chaos mode
 
-`--chaos` wraps the client with Pumba + tc/netem to introduce latency / jitter (currently — packet loss and bandwidth caps are listed in [TRAFFIC_CAPTURE_REFERENCE.md §3](docs/TRAFFIC_CAPTURE_REFERENCE.md#3-network-emulation-controlled-conditions) but not yet wired through).
+`--chaos` wraps the client with Pumba + tc/netem to introduce latency / jitter (currently — packet loss and bandwidth caps are listed in TRAFFIC_CAPTURE_REFERENCE.md §3 but not yet wired through).
 
 ### Output structure
 
@@ -308,7 +319,7 @@ evaluation/
 ├── protocols/                      # Docker build contexts for the 16 comparison protocols
 │   ├── common/                     # shared sender code baked into protocol images
 │   └── <protocol>/                 # per-protocol Dockerfile + scripts
-├── background/                     # PLANNED — Docker build contexts for natural-UDP generators
+├── background/                     # Docker build contexts (implemented) for natural-UDP generators
 ├── docs/
 │   └── TRAFFIC_CAPTURE_REFERENCE.md
 ├── results/                        # generated outputs
@@ -340,7 +351,7 @@ evaluation/
     │   ├── ml_cluster.py
     │   ├── ml_sequence.py
     │   └── ml_bytes.py
-    └── background/                 # PART 3 — eval-host orchestration (PLANNED)
+    └── background/                 # PART 3 — eval-host orchestration (implemented)
         ├── corpus.py
         ├── ml_open_world.py
         └── ml_blending.py
@@ -368,11 +379,11 @@ All three were dropped because they answered the wrong question (detectability o
 
 ### Real-application traffic generators
 
-Playwright (browser), yt-dlp (DASH/HLS), and FFmpeg+RTP are listed in [TRAFFIC_CAPTURE_REFERENCE.md §2.2](docs/TRAFFIC_CAPTURE_REFERENCE.md#22-realistic-application-layer-simulators) but not yet built into the harness. They are the foundation of Part 3's background corpus.
+Playwright (browser), yt-dlp (DASH/HLS), and FFmpeg+RTP are listed in TRAFFIC_CAPTURE_REFERENCE.md §2.2 but not yet built into the harness. They are the foundation of Part 3's background corpus.
 
 ### Loss / bandwidth-cap chaos conditions
 
-Currently chaos is latency + jitter only. Packet loss, bandwidth caps, and packet reordering are documented in [TRAFFIC_CAPTURE_REFERENCE.md §3](docs/TRAFFIC_CAPTURE_REFERENCE.md#3-network-emulation-controlled-conditions) and supported by tc/netem, but not yet wired through.
+Currently chaos is latency + jitter only. Packet loss, bandwidth caps, and packet reordering are documented in TRAFFIC_CAPTURE_REFERENCE.md §3 and supported by tc/netem, but not yet wired through.
 
 ### Cross-scenario classifier robustness
 
@@ -382,7 +393,7 @@ Train on bulk, test on interactive — to measure whether classifiers exploit en
 
 ## 9 — References
 
-All methodology references — including the foundation studies cited in this document — are catalogued in [docs/TRAFFIC_CAPTURE_REFERENCE.md](docs/TRAFFIC_CAPTURE_REFERENCE.md). Section 7 of that file describes the **real-world UDP traffic composition** that grounds Part 3's background corpus, with citations to AppLogic Networks (Sandvine), Cloudflare, APNIC Labs, MAWI / WIDE, CESNET-QUIC22, CAIDA, and relevant RFCs (3550 RTP, 6891 EDNS, 8831 WebRTC Data Channels, 9000 QUIC).
+All methodology references — including the foundation studies cited in this document — are catalogued in docs/TRAFFIC_CAPTURE_REFERENCE.md. Section 7 of that file describes the **real-world UDP traffic composition** that grounds Part 3's background corpus, with citations to AppLogic Networks (Sandvine), Cloudflare, APNIC Labs, MAWI / WIDE, CESNET-QUIC22, CAIDA, and relevant RFCs (3550 RTP, 6891 EDNS, 8831 WebRTC Data Channels, 9000 QUIC).
 
 Key citations supporting the framing:
 
