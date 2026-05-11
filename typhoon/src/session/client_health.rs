@@ -258,18 +258,22 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
 
     /// Perform the handshake and start the background health check timer.
     /// Must be called exactly once, after the background receive loop is running.
-    pub async fn perform_handshake(&self) {
+    pub async fn perform_handshake(&self) -> Result<(), SessionControllerError> {
         let mut response_rx = self.state.lock().await.response_rx.take().expect("perform_handshake() must be called exactly once");
         let handshake_factor = self.settings.get(&HANDSHAKE_NEXT_IN_FACTOR);
-        let initial_server_next_in = self.do_handshake(&mut response_rx, handshake_factor).await;
+        let initial_server_next_in = match self.do_handshake(&mut response_rx, handshake_factor).await {
+            Some(next_in) => next_in,
+            None => return Err(SessionControllerError::InitialHandshakeFailed(self.settings.get(&MAX_RETRIES))),
+        };
 
         let timer_response_rx = self.response_tx.subscribe();
         let timer_shadowride_rx = self.shadowride_tx.subscribe();
         let manager = self.manager.clone();
         let state = self.state.clone();
         let executor = self.settings.executor().clone();
-        executor.spawn(Self::timer_task(manager, state, timer_response_rx, timer_shadowride_rx, initial_server_next_in));
+        executor.spawn(Self::timer_task(manager, state, timer_response_rx, timer_shadowride_rx, Some(initial_server_next_in)));
         debug!("health provider: decay cycle started");
+        Ok(())
     }
 
     /// Called when a packet with HEALTH_CHECK flag is received.

@@ -82,8 +82,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
     /// Must be called after the background receive loop is running so that
     /// handshake responses can be received and fed back to the health provider.
     pub async fn start(&self) -> Result<(), SessionControllerError> {
-        self.health_provider.perform_handshake().await;
-        Ok(())
+        self.health_provider.perform_handshake().await
     }
 
     /// Select a random flow manager.

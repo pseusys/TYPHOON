@@ -65,6 +65,27 @@ fn test_settings_fake_header_probability_zero_ok() {
     assert!(result.is_ok());
 }
 
+// Test: SEND_BYTES_JITTER > 1.0 fails assertion.
+#[test]
+fn test_settings_send_bytes_jitter_exceeds_one() {
+    let result = builder().set(&SEND_BYTES_JITTER, 1.5).build();
+    assert!(result.is_err());
+}
+
+// Test: SEND_BYTES_JITTER negative fails assertion.
+#[test]
+fn test_settings_send_bytes_jitter_negative() {
+    let result = builder().set(&SEND_BYTES_JITTER, -0.1).build();
+    assert!(result.is_err());
+}
+
+// Test: SEND_BYTES_JITTER = 0.0 and 1.0 pass assertion (inclusive range).
+#[test]
+fn test_settings_send_bytes_jitter_unit_bounds_ok() {
+    assert!(builder().set(&SEND_BYTES_JITTER, 0.0).build().is_ok());
+    assert!(builder().set(&SEND_BYTES_JITTER, 1.0).build().is_ok());
+}
+
 // Test: HEALTH_CHECK_NEXT_IN_MIN <= TIMEOUT_MAX fails assertion (next_in must be > timeout).
 #[test]
 fn test_settings_next_in_not_greater_than_timeout() {
@@ -83,13 +104,6 @@ fn test_settings_rtt_default_out_of_range() {
 #[test]
 fn test_settings_decoy_current_alpha_exceeds_one() {
     let result = builder().set(&DECOY_CURRENT_ALPHA, 2.0).build();
-    assert!(result.is_err());
-}
-
-// Test: negative FAKE_BODY_SERVICE_PROBABILITY fails assertion.
-#[test]
-fn test_settings_negative_service_probability() {
-    let result = builder().set(&FAKE_BODY_SERVICE_PROBABILITY, -1.0).build();
     assert!(result.is_err());
 }
 

@@ -49,6 +49,7 @@ thiserror = "^2.0.18"
 tokio = { version = "^1.47.1", features = ["net", "sync", "time", "rt", "rt-multi-thread", "macros"], optional = true }
 rand_distr = "^0.4.3"
 socket2 = { version = "^0.5", features = ["all"], optional = true }
+weighted_rand = "^0.4.2"
 x25519-dalek = { version = "^2.0.1", features = ["static_secrets"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

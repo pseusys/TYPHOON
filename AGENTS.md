@@ -24,6 +24,7 @@ There is a `go` module in `evaluation/protocols/wireguard_daita/wg-daita` as wel
 - No unnecessary unused functions, constants, variables or traits should be generated, no comments describing generation process should be outputted.
 - No need to preserve any backward compatibility features or make any migration code unless it is specifically mentioned otherwise.
 - Comments should be put in a form of documentation strings, one per function, trait, struct and file.
+- Wherever a generalization is possible, using macros should be preferred over repetitive boilerplate code.
 - The concurrent code should be implemented using asynchronous feature and runtime-agnostic primitives, defined in `utils/sync.rs`.
 - Use constants instead of magic numbers whenever possible.
 - Take care of memory management: avoid copies as much as possible, data should almost be never copied, and instead be represented as views on pre-allocated pooled `ByteBuffer`s.

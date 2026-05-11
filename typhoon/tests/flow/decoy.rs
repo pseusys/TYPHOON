@@ -312,7 +312,7 @@ fn test_subheader_length_maintenance() {
     // Ensure a subheader config exists.
     let min_len = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
     let max_len = settings.get(&DECOY_SUBHEADER_LENGTH_MAX) as usize;
-    state.features.subheader_config = Some(super::generate_random_fake_header(min_len, max_len));
+    state.features.subheader_config = Some(super::generate_random_fake_header(&settings, min_len, max_len));
     assert_eq!(state.subheader_length(false), 0);
     assert!(state.subheader_length(true) > 0);
 }
@@ -325,7 +325,7 @@ fn test_subheader_length_all() {
     state.features.subheader_mode = SubheaderMode::All;
     let min_len = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
     let max_len = settings.get(&DECOY_SUBHEADER_LENGTH_MAX) as usize;
-    state.features.subheader_config = Some(super::generate_random_fake_header(min_len, max_len));
+    state.features.subheader_config = Some(super::generate_random_fake_header(&settings, min_len, max_len));
     assert!(state.subheader_length(false) > 0);
     assert!(state.subheader_length(true) > 0);
 }
@@ -381,7 +381,7 @@ fn test_seeded_packet_is_deterministic() {
         // Override subheader to All so the subheader path is always taken.
         // The config is generated from the seeded RNG, so it is deterministic.
         state.features.subheader_mode = SubheaderMode::All;
-        state.features.subheader_config = Some(super::generate_random_fake_header(sh_min, sh_max));
+        state.features.subheader_config = Some(super::generate_random_fake_header(&settings, sh_min, sh_max));
         let packet = state.create_decoy_packet(64, false);
         clear_test_rng();
         packet.as_ref().to_vec()
@@ -405,7 +405,7 @@ fn test_seeded_packets_differ_with_different_seeds() {
         set_test_rng_seed(seed);
         let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
         state.features.subheader_mode = SubheaderMode::All;
-        state.features.subheader_config = Some(super::generate_random_fake_header(sh_min, sh_max));
+        state.features.subheader_config = Some(super::generate_random_fake_header(&settings, sh_min, sh_max));
         let packet = state.create_decoy_packet(64, false);
         clear_test_rng();
         packet.as_ref().to_vec()
@@ -430,7 +430,7 @@ fn test_seeded_packet_snapshot() {
         set_test_rng_seed(seed);
         let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH));
         state.features.subheader_mode = SubheaderMode::All;
-        state.features.subheader_config = Some(super::generate_random_fake_header(sh_min, sh_max));
+        state.features.subheader_config = Some(super::generate_random_fake_header(&settings, sh_min, sh_max));
         let packet = state.create_decoy_packet(16, false);
         clear_test_rng();
         packet.as_ref().to_vec()

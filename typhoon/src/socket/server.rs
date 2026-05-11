@@ -21,6 +21,7 @@ use crate::session::{SessionControllerError, SessionManager};
 use crate::settings::{Settings, keys};
 use crate::socket::error::ServerSocketError;
 use crate::tailor::{IdentityType, PacketFlags, ReturnCode, ServerConnectionHandler, Tailor};
+use crate::utils::random::jittered_chunk_size;
 use crate::utils::socket::Socket;
 use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, NotifyQueueSender, RwLock, create_bounded_notify_queue, create_notify_queue};
 use crate::utils::unix_timestamp_ms;
@@ -585,11 +586,24 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> C
     }
 
     /// Send a byte slice, splitting into payload-sized chunks so each wire packet fits within MTU.
+    ///
+    /// See `ClientSocket::send_bytes` — same fragmentation-only-when-needed +
+    /// `TYPHOON_SEND_BYTES_JITTER`-driven per-chunk length sampling applies
+    /// here for s2c traffic.
     pub async fn send_bytes(&self, data: &[u8]) -> Result<(), ServerSocketError> {
-        for chunk in data.chunks(self.max_data_payload) {
-            let buffer = self.settings.pool().allocate(Some(chunk.len()));
-            buffer.slice_mut().copy_from_slice(chunk);
+        let jitter = self.settings.get(&keys::SEND_BYTES_JITTER);
+        let mut offset = 0;
+        while offset < data.len() {
+            let remaining = data.len() - offset;
+            let chunk_size = if remaining <= self.max_data_payload {
+                remaining
+            } else {
+                jittered_chunk_size(self.max_data_payload, jitter)
+            };
+            let buffer = self.settings.pool().allocate(Some(chunk_size));
+            buffer.slice_mut().copy_from_slice(&data[offset..offset + chunk_size]);
             self.send(buffer).await?;
+            offset += chunk_size;
         }
         Ok(())
     }

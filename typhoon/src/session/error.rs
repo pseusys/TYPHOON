@@ -27,4 +27,7 @@ pub enum SessionControllerError {
 
     #[error("session manager health provider terminated")]
     HealthProviderDied,
+
+    #[error("initial handshake failed after {} retries", .0)]
+    InitialHandshakeFailed(u64),
 }

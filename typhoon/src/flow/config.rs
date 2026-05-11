@@ -15,6 +15,7 @@ use crate::settings::{Settings, keys};
 use crate::utils::random::get_rng;
 use crate::utils::sync::AsyncExecutor;
 use crate::utils::unix_timestamp_ms;
+use crate::weighted_random;
 
 /// Fake body generation mode.
 ///
@@ -204,7 +205,8 @@ impl FakeHeaderConfig {
     ///
     /// Includes a header with probability `FAKE_HEADER_PROBABILITY`; if included, a random number
     /// of fields are packed to fill a length sampled from `[FAKE_HEADER_LENGTH_MIN, FAKE_HEADER_LENGTH_MAX]`.
-    /// Each field is independently assigned one of the five `FieldType` variants with equal probability.
+    /// Each field is independently assigned one of the five `FieldType` variants weighted by the
+    /// `FAKE_HEADER_FIELD_WEIGHT_*` settings.
     pub fn random<AE: AsyncExecutor>(settings: &Settings<AE>) -> Self {
         let mut rng = get_rng();
         let header_prob = settings.get(&keys::FAKE_HEADER_PROBABILITY);
@@ -218,16 +220,16 @@ impl FakeHeaderConfig {
             };
             let fields = (0..len)
                 .map(|_| {
-                    FieldTypeHolder::U8(match rng.gen_range(0u8..5) {
-                        0 => FieldType::Random,
-                        1 => FieldType::Constant {
+                    FieldTypeHolder::U8(weighted_random! {
+                        settings.get(&keys::FAKE_HEADER_FIELD_WEIGHT_RANDOM) => FieldType::Random,
+                        settings.get(&keys::FAKE_HEADER_FIELD_WEIGHT_CONSTANT) => FieldType::Constant {
                             value: rng.r#gen::<u8>(),
                         },
-                        2 => FieldType::Volatile {
+                        settings.get(&keys::FAKE_HEADER_FIELD_WEIGHT_VOLATILE) => FieldType::Volatile {
                             value: rng.r#gen::<u8>(),
                             change_probability: rng.gen_range(0.01..=0.20),
                         },
-                        3 => {
+                        settings.get(&keys::FAKE_HEADER_FIELD_WEIGHT_SWITCHING) => {
                             let switch_timeout = rng.gen_range(1_000u64..=30_000);
                             FieldType::Switching {
                                 value: rng.r#gen::<u8>(),
@@ -235,10 +237,9 @@ impl FakeHeaderConfig {
                                 switch_timeout,
                             }
                         }
-                        4 => FieldType::Incremental {
+                        settings.get(&keys::FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL) => FieldType::Incremental {
                             value: rng.r#gen::<u8>(),
                         },
-                        _ => unreachable!(),
                     })
                 })
                 .collect();
@@ -313,36 +314,28 @@ impl FlowConfig {
     /// Create a random flow configuration drawn from the default probability distributions.
     ///
     /// - Headers: included with probability `FAKE_HEADER_PROBABILITY`; if included, a random number
-    ///   of U8-random fields are packed to fill a length sampled from
+    ///   of fields are packed to fill a length sampled from
     ///   `[FAKE_HEADER_LENGTH_MIN, FAKE_HEADER_LENGTH_MAX]`.
-    /// - Body: chosen uniformly from four modes weighted by `FAKE_BODY_SERVICE_PROBABILITY`
-    ///   (Empty / Random{service} / Constant / Random — each with equal base weight, Random heavier).
+    /// - Body: chosen by the `FAKE_BODY_WEIGHT_*` settings (Empty / Random / Constant / Random{service}).
     ///   In `Constant` mode `packet_length` comes from `FAKE_BODY_CONSTANT_LENGTH`, clamped to
     ///   `[FAKE_BODY_LENGTH_MIN, mtu]`.
     pub fn random<AE: AsyncExecutor>(settings: &Settings<AE>) -> Self {
-        let mut rng = get_rng();
         let fake_header_mode = FakeHeaderConfig::random(settings);
 
         let min_len = settings.get(&keys::FAKE_BODY_LENGTH_MIN) as usize;
         let max_len = settings.get(&keys::FAKE_BODY_LENGTH_MAX) as usize;
-        let service_weight = settings.get(&keys::FAKE_BODY_SERVICE_PROBABILITY);
-        let total_weight = 3.0 + service_weight;
-        let roll = rng.gen_range(0.0..total_weight);
-        let fake_body_mode = if roll < 1.0 {
-            FakeBodyMode::Empty
-        } else if roll < 2.0 {
-            FakeBodyMode::Random {
-                min_length: min_len,
-                max_length: max_len,
-                service: false,
-            }
-        } else if roll < 3.0 {
-            let packet_length = (settings.get(&keys::FAKE_BODY_CONSTANT_LENGTH) as usize).clamp(min_len, settings.mtu());
-            FakeBodyMode::Constant {
-                packet_length,
-            }
-        } else {
-            FakeBodyMode::Random {
+
+        let fake_body_mode = weighted_random! {
+            settings.get(&keys::FAKE_BODY_WEIGHT_EMPTY) => FakeBodyMode::Empty,
+            settings.get(&keys::FAKE_BODY_WEIGHT_RANDOM) => FakeBodyMode::Random {
+                    min_length: min_len,
+                    max_length: max_len,
+                    service: false,
+            },
+            settings.get(&keys::FAKE_BODY_WEIGHT_CONSTANT) => FakeBodyMode::Constant {
+                packet_length: (settings.get(&keys::FAKE_BODY_CONSTANT_LENGTH) as usize).clamp(min_len, settings.mtu()),
+            },
+            settings.get(&keys::FAKE_BODY_WEIGHT_SERVICE) => FakeBodyMode::Random {
                 min_length: min_len,
                 max_length: max_len,
                 service: true,

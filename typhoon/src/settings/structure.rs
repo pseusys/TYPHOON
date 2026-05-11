@@ -151,9 +151,20 @@ impl<AE: AsyncExecutor> Settings<AE> {
         };
 
         // Helper to check f64 is positive.
-        let assert_positive = |key: &Key<f64>| -> Result<(), SettingsError> {
+        let assert_float_positive = |key: &Key<f64>| -> Result<(), SettingsError> {
             let val = self.get(key);
             if val <= 0.0 {
+                return Err(SettingsError::AssertionFailed {
+                    message: format!("{} ({}) must be positive", key.name, val),
+                });
+            }
+            Ok(())
+        };
+
+        // Helper to check u64 is positive.
+        let assert_int_positive = |key: &Key<u64>| -> Result<(), SettingsError> {
+            let val = self.get(key);
+            if val <= 0 {
                 return Err(SettingsError::AssertionFailed {
                     message: format!("{} ({}) must be positive", key.name, val),
                 });
@@ -205,15 +216,41 @@ impl<AE: AsyncExecutor> Settings<AE> {
 
         // Probability must be in [0, 1]
         assert_unit_inclusive(&keys::FAKE_HEADER_PROBABILITY)?;
+        assert_unit_inclusive(&keys::SEND_BYTES_JITTER)?;
 
         // Positive multipliers
-        assert_positive(&keys::FAKE_BODY_SERVICE_PROBABILITY)?;
-        assert_positive(&keys::DECOY_MAINTENANCE_MODE_NONE_PROBABILITY)?;
-        assert_positive(&keys::DECOY_REPLICATION_MODE_NONE_PROBABILITY)?;
-        assert_positive(&keys::TIMEOUT_RTT_FACTOR)?;
-        assert_positive(&keys::HANDSHAKE_NEXT_IN_FACTOR)?;
-        assert_positive(&keys::DECOY_BYTE_RATE_CAP)?;
-        assert_positive(&keys::DECOY_BYTE_RATE_FACTOR)?;
+        assert_float_positive(&keys::TIMEOUT_RTT_FACTOR)?;
+        assert_float_positive(&keys::HANDSHAKE_NEXT_IN_FACTOR)?;
+        assert_float_positive(&keys::DECOY_BYTE_RATE_CAP)?;
+        assert_float_positive(&keys::DECOY_BYTE_RATE_FACTOR)?;
+
+        // Weight modifiers
+        assert_int_positive(&keys::FAKE_BODY_WEIGHT_EMPTY)?;
+        assert_int_positive(&keys::FAKE_BODY_WEIGHT_RANDOM)?;
+        assert_int_positive(&keys::FAKE_BODY_WEIGHT_CONSTANT)?;
+        assert_int_positive(&keys::FAKE_BODY_WEIGHT_SERVICE)?;
+        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_RANDOM)?;
+        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_CONSTANT)?;
+        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_VOLATILE)?;
+        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_SWITCHING)?;
+        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL)?;
+        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_NONE)?;
+        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_RANDOM)?;
+        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_TIMED)?;
+        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_SIZED)?;
+        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_BOTH)?;
+        assert_int_positive(&keys::DECOY_REPLICATION_WEIGHT_NONE)?;
+        assert_int_positive(&keys::DECOY_REPLICATION_WEIGHT_MAINTENANCE)?;
+        assert_int_positive(&keys::DECOY_REPLICATION_WEIGHT_ALL)?;
+        assert_int_positive(&keys::DECOY_SUBHEADER_WEIGHT_NONE)?;
+        assert_int_positive(&keys::DECOY_SUBHEADER_WEIGHT_MAINTENANCE)?;
+        assert_int_positive(&keys::DECOY_SUBHEADER_WEIGHT_ALL)?;
+        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_SIMPLE)?;
+        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_SPARSE)?;
+        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_NOISY)?;
+        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_SMOOTH)?;
+        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_HEAVY)?;
+
         Ok(())
     }
 }

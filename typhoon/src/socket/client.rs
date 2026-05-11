@@ -15,10 +15,10 @@ use crate::flow::decoy::{DecoyFactory, random_decoy_factory};
 use crate::flow::probe::ProbeFactory;
 use crate::flow::{FlowConfig, FlowControllerError};
 use crate::session::{ClientSessionManager, SessionManager};
-use crate::settings::Settings;
+use crate::settings::{Settings, keys};
 use crate::socket::error::ClientSocketError;
 use crate::tailor::{ClientConnectionHandler, IdentityType};
-use crate::utils::random::{SupportRng, get_rng};
+use crate::utils::random::{SupportRng, get_rng, jittered_chunk_size};
 use crate::utils::socket::Socket;
 use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, create_notify_queue};
 
@@ -200,11 +200,27 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
     }
 
     /// Send a byte slice, splitting into payload-sized chunks so each wire packet fits within MTU.
+    ///
+    /// When fragmentation is unavoidable (`remaining > max_data_payload`), each
+    /// non-final chunk is sized in `[max_data_payload * (1 - jitter), max_data_payload]`
+    /// — `jitter = TYPHOON_SEND_BYTES_JITTER` (default `0.0`, reproducing the
+    /// deterministic equal-chunk split).  The final chunk and any single-packet
+    /// send go through unfragmented to avoid synthesising a small-packet tail
+    /// that a passive observer could latch onto.
     pub async fn send_bytes(&self, data: &[u8]) -> Result<(), ClientSocketError> {
-        for chunk in data.chunks(self.max_data_payload) {
-            let buffer = self.settings.pool().allocate(Some(chunk.len()));
-            buffer.slice_mut().copy_from_slice(chunk);
+        let jitter = self.settings.get(&keys::SEND_BYTES_JITTER);
+        let mut offset = 0;
+        while offset < data.len() {
+            let remaining = data.len() - offset;
+            let chunk_size = if remaining <= self.max_data_payload {
+                remaining
+            } else {
+                jittered_chunk_size(self.max_data_payload, jitter)
+            };
+            let buffer = self.settings.pool().allocate(Some(chunk_size));
+            buffer.slice_mut().copy_from_slice(&data[offset..offset + chunk_size]);
             self.send(buffer).await?;
+            offset += chunk_size;
         }
         Ok(())
     }

@@ -25,6 +25,7 @@ use crate::tailor::{IdentityType, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
 use crate::utils::unix_timestamp_ms;
+use crate::weighted_random;
 
 // ── Mode enums ──────────────────────────────────────────────────────────────
 
@@ -77,56 +78,45 @@ impl DecoyFeatureConfig {
     pub(super) fn random<AE: AsyncExecutor>(settings: &Settings<AE>) -> Self {
         let mut rng = get_rng();
 
-        // Maintenance mode: None is weighted heavier.
-        let none_weight = settings.get(&DECOY_MAINTENANCE_MODE_NONE_PROBABILITY);
-        let total = none_weight + 4.0; // 4 other modes
-        let roll: f64 = rng.gen_range(0.0..total);
-        let maintenance_mode = if roll < none_weight {
-            MaintenanceMode::None
-        } else {
-            let delay_min = settings.get(&DECOY_MAINTENANCE_DELAY_MIN);
-            let delay_max = settings.get(&DECOY_MAINTENANCE_DELAY_MAX);
-            let length_min = settings.get(&DECOY_MAINTENANCE_LENGTH_MIN) as usize;
-            let length_max = settings.get(&DECOY_MAINTENANCE_LENGTH_MAX) as usize;
-            let fixed_delay = rng.gen_range(delay_min..=delay_max);
-            let fixed_length = rng.gen_range(length_min..=length_max);
-            let idx = ((roll - none_weight) * 4.0 / 4.0) as usize;
-            match idx.min(3) {
-                0 => MaintenanceMode::Random,
-                1 => MaintenanceMode::Timed {
-                    delay_ms: fixed_delay,
-                },
-                2 => MaintenanceMode::Sized {
-                    length: fixed_length,
-                },
-                _ => MaintenanceMode::Both {
-                    delay_ms: fixed_delay,
-                    length: fixed_length,
-                },
-            }
+        let delay_min = settings.get(&DECOY_MAINTENANCE_DELAY_MIN);
+        let delay_max = settings.get(&DECOY_MAINTENANCE_DELAY_MAX);
+        let length_min = settings.get(&DECOY_MAINTENANCE_LENGTH_MIN) as usize;
+        let length_max = settings.get(&DECOY_MAINTENANCE_LENGTH_MAX) as usize;
+        let fixed_delay = rng.gen_range(delay_min..=delay_max);
+        let fixed_length = rng.gen_range(length_min..=length_max);
+
+        // Maintenance mode: weights from settings (None heavier by default).
+        let maintenance_mode = weighted_random! {
+            settings.get(&DECOY_MAINTENANCE_WEIGHT_NONE) => MaintenanceMode::None,
+            settings.get(&DECOY_MAINTENANCE_WEIGHT_RANDOM) => MaintenanceMode::Random,
+            settings.get(&DECOY_MAINTENANCE_WEIGHT_TIMED) => MaintenanceMode::Timed {
+                delay_ms: fixed_delay,
+            },
+            settings.get(&DECOY_MAINTENANCE_WEIGHT_SIZED) => MaintenanceMode::Sized {
+                length: fixed_length,
+            },
+            settings.get(&DECOY_MAINTENANCE_WEIGHT_BOTH) => MaintenanceMode::Both {
+                delay_ms: fixed_delay,
+                length: fixed_length,
+            },
         };
 
-        // Replication mode: None is weighted heavier.
-        let none_weight = settings.get(&DECOY_REPLICATION_MODE_NONE_PROBABILITY);
-        let total = none_weight + 2.0;
-        let roll: f64 = rng.gen_range(0.0..total);
-        let replication_mode = if roll < none_weight {
-            ReplicationMode::None
-        } else if roll < none_weight + 1.0 {
-            ReplicationMode::Maintenance
-        } else {
-            ReplicationMode::All
+        // Replication mode: weights from settings (None heavier by default).
+        let replication_mode = weighted_random! {
+            settings.get(&DECOY_REPLICATION_WEIGHT_NONE) => ReplicationMode::None,
+            settings.get(&DECOY_REPLICATION_WEIGHT_MAINTENANCE) => ReplicationMode::Maintenance,
+            settings.get(&DECOY_REPLICATION_WEIGHT_ALL) => ReplicationMode::All,
         };
 
         let prob_min = settings.get(&DECOY_REPLICATION_PROBABILITY_MIN);
         let prob_max = settings.get(&DECOY_REPLICATION_PROBABILITY_MAX);
         let replication_probability = rng.gen_range(prob_min..=prob_max);
 
-        // Subheader mode: equal probability.
-        let subheader_mode = match rng.gen_range(0u8..3) {
-            0 => SubheaderMode::None,
-            1 => SubheaderMode::Maintenance,
-            _ => SubheaderMode::All,
+        // Subheader mode: weights from settings.
+        let subheader_mode = weighted_random! {
+            settings.get(&DECOY_SUBHEADER_WEIGHT_NONE) => SubheaderMode::None,
+            settings.get(&DECOY_SUBHEADER_WEIGHT_MAINTENANCE) => SubheaderMode::Maintenance,
+            settings.get(&DECOY_SUBHEADER_WEIGHT_ALL) => SubheaderMode::All,
         };
 
         let subheader_config = if subheader_mode == SubheaderMode::None {
@@ -134,7 +124,7 @@ impl DecoyFeatureConfig {
         } else {
             let min_len = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
             let max_len = settings.get(&DECOY_SUBHEADER_LENGTH_MAX) as usize;
-            Some(generate_random_fake_header(min_len, max_len))
+            Some(generate_random_fake_header(settings, min_len, max_len))
         };
 
         info!("decoy feature config: maintenance={maintenance_mode:?}, replication={replication_mode:?}, replication_prob={replication_probability:.4}, subheader={subheader_mode:?}");
@@ -150,7 +140,7 @@ impl DecoyFeatureConfig {
 }
 
 /// Generate a random `FakeHeaderConfig` with total byte length in [min_len, max_len].
-fn generate_random_fake_header(min_len: usize, max_len: usize) -> FakeHeaderConfig {
+fn generate_random_fake_header<AE: AsyncExecutor>(settings: &Settings<AE>, min_len: usize, max_len: usize) -> FakeHeaderConfig {
     let mut rng = get_rng();
     let target_len = rng.gen_range(min_len..=max_len);
     let mut fields = Vec::new();
@@ -170,10 +160,10 @@ fn generate_random_fake_header(min_len: usize, max_len: usize) -> FakeHeaderConf
         };
 
         let field = match size {
-            1 => FieldTypeHolder::U8(random_field_type(&mut rng)),
-            2 => FieldTypeHolder::U16(random_field_type(&mut rng)),
-            4 => FieldTypeHolder::U32(random_field_type(&mut rng)),
-            8 => FieldTypeHolder::U64(random_field_type(&mut rng)),
+            1 => FieldTypeHolder::U8(random_field_type(settings, &mut rng)),
+            2 => FieldTypeHolder::U16(random_field_type(settings, &mut rng)),
+            4 => FieldTypeHolder::U32(random_field_type(settings, &mut rng)),
+            8 => FieldTypeHolder::U64(random_field_type(settings, &mut rng)),
             _ => unreachable!(),
         };
         fields.push(field);
@@ -183,28 +173,28 @@ fn generate_random_fake_header(min_len: usize, max_len: usize) -> FakeHeaderConf
     FakeHeaderConfig::new(fields)
 }
 
-/// Generate a random FieldType variant for a given size.
-fn random_field_type<L: Copy + From<u8>>(rng: &mut impl Rng) -> FieldType<L>
+/// Generate a random FieldType variant weighted by the `FAKE_HEADER_FIELD_WEIGHT_*` settings.
+fn random_field_type<AE: AsyncExecutor, L: Copy + From<u8>>(settings: &Settings<AE>, rng: &mut impl Rng) -> FieldType<L>
 where
     rand::distributions::Standard: Distribution<L>,
 {
-    match rng.gen_range(0u8..5) {
-        0 => FieldType::Random,
-        1 => FieldType::Constant {
+    weighted_random! {
+        settings.get(&FAKE_HEADER_FIELD_WEIGHT_RANDOM) => FieldType::Random,
+        settings.get(&FAKE_HEADER_FIELD_WEIGHT_CONSTANT) => FieldType::Constant {
             value: rng.r#gen::<L>(),
         },
-        2 => FieldType::Volatile {
+        settings.get(&FAKE_HEADER_FIELD_WEIGHT_VOLATILE) => FieldType::Volatile {
             value: rng.r#gen::<L>(),
             change_probability: rng.gen_range(0.01..0.5),
         },
-        3 => FieldType::Switching {
+        settings.get(&FAKE_HEADER_FIELD_WEIGHT_SWITCHING) => FieldType::Switching {
             value: rng.r#gen::<L>(),
             next_switch: unix_timestamp_ms() + rng.gen_range(1000..10000) as u128,
             switch_timeout: rng.gen_range(1000..10000),
         },
-        _ => FieldType::Incremental {
+        settings.get(&FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL) => FieldType::Incremental {
             value: rng.r#gen::<L>(),
-        },
+        }
     }
 }
 
