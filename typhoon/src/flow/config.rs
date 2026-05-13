@@ -317,13 +317,25 @@ impl FlowConfig {
     ///   of fields are packed to fill a length sampled from
     ///   `[FAKE_HEADER_LENGTH_MIN, FAKE_HEADER_LENGTH_MAX]`.
     /// - Body: chosen by the `FAKE_BODY_WEIGHT_*` settings (Empty / Random / Constant / Random{service}).
-    ///   In `Constant` mode `packet_length` comes from `FAKE_BODY_CONSTANT_LENGTH`, clamped to
-    ///   `[FAKE_BODY_LENGTH_MIN, mtu]`.
+    ///   In `Constant` mode `packet_length` is sampled **once at flow init** from
+    ///   `[FAKE_BODY_CONSTANT_LENGTH_MIN, FAKE_BODY_CONSTANT_LENGTH_MAX]` (clamped to
+    ///   `[FAKE_BODY_LENGTH_MIN, mtu]`) and then held constant for every packet
+    ///   in that flow — different flows get different constants, breaking the
+    ///   sharp single-mode wire-size spike that a global fixed-length Constant
+    ///   would produce.
     pub fn random<AE: AsyncExecutor>(settings: &Settings<AE>) -> Self {
         let fake_header_mode = FakeHeaderConfig::random(settings);
 
         let min_len = settings.get(&keys::FAKE_BODY_LENGTH_MIN) as usize;
         let max_len = settings.get(&keys::FAKE_BODY_LENGTH_MAX) as usize;
+
+        let constant_min = (settings.get(&keys::FAKE_BODY_CONSTANT_LENGTH_MIN) as usize).clamp(min_len, settings.mtu());
+        let constant_max = (settings.get(&keys::FAKE_BODY_CONSTANT_LENGTH_MAX) as usize).clamp(min_len, settings.mtu());
+        let constant_length = if constant_min >= constant_max {
+            constant_min
+        } else {
+            get_rng().gen_range(constant_min..=constant_max)
+        };
 
         let fake_body_mode = weighted_random! {
             settings.get(&keys::FAKE_BODY_WEIGHT_EMPTY) => FakeBodyMode::Empty,
@@ -333,7 +345,7 @@ impl FlowConfig {
                     service: false,
             },
             settings.get(&keys::FAKE_BODY_WEIGHT_CONSTANT) => FakeBodyMode::Constant {
-                packet_length: (settings.get(&keys::FAKE_BODY_CONSTANT_LENGTH) as usize).clamp(min_len, settings.mtu()),
+                packet_length: constant_length,
             },
             settings.get(&keys::FAKE_BODY_WEIGHT_SERVICE) => FakeBodyMode::Random {
                 min_length: min_len,

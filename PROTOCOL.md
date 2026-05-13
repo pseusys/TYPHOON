@@ -179,11 +179,11 @@ It can be either empty, random or constant:
 - `empty`: body is always empty, `0` bytes length.
 - `random`: body length is random, it is bound between `TYPHOON_FAKE_BODY_LENGTH_MIN` and `TYPHOON_FAKE_BODY_LENGTH_MAX` constant values, making all the packets different in size.
 - `service`: same as `random`, but is only applied to [health check](#health-check-packets) and [handshake](#handshake-packets) packets.
-- `constant`: body length depends on the lengths of the other packet parts and complement them to a constant size equal to `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` (clamped to `[TYPHOON_FAKE_BODY_LENGTH_MIN, MTU]`).
+- `constant`: body length is selected **once at flow initialization** by sampling a value uniformly from `[TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MIN, TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MAX]` (both clamped to `[TYPHOON_FAKE_BODY_LENGTH_MIN, MTU]`), and the resulting constant is held for every packet in that flow. Different flows therefore land at different constants, while within a flow the wire size is stable. The body length depends on the lengths of the other packet parts and complements them to that per-flow constant.
 
 > Handling `constant` body length might not be trivial, as it imposes a strict limit on packet data contents length.
 > TYPHOON protocol specifically does not support data fragmentation, so `constant` body length just won't have any effect if real packet body length is not always strictly limited.
-> If `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` is set so large that the fixed protocol overhead consumes the entire packet budget, leaving zero bytes for user data, the client socket builder will refuse to construct the socket and return an error.
+> If the per-flow sampled value is so large that the fixed protocol overhead consumes the entire packet budget, leaving zero bytes for user data, the client socket builder will refuse to construct the socket and return an error.
 
 Fake body mode is chosen randomly using weights `TYPHOON_FAKE_BODY_WEIGHT_EMPTY`, `TYPHOON_FAKE_BODY_WEIGHT_RANDOM`, `TYPHOON_FAKE_BODY_WEIGHT_CONSTANT` and `TYPHOON_FAKE_BODY_WEIGHT_SERVICE` (all integer, default `1` each except `service` which defaults to `2` to preserve a moderate bias toward service-only padding).
 
@@ -838,8 +838,8 @@ With `N > 1` on Linux, `N` SO_REUSEPORT sockets are created; on non-Linux platfo
 `ClientSocket::send_bytes` and `ClientHandle::send_bytes` split the incoming byte slice into wire-packet-sized chunks before encryption.
 By default each chunk is exactly `max_data_payload` bytes, which produces a fingerprintably-uniform per-flow chunk size that a passive observer can latch onto.
 
-To break that uniformity, both senders read `TYPHOON_SEND_BYTES_JITTER` (asserted float in `[0, 1]`, default `0.0`) and, on every iteration where fragmentation is unavoidable (i.e. `remaining > max_data_payload`), sample the chunk size independently from `[max_data_payload * (1 - jitter), max_data_payload]` (clamped to ≥ 1 byte).
-The default of `0.0` reproduces the deterministic equal-chunk behaviour; `0.30` (a typical evaluation setting) varies each non-final chunk's user-data length by up to 30 % below the maximum, which decorrelates per-packet wire size from `max_data_payload`.
+To break that uniformity, both senders read `TYPHOON_SEND_BYTES_JITTER` (asserted float in `[0, 1]`, default `0.8`) and, on every iteration where fragmentation is unavoidable (i.e. `remaining > max_data_payload`), sample the chunk size independently from `[max_data_payload * (1 - jitter), max_data_payload]` (clamped to ≥ 1 byte).
+The default of `0.2` spreads each non-final chunk's user-data length across most of the `[0.8 * max_data_payload, max_data_payload]` range, removing the sharp wire-size mode that fixed-chunk fragmentation otherwise leaves at exactly `max_data_payload`.
 
 When the remaining data fits into a single packet (`remaining ≤ max_data_payload`) — including any send shorter than one MTU's worth and the trailing chunk of a multi-packet send — that packet is emitted as-is, **without** sampling a smaller jittered size.
 This avoids fabricating a synthetic small-packet tail that an observer could fingerprint; jitter only affects the _interior_ chunks of genuinely multi-packet sends.

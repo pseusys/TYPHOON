@@ -174,6 +174,7 @@ impl<AE: AsyncExecutor> Settings<AE> {
 
         // Min <= Max pairs
         assert_min_max_u64(&keys::FAKE_BODY_LENGTH_MIN, &keys::FAKE_BODY_LENGTH_MAX)?;
+        assert_min_max_u64(&keys::FAKE_BODY_CONSTANT_LENGTH_MIN, &keys::FAKE_BODY_CONSTANT_LENGTH_MAX)?;
         assert_min_max_u64(&keys::FAKE_HEADER_LENGTH_MIN, &keys::FAKE_HEADER_LENGTH_MAX)?;
         assert_min_max_u64(&keys::HEALTH_CHECK_NEXT_IN_MIN, &keys::HEALTH_CHECK_NEXT_IN_MAX)?;
         assert_min_max_u64(&keys::TIMEOUT_MIN, &keys::TIMEOUT_MAX)?;

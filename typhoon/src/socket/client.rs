@@ -100,7 +100,8 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
     ///
     /// Returns [`ClientSocketError::FlowError`] wrapping [`FlowControllerError::AssertionFailed`]
     /// if the combined flow configuration leaves zero bytes available for user data
-    /// (e.g. `constant` fake-body mode with a `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` larger than
+    /// (e.g. `constant` fake-body mode with a per-flow constant length sampled from
+    /// `[TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MIN, TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MAX]` larger than
     /// the remaining packet budget after protocol overhead).
     pub async fn build(mut self) -> Result<ClientSocket<T, AE, CC>, ClientSocketError> {
         let cert_addrs = self.certificate.addresses();

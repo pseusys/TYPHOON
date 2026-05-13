@@ -24,12 +24,13 @@ pub mod keys {
     pub const RECEIVE_BUFFER_SIZE: Key<u64> = Key::new("TYPHOON_RECEIVE_BUFFER_SIZE", 512);
 
     // Send-bytes chunking jitter
-    pub const SEND_BYTES_JITTER: Key<f64> = Key::new("TYPHOON_SEND_BYTES_JITTER", 0.0);
+    pub const SEND_BYTES_JITTER: Key<f64> = Key::new("TYPHOON_SEND_BYTES_JITTER", 0.2);
 
     // Fake body/header settings
     pub const FAKE_BODY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_BODY_LENGTH_MIN", 32);
     pub const FAKE_BODY_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_FAKE_BODY_LENGTH_MAX", 512);
-    pub const FAKE_BODY_CONSTANT_LENGTH: Key<u64> = Key::new("TYPHOON_FAKE_BODY_CONSTANT_LENGTH", 512);
+    pub const FAKE_BODY_CONSTANT_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MIN", 64);
+    pub const FAKE_BODY_CONSTANT_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MAX", 1400);
     pub const FAKE_HEADER_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_LENGTH_MIN", 4);
     pub const FAKE_HEADER_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_LENGTH_MAX", 32);
     pub const FAKE_HEADER_PROBABILITY: Key<f64> = Key::new("TYPHOON_FAKE_HEADER_PROBABILITY", 0.60);
