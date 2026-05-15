@@ -94,19 +94,6 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
         let identity_len = <CP::Identity as IdentityType>::length();
         let full_tailor_len = TAILOR_LENGTH + identity_len;
 
-        // Ensure adequate before_capacity for the worst-case fake prefix (header + body padding)
-        // and after_capacity for tailor encryption overhead, both before the split and encrypt.
-        // This way expand_start always succeeds on the hot path and avoids a post-encrypt copy.
-        // TODO: remove
-        let max_prefix = self.config.max_overhead();
-        let packet = if packet.before_capacity() < max_prefix {
-            let staged = pool.allocate_precise(packet.len(), max_prefix, CP::tailor_overhead());
-            staged.slice_mut().copy_from_slice(packet.slice());
-            staged
-        } else {
-            packet
-        };
-
         let (encrypted_packet, packet_flags, data_len) = if fallthrough {
             // Fallthrough decoy: the input is `[random_body | plaintext_tailor]` (the tailor was written for accounting only) - truncate it to the body and forward as opaque noise.
             let body_only = packet.rebuffer_end(packet.len() - full_tailor_len);
