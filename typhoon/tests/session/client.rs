@@ -45,7 +45,7 @@ impl MockFlowManager {
 }
 
 impl FlowManager for MockFlowManager {
-    async fn send_packet(&self, _packet: DynamicByteBuffer) -> Result<(), FlowControllerError> {
+    async fn send_packet(&self, _packet: DynamicByteBuffer, _fallthrough: bool) -> Result<(), FlowControllerError> {
         Ok(())
     }
 

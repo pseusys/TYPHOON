@@ -31,7 +31,7 @@ impl DecoyProvider for SimpleDecoyProvider {
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyCommunicationMode<T, AE> for SimpleDecoyProvider {
-    fn new(_manager: Weak<dyn DecoyFlowSender>, _settings: Arc<Settings<AE>>, _identity: T) -> Self {
+    fn new(_manager: Weak<dyn DecoyFlowSender>, _settings: Arc<Settings<AE>>, _identity: T, _fallthrough_probability: Option<f64>) -> Self {
         Self
     }
 }

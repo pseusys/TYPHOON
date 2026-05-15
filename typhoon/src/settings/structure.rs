@@ -175,6 +175,7 @@ impl<AE: AsyncExecutor> Settings<AE> {
         // Min <= Max pairs
         assert_min_max_u64(&keys::FAKE_BODY_LENGTH_MIN, &keys::FAKE_BODY_LENGTH_MAX)?;
         assert_min_max_u64(&keys::FAKE_BODY_CONSTANT_LENGTH_MIN, &keys::FAKE_BODY_CONSTANT_LENGTH_MAX)?;
+        assert_min_max_f64(&keys::DECOY_FALLTHROUGH_PACKETS_MIN, &keys::DECOY_FALLTHROUGH_PACKETS_MAX)?;
         assert_min_max_u64(&keys::FAKE_HEADER_LENGTH_MIN, &keys::FAKE_HEADER_LENGTH_MAX)?;
         assert_min_max_u64(&keys::HEALTH_CHECK_NEXT_IN_MIN, &keys::HEALTH_CHECK_NEXT_IN_MAX)?;
         assert_min_max_u64(&keys::TIMEOUT_MIN, &keys::TIMEOUT_MAX)?;
@@ -218,6 +219,8 @@ impl<AE: AsyncExecutor> Settings<AE> {
         // Probability must be in [0, 1]
         assert_unit_inclusive(&keys::FAKE_HEADER_PROBABILITY)?;
         assert_unit_inclusive(&keys::SEND_BYTES_JITTER)?;
+        assert_unit_inclusive(&keys::DECOY_FALLTHROUGH_PACKETS_MIN)?;
+        assert_unit_inclusive(&keys::DECOY_FALLTHROUGH_PACKETS_MAX)?;
 
         // Positive multipliers
         assert_float_positive(&keys::TIMEOUT_RTT_FACTOR)?;

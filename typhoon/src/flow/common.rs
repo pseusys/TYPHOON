@@ -24,8 +24,8 @@ cfg_if! {
 
 /// Trait for managing packet flow with encryption and decoy traffic.
 pub(crate) trait FlowManager {
-    /// Send a packet through the flow manager.
-    fn send_packet(&self, packet: DynamicByteBuffer) -> impl Future<Output = Result<(), FlowControllerError>> + Send;
+    /// Send a packet through the flow manager. `fallthrough` is set only by fallthrough decoys and skips the tailor step in `prepare_outgoing`; all other callers pass `false`.
+    fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool) -> impl Future<Output = Result<(), FlowControllerError>> + Send;
 
     /// Receive a packet from the flow manager.
     #[cfg(feature = "client")]
@@ -33,8 +33,8 @@ pub(crate) trait FlowManager {
 }
 
 impl<T: FlowManager + Send + Sync> FlowManager for Arc<T> {
-    fn send_packet(&self, packet: DynamicByteBuffer) -> impl Future<Output = Result<(), FlowControllerError>> + Send {
-        (**self).send_packet(packet)
+    fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool) -> impl Future<Output = Result<(), FlowControllerError>> + Send {
+        (**self).send_packet(packet, fallthrough)
     }
 
     #[cfg(feature = "client")]
@@ -89,14 +89,15 @@ pub(crate) enum ProcessIncomingResult {
 
 #[cfg(feature = "client")]
 impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
-    /// Encrypt tailor, add fake header and body, return assembled packet ready for socket send.
-    pub(crate) fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &crate::bytes::BytePool) -> Result<DynamicByteBuffer, FlowControllerError> {
+    /// Encrypt tailor, add fake header and body, return assembled packet ready for socket send. When `fallthrough` is set, the trailing plaintext tailor bytes are dropped and the tailor-encryption step is skipped — only fake header / body padding is added on top of the body.
+    pub(crate) fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &crate::bytes::BytePool, fallthrough: bool) -> Result<DynamicByteBuffer, FlowControllerError> {
         let identity_len = <CP::Identity as IdentityType>::length();
         let full_tailor_len = TAILOR_LENGTH + identity_len;
 
         // Ensure adequate before_capacity for the worst-case fake prefix (header + body padding)
         // and after_capacity for tailor encryption overhead, both before the split and encrypt.
         // This way expand_start always succeeds on the hot path and avoids a post-encrypt copy.
+        // TODO: remove
         let max_prefix = self.config.max_overhead();
         let packet = if packet.before_capacity() < max_prefix {
             let staged = pool.allocate_precise(packet.len(), max_prefix, CP::tailor_overhead());
@@ -106,12 +107,20 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
             packet
         };
 
-        let (packet_data, packet_tailor) = packet.split_buf(packet.len() - full_tailor_len);
-        let packet_flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
-        let data_len = packet_data.len();
-        let encrypted_packet = match self.provider.get_mut().map_err(FlowControllerError::MissingCache)?.obfuscate_tailor(packet_tailor, pool) {
-            Ok(res) => packet_data.expand_end(res.len()),
-            Err(err) => return Err(FlowControllerError::TailorEncryption(err)),
+        let (encrypted_packet, packet_flags, data_len) = if fallthrough {
+            // Fallthrough decoy: the input is `[random_body | plaintext_tailor]` (the tailor was written for accounting only) - truncate it to the body and forward as opaque noise.
+            let body_only = packet.rebuffer_end(packet.len() - full_tailor_len);
+            let body_len = body_only.len();
+            (body_only, PacketFlags::DECOY, body_len)
+        } else {
+            let (packet_data, packet_tailor) = packet.split_buf(packet.len() - full_tailor_len);
+            let flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
+            let data_len = packet_data.len();
+            let encrypted = match self.provider.get_mut().map_err(FlowControllerError::MissingCache)?.obfuscate_tailor(packet_tailor, pool) {
+                Ok(res) => packet_data.expand_end(res.len()),
+                Err(err) => return Err(FlowControllerError::TailorEncryption(err)),
+            };
+            (encrypted, flags, data_len)
         };
 
         let fake_header_len = self.config.fake_header_mode.len();
@@ -123,14 +132,18 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
         get_rng().fill(&mut full_packet.rebuffer_both(fake_header_len, full_packet_len));
 
         self.capture.record_send(|| {
-            let kind = if packet_flags.is_discardable() {
+            let kind = if fallthrough {
+                "DecoyFallthrough"
+            } else if packet_flags.is_discardable() {
                 "Decoy"
             } else if packet_flags.is_service() {
                 "Service"
             } else {
                 "Data"
             };
-            (kind, full_tailor_len, CP::tailor_overhead(), fake_header_len, data_len, full_packet_len - fake_header_len)
+            let tailor_overhead = if fallthrough { 0 } else { CP::tailor_overhead() };
+            let tailor_len = if fallthrough { 0 } else { full_tailor_len };
+            (kind, tailor_len, tailor_overhead, fake_header_len, data_len, full_packet_len - fake_header_len)
         });
 
         Ok(full_packet)

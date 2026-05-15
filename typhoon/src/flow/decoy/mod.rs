@@ -43,7 +43,7 @@ where
 {
     Arc::new(|manager, settings, identity| {
         info!("decoy provider: {}", <DP as DecoyCommunicationMode<T, AE>>::name());
-        Box::new(DP::new(manager, settings, identity))
+        Box::new(DP::new(manager, settings, identity, None))
     })
 }
 
@@ -58,23 +58,23 @@ where
         weighted_random! {
             settings.get(&DECOY_PROVIDER_WEIGHT_SIMPLE) => {
                 info!("decoy provider: {}", <SimpleDecoyProvider as DecoyCommunicationMode<T, AE>>::name());
-                Box::new(SimpleDecoyProvider::new(manager, settings, identity)) as Box<dyn DecoyProvider>
+                Box::new(SimpleDecoyProvider::new(manager, settings, identity, None)) as Box<dyn DecoyProvider>
             },
             settings.get(&DECOY_PROVIDER_WEIGHT_SPARSE) => {
                 info!("decoy provider: {}", <SparseDecoyProvider<T, AE> as DecoyCommunicationMode<T, AE>>::name());
-                Box::new(SparseDecoyProvider::new(manager, settings, identity)) as Box<dyn DecoyProvider>
+                Box::new(SparseDecoyProvider::new(manager, settings, identity, None)) as Box<dyn DecoyProvider>
             },
             settings.get(&DECOY_PROVIDER_WEIGHT_NOISY) => {
                 info!("decoy provider: {}", <NoisyDecoyProvider<T, AE> as DecoyCommunicationMode<T, AE>>::name());
-                Box::new(NoisyDecoyProvider::new(manager, settings, identity)) as Box<dyn DecoyProvider>
+                Box::new(NoisyDecoyProvider::new(manager, settings, identity, None)) as Box<dyn DecoyProvider>
             },
             settings.get(&DECOY_PROVIDER_WEIGHT_SMOOTH) => {
                 info!("decoy provider: {}", <SmoothDecoyProvider<T, AE> as DecoyCommunicationMode<T, AE>>::name());
-                Box::new(SmoothDecoyProvider::new(manager, settings, identity)) as Box<dyn DecoyProvider>
+                Box::new(SmoothDecoyProvider::new(manager, settings, identity, None)) as Box<dyn DecoyProvider>
             },
             settings.get(&DECOY_PROVIDER_WEIGHT_HEAVY) => {
                 info!("decoy provider: {}", <HeavyDecoyProvider<T, AE> as DecoyCommunicationMode<T, AE>>::name());
-                Box::new(HeavyDecoyProvider::new(manager, settings, identity)) as Box<dyn DecoyProvider>
+                Box::new(HeavyDecoyProvider::new(manager, settings, identity, None)) as Box<dyn DecoyProvider>
             },
         }
     })

@@ -83,7 +83,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
             self.packet_number += 1;
             Tailor::decoy(buf.rebuffer_start(len), &self.identity, self.packet_number);
             if let Some(mgr) = self.manager.upgrade() {
-                if let Err(err) = mgr.send_decoy_packet(buf).await {
+                if let Err(err) = mgr.send_decoy_packet(buf, false).await {
                     warn!("MirrorDecoyProvider: send failed: {err:?}");
                 }
             }
@@ -97,7 +97,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyCommunicationMode<T, AE> for MirrorDecoyProvider<T, AE> {
-    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T) -> Self {
+    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, _fallthrough_probability: Option<f64>) -> Self {
         Self {
             manager,
             settings,

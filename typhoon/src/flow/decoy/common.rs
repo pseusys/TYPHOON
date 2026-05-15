@@ -203,13 +203,13 @@ where
 /// Object-safe interface used by decoy providers to dispatch generated packets.
 /// Implemented automatically for every `FlowManager + Send + Sync` type.
 pub trait DecoyFlowSender: Send + Sync {
-    /// Send a generated decoy packet through the flow manager.
-    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>>;
+    /// Send a generated decoy packet through the flow manager.  `fallthrough` skips the tailor step (see `FlowManager::send_packet`).
+    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>>;
 }
 
 impl<T: FlowManager + Send + Sync> DecoyFlowSender for T {
-    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>> {
-        Box::pin(self.send_packet(packet))
+    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>> {
+        Box::pin(self.send_packet(packet, fallthrough))
     }
 }
 
@@ -242,8 +242,8 @@ pub trait DecoyCommunicationMode<T: IdentityType + Clone, AE: AsyncExecutor>: De
         without_generics.split("::").last().unwrap_or(without_generics)
     }
 
-    /// Create a new decoy provider with the given manager, settings, and identity.
-    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T) -> Self;
+    /// Create a new decoy provider; `fallthrough_probability` pins the per-flow fallthrough rate, `None` samples from the settings keys.
+    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, fallthrough_probability: Option<f64>) -> Self;
 }
 
 // ── DecoyState ──────────────────────────────────────────────────────────────
@@ -278,10 +278,13 @@ pub(super) struct DecoyState<T: IdentityType + Clone, AE: AsyncExecutor> {
     pub(super) next_maintenance_time: u128,
     /// Pre-computed length for next maintenance packet.
     pub(super) pending_maintenance_length: usize,
+    /// Per-flow probability that a generated decoy packet bypasses the tailor step.
+    fallthrough_probability: f64,
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
-    pub(super) fn new(settings: Arc<Settings<AE>>, identity: T) -> Self {
+    /// Build a fresh decoy state. `fallthrough_probability` pins the per-flow probability; `None` samples from `DECOY_FALLTHROUGH_PACKETS_{MIN,MAX}`.
+    pub(super) fn new(settings: Arc<Settings<AE>>, identity: T, fallthrough_probability: Option<f64>) -> Self {
         let byte_rate_cap = settings.get(&DECOY_BYTE_RATE_CAP);
         let byte_rate_factor = settings.get(&DECOY_BYTE_RATE_FACTOR);
         let length_max = settings.get(&DECOY_LENGTH_MAX) as usize;
@@ -299,6 +302,12 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
             (now + delay as u128, length)
         };
 
+        let fallthrough_probability = fallthrough_probability.unwrap_or_else(|| {
+            let lo = settings.get(&DECOY_FALLTHROUGH_PACKETS_MIN);
+            let hi = settings.get(&DECOY_FALLTHROUGH_PACKETS_MAX);
+            if lo >= hi { lo } else { get_rng().gen_range(lo..=hi) }
+        });
+
         Self {
             settings: settings.clone(),
             reference_rate: settings.get(&DECOY_REFERENCE_PACKET_RATE_DEFAULT),
@@ -314,6 +323,19 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
             features,
             next_maintenance_time: maint_time,
             pending_maintenance_length: maint_len,
+            fallthrough_probability,
+        }
+    }
+
+    /// Roll a coin against `fallthrough_probability`; `true` ⇒ next decoy bypasses the tailor.
+    #[inline]
+    pub(super) fn should_fallthrough(&self) -> bool {
+        if self.fallthrough_probability <= 0.0 {
+            false
+        } else if self.fallthrough_probability >= 1.0 {
+            true
+        } else {
+            get_rng().r#gen::<f64>() < self.fallthrough_probability
         }
     }
 
@@ -511,7 +533,7 @@ where
             break;
         };
 
-        let (packet, body_length, should_rep, settings) = {
+        let (packet, body_length, should_rep, fallthrough, settings) = {
             let mut guard = state.write().await;
             let length = guard.pending_maintenance_length;
 
@@ -522,15 +544,16 @@ where
 
             let packet = guard.create_decoy_packet(length, true);
             let should_rep = guard.should_replicate(true);
+            let fallthrough = guard.should_fallthrough();
             let settings = Arc::clone(&guard.settings);
-            (packet, length, should_rep, settings)
+            (packet, length, should_rep, fallthrough, settings)
         };
 
         let body_buf = should_rep.then(|| settings.pool().allocate_precise_from_slice_with_capacity(packet.slice_end(body_length), 0, 0));
 
         debug!("Maintenance: generated packet (len={body_length})");
 
-        if let Err(err) = manager_arc.send_decoy_packet(packet).await {
+        if let Err(err) = manager_arc.send_decoy_packet(packet, fallthrough).await {
             warn!("Maintenance: failed to send: {err:?}");
         } else if let Some(body) = body_buf {
             try_replicate(&state, &manager, true, body).await;
@@ -575,15 +598,16 @@ where
                 break;
             };
 
-            let packet = {
+            let (packet, fallthrough) = {
                 let mut guard = state_clone.write().await;
                 if !guard.try_spend_budget(body.slice().len()) {
                     break;
                 }
-                guard.create_replica_packet(body.slice(), is_maintenance)
+                let replica = guard.create_replica_packet(body.slice(), is_maintenance);
+                (replica, guard.should_fallthrough())
             };
 
-            if manager_arc.send_decoy_packet(packet).await.is_err() {
+            if manager_arc.send_decoy_packet(packet, fallthrough).await.is_err() {
                 break;
             }
 

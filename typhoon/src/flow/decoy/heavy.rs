@@ -76,11 +76,12 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> HeavyDecoyProvider<T, AE> {
                 if state_guard.try_spend_budget(decoy_length) {
                     let decoy_packet = state_guard.create_decoy_packet(decoy_length, false);
                     let should_rep = state_guard.should_replicate(false);
+                    let fallthrough = state_guard.should_fallthrough();
                     let settings = Arc::clone(&state_guard.settings);
                     drop(state_guard);
 
                     let body_buf = should_rep.then(|| settings.pool().allocate_precise_from_slice_with_capacity(decoy_packet.slice_end(decoy_length), 0, 0));
-                    if let Err(err) = manager_arc.send_decoy_packet(decoy_packet).await {
+                    if let Err(err) = manager_arc.send_decoy_packet(decoy_packet, fallthrough).await {
                         warn!("HeavyDecoyProvider: failed to send decoy packet: {err:?}");
                     } else if let Some(body) = body_buf {
                         try_replicate(&state, &manager, false, body).await;
@@ -134,8 +135,8 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyCommunicationMode<T, AE> for HeavyDecoyProvider<T, AE> {
-    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T) -> Self {
-        let state = DecoyState::new(settings.clone(), identity);
+    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, fallthrough_probability: Option<f64>) -> Self {
+        let state = DecoyState::new(settings.clone(), identity, fallthrough_probability);
         let delay = Self::calculate_delay(&state);
         let length = Self::calculate_length(&state);
         let mut state = state;

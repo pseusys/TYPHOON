@@ -35,6 +35,10 @@ pub mod keys {
     pub const FAKE_HEADER_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_LENGTH_MAX", 32);
     pub const FAKE_HEADER_PROBABILITY: Key<f64> = Key::new("TYPHOON_FAKE_HEADER_PROBABILITY", 0.60);
 
+    // Per-flow probability that a generated decoy packet bypasses the tailor step
+    pub const DECOY_FALLTHROUGH_PACKETS_MIN: Key<f64> = Key::new("TYPHOON_DECOY_FALLTHROUGH_PACKETS_MIN", 0.0);
+    pub const DECOY_FALLTHROUGH_PACKETS_MAX: Key<f64> = Key::new("TYPHOON_DECOY_FALLTHROUGH_PACKETS_MAX", 0.25);
+
     // Fake body mode selection weights.
     pub const FAKE_BODY_WEIGHT_EMPTY: Key<u64> = Key::new("TYPHOON_FAKE_BODY_WEIGHT_EMPTY", 1);
     pub const FAKE_BODY_WEIGHT_RANDOM: Key<u64> = Key::new("TYPHOON_FAKE_BODY_WEIGHT_RANDOM", 5);

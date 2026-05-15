@@ -114,6 +114,34 @@ fn test_settings_decoy_length_min_exceeds_max() {
     assert!(result.is_err());
 }
 
+// Test: DECOY_FALLTHROUGH_PACKETS_MIN > DECOY_FALLTHROUGH_PACKETS_MAX fails assertion.
+#[test]
+fn test_settings_decoy_fallthrough_min_exceeds_max() {
+    let result = builder().set(&DECOY_FALLTHROUGH_PACKETS_MIN, 0.5).set(&DECOY_FALLTHROUGH_PACKETS_MAX, 0.1).build();
+    assert!(result.is_err());
+}
+
+// Test: DECOY_FALLTHROUGH_PACKETS_MIN outside [0, 1] fails assertion.
+#[test]
+fn test_settings_decoy_fallthrough_min_out_of_unit_range() {
+    assert!(builder().set(&DECOY_FALLTHROUGH_PACKETS_MIN, -0.1).build().is_err());
+    assert!(builder().set(&DECOY_FALLTHROUGH_PACKETS_MIN, 1.5).build().is_err());
+}
+
+// Test: DECOY_FALLTHROUGH_PACKETS_MAX outside [0, 1] fails assertion.
+#[test]
+fn test_settings_decoy_fallthrough_max_out_of_unit_range() {
+    assert!(builder().set(&DECOY_FALLTHROUGH_PACKETS_MAX, -0.1).build().is_err());
+    assert!(builder().set(&DECOY_FALLTHROUGH_PACKETS_MAX, 1.5).build().is_err());
+}
+
+// Test: DECOY_FALLTHROUGH_PACKETS_* unit bounds and equal bounds pass assertion.
+#[test]
+fn test_settings_decoy_fallthrough_unit_bounds_ok() {
+    assert!(builder().set(&DECOY_FALLTHROUGH_PACKETS_MIN, 0.0).set(&DECOY_FALLTHROUGH_PACKETS_MAX, 1.0).build().is_ok());
+    assert!(builder().set(&DECOY_FALLTHROUGH_PACKETS_MIN, 0.5).set(&DECOY_FALLTHROUGH_PACKETS_MAX, 0.5).build().is_ok());
+}
+
 // Test: valid custom settings pass assertions.
 #[test]
 fn test_settings_valid_custom_pass() {

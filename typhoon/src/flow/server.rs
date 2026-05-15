@@ -228,7 +228,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> FlowManager for ServerFlowManager<T, AE> {
-    async fn send_packet(&self, packet: DynamicByteBuffer) -> Result<(), FlowControllerError> {
+    async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool) -> Result<(), FlowControllerError> {
         let identity_len = T::length();
         let tailor_len = identity_len + TAILOR_LENGTH;
         let (body, tailor_buf) = packet.split_buf(packet.len() - tailor_len);
@@ -265,15 +265,23 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             notified_packet
         };
 
-        let (packet_data, packet_tailor) = notified_packet.split_buf(notified_packet.len() - identity_len - TAILOR_LENGTH);
-        let packet_flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
-        let data_len = packet_data.len();
-
-        let encrypted_tailor = {
-            let mut crypto = self.crypto_send.lock().await;
-            crypto.obfuscate_tailor(packet_tailor, self.settings.pool()).await.map_err(FlowControllerError::TailorEncryption)?
+        // Fallthrough decoys: drop the plaintext tailor, skip encryption, treat the remaining body as opaque random bytes.  Non-fallthrough path is unchanged.
+        let (encrypted_packet, packet_flags, data_len, tailor_overhead) = if fallthrough {
+            let body_only = notified_packet.rebuffer_end(notified_packet.len() - identity_len - TAILOR_LENGTH);
+            let body_len = body_only.len();
+            (body_only, PacketFlags::DECOY, body_len, 0_usize)
+        } else {
+            let (packet_data, packet_tailor) = notified_packet.split_buf(notified_packet.len() - identity_len - TAILOR_LENGTH);
+            let flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
+            let data_len = packet_data.len();
+            let encrypted_tailor = {
+                let mut crypto = self.crypto_send.lock().await;
+                crypto.obfuscate_tailor(packet_tailor, self.settings.pool()).await.map_err(FlowControllerError::TailorEncryption)?
+            };
+            let tailor_overhead = encrypted_tailor.len() - identity_len;
+            let encrypted = packet_data.expand_end(encrypted_tailor.len());
+            (encrypted, flags, data_len, tailor_overhead)
         };
-        let encrypted_packet = packet_data.expand_end(encrypted_tailor.len());
 
         // Add fake header and body (single lock scope: len + fill must be consistent).
         let (full_packet, cap_header, cap_body) = {
@@ -287,17 +295,23 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             (full_packet, fake_header_len, body_len)
         };
 
+        if full_packet.len() == 0 {
+            return Ok(());
+        }
         debug!("server flow: sending {packet_flags:?} packet to {addr}");
         self.socks[0].send_to(full_packet, addr).await.map_err(FlowControllerError::SocketError)?;
         record_server_send(addr, || {
-            let kind = if packet_flags.is_discardable() {
+            let kind = if fallthrough {
+                "DecoyFallthrough"
+            } else if packet_flags.is_discardable() {
                 "Decoy"
             } else if packet_flags.is_service() {
                 "Service"
             } else {
                 "Data"
             };
-            (kind, identity_len + TAILOR_LENGTH, encrypted_tailor.len() - identity_len, cap_header, data_len, cap_body)
+            let tailor_len = if fallthrough { 0 } else { identity_len + TAILOR_LENGTH };
+            (kind, tailor_len, tailor_overhead, cap_header, data_len, cap_body)
         });
         Ok(())
     }
