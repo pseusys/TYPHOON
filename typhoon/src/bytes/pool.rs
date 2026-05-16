@@ -45,6 +45,18 @@ pub struct BytePool {
 }
 
 impl BytePool {
+    /// Pool's default leading head-room.
+    #[inline]
+    pub fn before_cap(&self) -> usize {
+        self.before_cap
+    }
+
+    /// Pool's default trailing head-room.
+    #[inline]
+    pub fn after_cap(&self) -> usize {
+        self.after_cap
+    }
+
     /// Create a new pool.
     /// - `before_cap`: header space before main data
     /// - `size`: main data capacity

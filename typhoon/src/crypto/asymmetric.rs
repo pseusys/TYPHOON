@@ -83,7 +83,7 @@ impl ClientCertificate {
             initial_key: initial_encryption_key,
         };
 
-        let handshake_buffer = pool.allocate_precise(0, 0, CLIENT_HANDSHAKE_HEADER_SIZE);
+        let handshake_buffer = pool.allocate_precise(0, pool.before_cap(), CLIENT_HANDSHAKE_HEADER_SIZE);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append_buf(&ciphertext_obfuscated).append_buf(&nonce);
 
         let handshake_secret = if initial_data.is_empty() {
@@ -229,7 +229,7 @@ impl ServerSecret<'_> {
         let session_key_hash = Hasher::new_keyed(&hash_derive_key_context(SESSION_KEY)).update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(transcript.as_bytes()).finalize();
         let session_key = FixedByteBuffer::from(*session_key_hash.as_bytes());
 
-        let handshake_buffer = pool.allocate_precise(0, 0, SERVER_HANDSHAKE_HEADER_SIZE);
+        let handshake_buffer = pool.allocate_precise(0, pool.before_cap(), SERVER_HANDSHAKE_HEADER_SIZE);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append(&transcript_signed.to_bytes()).append_buf(&nonce);
 
         let handshake_secret = if initial_data.is_empty() {

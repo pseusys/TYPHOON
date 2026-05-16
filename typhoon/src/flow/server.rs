@@ -255,16 +255,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             })?
         };
 
-        // Ensure before_capacity for expand_start — same guard as prepare_outgoing in client flow.
-        // Decoy packets use allocate_precise with subheader_len before_capacity (can be 0).
-        let notified_packet = if notified_packet.before_capacity() < self.max_overhead {
-            let staged = self.settings.pool().allocate_precise(notified_packet.len(), self.max_overhead, ServerCryptoTool::<T>::tailor_overhead());
-            staged.slice_mut().copy_from_slice(notified_packet.slice());
-            staged
-        } else {
-            notified_packet
-        };
-
         // Fallthrough decoys: drop the plaintext tailor, skip encryption, treat the remaining body as opaque random bytes.  Non-fallthrough path is unchanged.
         let (encrypted_packet, packet_flags, data_len, tailor_overhead) = if fallthrough {
             let body_only = notified_packet.rebuffer_end(notified_packet.len() - identity_len - TAILOR_LENGTH);
