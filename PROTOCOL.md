@@ -203,6 +203,9 @@ Each of these fields can be one of these types: random, constant, volatile, swit
 By default, fake header is enabled with `TYPHOON_FAKE_HEADER_PROBABILITY` probability.
 Each field mode is chosen randomly using weights `TYPHOON_FAKE_HEADER_FIELD_WEIGHT_RANDOM`, `TYPHOON_FAKE_HEADER_FIELD_WEIGHT_CONSTANT`, `TYPHOON_FAKE_HEADER_FIELD_WEIGHT_VOLATILE`, `TYPHOON_FAKE_HEADER_FIELD_WEIGHT_SWITCHING` and `TYPHOON_FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL` (all integer, default `1` each).
 
+For `volatile` fields, the per-field change probability is sampled from `[TYPHOON_FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN, TYPHOON_FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX]` at flow init (both asserted floats in `[0, 1]`, default range `[0.01, 0.20]`).
+For `switching` fields, the per-field switch timeout in milliseconds is sampled from `[TYPHOON_FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS, TYPHOON_FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS]` at flow init (asserted positive, default range `[1000, 30000]`).
+
 ## Packet behavior
 
 In general, the packet behavior is defined not only by packet type (explained below), but also by the source that the packet originates from.

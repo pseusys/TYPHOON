@@ -54,6 +54,13 @@ pub mod keys {
     pub const FAKE_HEADER_FIELD_WEIGHT_SWITCHING: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_FIELD_WEIGHT_SWITCHING", 1);
     pub const FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL", 1);
 
+    // Volatile field-type change probability range (per-field draw at flow init).
+    pub const FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN: Key<f64> = Key::new("TYPHOON_FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN", 0.01);
+    pub const FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX: Key<f64> = Key::new("TYPHOON_FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX", 0.20);
+    // Switching field-type timeout range in milliseconds (per-field draw at flow init).
+    pub const FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS", 1000);
+    pub const FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS", 30000);
+
     // Decoy general settings
     pub const DECOY_REFERENCE_PACKET_RATE_DEFAULT: Key<f64> = Key::new("TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT", 200.0);
     pub const DECOY_CURRENT_PACKET_RATE_DEFAULT: Key<f64> = Key::new("TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT", 1.0);

@@ -180,6 +180,40 @@ fn test_env_var_override_applied() {
     }
 }
 
+// Test: FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN > MAX fails assertion.
+#[test]
+fn test_settings_fake_header_volatile_change_prob_min_exceeds_max() {
+    let result = builder()
+        .set(&FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN, 0.5)
+        .set(&FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX, 0.1)
+        .build();
+    assert!(result.is_err());
+}
+
+// Test: FAKE_HEADER_VOLATILE_CHANGE_PROB out of [0, 1] fails assertion.
+#[test]
+fn test_settings_fake_header_volatile_change_prob_exceeds_one() {
+    let result = builder().set(&FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX, 1.5).build();
+    assert!(result.is_err());
+}
+
+// Test: FAKE_HEADER_SWITCHING_TIMEOUT_MIN > MAX fails assertion.
+#[test]
+fn test_settings_fake_header_switching_timeout_min_exceeds_max() {
+    let result = builder()
+        .set(&FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS, 50_000)
+        .set(&FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS, 1_000)
+        .build();
+    assert!(result.is_err());
+}
+
+// Test: FAKE_HEADER_SWITCHING_TIMEOUT_MIN = 0 fails assertion (must be positive).
+#[test]
+fn test_settings_fake_header_switching_timeout_min_zero() {
+    let result = builder().set(&FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS, 0).build();
+    assert!(result.is_err());
+}
+
 // Test: explicit override takes precedence over environment variable.
 #[test]
 fn test_explicit_override_beats_env_var() {

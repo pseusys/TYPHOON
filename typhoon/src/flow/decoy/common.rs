@@ -178,6 +178,10 @@ fn random_field_type<AE: AsyncExecutor, L: Copy + From<u8>>(settings: &Settings<
 where
     rand::distributions::Standard: Distribution<L>,
 {
+    let volatile_prob_min = settings.get(&FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN);
+    let volatile_prob_max = settings.get(&FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX);
+    let switching_timeout_min = settings.get(&FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS);
+    let switching_timeout_max = settings.get(&FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS);
     weighted_random! {
         settings.get(&FAKE_HEADER_FIELD_WEIGHT_RANDOM) => FieldType::Random,
         settings.get(&FAKE_HEADER_FIELD_WEIGHT_CONSTANT) => FieldType::Constant {
@@ -185,12 +189,15 @@ where
         },
         settings.get(&FAKE_HEADER_FIELD_WEIGHT_VOLATILE) => FieldType::Volatile {
             value: rng.r#gen::<L>(),
-            change_probability: rng.gen_range(0.01..0.5),
+            change_probability: rng.gen_range(volatile_prob_min..=volatile_prob_max),
         },
-        settings.get(&FAKE_HEADER_FIELD_WEIGHT_SWITCHING) => FieldType::Switching {
-            value: rng.r#gen::<L>(),
-            next_switch: unix_timestamp_ms() + rng.gen_range(1000..10000) as u128,
-            switch_timeout: rng.gen_range(1000..10000),
+        settings.get(&FAKE_HEADER_FIELD_WEIGHT_SWITCHING) => {
+            let switch_timeout = rng.gen_range(switching_timeout_min..=switching_timeout_max);
+            FieldType::Switching {
+                value: rng.r#gen::<L>(),
+                next_switch: unix_timestamp_ms() + switch_timeout as u128,
+                switch_timeout,
+            }
         },
         settings.get(&FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL) => FieldType::Incremental {
             value: rng.r#gen::<L>(),

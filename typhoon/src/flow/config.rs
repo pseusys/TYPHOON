@@ -218,6 +218,10 @@ impl FakeHeaderConfig {
             } else {
                 rng.gen_range(min_len..=max_len)
             };
+            let volatile_prob_min = settings.get(&keys::FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN);
+            let volatile_prob_max = settings.get(&keys::FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX);
+            let switching_timeout_min = settings.get(&keys::FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS);
+            let switching_timeout_max = settings.get(&keys::FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS);
             let fields = (0..len)
                 .map(|_| {
                     FieldTypeHolder::U8(weighted_random! {
@@ -227,10 +231,10 @@ impl FakeHeaderConfig {
                         },
                         settings.get(&keys::FAKE_HEADER_FIELD_WEIGHT_VOLATILE) => FieldType::Volatile {
                             value: rng.r#gen::<u8>(),
-                            change_probability: rng.gen_range(0.01..=0.20),
+                            change_probability: rng.gen_range(volatile_prob_min..=volatile_prob_max),
                         },
                         settings.get(&keys::FAKE_HEADER_FIELD_WEIGHT_SWITCHING) => {
-                            let switch_timeout = rng.gen_range(1_000u64..=30_000);
+                            let switch_timeout = rng.gen_range(switching_timeout_min..=switching_timeout_max);
                             FieldType::Switching {
                                 value: rng.r#gen::<u8>(),
                                 next_switch: unix_timestamp_ms() + switch_timeout as u128,

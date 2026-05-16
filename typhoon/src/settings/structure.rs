@@ -192,6 +192,8 @@ impl<AE: AsyncExecutor> Settings<AE> {
         assert_min_max_u64(&keys::DECOY_REPLICATION_DELAY_MIN, &keys::DECOY_REPLICATION_DELAY_MAX)?;
         assert_min_max_u64(&keys::DECOY_SUBHEADER_LENGTH_MIN, &keys::DECOY_SUBHEADER_LENGTH_MAX)?;
         assert_min_max_f64(&keys::DECOY_REPLICATION_PROBABILITY_MIN, &keys::DECOY_REPLICATION_PROBABILITY_MAX)?;
+        assert_min_max_f64(&keys::FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN, &keys::FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX)?;
+        assert_min_max_u64(&keys::FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS, &keys::FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS)?;
 
         // Defaults within bounds
         assert_default_in_range(&keys::RTT_MIN, &keys::RTT_DEFAULT, &keys::RTT_MAX)?;
@@ -221,6 +223,8 @@ impl<AE: AsyncExecutor> Settings<AE> {
         assert_unit_inclusive(&keys::SEND_BYTES_JITTER)?;
         assert_unit_inclusive(&keys::DECOY_FALLTHROUGH_PACKETS_MIN)?;
         assert_unit_inclusive(&keys::DECOY_FALLTHROUGH_PACKETS_MAX)?;
+        assert_unit_inclusive(&keys::FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN)?;
+        assert_unit_inclusive(&keys::FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX)?;
 
         // SEND_BYTES_CHUNK must fit inside the MTU.
         // Zero is the "use max_user_payload" sentinel and bypasses the check.
@@ -263,6 +267,7 @@ impl<AE: AsyncExecutor> Settings<AE> {
         assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_NOISY)?;
         assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_SMOOTH)?;
         assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_HEAVY)?;
+        assert_int_positive(&keys::FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS)?;
 
         Ok(())
     }
