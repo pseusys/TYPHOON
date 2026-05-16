@@ -222,6 +222,15 @@ impl<AE: AsyncExecutor> Settings<AE> {
         assert_unit_inclusive(&keys::DECOY_FALLTHROUGH_PACKETS_MIN)?;
         assert_unit_inclusive(&keys::DECOY_FALLTHROUGH_PACKETS_MAX)?;
 
+        // SEND_BYTES_CHUNK must fit inside the MTU.
+        // Zero is the "use max_user_payload" sentinel and bypasses the check.
+        let chunk = self.get(&keys::SEND_BYTES_CHUNK);
+        if chunk != 0 && (chunk as usize) > self.mtu() {
+            return Err(SettingsError::AssertionFailed {
+                message: format!("{} ({}) must be ≤ MTU ({}) or 0 (sentinel)", keys::SEND_BYTES_CHUNK.name, chunk, self.mtu()),
+            });
+        }
+
         // Positive multipliers
         assert_float_positive(&keys::TIMEOUT_RTT_FACTOR)?;
         assert_float_positive(&keys::HANDSHAKE_NEXT_IN_FACTOR)?;

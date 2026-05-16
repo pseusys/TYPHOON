@@ -25,6 +25,8 @@ pub mod keys {
 
     // Send-bytes chunking jitter
     pub const SEND_BYTES_JITTER: Key<f64> = Key::new("TYPHOON_SEND_BYTES_JITTER", 0.2);
+    // Send-bytes target chunk size. `0` means "use `max_user_payload`".
+    pub const SEND_BYTES_CHUNK: Key<u64> = Key::new("TYPHOON_SEND_BYTES_CHUNK", 0);
 
     // Fake body/header settings
     pub const FAKE_BODY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_BODY_LENGTH_MIN", 32);

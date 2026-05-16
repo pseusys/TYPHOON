@@ -139,24 +139,26 @@ pub fn get_rng() -> TyphoonRng {
     TyphoonRng::Os(OsRng)
 }
 
-/// Sample a chunk size in `[max_payload * (1 - jitter), max_payload]`, clamped to ≥ 1.
-///
-/// Used by `send_bytes` to randomise per-packet user-data length and break up the
-/// fingerprintably-uniform "every chunk equals max_data_payload" pattern.  Returns
-/// `max_payload` without consulting the RNG when *jitter* is zero or the lower
-/// bound rounds up to the upper bound (one-byte payloads, etc.).  Caller must
-/// have validated *jitter* is in `[0, 1]` (the settings layer does this).
+#[cfg(test)]
+#[path = "../../tests/utils/random.rs"]
+mod tests;
+
+/// Sample a chunk size around `chunk` with two-sided `jitter`, clamped to `[1, max_payload]`, `chunk == 0` is the sentinel for "saturate the MTU".
 #[cfg(feature = "client")]
 #[inline]
-pub fn jittered_chunk_size(max_payload: usize, jitter: f64) -> usize {
-    if jitter <= 0.0 || max_payload <= 1 {
+pub fn jittered_chunk_size(max_payload: usize, chunk: usize, jitter: f64) -> usize {
+    let target = if chunk == 0 { max_payload } else { chunk };
+    if max_payload <= 1 {
         return max_payload;
     }
-    let lo = ((max_payload as f64 * (1.0 - jitter)).round() as usize).max(1);
-    if lo >= max_payload {
-        return max_payload;
+    let target_f = target as f64;
+    let delta = (target_f * jitter).round() as usize;
+    let lo = target.saturating_sub(delta).max(1);
+    let hi = target.saturating_add(delta).min(max_payload);
+    if lo >= hi {
+        return hi;
     }
-    get_rng().gen_range(lo..=max_payload)
+    get_rng().gen_range(lo..=hi)
 }
 
 

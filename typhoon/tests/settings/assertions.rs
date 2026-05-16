@@ -86,6 +86,15 @@ fn test_settings_send_bytes_jitter_unit_bounds_ok() {
     assert!(builder().set(&SEND_BYTES_JITTER, 1.0).build().is_ok());
 }
 
+// Test: SEND_BYTES_CHUNK = 0 (sentinel) passes; positive ≤ MTU passes; > MTU fails.
+#[test]
+fn test_settings_send_bytes_chunk_bounds() {
+    assert!(builder().set(&SEND_BYTES_CHUNK, 0).build().is_ok());
+    assert!(builder().set(&SEND_BYTES_CHUNK, 512).build().is_ok());
+    assert!(builder().set(&SEND_BYTES_CHUNK, 1500).build().is_ok());
+    assert!(builder().set(&SEND_BYTES_CHUNK, 9000).build().is_err());
+}
+
 // Test: HEALTH_CHECK_NEXT_IN_MIN <= TIMEOUT_MAX fails assertion (next_in must be > timeout).
 #[test]
 fn test_settings_next_in_not_greater_than_timeout() {

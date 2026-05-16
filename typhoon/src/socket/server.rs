@@ -592,13 +592,14 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> C
     /// here for s2c traffic.
     pub async fn send_bytes(&self, data: &[u8]) -> Result<(), ServerSocketError> {
         let jitter = self.settings.get(&keys::SEND_BYTES_JITTER);
+        let chunk = self.settings.get(&keys::SEND_BYTES_CHUNK) as usize;
         let mut offset = 0;
         while offset < data.len() {
             let remaining = data.len() - offset;
             let chunk_size = if remaining <= self.max_data_payload {
                 remaining
             } else {
-                jittered_chunk_size(self.max_data_payload, jitter)
+                jittered_chunk_size(self.max_data_payload, chunk, jitter)
             };
             let buffer = self.settings.pool().allocate(Some(chunk_size));
             buffer.slice_mut().copy_from_slice(&data[offset..offset + chunk_size]);
