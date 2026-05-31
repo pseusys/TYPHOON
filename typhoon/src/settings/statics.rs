@@ -31,7 +31,7 @@ pub mod keys {
     // Fake body/header settings
     pub const FAKE_BODY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_BODY_LENGTH_MIN", 32);
     pub const FAKE_BODY_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_FAKE_BODY_LENGTH_MAX", 512);
-    pub const FAKE_BODY_CONSTANT_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MIN", 64);
+    pub const FAKE_BODY_CONSTANT_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MIN", 256);
     pub const FAKE_BODY_CONSTANT_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MAX", 1400);
     pub const FAKE_HEADER_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_LENGTH_MIN", 4);
     pub const FAKE_HEADER_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_LENGTH_MAX", 32);

@@ -70,8 +70,12 @@ impl<AE: AsyncExecutor> SettingsBuilder<AE> {
             self.overrides,
             self.executor.unwrap_or_else(AE::new),
             self.pool.unwrap_or_else(|| {
-                let capacity = self.mtu / 2;
-                BytePool::new(capacity, self.mtu, capacity, consts::DEFAULT_POOL_INITIAL_SIZE, consts::DEFAULT_POOL_CAPACITY)
+                // `before_cap` must accommodate the worst-case fake-header + fake-body padding
+                // that `FlowConfig::random` may pick.  `FAKE_BODY_CONSTANT_LENGTH_MAX` is
+                // clamped to `mtu` at flow-build time, so the prepended bytes can be up to
+                // `mtu` in the limit — sizing `before_cap` below `mtu` panics `expand_start`
+                // for small handshake packets paired with a near-MTU Constant body.
+                BytePool::new(self.mtu, self.mtu, self.mtu / 2, consts::DEFAULT_POOL_INITIAL_SIZE, consts::DEFAULT_POOL_CAPACITY)
             }),
             self.mtu,
         );
