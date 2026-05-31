@@ -144,7 +144,6 @@ pub fn get_rng() -> TyphoonRng {
 mod tests;
 
 /// Sample a chunk size around `chunk` with two-sided `jitter`, clamped to `[1, max_payload]`, `chunk == 0` is the sentinel for "saturate the MTU".
-#[cfg(feature = "client")]
 #[inline]
 pub fn jittered_chunk_size(max_payload: usize, chunk: usize, jitter: f64) -> usize {
     let target = if chunk == 0 { max_payload } else { chunk };
