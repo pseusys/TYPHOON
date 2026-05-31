@@ -83,8 +83,6 @@ pub(crate) enum ProcessIncomingResult {
     Valid(DynamicByteBuffer),
     /// Decoy flag set: packet should be silently discarded.
     Decoy,
-    /// Tailor decryption or verification failed: packet forwarded to the probe handler.
-    Unexpected(DynamicByteBuffer),
 }
 
 #[cfg(feature = "client")]
@@ -173,13 +171,4 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
         ProcessIncomingResult::Valid(body.rebuffer_start(body.len() - payload_len).expand_end(full_tailor_len))
     }
 
-    /// Decrypt tailor and verify. Returns `Valid`, `Decoy`, or `Unexpected` (crypto failure).
-    /// On failure the original (possibly partially modified) buffer is returned inside `Unexpected`
-    /// so the caller can forward it to the active probe handler.
-    pub(crate) fn process_incoming(&mut self, packet: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<ProcessIncomingResult, FlowControllerError> {
-        match self.deobfuscate_incoming(packet.clone(), pool)? {
-            None => Ok(ProcessIncomingResult::Unexpected(packet)),
-            Some((body, tailor_buf)) => Ok(self.process_with_tailor(body, tailor_buf)),
-        }
-    }
 }

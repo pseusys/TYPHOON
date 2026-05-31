@@ -128,7 +128,6 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager
                 lock.process_with_tailor(notified_body, tailor_buf)
             };
             match incoming_packet {
-                ProcessIncomingResult::Unexpected(pkt) => self.probe_handler.lock().await.process(pkt, None).await,
                 ProcessIncomingResult::Decoy => {}
                 ProcessIncomingResult::Valid(result) => return Ok(result),
             }
