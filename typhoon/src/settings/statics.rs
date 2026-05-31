@@ -82,6 +82,7 @@ pub mod keys {
     pub const DECOY_HEAVY_BASE_LENGTH: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_BASE_LENGTH", 0.7);
     pub const DECOY_HEAVY_QUIETNESS_LENGTH: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH", 0.3);
     pub const DECOY_HEAVY_DECOY_LENGTH_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR", 0.8);
+    pub const DECOY_HEAVY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_HEAVY_LENGTH_MIN", 560);
 
     // Decoy noisy settings
     pub const DECOY_NOISY_BASE_RATE: Key<f64> = Key::new("TYPHOON_DECOY_NOISY_BASE_RATE", 3.0);
@@ -89,6 +90,7 @@ pub mod keys {
     pub const DECOY_NOISY_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_DELAY_MAX", 2000);
     pub const DECOY_NOISY_DELAY_DEFAULT: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_DELAY_DEFAULT", 500);
     pub const DECOY_NOISY_DECOY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN", 64);
+    pub const DECOY_NOISY_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_LENGTH_MAX", 800);
     pub const DECOY_NOISY_DECOY_LENGTH_JITTER: Key<f64> = Key::new("TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER", 0.3);
 
     // Decoy sparse settings
@@ -114,7 +116,7 @@ pub mod keys {
     pub const DECOY_SMOOTH_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_DELAY_MAX", 300_000);
     pub const DECOY_SMOOTH_DELAY_DEFAULT: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT", 5000);
     pub const DECOY_SMOOTH_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_LENGTH_MIN", 48);
-    pub const DECOY_SMOOTH_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_LENGTH_MAX", 1400);
+    pub const DECOY_SMOOTH_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_LENGTH_MAX", 1100);
 
     // Decoy maintenance settings
     pub const DECOY_MAINTENANCE_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_LENGTH_MIN", 250);

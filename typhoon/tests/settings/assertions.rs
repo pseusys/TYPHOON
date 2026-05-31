@@ -214,6 +214,26 @@ fn test_settings_fake_header_switching_timeout_min_zero() {
     assert!(result.is_err());
 }
 
+// Test: DECOY_NOISY_DECOY_LENGTH_MIN > DECOY_NOISY_LENGTH_MAX fails.
+#[test]
+fn test_settings_noisy_length_min_exceeds_max() {
+    let result = builder()
+        .set(&DECOY_NOISY_DECOY_LENGTH_MIN, 1000)
+        .set(&DECOY_NOISY_LENGTH_MAX, 500)
+        .build();
+    assert!(result.is_err());
+}
+
+// Test: DECOY_HEAVY_LENGTH_MIN > DECOY_LENGTH_MAX fails.
+#[test]
+fn test_settings_heavy_length_min_exceeds_decoy_max() {
+    let result = builder()
+        .set(&DECOY_HEAVY_LENGTH_MIN, 2000)
+        .set(&DECOY_LENGTH_MAX, 1400)
+        .build();
+    assert!(result.is_err());
+}
+
 // Test: explicit override takes precedence over environment variable.
 #[test]
 fn test_explicit_override_beats_env_var() {

@@ -41,15 +41,16 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> NoisyDecoyProvider<T, AE> {
         (delay as u64).clamp(delay_min, delay_max)
     }
 
-    fn calculate_length(state: &DecoyState<T, AE>) -> usize {
+    pub(crate) fn calculate_length(state: &DecoyState<T, AE>) -> usize {
         let length_min = state.settings.get(&DECOY_NOISY_DECOY_LENGTH_MIN) as usize;
+        let length_max = state.settings.get(&DECOY_NOISY_LENGTH_MAX) as usize;
         let length_jitter = state.settings.get(&DECOY_NOISY_DECOY_LENGTH_JITTER);
 
         let quietness = state.quietness_index();
-        let mean_length = (length_min as f64) + quietness * (-state.packet_rate / state.reference_rate).exp() * ((state.packet_length_cap - length_min) as f64);
+        let mean_length = (length_min as f64) + quietness * (-state.packet_rate / state.reference_rate).exp() * ((length_max - length_min) as f64);
         let decoy_length = random_gauss(mean_length, length_jitter * mean_length);
 
-        (decoy_length as usize).clamp(length_min, state.packet_length_cap)
+        (decoy_length as usize).clamp(length_min, length_max)
     }
 
     async fn timer_task(manager: Weak<dyn DecoyFlowSender>, state: Arc<RwLock<DecoyState<T, AE>>>) {
@@ -118,7 +119,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 
     async fn feed_input(&mut self, packet: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         let mut state = self.state.write().await;
-        state.update(packet.len());
+        state.update(packet.len(), false);
         Some(packet)
     }
 
@@ -126,7 +127,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         let flags = PacketFlags::from_bits_truncate(*tailor_buf.get(FG_OFFSET));
         if !flags.is_discardable() {
             let mut state = self.state.write().await;
-            state.update(body.len() + tailor_buf.len());
+            state.update(body.len() + tailor_buf.len(), true);
         }
         Some(body)
     }

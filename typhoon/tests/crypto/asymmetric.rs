@@ -18,7 +18,7 @@ const NONCE_LENGTH: usize = 32;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 const ENCRYPT_OBFUSCATE_HEADER: usize = NONCE_LENGTH + X25519_KEY_LENGTH + 2 * ANONYMOUS_NONCE_LEN;
 
-static TEST_POOL: LazyLock<BytePool> = LazyLock::new(|| BytePool::new(32, 256, 32, 4, 16));
+static TEST_POOL: LazyLock<BytePool> = LazyLock::new(|| BytePool::new(64, 384, 64, 4, 16));
 
 // Test: handshake produces matching shared secrets and session keys, with initial data exchange.
 #[cfg(all(feature = "client", feature = "server"))]

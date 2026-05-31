@@ -181,6 +181,8 @@ impl<AE: AsyncExecutor> Settings<AE> {
         assert_min_max_u64(&keys::TIMEOUT_MIN, &keys::TIMEOUT_MAX)?;
         assert_min_max_u64(&keys::RTT_MIN, &keys::RTT_MAX)?;
         assert_min_max_u64(&keys::DECOY_LENGTH_MIN, &keys::DECOY_LENGTH_MAX)?;
+        assert_min_max_u64(&keys::DECOY_NOISY_DECOY_LENGTH_MIN, &keys::DECOY_NOISY_LENGTH_MAX)?;
+        assert_min_max_u64(&keys::DECOY_HEAVY_LENGTH_MIN, &keys::DECOY_LENGTH_MAX)?;
         assert_min_max_u64(&keys::DECOY_HEAVY_DELAY_MIN, &keys::DECOY_HEAVY_DELAY_MAX)?;
         assert_min_max_u64(&keys::DECOY_NOISY_DELAY_MIN, &keys::DECOY_NOISY_DELAY_MAX)?;
         assert_min_max_u64(&keys::DECOY_SPARSE_DELAY_MIN, &keys::DECOY_SPARSE_DELAY_MAX)?;

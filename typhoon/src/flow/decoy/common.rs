@@ -346,8 +346,8 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
         }
     }
 
-    /// Update internal state when a packet passes through.
-    pub(super) fn update(&mut self, packet_length: usize) {
+    /// Update rate-tracking state when a packet passes through.
+    pub(super) fn update(&mut self, packet_length: usize, outgoing_real: bool) {
         let current_time = unix_timestamp_ms();
 
         if let Some(prev_time) = self.previous_packet_time {
@@ -361,7 +361,9 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
             self.reference_rate = (1.0 - reference_alpha) * self.reference_rate + reference_alpha * time_delta;
             self.packet_rate = (1.0 - current_alpha) * self.packet_rate + current_alpha * time_delta;
             self.byte_rate = (1.0 - current_alpha) * self.byte_rate + current_alpha * (packet_length as f64);
-            self.byte_budget = (self.byte_budget + time_delta * byte_rate_cap / 1000.0).min(byte_rate_cap * byte_rate_factor);
+            let refill = time_delta * byte_rate_cap / 1000.0;
+            let deduct = if outgoing_real { packet_length as f64 } else { 0.0 };
+            self.byte_budget = (self.byte_budget + refill - deduct).clamp(0.0, byte_rate_cap * byte_rate_factor);
         }
 
         self.previous_packet_time = Some(current_time);

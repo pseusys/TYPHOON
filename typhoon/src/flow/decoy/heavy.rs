@@ -42,16 +42,17 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> HeavyDecoyProvider<T, AE> {
         (delay as u64).clamp(delay_min, delay_max)
     }
 
-    fn calculate_length(state: &DecoyState<T, AE>) -> usize {
+    pub(crate) fn calculate_length(state: &DecoyState<T, AE>) -> usize {
         let base_length_factor = state.settings.get(&DECOY_HEAVY_BASE_LENGTH);
         let quietness_length = state.settings.get(&DECOY_HEAVY_QUIETNESS_LENGTH);
         let decoy_length_factor = state.settings.get(&DECOY_HEAVY_DECOY_LENGTH_FACTOR);
+        let length_min = state.settings.get(&DECOY_HEAVY_LENGTH_MIN) as usize;
 
         let quietness = state.quietness_index();
         let base_length = (state.packet_length_cap as f64) * (base_length_factor + quietness_length * quietness);
         let decoy_length = random_uniform(decoy_length_factor * base_length, base_length);
 
-        (decoy_length as usize).clamp(state.packet_length_cap / 2, state.packet_length_cap)
+        (decoy_length as usize).clamp(length_min, state.packet_length_cap)
     }
 
     async fn timer_task(manager: Weak<dyn DecoyFlowSender>, state: Arc<RwLock<DecoyState<T, AE>>>) {
@@ -120,7 +121,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 
     async fn feed_input(&mut self, packet: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         let mut state = self.state.write().await;
-        state.update(packet.len());
+        state.update(packet.len(), false);
         Some(packet)
     }
 
@@ -128,7 +129,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         let flags = PacketFlags::from_bits_truncate(*tailor_buf.get(FG_OFFSET));
         if !flags.is_discardable() {
             let mut state = self.state.write().await;
-            state.update(body.len() + tailor_buf.len());
+            state.update(body.len() + tailor_buf.len(), true);
         }
         Some(body)
     }

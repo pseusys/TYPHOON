@@ -45,7 +45,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> SmoothDecoyProvider<T, AE> {
         (delay as u64).clamp(delay_min, delay_max)
     }
 
-    fn calculate_length(state: &DecoyState<T, AE>) -> usize {
+    pub(crate) fn calculate_length(state: &DecoyState<T, AE>) -> usize {
         let length_min = state.settings.get(&DECOY_SMOOTH_LENGTH_MIN) as usize;
         let length_max = state.settings.get(&DECOY_SMOOTH_LENGTH_MAX) as usize;
 
@@ -122,7 +122,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 
     async fn feed_input(&mut self, packet: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         let mut state = self.state.write().await;
-        state.update(packet.len());
+        state.update(packet.len(), false);
         Some(packet)
     }
 
@@ -130,7 +130,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         let flags = PacketFlags::from_bits_truncate(*tailor_buf.get(FG_OFFSET));
         if !flags.is_discardable() {
             let mut state = self.state.write().await;
-            state.update(body.len() + tailor_buf.len());
+            state.update(body.len() + tailor_buf.len(), true);
         }
         Some(body)
     }
