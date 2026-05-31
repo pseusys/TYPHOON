@@ -148,6 +148,13 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         loop {
             let (packet, source_addr) = sock.recv_from(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
 
+            // Undersized wire packets (shorter than the encrypted tailor) can't be valid Typhoon; forward to the probe handler and keep draining.
+            if packet.len() < identity_len + tailor_overhead {
+                warn!("server flow: undersized wire packet from {source_addr} ({} < {})", packet.len(), identity_len + tailor_overhead);
+                self.probe_handler.lock().await.process(packet, Some(source_addr)).await;
+                continue;
+            }
+
             let (encrypted_packet, encrypted_tailor) = packet.split_buf(packet.len() - identity_len - tailor_overhead);
 
             // Deobfuscate tailor, verify immediately for non-handshake packets (single lock scope).

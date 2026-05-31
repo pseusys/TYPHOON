@@ -142,6 +142,13 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
     /// (caller should treat the wire packet as unexpected), or `Err` on a programming error.
     pub(crate) fn deobfuscate_incoming(&mut self, packet: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<Option<(DynamicByteBuffer, DynamicByteBuffer)>, FlowControllerError> {
         let encrypted_tailor_len = <CP::Identity as IdentityType>::length() + CP::tailor_overhead();
+        // A wire packet shorter than the encrypted tailor cannot be a valid Typhoon
+        // packet — caller treats `None` the same as crypto failure and forwards
+        // the buffer to the probe handler, so just bail out without splitting.
+        if packet.len() < encrypted_tailor_len {
+            warn!("client flow: undersized wire packet ({} < {encrypted_tailor_len})", packet.len());
+            return Ok(None);
+        }
         let (body, encrypted_tailor) = packet.split_buf(packet.len() - encrypted_tailor_len);
         let cipher = self.provider.get_mut().map_err(FlowControllerError::MissingCache)?;
         match cipher.deobfuscate_tailor(encrypted_tailor, pool) {
