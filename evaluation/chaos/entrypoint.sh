@@ -17,7 +17,7 @@ rm -f "${_addrs_tmp}"
 
 apply_qdisc() {
     iface="$1"
-    if [ -z "${iface}" ]; then
+    if [[ -z "${iface}" ]]; then
         return
     fi
     tc qdisc del dev "${iface}" root 2>/dev/null || true
@@ -29,7 +29,7 @@ apply_qdisc() {
     NETEM_OPTS="${NETEM_OPTS} loss ${CHAOS_LOSS_PCT}%"
     NETEM_OPTS="${NETEM_OPTS} duplicate ${CHAOS_DUPLICATE_PCT}%"
     NETEM_OPTS="${NETEM_OPTS} reorder ${CHAOS_REORDER_PCT}%"
-    if [ "${CHAOS_BW_MBPS}" != "0" ] && [ "${CHAOS_BW_MBPS}" != "0.0" ]; then
+    if [[ "${CHAOS_BW_MBPS}" != "0" ]] && [[ "${CHAOS_BW_MBPS}" != "0.0" ]]; then
         BW_KBIT=$(awk "BEGIN{printf \"%d\", ${CHAOS_BW_MBPS} * 1000}")
         BURST_BYTES=$(awk "BEGIN{printf \"%d\", ${CHAOS_BW_MBPS} * 1000 * 1000 / 8 / 100}")
         tc qdisc add dev "${iface}" root handle 1: tbf \
