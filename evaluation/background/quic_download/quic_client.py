@@ -7,19 +7,20 @@ fetches one object of size matching `bytes_s2c / OBJECT_COUNT`.
 
 from __future__ import annotations
 
-import asyncio
-import os
-import ssl
-import sys
-import time
+from asyncio import Future, TimeoutError, get_event_loop, run, sleep, wait_for
+from os import environ, system
+from ssl import CERT_NONE
+from sys import path
+from time import monotonic
 
 from aioquic.asyncio.client import connect
 from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.h3.connection import H3_ALPN, H3Connection
 from aioquic.h3.events import DataReceived, H3Event, HeadersReceived
 from aioquic.quic.configuration import QuicConfiguration
+from aioquic.quic.events import QuicEvent
 
-sys.path.insert(0, "/common")
+path.insert(0, "/common")
 from profile_env import ProfileEnv
 
 SERVER_PORT = 443
@@ -27,19 +28,19 @@ OBJECT_COUNT = 4
 
 
 def _route_setup() -> None:
-    gw = os.environ.get("OBSERVER_GW")
+    gw = environ.get("OBSERVER_GW")
     if not gw:
         return
-    os.system(f"ip route add 172.21.0.0/24 via {gw} 2>/dev/null")  # noqa: S605
+    system(f"ip route add 172.21.0.0/24 via {gw} 2>/dev/null")  # noqa: S605
 
 
 class HttpClientProtocol(QuicConnectionProtocol):
     """Issue one GET, signal the body-completion future when stream ends."""
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self._h3 = H3Connection(self._quic)
-        self._completed: asyncio.Future[int] = asyncio.get_event_loop().create_future()
+        self._completed: Future[int] = get_event_loop().create_future()
         self._bytes_in = 0
 
     async def get(self, host: str, path: str = "/") -> int:
@@ -57,7 +58,7 @@ class HttpClientProtocol(QuicConnectionProtocol):
         self.transmit()
         return await self._completed
 
-    def quic_event_received(self, event) -> None:
+    def quic_event_received(self, event: QuicEvent) -> None:
         for h3_event in self._h3.handle_event(event):
             self._handle_h3_event(h3_event)
 
@@ -74,29 +75,29 @@ class HttpClientProtocol(QuicConnectionProtocol):
 async def main_async() -> None:
     profile = ProfileEnv.from_env()
     _route_setup()
-    server_host = os.environ["SERVER_HOST"]
+    server_host = environ["SERVER_HOST"]
 
     config = QuicConfiguration(is_client=True, alpn_protocols=H3_ALPN)
-    config.verify_mode = ssl.CERT_NONE
+    config.verify_mode = CERT_NONE
 
-    deadline = time.monotonic() + profile.duration_s
+    deadline = monotonic() + profile.duration_s
     fetched = 0
-    while time.monotonic() < deadline:
+    while monotonic() < deadline:
         try:
             async with connect(
                 server_host, SERVER_PORT, configuration=config, create_protocol=HttpClientProtocol
             ) as client:
                 client = client  # type: HttpClientProtocol
-                got = await asyncio.wait_for(client.get(server_host), timeout=max(deadline - time.monotonic(), 1.0))
+                got = await wait_for(client.get(server_host), timeout=max(deadline - monotonic(), 1.0))
                 fetched += got
-        except (asyncio.TimeoutError, ConnectionError, OSError) as e:
+        except (TimeoutError, ConnectionError, OSError) as e:
             print(f"quic-d/l client: connection error {e}", flush=True)
-            await asyncio.sleep(0.5)
+            await sleep(0.5)
         except Exception as e:
             print(f"quic-d/l client: error {e}", flush=True)
-            await asyncio.sleep(0.5)
+            await sleep(0.5)
     print(f"quic-d/l client: total fetched {fetched} bytes", flush=True)
 
 
 if __name__ == "__main__":
-    asyncio.run(main_async())
+    run(main_async())

@@ -25,23 +25,27 @@ Usage (direct):
     python -m typhoon_eval.flow_plot --example hello_world --per-packet --out-dir out/
 """
 
-import json
-import os
-import subprocess
-import sys
 from collections import defaultdict
+from json import JSONDecodeError, loads
+from os import environ
 from pathlib import Path
+from subprocess import TimeoutExpired, run
+from sys import exit, stdin
 
-import click
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
 import numpy as np
+from click import Path as ClickPath
+from click import UsageError, command, echo, option
+from matplotlib import patches as mpatches
+from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
 
 # Default path to the typhoon Rust crate, relative to this file.
 _DEFAULT_TYPHOON_DIR = Path(__file__).parent.parent.parent.parent.parent / "typhoon"
 
 # Wire-packet component order (bottom → top in each bar).
 _COMPONENTS = ["tailor", "crypto", "header", "payload", "body"]
+# Minimum records to autoscale a histogram bucket — below this we fall back to 10 ms.
+MIN_RECORDS_FOR_AUTO_BUCKET = 2
 
 _COLORS = {
     "tailor":  "#555555",
@@ -75,8 +79,8 @@ def _parse_lines(lines: list[str]) -> tuple[list[dict], list[dict]]:
         if brace == -1:
             continue
         try:
-            rec = json.loads(line[brace:])
-        except json.JSONDecodeError:
+            rec = loads(line[brace:])
+        except JSONDecodeError:
             continue
         if rec.get("kind") == "Config":
             configs.append(rec)
@@ -87,9 +91,9 @@ def _parse_lines(lines: list[str]) -> tuple[list[dict], list[dict]]:
 
 def _run_example(example: str, typhoon_dir: Path, timeout: int, extra_env: dict | None = None) -> tuple[list[dict], list[dict]]:
     """Build and run a TYPHOON example with capture logging; return (packets, configs)."""
-    env = {**os.environ, "RUST_LOG": "typhoon::capture=trace", **(extra_env or {})}
+    env = {**environ, "RUST_LOG": "typhoon::capture=trace", **(extra_env or {})}
     try:
-        result = subprocess.run(
+        result = run(
             ["cargo", "run", "--features", "capture", "--example", example],
             cwd=typhoon_dir,
             capture_output=True,
@@ -97,7 +101,7 @@ def _run_example(example: str, typhoon_dir: Path, timeout: int, extra_env: dict 
             timeout=timeout,
             env=env,
         )
-    except subprocess.TimeoutExpired as exc:
+    except TimeoutExpired as exc:
         stderr = exc.stderr or ""
         return _parse_lines((stderr if isinstance(stderr, str) else stderr.decode()).splitlines())
     return _parse_lines(result.stderr.splitlines())
@@ -105,7 +109,7 @@ def _run_example(example: str, typhoon_dir: Path, timeout: int, extra_env: dict 
 
 def _auto_bucket_ms(records: list[dict], target_bars: int = 200) -> int:
     """Choose a bucket width (ms) that produces roughly target_bars bars."""
-    if len(records) < 2:
+    if len(records) < MIN_RECORDS_FOR_AUTO_BUCKET:
         return 10
     duration = max(r["t"] for r in records) - min(r["t"] for r in records)
     return max(1, duration // target_bars)
@@ -115,7 +119,7 @@ def _bucket(records: list[dict], bucket_ms: int) -> dict[str, dict[int, dict]]:
     """Group records into time buckets per flow address."""
     t_min = min(r["t"] for r in records)
 
-    def _empty():
+    def _empty() -> dict[str, dict[str, int]]:
         return {"c2s": {c: 0 for c in _COMPONENTS}, "s2c": {c: 0 for c in _COMPONENTS}}
 
     flows: dict[str, dict[int, dict]] = defaultdict(lambda: defaultdict(_empty))
@@ -190,12 +194,8 @@ def _pair_flows(flows: dict[str, dict]) -> list[tuple[str | None, str | None, di
                     merged[t] = {"c2s": {c: 0 for c in _COMPONENTS}, "s2c": dict(dirs["s2c"])}
         paired.append((c2s_addr, best_match, merged))
 
-    for s2c_addr in s2c_sorted:
-        if s2c_addr not in used_s2c:
-            paired.append((None, s2c_addr, s2c_only[s2c_addr]))
-
-    for addr, buckets in mixed.items():
-        paired.append((addr, addr, buckets))
+    paired.extend((None, s2c_addr, s2c_only[s2c_addr]) for s2c_addr in s2c_sorted if s2c_addr not in used_s2c)
+    paired.extend((addr, addr, buckets) for addr, buckets in mixed.items())
 
     return paired
 
@@ -303,7 +303,7 @@ def _subplot_title(
     return base
 
 
-def _draw_bars(ax, times_or_xpos, values_by_direction: dict[str, dict[int | float, dict]], kind_by_xpos: dict | None = None) -> None:
+def _draw_bars(ax: Axes, times_or_xpos: list[float] | list[int], values_by_direction: dict[str, dict[int | float, dict]], kind_by_xpos: dict | None = None) -> None:
     """Draw stacked bars for both directions onto ax."""
     for direction, sign in (("c2s", 1), ("s2c", -1)):
         bottoms: dict = {}
@@ -388,7 +388,7 @@ def _plot_all(
     path = out_dir / f"{name}.png"
     fig.savefig(path, format="png", bbox_inches="tight", dpi=100)
     plt.close(fig)
-    click.echo(f"Saved: {path}")
+    echo(f"Saved: {path}")
 
 
 def _plot_all_per_packet(
@@ -454,42 +454,42 @@ def _plot_all_per_packet(
     path = out_dir / f"{name}_packets.png"
     fig.savefig(path, format="png", bbox_inches="tight", dpi=100)
     plt.close(fig)
-    click.echo(f"Saved: {path}")
+    echo(f"Saved: {path}")
 
 
-@click.command()
-@click.option("--example", default=None, help="Rust example name to compile and run")
-@click.option("--log", "log_file", default=None, type=click.Path(), help="Existing log file (use '-' for stdin)")
-@click.option("--out-dir", required=True, type=click.Path(), help="Directory for output PNG(s)")
-@click.option("--typhoon-dir", default=str(_DEFAULT_TYPHOON_DIR), show_default=True, type=click.Path(exists=True), help="Path to the typhoon Rust crate")
-@click.option("--timeout", default=30, show_default=True, help="Timeout in seconds when running an example")
-@click.option("--bucket-ms", default=0, show_default=True, help="Time bucket width in ms (0 = auto); ignored with --per-packet")
-@click.option("--per-packet/--bucketed", default=True, help="One bar per packet (default) or bucket-aggregated bars")
+@command()
+@option("--example", default=None, help="Rust example name to compile and run")
+@option("--log", "log_file", default=None, type=ClickPath(), help="Existing log file (use '-' for stdin)")
+@option("--out-dir", required=True, type=ClickPath(), help="Directory for output PNG(s)")
+@option("--typhoon-dir", default=str(_DEFAULT_TYPHOON_DIR), show_default=True, type=ClickPath(exists=True), help="Path to the typhoon Rust crate")
+@option("--timeout", default=30, show_default=True, help="Timeout in seconds when running an example")
+@option("--bucket-ms", default=0, show_default=True, help="Time bucket width in ms (0 = auto); ignored with --per-packet")
+@option("--per-packet/--bucketed", default=True, help="One bar per packet (default) or bucket-aggregated bars")
 def main(example: str, log_file: str, out_dir: str, typhoon_dir: str, timeout: int, bucket_ms: int, per_packet: bool) -> None:
     """Generate paired-flow packet structure diagrams from TYPHOON capture logs."""
     if not example and not log_file:
-        raise click.UsageError("Provide either --example or --log.")
+        raise UsageError("Provide either --example or --log.")
     if example and log_file:
-        raise click.UsageError("--example and --log are mutually exclusive.")
+        raise UsageError("--example and --log are mutually exclusive.")
 
     if example:
         records, configs = _run_example(example, Path(typhoon_dir), timeout)
         name = example
     elif log_file == "-":
-        records, configs = _parse_lines(sys.stdin.readlines())
+        records, configs = _parse_lines(stdin.readlines())
         name = "capture"
     else:
         records, configs = _parse_lines(Path(log_file).read_text().splitlines())
         name = Path(log_file).stem
 
     if not records:
-        click.echo(
+        echo(
             "No capture records found.\n"
             "Ensure the typhoon crate is built with --features capture and "
             "RUST_LOG=typhoon::capture=trace is set.",
             err=True,
         )
-        sys.exit(1)
+        exit(1)
 
     out = Path(out_dir)
     if per_packet:

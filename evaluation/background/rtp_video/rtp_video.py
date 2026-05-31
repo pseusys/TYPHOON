@@ -7,14 +7,14 @@ Packet sizes draw from N(1100, 100) clamped to [600, 1200].
 
 from __future__ import annotations
 
-import os
-import random
-import socket
-import sys
-import threading
-import time
+from os import environ, system, urandom
+from random import Random, randint
+from socket import AF_INET, SOCK_DGRAM, socket, timeout
+from sys import exit, path
+from threading import Thread
+from time import monotonic, sleep
 
-sys.path.insert(0, "/common")
+path.insert(0, "/common")
 from profile_env import ProfileEnv
 
 CLIENT_PORT = 5104
@@ -29,11 +29,11 @@ PACKET_SIZE_MAX = 1200
 
 
 def _route_setup(role: str) -> None:
-    gw = os.environ.get("OBSERVER_GW")
+    gw = environ.get("OBSERVER_GW")
     if not gw:
         return
     target = "172.21.0.0/24" if role == "client" else "172.20.0.0/24"
-    os.system(f"ip route add {target} via {gw} 2>/dev/null")  # noqa: S605
+    system(f"ip route add {target} via {gw} 2>/dev/null")  # noqa: S605
 
 
 def _build_rtp(seq: int, ts: int, ssrc: int, payload: bytes, marker: bool) -> bytes:
@@ -44,33 +44,33 @@ def _build_rtp(seq: int, ts: int, ssrc: int, payload: bytes, marker: bool) -> by
     return header + payload
 
 
-def _recv_loop(sock: socket.socket, deadline: float) -> None:
+def _recv_loop(sock: socket, deadline: float) -> None:
     sock.settimeout(0.2)
-    while time.monotonic() < deadline:
+    while monotonic() < deadline:
         try:
             sock.recv(2048)
-        except (socket.timeout, OSError):
+        except (timeout, OSError):
             continue
 
 
 def main() -> int:
-    role = os.environ.get("ROLE", "client").lower()
+    role = environ.get("ROLE", "client").lower()
     profile = ProfileEnv.from_env()
-    seed = int(os.environ.get("PROFILE_SEED", "0")) or random.randint(0, 1 << 30)
-    rng = random.Random(seed)
+    seed = int(environ.get("PROFILE_SEED", "0")) or randint(0, 1 << 30)
+    rng = Random(seed)
 
     _route_setup(role)
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock = socket(AF_INET, SOCK_DGRAM)
     if role == "client":
         sock.bind(("0.0.0.0", CLIENT_PORT))
-        peer_addr = (os.environ["SERVER_HOST"], SERVER_PORT)
+        peer_addr = (environ["SERVER_HOST"], SERVER_PORT)
     else:
         sock.bind(("0.0.0.0", SERVER_PORT))
-        peer_addr = (os.environ.get("CLIENT_HOST", "0.0.0.0"), CLIENT_PORT)
+        peer_addr = (environ.get("CLIENT_HOST", "0.0.0.0"), CLIENT_PORT)
 
-    deadline = time.monotonic() + profile.duration_s
-    threading.Thread(target=_recv_loop, args=(sock, deadline), daemon=True).start()
+    deadline = monotonic() + profile.duration_s
+    Thread(target=_recv_loop, args=(sock, deadline), daemon=True).start()
 
     ssrc = rng.randint(0, 0xFFFFFFFF)
     seq = rng.randint(0, 0xFFFF)
@@ -78,9 +78,9 @@ def main() -> int:
     # H.264-encoded NAL units are high-entropy on the wire — pre-allocate a
     # max-size random buffer and slice it per-packet to avoid the cost of
     # generating random bytes on the hot path.
-    rand_pool = os.urandom(PACKET_SIZE_MAX)
+    rand_pool = urandom(PACKET_SIZE_MAX)
     sent = 0
-    while time.monotonic() < deadline:
+    while monotonic() < deadline:
         n_pkts = rng.randint(*PACKETS_PER_FRAME_RANGE)
         for i in range(n_pkts):
             size = int(rng.gauss(PACKET_SIZE_MEAN, PACKET_SIZE_STD))
@@ -95,10 +95,10 @@ def main() -> int:
             seq = (seq + 1) & 0xFFFF
         ts = (ts + 3000) & 0xFFFFFFFF  # 90 kHz clock × 33 ms
         sleep_s = FRAME_INTERVAL_S * rng.uniform(0.85, 1.15)
-        time.sleep(sleep_s)
+        sleep(sleep_s)
     print(f"rtp_video {role}: sent {sent} packets", flush=True)
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit(main())

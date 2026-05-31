@@ -20,6 +20,7 @@ implementation as Docker / aioquic / sipp behaviour requires.
 
 from dataclasses import dataclass, field
 from enum import Enum
+from random import Random
 from typing import Final
 
 
@@ -39,7 +40,7 @@ class Range:
     lo: float
     hi: float
 
-    def sample(self, rng) -> float:
+    def sample(self, rng: Random) -> float:
         return rng.uniform(self.lo, self.hi)
 
 
@@ -50,7 +51,7 @@ class IntRange:
     lo: int
     hi: int
 
-    def sample(self, rng) -> int:
+    def sample(self, rng: Random) -> int:
         return rng.randint(self.lo, self.hi)
 
 
@@ -100,24 +101,31 @@ PROFILES: Final[dict[str, Profile]] = {
     "as_voice": Profile(
         name="as_voice",
         description="Mimics RTP voice (G.711 / Opus): symmetric 160 B payload + 12 B RTP header at 50 pps.",
-        chunk_c2s=IntRange(150, 170),
-        chunk_s2c=IntRange(150, 170),
+        # Chunk 76-112 sits *below* max_user_payload (≈ 112 B with ShortIdentity
+        # and RANDOM_SERVICE) so each `send_bytes` call produces exactly ONE
+        # wire packet.  Previously chunk 150-170 > max_user_payload (≈ 100 B
+        # with constant body=200), so every `send_bytes` got split into two
+        # back-to-back packets — that's what produced the bimodal IAT
+        # distribution (50 % sub-ms intra-split, 50 % 20 ms inter-send).
+        # With this range and overhead ≈ 88 B, wire = 164-200 B per packet,
+        # matching real rtp_voice's measured 164-200 B spread.
+        chunk_c2s=IntRange(76, 112),
+        chunk_s2c=IntRange(76, 112),
         iat_c2s_ms=Range(20.0, 20.0),
         iat_s2c_ms=Range(20.0, 20.0),
         bytes_c2s=IntRange(50_000, 200_000),
         bytes_s2c=IntRange(50_000, 200_000),
         duration_s=Range(30.0, 120.0),
-        fake_body_mode=FakeBodyMode.CONSTANT,
-        # 200 B is the smallest value that leaves room for chunk_c2s (≤ 170 B)
-        # plus fake_header (12 B) + crypto + tailor (~30 B+).  Constant mode
-        # pins the *whole wire packet* size, not just padding — values below
-        # ~210 B cause the protocol to reject socket build with
-        # `max_data_payload = 0`.  Wire packets land at ~200 B vs RTP voice
-        # 172 B (16 % over); blending could be tighter only with a smaller
-        # `chunk_c2s` budget or a smaller per-packet wire-overhead floor.
-        fake_body_constant_len=200,
-        # Tightened to exactly the RTP header length so per-packet header
-        # size has zero variance (matches real voice-over-RTP fingerprint).
+        # RANDOM_SERVICE: data packets carry NO body padding (wire = chunk +
+        # overhead) — so size variance comes from the chunk range above, not
+        # from body padding.  Service packets (handshake / health-check) still
+        # get random padding so they don't reveal themselves by being a
+        # different fixed size from data packets.
+        fake_body_mode=FakeBodyMode.RANDOM_SERVICE,
+        fake_body_random_min=0,
+        fake_body_random_max=100,
+        # Pinned to exactly RTP header length so per-packet header size has
+        # zero variance (matches real voice-over-RTP fingerprint).
         fake_header_len=IntRange(12, 12),
     ),
     "as_video": Profile(
@@ -128,11 +136,15 @@ PROFILES: Final[dict[str, Profile]] = {
         # chunk + 100 = 1000-1100 B vs the previous 1100-1200).
         chunk_c2s=IntRange(900, 1000),
         chunk_s2c=IntRange(900, 1000),
-        # Switched from 28-38 ms (uniform IAT) to 0-2 ms intra-burst — combined
-        # with `burst_idle_s` of 28-38 ms below, this produces the bimodal IAT
-        # distribution real RTP video shows (intra-frame ~0 ms + inter-frame
-        # 33 ms).  Previous unimodal 33 ms IAT was the dominant `iat_p5`/
-        # `iat_entropy` Δ vs rtp_video.
+        # Intra-burst IAT 0-2 ms, inter-burst 28-38 ms (tight RTP-video frame
+        # rhythm).  Widening (0-5 ms / 20-80 ms) helped as_video_bursty
+        # recover lost iat_std, but pushed as_video into a new
+        # `iat_std −2.3σ` / `iat_p95 −2.4σ` gap — because as_video has both
+        # directions sending bursts, the wider per-flow burst_idle range
+        # produced flows whose IATs sample a narrower sub-range than real
+        # bidirectional rtp_video sees from naturally-interleaved s2c+c2s
+        # traffic.  Rolling back as_video to the tight values; keeping
+        # as_video_bursty widened (it benefitted from the change).
         iat_c2s_ms=Range(0.0, 2.0),
         iat_s2c_ms=Range(0.0, 2.0),
         bytes_c2s=IntRange(2_000_000, 8_000_000),
@@ -144,53 +156,45 @@ PROFILES: Final[dict[str, Profile]] = {
         fake_body_random_min=0,
         fake_body_random_max=50,
         fake_header_len=IntRange(8, 16),
-        # 60 frame-bursts per flow — produces a clearly bimodal IAT (lots of
-        # near-zero intra-frame + inter-frame at burst_idle).  burst_idle
-        # tightened to RTP-video's 33 ms frame interval.
         bursty=True,
         burst_count=60,
         burst_idle_s=Range(0.028, 0.038),
     ),
     "as_quic_d": Profile(
         name="as_quic_d",
-        description="Mimics QUIC HTTP/3 download: c2s small (request + ACK), s2c large 1200 B packets at full rate.",
-        chunk_c2s=IntRange(150, 200),
+        description="Mimics QUIC HTTP/3 download: handshake-only c2s, large s2c data flow capped under MTU=1450, second small-packet mode supplied by sparse decoys.",
+        # No c2s user data — only handshake / health-check packets remain.
+        # Matches the "pure download" scenario where the client requests once
+        # and receives all data; closer to one-shot HTTP GET semantics than
+        # full QUIC with ACK frames (which we can't reach below the 76 B
+        # service-packet floor anyway).
+        chunk_c2s=IntRange(0, 0),
         chunk_s2c=IntRange(1100, 1200),
-        iat_c2s_ms=Range(20.0, 80.0),
+        iat_c2s_ms=Range(0.0, 0.0),
         iat_s2c_ms=Range(0.0, 2.0),
-        # Bumped 50K-200K → 500K-2M so the c2s ACK side has enough packets
-        # to register as a real mode in the size distribution (real QUIC
-        # download has 5-15 % ACK packets; previously TYPHOON's c2s was a
-        # 0.5-2 % rounding sliver, leaving us unimodally large s2c).
-        bytes_c2s=IntRange(500_000, 2_000_000),
+        bytes_c2s=IntRange(0, 0),
         bytes_s2c=IntRange(10_000_000, 30_000_000),
         duration_s=Range(15.0, 60.0),
-        fake_body_mode=FakeBodyMode.RANDOM,
-        fake_body_random_min=0,
-        fake_body_random_max=100,
-        # Widened 8-16 → 22-28 to match real QUIC long-header byte budget
-        # (1 flags + 4 version + 1+8 DCID + 1+8 SCID + 1-4 packet number ≈
-        # 25 B).  With the eval-side Constant-heavy field bias, the extra
-        # bytes carry per-flow constants that dilute payload_entropy toward
-        # real QUIC's ~98 % encrypted / ~2 % cleartext ratio.
+        # EMPTY body — every wire packet is exactly chunk + fake_header +
+        # overhead, no random body padding inflating size.  Combined with
+        # the eval-side MTU=1450 + SEND_BYTES_JITTER=0.1, wire s2c packets
+        # land tightly under MTU like real QUIC.  The bimodal small-packet
+        # mode comes from the SparseDecoyProvider override in eval_client.
+        fake_body_mode=FakeBodyMode.EMPTY,
         fake_header_len=IntRange(22, 28),
     ),
     "as_quic_u": Profile(
         name="as_quic_u",
-        description="Mimics QUIC HTTP/3 upload: c2s large 1200 B at full rate, s2c small ACK frames.",
+        description="Mimics QUIC HTTP/3 upload: handshake-only s2c, large c2s data flow capped under MTU=1450, second small-packet mode supplied by sparse decoys.",
         chunk_c2s=IntRange(1100, 1200),
-        chunk_s2c=IntRange(150, 200),
+        chunk_s2c=IntRange(0, 0),
         iat_c2s_ms=Range(0.0, 2.0),
-        iat_s2c_ms=Range(20.0, 80.0),
+        iat_s2c_ms=Range(0.0, 0.0),
         bytes_c2s=IntRange(10_000_000, 30_000_000),
-        # See as_quic_d — bumped to give the s2c ACK side enough packets
-        # to register as a mode.
-        bytes_s2c=IntRange(500_000, 2_000_000),
+        bytes_s2c=IntRange(0, 0),
         duration_s=Range(15.0, 60.0),
-        fake_body_mode=FakeBodyMode.RANDOM,
-        fake_body_random_min=0,
-        fake_body_random_max=100,
-        # See as_quic_d on QUIC long-header sizing rationale.
+        # See as_quic_d for the rationale on EMPTY body + MTU + decoys.
+        fake_body_mode=FakeBodyMode.EMPTY,
         fake_header_len=IntRange(22, 28),
     ),
     "as_video_bursty": Profile(
@@ -199,20 +203,22 @@ PROFILES: Final[dict[str, Profile]] = {
         # See as_video for the chunk-range rationale.
         chunk_c2s=IntRange(900, 1000),
         chunk_s2c=IntRange(0, 0),
-        iat_c2s_ms=Range(0.0, 2.0),
+        # See as_video — intra-burst IAT widened 0-2 → 0-5 ms and burst_idle
+        # widened 28-38 → 20-80 ms to add the per-burst variance real RTP
+        # video has from natural jitter.  Previous tight ranges produced
+        # iat_std −2.4σ and iat_p95 −2.5σ (TYPHOON too regular).
+        iat_c2s_ms=Range(0.0, 5.0),
         iat_s2c_ms=Range(0.0, 0.0),
         bytes_c2s=IntRange(3_000_000, 5_000_000),
         bytes_s2c=IntRange(0, 0),
         duration_s=Range(40.0, 60.0),
         fake_body_mode=FakeBodyMode.RANDOM,
         fake_body_random_min=0,
-        # See as_video — tightened max 100 → 50 to keep size_mean closer to RTP video.
         fake_body_random_max=50,
         fake_header_len=IntRange(8, 16),
         bursty=True,
-        # 60 frame-bursts per flow with 33 ms inter-burst — see as_video.
         burst_count=60,
-        burst_idle_s=Range(0.028, 0.038),
+        burst_idle_s=Range(0.020, 0.080),
     ),
     "silent_idle": Profile(
         name="silent_idle",
@@ -231,15 +237,53 @@ PROFILES: Final[dict[str, Profile]] = {
     ),
     "raw_default": Profile(
         name="raw_default",
-        description="Pure-protocol-default baseline: FlowConfig::random + protocol-default settings, no eval-side overrides.  Workload mirrors as_quic_u.  fake_body_* / fake_header_* fields are ignored here — eval client/server detect the name and skip pinning.",
-        chunk_c2s=IntRange(1100, 1400),
-        chunk_s2c=IntRange(0, 0),
-        iat_c2s_ms=Range(0.0, 2.0),
-        iat_s2c_ms=Range(0.0, 0.0),
-        bytes_c2s=IntRange(10_000_000, 20_000_000),
-        bytes_s2c=IntRange(0, 0),
-        duration_s=Range(15.0, 30.0),
-        fake_body_mode=FakeBodyMode.EMPTY,
+        description=(
+            "Open-ended diversity baseline.  Both client and server emit "
+            "random-sized packets at random intervals drawn per packet from "
+            "broad uniform ranges (size 40–1400 B, IAT 0.5–200 ms) and "
+            "FlowConfig::random + the protocol-default decoy provider + "
+            "default settings are used unchanged (no eval-side pinning).  "
+            "Mirrors the `unknown` background generator's parameter space so "
+            "the (raw_default, unknown) pair demonstrates that TYPHOON's "
+            "defaults blend with arbitrary long-tail UDP rather than any one "
+            "natural class.  The chunk/IAT *ranges* are passed to the Rust "
+            "eval binaries via PROFILE_CHUNK_*_MIN/MAX and PROFILE_IAT_*_MIN/MAX_MS "
+            "env vars; the binaries resample per packet only when the profile "
+            "name is `raw_default`, so tuned profiles' single-shape behaviour "
+            "is preserved."
+        ),
+        chunk_c2s=IntRange(40, 1400),
+        chunk_s2c=IntRange(40, 1400),
+        iat_c2s_ms=Range(0.5, 200.0),
+        iat_s2c_ms=Range(0.5, 200.0),
+        bytes_c2s=IntRange(100_000, 5_000_000),
+        bytes_s2c=IntRange(100_000, 5_000_000),
+        duration_s=Range(15.0, 90.0),
+        # These fields are *signals only* for raw_default — the Rust client/server
+        # skip pinning when `is_raw_default()` and let `FlowConfig::random` choose
+        # body / header / decoy provider randomly per flow.
+        fake_body_mode=FakeBodyMode.RANDOM,
+        fake_header_len=IntRange(0, 0),
+    ),
+    "tuned_default": Profile(
+        name="tuned_default",
+        description=(
+            "Same per-packet randomization and FlowConfig::random freedom as "
+            "raw_default, but the Rust eval binaries apply blending-oriented "
+            "settings overrides on top: SEND_BYTES_JITTER=0.8, "
+            "DECOY_FALLTHROUGH_PACKETS_MAX=0.75, and decoy emission rates "
+            "multiplied by 3.  Used to demonstrate how much closer to the "
+            "`unknown` long-tail distribution TYPHOON can get without "
+            "touching the performance-oriented protocol defaults."
+        ),
+        chunk_c2s=IntRange(40, 1400),
+        chunk_s2c=IntRange(40, 1400),
+        iat_c2s_ms=Range(0.5, 200.0),
+        iat_s2c_ms=Range(0.5, 200.0),
+        bytes_c2s=IntRange(100_000, 5_000_000),
+        bytes_s2c=IntRange(100_000, 5_000_000),
+        duration_s=Range(15.0, 90.0),
+        fake_body_mode=FakeBodyMode.RANDOM,
         fake_header_len=IntRange(0, 0),
     ),
 }
@@ -289,7 +333,14 @@ SERVICE_SLOTS: Final[dict[str, ServiceSlot]] = {
     "gaming":        ServiceSlot("gaming",        16),
     "wireguard_idle":ServiceSlot("wireguard_idle",17),
     "control_plane": ServiceSlot("control_plane", 18),
+    "unknown":       ServiceSlot("unknown",       19),
 }
+
+# Slots that model the long-tail "private / custom / legacy UDP" protocols a
+# real censor cannot enumerate.  By policy these labels must **never** appear
+# in any open-set classifier's training set — they exist solely to populate
+# the held-out unknown-class evaluation bucket (see ml_open_world Tests D/E).
+HELD_OUT_BG_CLASSES: Final[frozenset[str]] = frozenset({"unknown"})
 
 
 # Per-class sampling weights for the corpus orchestrator (uniform inclusion
@@ -304,6 +355,7 @@ GENERATOR_WEIGHTS: Final[dict[str, float]] = {
     "gaming":         1.0,
     "wireguard_idle": 1.0,
     "control_plane":  1.0,
+    "unknown":        1.0,
 }
 
 
@@ -441,6 +493,22 @@ BACKGROUND_PROFILES: Final[dict[str, BackgroundProfile]] = {
         bytes_s2c=IntRange(0, 0),
         duration_s=Range(60.0, 180.0),
     ),
+    "unknown": BackgroundProfile(
+        # Synthetic long-tail "private / custom / legacy UDP" class.  Only
+        # `duration_s` is honoured by the generator; every other parameter
+        # is drawn from the generator's own broad parameter space at run
+        # time (see evaluation/background/unknown/unknown.py).  The unknown
+        # class is held out of every supervised classifier — see
+        # `HELD_OUT_BG_CLASSES`.
+        name="unknown",
+        chunk_c2s=IntRange(0, 0),
+        chunk_s2c=IntRange(0, 0),
+        iat_c2s_ms=Range(0.0, 0.0),
+        iat_s2c_ms=Range(0.0, 0.0),
+        bytes_c2s=IntRange(0, 0),
+        bytes_s2c=IntRange(0, 0),
+        duration_s=Range(30.0, 120.0),
+    ),
 }
 
 
@@ -467,14 +535,30 @@ CHAOS_DUPLICATE_PCT: Final[Range] = Range(0.0, 0.2)
 CHAOS_REORDER_PCT: Final[Range] = Range(0.0, 1.5)
 
 
-def profile_to_env(profile: Profile, rng) -> dict[str, str]:
-    """Sample per-run values from a profile and return env-var dict for both client and server."""
+def profile_to_env(profile: Profile, rng: Random) -> dict[str, str]:
+    """Sample per-run values from a profile and return env-var dict for both client and server.
+
+    Emits both the per-run sampled values (``PROFILE_CHUNK_C2S``, ``PROFILE_IAT_C2S_MS``,
+    etc.) and the underlying range bounds (``PROFILE_CHUNK_C2S_MIN/MAX``,
+    ``PROFILE_IAT_C2S_MIN/MAX_MS``, etc.).  The Rust eval binaries only consult
+    the MIN/MAX bounds for the ``raw_default`` profile, where they drive
+    per-packet resampling; tuned profiles ignore the bounds and use the
+    single sampled value, preserving their fixed-shape design intent.
+    """
     return {
         "TRAFFIC_PROFILE":          profile.name,
         "PROFILE_CHUNK_C2S":        str(profile.chunk_c2s.sample(rng)),
         "PROFILE_CHUNK_S2C":        str(profile.chunk_s2c.sample(rng)),
+        "PROFILE_CHUNK_C2S_MIN":    str(profile.chunk_c2s.lo),
+        "PROFILE_CHUNK_C2S_MAX":    str(profile.chunk_c2s.hi),
+        "PROFILE_CHUNK_S2C_MIN":    str(profile.chunk_s2c.lo),
+        "PROFILE_CHUNK_S2C_MAX":    str(profile.chunk_s2c.hi),
         "PROFILE_IAT_C2S_MS":       f"{profile.iat_c2s_ms.sample(rng):.3f}",
         "PROFILE_IAT_S2C_MS":       f"{profile.iat_s2c_ms.sample(rng):.3f}",
+        "PROFILE_IAT_C2S_MIN_MS":   f"{profile.iat_c2s_ms.lo:.3f}",
+        "PROFILE_IAT_C2S_MAX_MS":   f"{profile.iat_c2s_ms.hi:.3f}",
+        "PROFILE_IAT_S2C_MIN_MS":   f"{profile.iat_s2c_ms.lo:.3f}",
+        "PROFILE_IAT_S2C_MAX_MS":   f"{profile.iat_s2c_ms.hi:.3f}",
         "PROFILE_BYTES_C2S":        str(profile.bytes_c2s.sample(rng)),
         "PROFILE_BYTES_S2C":        str(profile.bytes_s2c.sample(rng)),
         "PROFILE_DURATION_S":       f"{profile.duration_s.sample(rng):.3f}",
@@ -491,7 +575,7 @@ def profile_to_env(profile: Profile, rng) -> dict[str, str]:
     }
 
 
-def bg_profile_to_env(bg_profile: BackgroundProfile, rng) -> dict[str, str]:
+def bg_profile_to_env(bg_profile: BackgroundProfile, rng: Random) -> dict[str, str]:
     """Sample per-run values from a background profile and return env-var dict for the generator container.
 
     Emits the same ``PROFILE_*`` env keys consumed by

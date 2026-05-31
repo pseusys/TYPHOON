@@ -7,17 +7,17 @@ TYPHOON containers; this module parses them into a dataclass.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
+from os import environ
 
 
 def _env_int(key: str, default: int) -> int:
-    raw = os.environ.get(key)
+    raw = environ.get(key)
     return int(raw) if raw is not None and raw.strip() else default
 
 
 def _env_float(key: str, default: float) -> float:
-    raw = os.environ.get(key)
+    raw = environ.get(key)
     return float(raw) if raw is not None and raw.strip() else default
 
 
@@ -40,7 +40,7 @@ class ProfileEnv:
     @classmethod
     def from_env(cls) -> ProfileEnv:
         return cls(
-            name=os.environ.get("TRAFFIC_PROFILE", "bulk_upload"),
+            name=environ.get("TRAFFIC_PROFILE", "bulk_upload"),
             chunk_c2s=max(1, _env_int("PROFILE_CHUNK_C2S", 500)),
             chunk_s2c=max(1, _env_int("PROFILE_CHUNK_S2C", 0)),
             iat_c2s_ms=max(0.0, _env_float("PROFILE_IAT_C2S_MS", 0.0)),

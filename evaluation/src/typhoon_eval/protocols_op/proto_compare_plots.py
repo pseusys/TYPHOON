@@ -34,14 +34,15 @@ Usage (via poe):
     poe proto-compare --run 20260501_120000 --out-dir results/plots
 """
 
-import json
-import math
-import sys
+from json import loads
+from math import isnan
 from pathlib import Path
+from sys import exit
 
-import click
-import matplotlib.pyplot as plt
-import numpy as np
+from click import Path as ClickPath
+from click import command, echo, option
+from matplotlib import pyplot as plt
+from numpy import arange, array, diff, nanmax, nanmin, ndarray, sort, vstack, zeros_like
 
 from typhoon_eval.shared.analysis import CAPTURES_ROOT, _latest_run
 from typhoon_eval.shared.pcap_stats import _entropy, handshake_end, parse_pcap
@@ -71,9 +72,9 @@ def _compute_metrics(
     sniffer = proto.handshake_sniffer if proto else None
     hs_end = handshake_end(c2s, s2c, sniffer)
 
-    all_sizes = np.array([sz for _, sz, _ in all_recs], dtype=float)
-    all_ts    = np.array([ts for ts, _, _ in all_recs])
-    iats_ms   = np.diff(np.sort(all_ts)) * 1000.0
+    all_sizes = array([sz for _, sz, _ in all_recs], dtype=float)
+    all_ts    = array([ts for ts, _, _ in all_recs])
+    iats_ms   = diff(sort(all_ts)) * 1000.0
 
     hs_pkts   = [r for r in all_recs if r[0] < hs_end]  if hs_end else []
     data_pkts = [r for r in all_recs if r[0] >= hs_end] if hs_end else all_recs
@@ -134,10 +135,10 @@ def _plot_main(metrics: list[dict], run_name: str, out_dir: Path) -> None:
 
     # A — packet size CDF
     for i, m in enumerate(metrics):
-        sizes = np.sort(m["all_sizes"])
+        sizes = sort(m["all_sizes"])
         if len(sizes) == 0:
             continue
-        cdf = np.arange(1, len(sizes) + 1) / len(sizes)
+        cdf = arange(1, len(sizes) + 1) / len(sizes)
         ax_size_cdf.plot(sizes, cdf, color=colors[i], linewidth=1.2, alpha=0.8, label=m["label"])
     ax_size_cdf.set_xlabel("Transport-payload size (bytes)")
     ax_size_cdf.set_ylabel("CDF")
@@ -147,11 +148,11 @@ def _plot_main(metrics: list[dict], run_name: str, out_dir: Path) -> None:
 
     # B — IAT CDF (log x-axis)
     for i, m in enumerate(metrics):
-        iats = np.sort(m["iats_ms"])
+        iats = sort(m["iats_ms"])
         iats = iats[iats > 0]  # log axis cannot show zero
         if len(iats) == 0:
             continue
-        cdf = np.arange(1, len(iats) + 1) / len(iats)
+        cdf = arange(1, len(iats) + 1) / len(iats)
         ax_iat_cdf.plot(iats, cdf, color=colors[i], linewidth=1.2, alpha=0.8, label=m["label"])
     ax_iat_cdf.set_xscale("log")
     ax_iat_cdf.set_xlabel("Inter-arrival time (ms, log scale)")
@@ -163,7 +164,7 @@ def _plot_main(metrics: list[dict], run_name: str, out_dir: Path) -> None:
     valid = [
         (m["throughput_mbps"], m["goodput_efficiency"], colors[i], m["label"])
         for i, m in enumerate(metrics)
-        if m.get("goodput_efficiency") is not None and not math.isnan(m["goodput_efficiency"])
+        if m.get("goodput_efficiency") is not None and not isnan(m["goodput_efficiency"])
     ]
     if valid:
         tps, effs, clrs, lbls = zip(*valid)
@@ -197,7 +198,7 @@ def _plot_main(metrics: list[dict], run_name: str, out_dir: Path) -> None:
         ax_oh.set_title("D  Protocol overhead", fontweight="bold")
 
     # E — byte entropy by phase (all / handshake / data)
-    x = np.arange(n)
+    x = arange(n)
     width = 0.26
     ent_all  = [m["entropy_all"]  or 0.0 for m in metrics]
     ent_hs   = [m["entropy_hs"]   or 0.0 for m in metrics]
@@ -215,10 +216,10 @@ def _plot_main(metrics: list[dict], run_name: str, out_dir: Path) -> None:
     # F — operational metric heatmap (normalised)
     metric_names = ["Throughput", "Goodput eff.", "Data entropy", "Burstiness", "HS duration", "HS byte frac"]
 
-    def _norm(vals: list) -> np.ndarray:
-        arr = np.array(vals, dtype=float)
-        lo, hi = np.nanmin(arr), np.nanmax(arr)
-        return (arr - lo) / (hi - lo) if hi > lo else np.zeros_like(arr)
+    def _norm(vals: list) -> ndarray:
+        arr = array(vals, dtype=float)
+        lo, hi = nanmin(arr), nanmax(arr)
+        return (arr - lo) / (hi - lo) if hi > lo else zeros_like(arr)
 
     throughputs = [m["throughput_mbps"] for m in metrics]
     effs        = [m["goodput_efficiency"] if m["goodput_efficiency"] is not None else float("nan") for m in metrics]
@@ -227,7 +228,7 @@ def _plot_main(metrics: list[dict], run_name: str, out_dir: Path) -> None:
     hs_durs     = [m["hs_duration_s"] if m["hs_duration_s"] is not None else float("nan") for m in metrics]
     hs_fracs    = [m["hs_byte_frac"] for m in metrics]
 
-    heat = np.vstack([
+    heat = vstack([
         _norm(throughputs),
         _norm(effs),
         _norm(data_ents),
@@ -249,7 +250,7 @@ def _plot_main(metrics: list[dict], run_name: str, out_dir: Path) -> None:
     path = out_dir / f"{run_name}_proto_compare.png"
     fig.savefig(path, format="png", bbox_inches="tight", dpi=110)
     plt.close(fig)
-    click.echo(f"Saved: {path}")
+    echo(f"Saved: {path}")
 
 
 def _plot_handshake(metrics: list[dict], run_name: str, out_dir: Path) -> None:
@@ -289,7 +290,7 @@ def _plot_handshake(metrics: list[dict], run_name: str, out_dir: Path) -> None:
     path = out_dir / f"{run_name}_handshake.png"
     fig.savefig(path, format="png", bbox_inches="tight", dpi=110)
     plt.close(fig)
-    click.echo(f"Saved: {path}")
+    echo(f"Saved: {path}")
 
 
 def _write_table(metrics: list[dict], run_name: str, out_dir: Path) -> None:
@@ -321,32 +322,32 @@ def _write_table(metrics: list[dict], run_name: str, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{run_name}_compare_table.md"
     path.write_text("\n".join(lines) + "\n")
-    click.echo(f"Saved: {path}")
+    echo(f"Saved: {path}")
 
 
-@click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option("--run", "run_id", default=None, metavar="YYYYMMDD_HHMMSS", help="Run directory (default: most recent).")
-@click.option("--out-dir", default=str(_DEFAULT_OUT_DIR), show_default=True, type=click.Path(), help="Output directory for plots and table.")
+@command(context_settings={"help_option_names": ["-h", "--help"]})
+@option("--run", "run_id", default=None, metavar="YYYYMMDD_HHMMSS", help="Run directory (default: most recent).")
+@option("--out-dir", default=str(_DEFAULT_OUT_DIR), show_default=True, type=ClickPath(), help="Output directory for plots and table.")
 def main(run_id: str | None, out_dir: str) -> None:
     """Generate operational comparison plots and table from pcap captures."""
     if run_id:
         run_dir = CAPTURES_ROOT / f"run_{run_id}"
         if not run_dir.is_dir():
-            click.echo(f"Run not found: {run_dir}", err=True)
-            sys.exit(1)
+            echo(f"Run not found: {run_dir}", err=True)
+            exit(1)
     else:
         run_dir = _latest_run()
         if run_dir is None:
-            click.echo("No capture runs found. Run 'poe capture' first.", err=True)
-            sys.exit(1)
+            echo("No capture runs found. Run 'poe capture' first.", err=True)
+            exit(1)
 
     meta_path = run_dir / "metadata.json"
-    metadata: dict = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    metadata: dict = loads(meta_path.read_text()) if meta_path.exists() else {}
 
     pcaps = sorted(run_dir.glob("*.pcap"))
     if not pcaps:
-        click.echo(f"No pcap files in {run_dir}", err=True)
-        sys.exit(1)
+        echo(f"No pcap files in {run_dir}", err=True)
+        exit(1)
 
     metrics_list: list[dict] = []
     for pcap in pcaps:
@@ -355,7 +356,7 @@ def main(run_id: str | None, out_dir: str) -> None:
         proto     = BY_NAME.get(proto_key)
         transfer_bytes: int | None = metadata.get(proto_key, {}).get("transfer_bytes")
 
-        click.echo(f"  Parsing {name}…")
+        echo(f"  Parsing {name}…")
         c2s, s2c = parse_pcap(pcap)
         if not c2s and not s2c:
             continue
@@ -365,8 +366,8 @@ def main(run_id: str | None, out_dir: str) -> None:
             metrics_list.append(m)
 
     if not metrics_list:
-        click.echo("No data to plot.", err=True)
-        sys.exit(1)
+        echo("No data to plot.", err=True)
+        exit(1)
 
     run_name = run_dir.name
     _plot_main(metrics_list, run_name, Path(out_dir))

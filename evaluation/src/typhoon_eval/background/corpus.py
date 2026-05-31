@@ -17,15 +17,17 @@ config.json, logs/}`.
 
 from __future__ import annotations
 
-import datetime
-import json
-import os
-import random
-import secrets
-import subprocess
+from datetime import UTC, datetime
+from json import dumps
+from os import environ
 from pathlib import Path
+from random import Random
+from secrets import randbits
+from subprocess import DEVNULL, STDOUT, TimeoutExpired, run
 
-import click
+from click import Path as ClickPath
+from click import command, option
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from rich.console import Console
 
 from typhoon_eval.shared.profiles import (
@@ -49,6 +51,14 @@ console = Console()
 RESULTS_ROOT = Path(__file__).parent.parent.parent.parent / "results" / "background"
 COMPOSE_DIR = Path(__file__).parent.parent.parent.parent / "compose"
 BG_COMPOSE_DIR = Path(__file__).parent.parent.parent.parent / "background" / "compose"
+# Jinja2 template for the per-run docker-compose file (one template covers
+# observer + TYPHOON + per-generator + optional chaos blocks).
+COMPOSE_TEMPLATE_NAME = "per_run.yml.j2"
+_COMPOSE_TEMPLATE_ENV = Environment(
+    loader=FileSystemLoader(str(BG_COMPOSE_DIR)),
+    undefined=StrictUndefined,
+    keep_trailing_newline=True,
+)
 
 # Build-compose YAMLs covering every image the corpus runs need:
 #   * shared/observer + typhoon-server/client → compose/docker-compose.build.yml
@@ -70,23 +80,33 @@ def _build_images() -> None:
             console.print(f"[red]Build compose file missing:[/red] {compose_file}")
             raise SystemExit(1)
         console.print(f"[bold]Building images[/bold] from {compose_file}")
-        result = subprocess.run(
+        result = run(
             ["docker", "compose", "-f", str(compose_file), "build"],
-            stdin=subprocess.DEVNULL,
+            stdin=DEVNULL,
         )
         if result.returncode != 0:
             console.print(f"[red]docker compose build failed[/red] for {compose_file}")
             raise SystemExit(result.returncode)
 
 
-def _sample_generators(rng: random.Random) -> list[str]:
-    """Pick a random subset of background generator class names of size ≥ 3."""
-    n = rng.randint(MIN_GENERATORS_PER_RUN, MAX_GENERATORS_PER_RUN)
-    keys = list(GENERATOR_WEIGHTS.keys())
+def _sample_generators(rng: Random, pool: list[str] | None = None) -> list[str]:
+    """Pick a random subset of background generator class names of size ≥ 3.
+
+    *pool* restricts the candidate set (defaulting to ``GENERATOR_WEIGHTS.keys()``).
+    When the pool is smaller than ``MIN_GENERATORS_PER_RUN``, the per-run count
+    collapses to the pool size so a single-generator filter (e.g. ``--modes unknown``)
+    still produces valid runs.
+    """
+    keys = pool if pool is not None else list(GENERATOR_WEIGHTS.keys())
+    if not keys:
+        return []
+    lo = min(MIN_GENERATORS_PER_RUN, len(keys))
+    hi = min(MAX_GENERATORS_PER_RUN, len(keys))
+    n = rng.randint(lo, hi)
     return rng.sample(keys, k=n)
 
 
-def _sample_chaos(rng: random.Random) -> dict[str, float]:
+def _sample_chaos(rng: Random) -> dict[str, float]:
     """Sample chaos parameters such that pumba's `jitter < latency` invariant holds.
 
     Pumba rejects the netem invocation when jitter ≥ latency.  Sampling jitter
@@ -104,234 +124,157 @@ def _sample_chaos(rng: random.Random) -> dict[str, float]:
     }
 
 
-def _stratified_profile_schedule(rng: random.Random, total_runs: int) -> list[str]:
+def _stratified_profile_schedule(rng: Random, total_runs: int, pool: list[str] | None = None) -> list[str]:
     """Return a shuffled run-by-run profile list with each profile near-equally represented.
 
     Each profile gets `total_runs // n_profiles` runs; the remainder (if any)
     is distributed to a random subset of profiles, one extra each.  Then the
     list is shuffled so the corpus interleaves profiles instead of running
     each in a contiguous block (which would hide systematic chaos drift).
+
+    *pool* restricts the candidate TYPHOON profiles (defaulting to ``PROFILES``).
     """
-    profiles = list(PROFILES.keys())
+    profiles = pool if pool is not None else list(PROFILES.keys())
     base = total_runs // len(profiles)
     extra = total_runs % len(profiles)
     schedule: list[str] = []
     for p in profiles:
         schedule.extend([p] * base)
     if extra > 0:
-        schedule.extend(rng.sample(profiles, extra))
+        schedule.extend(rng.sample(profiles, min(extra, len(profiles))))
+        # If `extra` > pool size, top up with repeats so the schedule reaches `total_runs`.
+        while len(schedule) < total_runs:
+            schedule.append(rng.choice(profiles))
     rng.shuffle(schedule)
     return schedule
+
+
+def _parse_modes(modes_spec: str | None) -> tuple[list[str] | None, list[str] | None]:
+    """Split ``--modes`` into TYPHOON-profile and bg-generator filters.
+
+    Returns ``(profile_filter, generator_filter)`` where each side is either a
+    sorted list (when at least one matching name was given) or ``None``
+    (full default pool).  Names that do not match any TYPHOON profile or
+    background generator raise ``SystemExit``.
+    """
+    if not modes_spec:
+        return None, None
+    requested = [s.strip() for s in modes_spec.split(",") if s.strip()]
+    profile_set: set[str] = set()
+    generator_set: set[str] = set()
+    unknown: list[str] = []
+    for name in requested:
+        if name in PROFILES:
+            profile_set.add(name)
+        if name in GENERATOR_WEIGHTS:
+            generator_set.add(name)
+        if name not in PROFILES and name not in GENERATOR_WEIGHTS:
+            unknown.append(name)
+    if unknown:
+        raise SystemExit(
+            f"--modes: unknown name(s) {unknown}.  Valid TYPHOON profiles: "
+            f"{sorted(PROFILES)}; valid bg generators: {sorted(GENERATOR_WEIGHTS)}."
+        )
+    return (sorted(profile_set) or None, sorted(generator_set) or None)
 
 
 def _render_compose(run_id: str, run_dir: Path, generators: list[str], typhoon_profile: str,
                     profile_env: dict[str, str], bg_envs: dict[str, dict[str, str]],
                     chaos: dict[str, float]) -> Path:
-    """Write the per-run docker-compose YAML.  Returns the path.
+    """Render and write the per-run docker-compose YAML.  Returns the path.
 
-    *profile_env* drives only the TYPHOON containers.  *bg_envs* maps each
-    selected background generator name to its own per-run env dict, sampled
-    independently from ``BACKGROUND_PROFILES`` so real-X traffic actually
-    looks like real X (not TYPHOON-profile-warped X).
+    Loads ``background/compose/per_run.yml.j2`` and supplies it with one
+    structured context dict per run.  *profile_env* drives only the TYPHOON
+    containers; *bg_envs* maps each selected background generator name to its
+    own per-run env dict, sampled independently from ``BACKGROUND_PROFILES``
+    so real-X traffic actually looks like real X (not TYPHOON-profile-warped
+    X).  The chaos block is rendered only when at least one chaos parameter
+    is non-zero — that single qdisc covers `delay+jitter+loss+duplicate+
+    reorder` on both observer interfaces (Pumba can't combine them).
     """
-    compose_path = run_dir / "docker-compose.yml"
-    services_lines = []
-
-    services_lines.append(_observer_block(run_dir))
-    services_lines.append(_typhoon_blocks(typhoon_profile, profile_env))
-
-    for gen in generators:
-        services_lines.append(_generator_block(gen, bg_envs[gen]))
-
-    # Replace pumba with the dedicated chaos container.  Pumba's `netem
-    # delay` subcommand can't combine loss in a single qdisc; the chaos
-    # container shares the observer's network namespace and writes a
-    # combined `delay+jitter+loss` qdisc on both observer interfaces, so
-    # both c2s and s2c packets actually take the sampled chaos.
+    typhoon_slot = SERVICE_SLOTS["typhoon"]
+    gen_contexts = [
+        {
+            "name": gen,
+            "image_prefix": "typhoon-eval-bg-" + gen.replace("_", "-"),
+            "server_ip": SERVICE_SLOTS[gen].server_ip,
+            "client_ip": SERVICE_SLOTS[gen].client_ip,
+            "extra_mount": "wg_shared:/shared" if gen == "wireguard_idle" else None,
+            "env": bg_envs[gen],
+        }
+        for gen in generators
+    ]
+    chaos_context = None
     if any(v > 0.0 for v in chaos.values()):
-        services_lines.append(_chaos_block(chaos))
-
-    yaml = _compose_header(run_id) + "\n".join(s for s in services_lines if s)
-    compose_path.write_text(yaml)
+        chaos_context = {
+            "delay_ms":      int(chaos["latency_ms"]),
+            "jitter_ms":     int(chaos["jitter_ms"]),
+            "loss_pct":      f"{chaos['loss_pct']:.3f}",
+            "duplicate_pct": f"{chaos['duplicate_pct']:.3f}",
+            "reorder_pct":   f"{chaos['reorder_pct']:.3f}",
+        }
+    template = _COMPOSE_TEMPLATE_ENV.get_template(COMPOSE_TEMPLATE_NAME)
+    rendered = template.render(
+        run_id_dashed     = run_id.replace("_", "-"),
+        observer_left_ip  = OBSERVER_LEFT_IP,
+        observer_right_ip = OBSERVER_RIGHT_IP,
+        run_dir_abs       = run_dir.resolve(),
+        capture_filter    = "net 172.20.0.0/24 or net 172.21.0.0/24",
+        typhoon_server_ip = typhoon_slot.server_ip,
+        typhoon_client_ip = typhoon_slot.client_ip,
+        profile_env       = profile_env,
+        generators        = gen_contexts,
+        chaos             = chaos_context,
+    )
+    compose_path = run_dir / "docker-compose.yml"
+    compose_path.write_text(rendered)
+    # `typhoon_profile` is intentionally unused here — it's already encoded in
+    # `profile_env`'s TRAFFIC_PROFILE key.  Kept in the signature so the caller
+    # interface stays unchanged.
+    del typhoon_profile
     return compose_path
 
 
-def _compose_header(run_id: str) -> str:
-    return (
-        f"name: typhoon-eval-bg-{run_id.replace('_', '-')}\n\n"
-        "volumes:\n"
-        "  eval_keys: {}\n"
-        "  wg_shared: {}\n\n"
-        "networks:\n"
-        "  net_left:\n"
-        "    driver: bridge\n"
-        "    ipam:\n"
-        "      config:\n"
-        "        - subnet: 172.20.0.0/24\n"
-        "  net_right:\n"
-        "    driver: bridge\n"
-        "    ipam:\n"
-        "      config:\n"
-        "        - subnet: 172.21.0.0/24\n\n"
-        "services:\n\n"
-    )
-
-
-def _observer_block(run_dir: Path) -> str:
-    # Capture every flow on either /24 — covers every service slot, not just TYPHOON.
-    capture_filter = "net 172.20.0.0/24 or net 172.21.0.0/24"
-    return (
-        "  observer:\n"
-        "    image: typhoon-eval-observer\n"
-        "    networks:\n"
-        f"      net_left:  {{ ipv4_address: {OBSERVER_LEFT_IP} }}\n"
-        f"      net_right: {{ ipv4_address: {OBSERVER_RIGHT_IP} }}\n"
-        "    privileged: true\n"
-        "    pid: \"host\"\n"
-        "    sysctls:\n"
-        "      - net.ipv4.ip_forward=1\n"
-        "      - net.ipv6.conf.all.disable_ipv6=1\n"
-        "    volumes:\n"
-        f"      - {run_dir.resolve()}:/captures\n"
-        "    environment:\n"
-        "      PROTOCOL: background\n"
-        "      PROTOCOL_SUFFIX: \"\"\n"
-        f"      CAPTURE_FILTER: \"{capture_filter}\"\n"
-    )
-
-
-def _profile_env_yaml(profile_env: dict[str, str], indent: str = "      ") -> str:
-    return "".join(f"{indent}{k}: \"{v}\"\n" for k, v in profile_env.items())
-
-
-def _typhoon_blocks(typhoon_profile: str, profile_env: dict[str, str]) -> str:
-    slot = SERVICE_SLOTS["typhoon"]
-    env = _profile_env_yaml(profile_env)
-    grace = "    stop_grace_period: 5s\n"
-    return (
-        "  typhoon-server:\n"
-        "    image: typhoon-eval-typhoon-server\n"
-        "    networks:\n"
-        f"      net_right: {{ ipv4_address: {slot.server_ip} }}\n"
-        "    cap_add: [NET_ADMIN]\n"
-        "    devices: [/dev/net/tun:/dev/net/tun]\n"
-        "    sysctls: [net.ipv6.conf.all.disable_ipv6=1]\n"
-        "    volumes: [eval_keys:/keys]\n"
-        f"{grace}"
-        "    environment:\n"
-        f"      OBSERVER_GW: {OBSERVER_RIGHT_IP}\n"
-        f"      CERT_HOST: {slot.server_ip}\n"
-        f"{env}"
-        "    depends_on: [observer]\n\n"
-        "  typhoon-client:\n"
-        "    image: typhoon-eval-typhoon-client\n"
-        "    networks:\n"
-        f"      net_left: {{ ipv4_address: {slot.client_ip} }}\n"
-        "    cap_add: [NET_ADMIN]\n"
-        "    devices: [/dev/net/tun:/dev/net/tun]\n"
-        "    sysctls: [net.ipv6.conf.all.disable_ipv6=1]\n"
-        "    volumes: [eval_keys:/keys]\n"
-        f"{grace}"
-        "    environment:\n"
-        f"      OBSERVER_GW: {OBSERVER_LEFT_IP}\n"
-        f"{env}"
-        "    depends_on: [typhoon-server]\n"
-    )
-
-
-def _generator_block(gen: str, profile_env: dict[str, str]) -> str:
-    slot = SERVICE_SLOTS[gen]
-    env = _profile_env_yaml(profile_env)
-    image_prefix = "typhoon-eval-bg-" + gen.replace("_", "-")
-    # WireGuard idle uses a shared volume to swap public keys between client and server.
-    extra_mounts = "    volumes: [wg_shared:/shared]\n" if gen == "wireguard_idle" else ""
-    grace = "    stop_grace_period: 5s\n"
-    return (
-        f"  {gen}-server:\n"
-        f"    image: {image_prefix}-server\n"
-        "    networks:\n"
-        f"      net_right: {{ ipv4_address: {slot.server_ip} }}\n"
-        "    cap_add: [NET_ADMIN]\n"
-        "    sysctls: [net.ipv6.conf.all.disable_ipv6=1]\n"
-        f"{extra_mounts}"
-        f"{grace}"
-        "    environment:\n"
-        f"      OBSERVER_GW: {OBSERVER_RIGHT_IP}\n"
-        f"      SERVER_HOST: {slot.server_ip}\n"
-        f"{env}"
-        "    depends_on: [observer]\n\n"
-        f"  {gen}-client:\n"
-        f"    image: {image_prefix}-client\n"
-        "    networks:\n"
-        f"      net_left: {{ ipv4_address: {slot.client_ip} }}\n"
-        "    cap_add: [NET_ADMIN]\n"
-        "    sysctls: [net.ipv6.conf.all.disable_ipv6=1]\n"
-        f"{extra_mounts}"
-        f"{grace}"
-        "    environment:\n"
-        f"      OBSERVER_GW: {OBSERVER_LEFT_IP}\n"
-        f"      SERVER_HOST: {slot.server_ip}\n"
-        f"{env}"
-        f"    depends_on: [{gen}-server]\n"
-    )
-
-
-def _chaos_block(chaos: dict[str, float]) -> str:
-    """Chaos sidecar that shares the observer's network namespace and applies a
-    single `delay + jitter + loss + duplicate + reorder` netem qdisc on both
-    observer interfaces.
-
-    Combines every netem perturbation in one qdisc so packets are subject to
-    all of them simultaneously (vs pumba, which can only apply one chaos type
-    per invocation and would conflict if stacked).  Both directions (left +
-    right) get the same qdisc so c2s and s2c packets see identical chaos.
-    """
-    return (
-        "  chaos:\n"
-        "    init: true\n"
-        "    image: typhoon-eval-chaos\n"
-        "    network_mode: \"service:observer\"\n"
-        "    cap_add:\n"
-        "      - NET_ADMIN\n"
-        "    environment:\n"
-        f"      CHAOS_DELAY_MS: \"{int(chaos['latency_ms'])}\"\n"
-        f"      CHAOS_JITTER_MS: \"{int(chaos['jitter_ms'])}\"\n"
-        f"      CHAOS_LOSS_PCT: \"{chaos['loss_pct']:.3f}\"\n"
-        f"      CHAOS_DUPLICATE_PCT: \"{chaos['duplicate_pct']:.3f}\"\n"
-        f"      CHAOS_REORDER_PCT: \"{chaos['reorder_pct']:.3f}\"\n"
-        "      CHAOS_BW_MBPS: \"0\"\n"
-        "    depends_on: [observer]\n"
-        "    stop_grace_period: 5s\n"
-    )
-
-
-@click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option("--runs", default=DEFAULT_NUM_RUNS, show_default=True, type=int,
+@command(context_settings={"help_option_names": ["-h", "--help"]})
+@option("--runs", default=DEFAULT_NUM_RUNS, show_default=True, type=int,
               help="Number of randomised corpus runs.")
-@click.option("--seed", default=None, type=int, help="RNG seed (default: random).")
-@click.option("--out-dir", "out_dir", default=str(RESULTS_ROOT), show_default=True, type=click.Path(),
+@option("--seed", default=None, type=int, help="RNG seed (default: random).")
+@option("--out-dir", "out_dir", default=str(RESULTS_ROOT), show_default=True, type=ClickPath(),
               help="Root directory for corpus run outputs.")
-@click.option("--chaos/--no-chaos", default=True, show_default=True,
+@option("--chaos/--no-chaos", default=True, show_default=True,
               help="Apply network-wide Pumba chaos (latency/jitter/loss) per run.")
-@click.option("--build/--no-build", default=True, show_default=True,
+@option("--build/--no-build", default=True, show_default=True,
               help="Rebuild every Docker image used by the corpus before the first run.")
-def main(runs: int, seed: int | None, out_dir: str, chaos: bool, build: bool) -> None:
+@option("--modes", "modes_spec", default=None, type=str,
+              help="Comma-separated list of TYPHOON profile names and/or bg generator names "
+                   "to restrict the corpus to (e.g. `raw_default,unknown`).  Names that match "
+                   "a TYPHOON profile filter the per-run profile schedule; names that match "
+                   "a bg generator filter the per-run generator pool.  Defaults to the full "
+                   "stratified schedule + random subset of all bg generators.")
+def main(runs: int, seed: int | None, out_dir: str, chaos: bool, build: bool, modes_spec: str | None) -> None:
     """Run the background-blending corpus."""
+    profile_pool, generator_pool = _parse_modes(modes_spec)
+    if profile_pool or generator_pool:
+        console.print(
+            f"[dim]--modes filter: TYPHOON profiles = "
+            f"{profile_pool if profile_pool else 'ALL'}; "
+            f"bg generators = {generator_pool if generator_pool else 'ALL'}.[/dim]"
+        )
     if build:
         _build_images()
-    rng = random.Random(seed if seed is not None else secrets.randbits(64))
+    rng = Random(seed if seed is not None else randbits(64))
     out_root = Path(out_dir)
     out_root.mkdir(parents=True, exist_ok=True)
-    schedule = _stratified_profile_schedule(rng, runs)
+    schedule = _stratified_profile_schedule(rng, runs, pool=profile_pool)
     console.print(f"[dim]Stratified schedule: {schedule}[/dim]")
 
     for i, typhoon_profile_name in enumerate(schedule):
-        run_id = "run_" + datetime.datetime.now(datetime.UTC).strftime("%Y%m%d_%H%M%S_%f")
+        run_id = "run_" + datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
         run_dir = out_root / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
 
         typhoon_profile = PROFILES[typhoon_profile_name]
-        generators = _sample_generators(rng)
+        generators = _sample_generators(rng, pool=generator_pool)
         chaos_params = _sample_chaos(rng) if chaos else {"latency_ms": 0.0, "jitter_ms": 0.0, "loss_pct": 0.0}
         profile_env = profile_to_env(typhoon_profile, rng)
         bg_envs = {gen: bg_profile_to_env(BACKGROUND_PROFILES[gen], rng) for gen in generators}
@@ -351,7 +294,7 @@ def main(runs: int, seed: int | None, out_dir: str, chaos: bool, build: bool) ->
 
         metadata = {
             "run_id": run_id,
-            "started_at": datetime.datetime.now(datetime.UTC).isoformat(),
+            "started_at": datetime.now(UTC).isoformat(),
             "typhoon_profile": typhoon_profile_name,
             "generators": generators,
             "chaos": chaos_params,
@@ -359,14 +302,14 @@ def main(runs: int, seed: int | None, out_dir: str, chaos: bool, build: bool) ->
             "bg_envs": bg_envs,
             "ip_map": ip_map,
         }
-        (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))
+        (run_dir / "metadata.json").write_text(dumps(metadata, indent=2))
 
         console.print(f"[bold]{i + 1}/{runs}[/bold]  {run_id}  profile={typhoon_profile_name}  generators={generators}  chaos={chaos_params}")
 
         compose_path = _render_compose(run_id, run_dir, generators, typhoon_profile_name, profile_env, bg_envs, chaos_params)
         log_path = run_dir / "compose.log"
 
-        env = os.environ.copy()
+        env = environ.copy()
         # Cap total time per run at the longest active container's duration
         # (TYPHOON or any bg generator) plus buffer for handshake / teardown.
         max_duration = max(
@@ -379,16 +322,16 @@ def main(runs: int, seed: int | None, out_dir: str, chaos: bool, build: bool) ->
         with log_path.open("a") as lf:
             lf.write(f"\n$ {' '.join(cmd_up)} (timeout {run_timeout:.0f}s)\n")
             try:
-                subprocess.run(cmd_up, env=env, stdout=lf, stderr=subprocess.STDOUT,
-                               stdin=subprocess.DEVNULL, timeout=run_timeout)
-            except subprocess.TimeoutExpired:
+                run(cmd_up, env=env, stdout=lf, stderr=STDOUT,
+                               stdin=DEVNULL, timeout=run_timeout)
+            except TimeoutExpired:
                 lf.write("[corpus] compose up timed out — forcing teardown\n")
 
         cmd_down = ["docker", "compose", "-f", str(compose_path), "down",
                     "--volumes", "--remove-orphans"]
         with log_path.open("a") as lf:
             lf.write(f"\n$ {' '.join(cmd_down)}\n")
-            subprocess.run(cmd_down, env=env, stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+            run(cmd_down, env=env, stdout=lf, stderr=STDOUT, stdin=DEVNULL)
 
     console.print(f"[green]Corpus complete:[/green] {runs} runs in {out_root}")
 

@@ -7,9 +7,9 @@ random bytes.  Used by the QUIC download generator.
 
 from __future__ import annotations
 
-import asyncio
-import os
-import sys
+from asyncio import run, sleep
+from os import environ, system, urandom
+from sys import path
 
 from aioquic.asyncio import serve
 from aioquic.asyncio.protocol import QuicConnectionProtocol
@@ -18,23 +18,23 @@ from aioquic.h3.events import H3Event, HeadersReceived
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.events import QuicEvent
 
-sys.path.insert(0, "/common")
+path.insert(0, "/common")
 from profile_env import ProfileEnv
 
 LISTEN_PORT = 443
 
 
 def _route_setup() -> None:
-    gw = os.environ.get("OBSERVER_GW")
+    gw = environ.get("OBSERVER_GW")
     if not gw:
         return
-    os.system(f"ip route add 172.20.0.0/24 via {gw} 2>/dev/null")  # noqa: S605
+    system(f"ip route add 172.20.0.0/24 via {gw} 2>/dev/null")  # noqa: S605
 
 
 class HttpServerProtocol(QuicConnectionProtocol):
     """One H3 connection answering any request with a fixed-size random body."""
 
-    def __init__(self, *args, object_size: int, **kwargs) -> None:
+    def __init__(self, *args: object, object_size: int, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self._h3: H3Connection | None = None
         self._object_size = object_size
@@ -48,7 +48,7 @@ class HttpServerProtocol(QuicConnectionProtocol):
     def _handle_h3_event(self, event: H3Event) -> None:
         if not isinstance(event, HeadersReceived):
             return
-        body = os.urandom(self._object_size)
+        body = urandom(self._object_size)
         self._h3.send_headers(
             stream_id=event.stream_id,
             headers=[
@@ -64,19 +64,19 @@ async def main_async() -> None:
     profile = ProfileEnv.from_env()
     _route_setup()
     object_size = max(profile.bytes_s2c, 1024)
-    cert_path = os.environ.get("CERT_PATH", "/keys/quic.pem")
-    key_path = os.environ.get("KEY_PATH", "/keys/quic.key")
+    cert_path = environ.get("CERT_PATH", "/keys/quic.pem")
+    key_path = environ.get("KEY_PATH", "/keys/quic.key")
     config = QuicConfiguration(is_client=False, alpn_protocols=H3_ALPN)
     config.load_cert_chain(cert_path, key_path)
 
     print(f"quic-d/l server: listening on UDP/{LISTEN_PORT}, object_size={object_size}", flush=True)
 
-    def _factory(*args, **kwargs):
+    def _factory(*args: object, **kwargs: object) -> HttpServerProtocol:
         return HttpServerProtocol(*args, object_size=object_size, **kwargs)
 
     await serve(host="0.0.0.0", port=LISTEN_PORT, configuration=config, create_protocol=_factory)
-    await asyncio.sleep(profile.duration_s + 5.0)
+    await sleep(profile.duration_s + 5.0)
 
 
 if __name__ == "__main__":
-    asyncio.run(main_async())
+    run(main_async())

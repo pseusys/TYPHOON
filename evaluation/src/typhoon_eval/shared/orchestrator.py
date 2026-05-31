@@ -19,13 +19,13 @@ Usage (direct):
     python -m typhoon_eval.shared.orchestrator --all [--chaos] [--timeout 300] [--profile bulk_upload]
 """
 
-import datetime
-import json
-import random
-import sys
+from datetime import UTC, datetime
+from json import dumps
 from pathlib import Path
+from random import Random
+from sys import exit
 
-import click
+from click import Choice, command, option
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
@@ -37,6 +37,13 @@ from .protocols import ALL, BY_NAME, Protocol
 console = Console()
 
 RESULTS_DIR = Path(__file__).parent.parent.parent.parent / "results"
+
+# Minimum pcap size to consider non-empty / capture-worthy (bytes).  Below this
+# the file is essentially just the libpcap global header (24 B) plus a stub.
+MIN_PCAP_SIZE_B = 100
+# Delivery-rate colour bands — mirrors `shared/analysis.py`.
+DELIVERY_GREEN_PCT = 99.9
+DELIVERY_YELLOW_PCT = 80.0
 ENV_DIR = COMPOSE_DIR / "env"
 
 
@@ -74,9 +81,6 @@ def _run_one(
         "PROTOCOL_SUFFIX": suffix,
         "CLIENT_IMAGE": protocol.client_image,
         "SERVER_IMAGE": protocol.server_image,
-        # Compatibility key — TRANSFER_BYTES is read by legacy senders that have
-        # not yet migrated to PROFILE_BYTES_C2S.  Mirror the c2s budget here.
-        "TRANSFER_BYTES": profile_env["PROFILE_BYTES_C2S"],
         "CAPTURES_DIR": str(captures_dir.resolve()),
         "PUMBA_TARGET": pumba_target,
         "CHAOS_LOSS_PCT": str(loss_pct),
@@ -97,42 +101,42 @@ def _run_one(
     if success:
         if not pcap.exists():
             return False, "observer did not write pcap", None, None, None
-        if pcap.stat().st_size < 100:
+        if pcap.stat().st_size < MIN_PCAP_SIZE_B:
             return False, f"pcap is empty ({pcap.stat().st_size} bytes)", None, None, None
 
     return success, "" if success else "non-zero exit or timeout", delivery_pct, transfer_time_s, recv_time_s
 
 
-@click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option("--all", "run_all", is_flag=True, help="Capture all protocols.")
-@click.option(
+@command(context_settings={"help_option_names": ["-h", "--help"]})
+@option("--all", "run_all", is_flag=True, help="Capture all protocols.")
+@option(
     "--protocol",
     "protocol_name",
     default=None,
     metavar="NAME",
     help=f"Capture one protocol. Choices: {', '.join(BY_NAME)}.",
 )
-@click.option("--chaos", is_flag=True, default=False, help="Enable pumba chaos overlay (latency + jitter).")
-@click.option(
+@option("--chaos", is_flag=True, default=False, help="Enable pumba chaos overlay (latency + jitter).")
+@option(
     "--timeout",
     default=300,
     show_default=True,
     help="Per-protocol timeout in seconds before the run is killed.",
 )
-@click.option(
+@option(
     "--profile",
     default=DEFAULT_PROFILE,
     show_default=True,
-    type=click.Choice(list(PROFILES.keys())),
+    type=Choice(list(PROFILES.keys())),
     help="Traffic profile (chunk sizes, IATs, byte budgets, FlowConfig overrides).",
 )
-@click.option(
+@option(
     "--seed",
     default=None,
     type=int,
     help="RNG seed for sampling profile parameters (default: random).",
 )
-@click.option(
+@option(
     "--loss-pct",
     "loss_pct",
     default=0.0,
@@ -140,7 +144,7 @@ def _run_one(
     type=float,
     help="Chaos: packet loss percentage (0 = no extra loss beyond chaos default).",
 )
-@click.option(
+@option(
     "--bw-mbps",
     "bw_mbps",
     default=0.0,
@@ -154,17 +158,17 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, pr
     if not run_all and not protocol_name:
         console.print("[red]Error:[/red] specify --all or --protocol <name>.")
         console.print(f"Available protocols: {', '.join(BY_NAME)}")
-        sys.exit(1)
+        exit(1)
 
     if protocol_name and protocol_name not in BY_NAME:
         console.print(f"[red]Unknown protocol:[/red] {protocol_name!r}")
         console.print(f"Available: {', '.join(BY_NAME)}")
-        sys.exit(1)
+        exit(1)
 
     protocols = list(ALL) if run_all else [BY_NAME[protocol_name]]
     chaos_note = " [yellow](chaos mode)[/yellow]" if chaos else ""
 
-    rng = random.Random(seed)
+    rng = Random(seed)
     profile_obj = PROFILES[profile]
     profile_env = profile_to_env(profile_obj, rng)
     transfer_bytes = int(profile_env["PROFILE_BYTES_C2S"])
@@ -178,14 +182,14 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, pr
         console.print(f"  Chaos     : loss={loss_pct}%  bw={bw_mbps or 'unlimited'} Mbps")
     console.print()
 
-    run_id = "run_" + datetime.datetime.now(datetime.UTC).strftime("%Y%m%d_%H%M%S")
+    run_id = "run_" + datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     captures_dir = RESULTS_DIR / "captures" / run_id
     captures_dir.mkdir(parents=True, exist_ok=True)
     console.print(f"  Run ID    : [dim]{run_id}[/dim]\n")
 
     config: dict = {
         "run_id": run_id,
-        "started_at": datetime.datetime.now(datetime.UTC).isoformat(),
+        "started_at": datetime.now(UTC).isoformat(),
         "protocols": [p.name for p in protocols],
         "chaos": chaos,
         "timeout_s": timeout,
@@ -195,7 +199,7 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, pr
         "loss_pct": loss_pct,
         "bw_mbps": bw_mbps,
     }
-    (captures_dir / "config.json").write_text(json.dumps(config, indent=2))
+    (captures_dir / "config.json").write_text(dumps(config, indent=2))
 
     run_results: dict[str, dict] = {}
 
@@ -212,7 +216,7 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, pr
                     f"  [cyan]{protocol.name:<16}[/cyan] {protocol.description}",
                     total=None,
                 )
-                started_at = datetime.datetime.now(datetime.UTC)
+                started_at = datetime.now(UTC)
 
                 success, error, delivery_pct, transfer_time_s, recv_time_s = _run_one(
                     protocol=protocol,
@@ -225,7 +229,7 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, pr
                     log_dir=captures_dir / "logs" / protocol.name,
                 )
 
-                elapsed = (datetime.datetime.now(datetime.UTC) - started_at).total_seconds()
+                elapsed = (datetime.now(UTC) - started_at).total_seconds()
                 run_results[protocol.name] = {
                     "success": success,
                     "error": error,
@@ -235,7 +239,7 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, pr
                     "chaos": chaos,
                     "transfer_bytes": transfer_bytes,
                     "delivery_pct": delivery_pct,
-                    "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                 }
 
                 icon = "[green]✓[/green]" if success else "[red]✗[/red]"
@@ -249,7 +253,7 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, pr
     except KeyboardInterrupt:
         _purge_stale_stacks()
         console.print("\n[yellow]Interrupted — containers cleaned up.[/yellow]")
-        sys.exit(1)
+        exit(1)
 
     _purge_stale_stacks()
 
@@ -268,9 +272,9 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, pr
         pct = r.get("delivery_pct")
         if pct is None:
             delivery = "[dim]—[/dim]"
-        elif pct >= 99.9:
+        elif pct >= DELIVERY_GREEN_PCT:
             delivery = f"[green]{pct:.1f}%[/green]"
-        elif pct >= 80.0:
+        elif pct >= DELIVERY_YELLOW_PCT:
             delivery = f"[yellow]{pct:.1f}%[/yellow]"
         else:
             delivery = f"[red]{pct:.1f}%[/red]"
@@ -284,10 +288,10 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, pr
     console.print(f"\n{ok}/{len(protocols)} captures succeeded.\n")
 
     meta_path = captures_dir / "metadata.json"
-    meta_path.write_text(json.dumps(run_results, indent=2))
+    meta_path.write_text(dumps(run_results, indent=2))
     console.print(f"Metadata → [dim]{meta_path}[/dim]\n")
 
-    sys.exit(0 if ok == len(protocols) else 1)
+    exit(0 if ok == len(protocols) else 1)
 
 
 if __name__ == "__main__":

@@ -8,18 +8,18 @@ underlying server image, so the s2c portion of any profile is silently
 ignored on this side.
 """
 
-import os
-import time
+from os import environ, urandom
+from time import monotonic, sleep
 from typing import Callable
 
 
 def _env_int(key: str, default: int) -> int:
-    raw = os.environ.get(key)
+    raw = environ.get(key)
     return int(raw) if raw is not None and raw.strip() else default
 
 
 def _env_float(key: str, default: float) -> float:
-    raw = os.environ.get(key)
+    raw = environ.get(key)
     return float(raw) if raw is not None and raw.strip() else default
 
 
@@ -39,12 +39,12 @@ def run_profile(send_fn: Callable[[bytes], None]) -> tuple[int, float]:
     if bytes_c2s <= 0:
         return 0, 0.0
 
-    start = time.monotonic()
+    start = monotonic()
     deadline = start + duration_s
     # Fill the chunk buffer with random bytes once so subsequent slices look
     # like compressed/encrypted application data; sending all-zero payloads
     # would let a passive observer split flows by trivial byte-entropy alone.
-    chunk = os.urandom(chunk_c2s)
+    chunk = urandom(chunk_c2s)
 
     sent = 0
     total_sleep = 0.0
@@ -55,10 +55,10 @@ def run_profile(send_fn: Callable[[bytes], None]) -> tuple[int, float]:
         for i in range(burst_count):
             target = sent + bytes_per_burst
             sent, total_sleep = _send_until(send_fn, chunk, sent, target, delay_s, deadline, total_sleep)
-            if sent >= bytes_c2s or time.monotonic() >= deadline:
+            if sent >= bytes_c2s or monotonic() >= deadline:
                 break
             if i + 1 < burst_count and burst_idle_s > 0:
-                time.sleep(burst_idle_s)
+                sleep(burst_idle_s)
                 total_sleep += burst_idle_s
     else:
         sent, total_sleep = _send_until(send_fn, chunk, sent, bytes_c2s, delay_s, deadline, total_sleep)
@@ -77,11 +77,11 @@ def _send_until(
 ) -> tuple[int, float]:
     """Drive `send_fn` toward *target* bytes, respecting *delay_s* IAT and *deadline*."""
     chunk_size = len(chunk)
-    while sent < target and time.monotonic() < deadline:
+    while sent < target and monotonic() < deadline:
         n = min(chunk_size, target - sent)
         send_fn(chunk[:n])
         sent += n
         if delay_s > 0.0:
-            time.sleep(delay_s)
+            sleep(delay_s)
             total_sleep += delay_s
     return sent, total_sleep

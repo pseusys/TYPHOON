@@ -97,3 +97,15 @@ services:
     build:
       context: ../../..
       dockerfile: evaluation/background/wireguard_idle/Dockerfile.server
+
+  bg-unknown-client:
+    image: typhoon-eval-bg-unknown-client
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/unknown/Dockerfile.client
+
+  bg-unknown-server:
+    image: typhoon-eval-bg-unknown-server
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/unknown/Dockerfile.server

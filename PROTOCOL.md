@@ -436,7 +436,7 @@ For that, it keeps track of three internal values:
 - `reference_rate`: defines the long-term reference transmission rate _in packets_, equals `TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT` by default.
 - `packet_rate`: defines the current transmission rate _in packets_, equals `TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT` by default.
 - `byte_rate`: defines the current transmission rate _in bytes_, equals `TYPHOON_DECOY_CURRENT_BYTE_RATE_DEFAULT` by default.
-- `byte_budget`: defines the number of decoy packet bytes that are allowed to send now, equals `TYPHOON_DECOY_BYTE_RATE_CAP * TYPHOON_DECOY_BYTE_RATE_FACTOR / 2` by default.
+- `byte_budget`: defines a shared bandwidth pool consumed by both decoy and real outgoing traffic. Decoys may be sent only while the budget covers their length (see [insertion and processing](#insertion-and-processing)); heavy real outgoing traffic depletes the budget and silently suppresses subsequent decoys. Real traffic is **never gated** by the budget — it always goes through; the budget records bookkeeping after the packet has already been emitted.  Initial value is `TYPHOON_DECOY_BYTE_RATE_CAP * TYPHOON_DECOY_BYTE_RATE_FACTOR / 2`.
 
 They are updated whenever a packet leaves from or arrives to the flow manager, using `TYPHOON_DECOY_CURRENT_ALPHA` and `TYPHOON_DECOY_REFERENCE_ALPHA` constant values:
 
@@ -446,7 +446,7 @@ They are updated whenever a packet leaves from or arrives to the flow manager, u
   - `reference_rate = (1 - TYPHOON_DECOY_REFERENCE_ALPHA) * reference_rate + TYPHOON_DECOY_REFERENCE_ALPHA * (current_packet_time - previous_packet_time)`
   - `packet_rate = (1 - TYPHOON_DECOY_CURRENT_ALPHA) * packet_rate + TYPHOON_DECOY_CURRENT_ALPHA * (current_packet_time - previous_packet_time)`
   - `byte_rate = (1 - TYPHOON_DECOY_CURRENT_ALPHA) * byte_rate + TYPHOON_DECOY_CURRENT_ALPHA * packet_length`
-  - `byte_budget = min(byte_budget + (current_packet_time - previous_packet_time) * TYPHOON_DECOY_BYTE_RATE_CAP / 1000, TYPHOON_DECOY_BYTE_RATE_CAP * TYPHOON_DECOY_BYTE_RATE_FACTOR)`
+  - `byte_budget = clamp(byte_budget + (current_packet_time - previous_packet_time) * TYPHOON_DECOY_BYTE_RATE_CAP / 1000 - outgoing_real_packet_length, 0, TYPHOON_DECOY_BYTE_RATE_CAP * TYPHOON_DECOY_BYTE_RATE_FACTOR)`, where `outgoing_real_packet_length` is the byte length of the just-emitted **real outgoing** packet (0 for incoming traffic and for decoy outgoing — decoy outgoing packets deduct their length from the budget at emission time, before the timer fires, via the gating check above).
 
 Every mode defines its own equations for calculation of decoy packet length (`decoy_length`, in bytes) and delay before the next decoy packet (`decoy_delay`).
 The built-in communication mode is chosen randomly using weights `TYPHOON_DECOY_PROVIDER_WEIGHT_SIMPLE`, `TYPHOON_DECOY_PROVIDER_WEIGHT_SPARSE`, `TYPHOON_DECOY_PROVIDER_WEIGHT_NOISY`, `TYPHOON_DECOY_PROVIDER_WEIGHT_SMOOTH` and `TYPHOON_DECOY_PROVIDER_WEIGHT_HEAVY` (all integer, default `1` each).
@@ -954,7 +954,7 @@ They are designed to be general-purpose, suitable for most network environments,
 
 Some values used in computation are defined once during initialization or derived from the state:
 
-- `packet_length_cap`: maximum allowed length of the decoy packet, capped between `TYPHOON_DECOY_LENGTH_MAX` and `TYPHOON_DECOY_LENGTH_MIN` constants.
+- `packet_length_cap`: maximum allowed length of any decoy packet, capped between `TYPHOON_DECOY_LENGTH_MAX` and `TYPHOON_DECOY_LENGTH_MIN` constants. Individual communication modes may impose tighter, mode-specific length ceilings (e.g. `TYPHOON_DECOY_NOISY_LENGTH_MAX`, `TYPHOON_DECOY_SMOOTH_LENGTH_MAX`, `TYPHOON_DECOY_SPARSE_LENGTH_MAX`) when their intended traffic shape differs from "any packet up to MTU".
 - `quietness_index`: a value used for checking how busy the current traffic situation is, computed as `(reference_rate - packet_rate) / reference_rate`, clamped between `0` and `1`.
 
 #### Heavy mode
@@ -971,7 +971,7 @@ It defines the following equations for decoy packet delay:
 And the following equations for decoy packet length:
 
 - `base_length = packet_length_cap * (TYPHOON_DECOY_HEAVY_BASE_LENGTH + TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH * quietness_index)`.
-- `decoy_length = random_uniform(TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR * base_length, base_length)`, clamped between `packet_length_cap / 2` and `packet_length_cap`.
+- `decoy_length = random_uniform(TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR * base_length, base_length)`, clamped between `TYPHOON_DECOY_HEAVY_LENGTH_MIN` and `packet_length_cap`.
 
 > The `exponential_variance` and `random_uniform` functions are defined in the [supporting math](#supporting-math) chapter.
 
@@ -988,8 +988,10 @@ It defines the following equations for decoy packet delay:
 
 And the following equations for decoy packet length:
 
-- `mean_length = TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN + quietness_index * exp(-packet_rate / reference_rate) * (packet_length_cap - TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN)`.
-- `decoy_length = random_gauss(mean_length, TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER * mean_length)`, clamped between `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` and `packet_length_cap`.
+- `mean_length = TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN + quietness_index * exp(-packet_rate / reference_rate) * (TYPHOON_DECOY_NOISY_LENGTH_MAX - TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN)`.
+- `decoy_length = random_gauss(mean_length, TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER * mean_length)`, clamped between `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` and `TYPHOON_DECOY_NOISY_LENGTH_MAX`.
+
+`TYPHOON_DECOY_NOISY_LENGTH_MAX` is intentionally smaller than `packet_length_cap` (default 800 B vs 1400 B): noisy mode mimics small/medium bursty traffic such as web or socket payloads, so even at maximum `quietness_index` the mean packet size stays well below MTU.
 
 > The `exponential_variance`, `random_uniform`, and `random_gauss` functions are defined in the [supporting math](#supporting-math) chapter.
 
@@ -1012,7 +1014,7 @@ And the following equations for decoy packet length:
 
 #### Smooth mode
 
-Smooth mode implements sending few average decoy packets during quiet periods.
+Smooth mode implements adaptive decoy packets that scale with the level of real traffic activity: small and rare during high-load periods, with both the emission rate and the per-packet size ceiling growing during quiet periods.
 It fills gaps between data packets and prevents the connection from going silent.
 
 It defines the following equations for decoy packet delay:

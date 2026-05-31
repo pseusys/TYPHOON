@@ -1,0 +1,9 @@
+FROM python:3.12-alpine
+
+RUN apk add --no-cache iproute2
+
+COPY evaluation/background/unknown/unknown.py /usr/local/bin/unknown
+RUN chmod +x /usr/local/bin/unknown
+
+ENV ROLE=client
+CMD ["python3", "/usr/local/bin/unknown"]

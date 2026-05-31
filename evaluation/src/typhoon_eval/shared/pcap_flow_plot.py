@@ -15,14 +15,15 @@ Usage (direct):
     python -m typhoon_eval.pcap_flow_plot [--run YYYYMMDD_HHMMSS] [--out-dir DIR]
 """
 
-import sys
 from math import ceil
 from pathlib import Path
+from sys import exit
 
-import click
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
-import numpy as np
+from click import Path as ClickPath
+from click import command, echo, option
+from matplotlib import patches as mpatches
+from matplotlib import pyplot as plt
+from numpy import array
 from scapy.layers.inet import IP
 from scapy.utils import PcapReader
 
@@ -59,8 +60,8 @@ def _parse_timeline(path: Path) -> tuple[list[tuple[float, int]], list[tuple[flo
 def _plot_timeline(run_dir: Path, out_dir: Path) -> None:
     pcaps = sorted(run_dir.glob("*.pcap"))
     if not pcaps:
-        click.echo(f"No pcap files in {run_dir}", err=True)
-        sys.exit(1)
+        echo(f"No pcap files in {run_dir}", err=True)
+        exit(1)
 
     # Collect per-protocol data.
     proto_data: list[tuple[str, list, list]] = []
@@ -71,8 +72,8 @@ def _plot_timeline(run_dir: Path, out_dir: Path) -> None:
             proto_data.append((name, c2s, s2c))
 
     if not proto_data:
-        click.echo("No packets found in any pcap.", err=True)
-        sys.exit(1)
+        echo("No packets found in any pcap.", err=True)
+        exit(1)
 
     # Global y-range: shared across all subplots for comparability.
     all_sizes = [sz for _, c2s, s2c in proto_data for _, sz in c2s + s2c]
@@ -103,13 +104,13 @@ def _plot_timeline(run_dir: Path, out_dir: Path) -> None:
             hs_end_ts = handshake_end(c2s_recs, s2c_recs, proto.handshake_sniffer)
 
         if c2s:
-            ts_arr = np.array([ts - t0 for ts, _ in c2s])
-            sz_arr = np.array([sz for _, sz in c2s], dtype=float)
+            ts_arr = array([ts - t0 for ts, _ in c2s])
+            sz_arr = array([sz for _, sz in c2s], dtype=float)
             ax.scatter(ts_arr, sz_arr, color=_C2S_COLOR, s=3, alpha=0.5, linewidths=0, rasterized=True)
 
         if s2c:
-            ts_arr = np.array([ts - t0 for ts, _ in s2c])
-            sz_arr = np.array([-sz for _, sz in s2c], dtype=float)
+            ts_arr = array([ts - t0 for ts, _ in s2c])
+            sz_arr = array([-sz for _, sz in s2c], dtype=float)
             ax.scatter(ts_arr, sz_arr, color=_S2C_COLOR, s=3, alpha=0.5, linewidths=0, rasterized=True)
 
         if hs_end_ts is not None:
@@ -140,24 +141,24 @@ def _plot_timeline(run_dir: Path, out_dir: Path) -> None:
     path = out_dir / f"{run_dir.name}_pcap_flow.png"
     fig.savefig(path, format="png", bbox_inches="tight", dpi=100)
     plt.close(fig)
-    click.echo(f"Saved: {path}")
+    echo(f"Saved: {path}")
 
 
-@click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option("--run", "run_id", default=None, metavar="YYYYMMDD_HHMMSS", help="Run directory to plot (default: most recent).")
-@click.option("--out-dir", default=str(_DEFAULT_OUT_DIR), show_default=True, type=click.Path(), help="Output directory for the PNG.")
+@command(context_settings={"help_option_names": ["-h", "--help"]})
+@option("--run", "run_id", default=None, metavar="YYYYMMDD_HHMMSS", help="Run directory to plot (default: most recent).")
+@option("--out-dir", default=str(_DEFAULT_OUT_DIR), show_default=True, type=ClickPath(), help="Output directory for the PNG.")
 def main(run_id: str | None, out_dir: str) -> None:
     """Generate per-packet timeline grid from pcap files of a capture run."""
     if run_id:
         run_dir = CAPTURES_ROOT / f"run_{run_id}"
         if not run_dir.is_dir():
-            click.echo(f"Run not found: {run_dir}", err=True)
-            sys.exit(1)
+            echo(f"Run not found: {run_dir}", err=True)
+            exit(1)
     else:
         run_dir = _latest_run()
         if run_dir is None:
-            click.echo("No capture runs found. Run 'poe capture' first.", err=True)
-            sys.exit(1)
+            echo("No capture runs found. Run 'poe capture' first.", err=True)
+            exit(1)
 
     _plot_timeline(run_dir, Path(out_dir))
 

@@ -2,3 +2,6 @@ default: true
 
 # Line length
 MD013: false
+
+# Inline HTML not allowed
+MD033: false

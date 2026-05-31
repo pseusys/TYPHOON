@@ -23,7 +23,7 @@ awg set awg0 \
 
 ip link set awg0 up
 
-TRANSFER_BYTES="${TRANSFER_BYTES:-104857600}" \
+PROFILE_BYTES_C2S="${PROFILE_BYTES_C2S:-104857600}" \
 OBSERVER_GW="" \
 python3 /app/server.py &
 SINK_PID=$!

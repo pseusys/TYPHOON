@@ -13,17 +13,17 @@ IMPORTANT — observer capability requirements:
   --root) or Docker are both fine; rootless Podman is not.
 
 NOTE — sequential-only:
-  _overlay_env modifies os.environ, which is process-global.  Protocols
+  _overlay_env modifies environ, which is process-global.  Protocols
   must be run sequentially (as the orchestrator does) to avoid races.
 """
 
-import contextlib
-import os
-import re
-import threading
-import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
+from contextlib import contextmanager, suppress
+from os import environ
 from pathlib import Path
+from re import search
+from threading import Thread
+from time import sleep
 
 from python_on_whales import DockerClient, DockerException
 
@@ -38,37 +38,31 @@ def _project_name(protocol_name: str) -> str:
 def _purge_stale_stacks(current_protocol: str = "") -> None:
     """Force-remove leftover typhoon-eval-* containers and networks."""
     current_prefix = f"typhoon-eval-{current_protocol.replace('_', '-')}-" if current_protocol else ""
-    try:
+    with suppress(Exception):
         dc = DockerClient()
         for container in dc.container.list(all=True, filters={"name": "typhoon-eval-"}):
             if not current_prefix or not container.name.startswith(current_prefix):
-                try:
+                with suppress(Exception):
                     dc.container.remove(container.name, force=True, volumes=True)
-                except Exception:
-                    pass
         for net in dc.network.list(filters={"name": "typhoon-eval-"}):
             if not current_prefix or not net.name.startswith(current_prefix):
-                try:
+                with suppress(Exception):
                     dc.network.remove(net.name)
-                except Exception:
-                    pass
-    except Exception:
-        pass
 
 
-@contextlib.contextmanager
+@contextmanager
 def _overlay_env(extra: dict[str, str]) -> Generator[None, None, None]:
     """Temporarily inject extra variables into the process environment."""
-    old = {k: os.environ.get(k) for k in extra}
-    os.environ.update(extra)
+    old = {k: environ.get(k) for k in extra}
+    environ.update(extra)
     try:
         yield
     finally:
         for k, v in old.items():
             if v is None:
-                os.environ.pop(k, None)
+                environ.pop(k, None)
             else:
-                os.environ[k] = v
+                environ[k] = v
 
 
 def _parse_delivery(dc: DockerClient, protocol_name: str) -> float | None:
@@ -77,7 +71,7 @@ def _parse_delivery(dc: DockerClient, protocol_name: str) -> float | None:
     try:
         logs: str = dc.container.logs(server_name)
         for line in reversed(logs.splitlines()):
-            m = re.search(r"\((\d+(?:\.\d+)?)%\)", line)
+            m = search(r"\((\d+(?:\.\d+)?)%\)", line)
             if m:
                 return float(m.group(1))
     except Exception:
@@ -99,7 +93,7 @@ def _parse_timing(dc: DockerClient, protocol_name: str) -> tuple[float | None, f
     try:
         logs: str = dc.container.logs(client_name)
         for line in logs.splitlines():
-            m = re.search(r"transfer_time_s=([\d.]+)", line)
+            m = search(r"transfer_time_s=([\d.]+)", line)
             if m:
                 transfer_time_s = float(m.group(1))
     except Exception:
@@ -108,7 +102,7 @@ def _parse_timing(dc: DockerClient, protocol_name: str) -> tuple[float | None, f
     try:
         logs = dc.container.logs(server_name)
         for line in logs.splitlines():
-            m = re.search(r"recv_time_s=([\d.]+)", line)
+            m = search(r"recv_time_s=([\d.]+)", line)
             if m:
                 recv_time_s = float(m.group(1))
     except Exception:
@@ -151,9 +145,9 @@ def _save_logs(dc: DockerClient, protocol_name: str, log_dir: Path) -> None:
             log_path.write_text(f"[log capture failed: {e}]\n")
 
 
-def _docker_op(fn, timeout_s: int = 60) -> None:
+def _docker_op(fn: Callable[[], None], timeout_s: int = 60) -> None:
     """Run a docker/compose operation in a daemon thread with a hard timeout."""
-    t = threading.Thread(target=fn, daemon=True)
+    t = Thread(target=fn, daemon=True)
     t.start()
     t.join(timeout=timeout_s)
 
@@ -181,19 +175,17 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
     with _overlay_env(extra_env):
         timed_out = False
         success = False
-        _up_thread: threading.Thread | None = None
+        _up_thread: Thread | None = None
 
         _docker_op(lambda: dc.compose.down(volumes=True, remove_orphans=True, quiet=True))
 
         try:
             if not chaos:
                 def _run_up() -> None:
-                    try:
+                    with suppress(DockerException):
                         dc.compose.up(abort_on_container_exit=True, no_build=True, quiet=True)
-                    except DockerException:
-                        pass
 
-                _up_thread = threading.Thread(target=_run_up, daemon=True)
+                _up_thread = Thread(target=_run_up, daemon=True)
                 _up_thread.start()
                 _up_thread.join(timeout=timeout)
 
@@ -212,12 +204,10 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
                     server_name = f"{_project_name(protocol_name)}-server-1"
 
                     def _wait_server() -> None:
-                        try:
+                        with suppress(Exception):
                             dc.container.wait(server_name)
-                        except Exception:
-                            pass
 
-                    _up_thread = threading.Thread(target=_wait_server, daemon=True)
+                    _up_thread = Thread(target=_wait_server, daemon=True)
                     _up_thread.start()
                     _up_thread.join(timeout=timeout)
 
@@ -226,7 +216,7 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
 
                     _docker_op(lambda: dc.compose.stop(), timeout_s=30)
                     # Brief pause so tcpdump flushes its write buffer before down.
-                    time.sleep(2)
+                    sleep(2)
 
             if not timed_out:
                 # In chaos mode the client is killed by SIGTERM after the server exits

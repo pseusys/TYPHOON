@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY shadowsocks/server.json /etc/shadowsocks-libev/config.json
 COPY common/tcp_sink.py /app/server.py
 CMD sh -c 'ip route add 172.20.0.0/24 via "$OBSERVER_GW" 2>/dev/null || true; \
-           TRANSFER_BYTES="${TRANSFER_BYTES:-104857600}" OBSERVER_GW="" \
+           PROFILE_BYTES_C2S="${PROFILE_BYTES_C2S:-104857600}" OBSERVER_GW="" \
            python3 /app/server.py & SINK=$!; \
            ss-server -c /etc/shadowsocks-libev/config.json & SS=$!; \
            wait $SINK'

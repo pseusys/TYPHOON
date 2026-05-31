@@ -66,7 +66,7 @@ services:
       CERT_HOST:   172.21.0.10
       # obfs4_iat: when set, obfs4proxy uses the given IAT mode (0=off, 1=on, 2=paranoid)
       OBFS4_IAT_MODE: ${OBFS4_IAT_MODE:-}
-      TRANSFER_BYTES: ${TRANSFER_BYTES:-10485760}
+      PROFILE_BYTES_C2S: ${PROFILE_BYTES_C2S:-10485760}
       RUST_LOG: ${RUST_LOG:-}
     volumes:
       - eval_keys:/keys
@@ -90,7 +90,7 @@ services:
       SERVER_HOST:    172.21.0.10
       # Observer's net_left IP — client adds forward route via this gateway
       OBSERVER_GW:    172.20.0.2
-      TRANSFER_BYTES:        ${TRANSFER_BYTES:-10485760}
+      PROFILE_BYTES_C2S:        ${PROFILE_BYTES_C2S:-10485760}
       INTER_PACKET_DELAY_MS:  ${INTER_PACKET_DELAY_MS:-40}
       DELAY_EVERY_N:          ${DELAY_EVERY_N:-10}
       TRAFFIC_SCENARIO:       ${TRAFFIC_SCENARIO:-bulk}

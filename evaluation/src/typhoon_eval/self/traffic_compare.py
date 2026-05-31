@@ -23,13 +23,14 @@ Usage (direct):
     python -m typhoon_eval.traffic_compare --use-case interactive
 """
 
-import json
+from json import dumps
 from pathlib import Path
 
-import click
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
-import numpy as np
+from click import Path as ClickPath
+from click import command, echo, option
+from matplotlib import patches as mpatches
+from matplotlib import pyplot as plt
+from numpy import array
 
 from typhoon_eval.self.flow_plot import _DEFAULT_TYPHOON_DIR, _run_example
 from typhoon_eval.shared.capture_stats import COMP_COLORS, COMPONENTS, pool_stats, stats_from_records
@@ -59,7 +60,7 @@ def _plot_traffic_compare(pooled_by_mode: list[tuple[str, str, dict]], use_case:
 
         # Row 0 — packet size box plot
         ax = axes[0][col]
-        sizes = np.array(ds["packet_size"]["raw"])
+        sizes = array(ds["packet_size"]["raw"])
         if len(sizes) > 0:
             ax.boxplot(sizes, vert=True, patch_artist=True,
                        boxprops=dict(facecolor=color, alpha=0.6),
@@ -71,7 +72,7 @@ def _plot_traffic_compare(pooled_by_mode: list[tuple[str, str, dict]], use_case:
 
         # Row 1 — IAT box plot
         ax = axes[1][col]
-        iats = np.array(ds["iat_ms"]["raw"])
+        iats = array(ds["iat_ms"]["raw"])
         if len(iats) > 0:
             ax.boxplot(iats, vert=True, patch_artist=True,
                        boxprops=dict(facecolor=color, alpha=0.6),
@@ -138,23 +139,23 @@ def _plot_traffic_compare(pooled_by_mode: list[tuple[str, str, dict]], use_case:
     png_path = out_dir / f"{use_case}_traffic_compare.png"
     fig.savefig(png_path, format="png", bbox_inches="tight", dpi=120)
     plt.close(fig)
-    click.echo(f"Saved: {png_path}")
+    echo(f"Saved: {png_path}")
 
 
-@click.command()
-@click.option("--example", default="use_case", show_default=True, help="Rust example name to run")
-@click.option("--use-case", "use_case", default="default", show_default=True, help="TYPHOON_USE_CASE value")
-@click.option("--runs", default=3, show_default=True, help="Number of runs per mode (results are pooled)")
-@click.option("--out-dir", default=str(_DEFAULT_OUT_DIR), show_default=True, type=click.Path(), help="Output directory for PNG and JSON")
-@click.option("--typhoon-dir", default=str(_DEFAULT_TYPHOON_DIR), show_default=True, type=click.Path(exists=True), help="Path to the typhoon Rust crate")
-@click.option("--timeout", default=90, show_default=True, help="Per-run timeout in seconds")
+@command()
+@option("--example", default="use_case", show_default=True, help="Rust example name to run")
+@option("--use-case", "use_case", default="default", show_default=True, help="TYPHOON_USE_CASE value")
+@option("--runs", default=3, show_default=True, help="Number of runs per mode (results are pooled)")
+@option("--out-dir", default=str(_DEFAULT_OUT_DIR), show_default=True, type=ClickPath(), help="Output directory for PNG and JSON")
+@option("--typhoon-dir", default=str(_DEFAULT_TYPHOON_DIR), show_default=True, type=ClickPath(exists=True), help="Path to the typhoon Rust crate")
+@option("--timeout", default=90, show_default=True, help="Per-run timeout in seconds")
 def main(example: str, use_case: str, runs: int, out_dir: str, typhoon_dir: str, timeout: int) -> None:
     """Run TYPHOON with each of the four payload×wait traffic modes and compare results."""
     pooled_by_mode: list[tuple[str, str, dict]] = []
     json_data: dict = {}
 
     for _num, label, slug, random_payload, random_wait in _MODES:
-        click.echo(f"Mode {_num}: {label.replace(chr(10), ' / ')} …")
+        echo(f"Mode {_num}: {label.replace(chr(10), ' / ')} …")
         extra_env: dict = {"TYPHOON_USE_CASE": use_case}
         if random_payload:
             extra_env["TYPHOON_RANDOM_PAYLOAD"] = "1"
@@ -163,15 +164,15 @@ def main(example: str, use_case: str, runs: int, out_dir: str, typhoon_dir: str,
 
         run_stats: list[dict] = []
         for i in range(runs):
-            click.echo(f"  run {i + 1}/{runs}…")
+            echo(f"  run {i + 1}/{runs}…")
             packets, configs = _run_example(example, Path(typhoon_dir), timeout, extra_env)
             if not packets:
-                click.echo("  Warning: no capture records; skipping.", err=True)
+                echo("  Warning: no capture records; skipping.", err=True)
                 continue
             run_stats.append(stats_from_records(packets, configs))
 
         if not run_stats:
-            click.echo(f"  No successful runs for mode {_num}; skipping.", err=True)
+            echo(f"  No successful runs for mode {_num}; skipping.", err=True)
             continue
 
         pooled = pool_stats(run_stats, direction="all")
@@ -180,7 +181,7 @@ def main(example: str, use_case: str, runs: int, out_dir: str, typhoon_dir: str,
         json_data[slug] = run_stats
 
     if not pooled_by_mode:
-        click.echo("No data; nothing to plot.", err=True)
+        echo("No data; nothing to plot.", err=True)
         return
 
     _plot_traffic_compare(pooled_by_mode, use_case, Path(out_dir))
@@ -202,8 +203,8 @@ def main(example: str, use_case: str, runs: int, out_dir: str, typhoon_dir: str,
             entry["config"] = s.get("config", [])
             stripped.append(entry)
         serialisable[slug] = stripped
-    json_path.write_text(json.dumps(serialisable, indent=2))
-    click.echo(f"Saved: {json_path}")
+    json_path.write_text(dumps(serialisable, indent=2))
+    echo(f"Saved: {json_path}")
 
 
 if __name__ == "__main__":

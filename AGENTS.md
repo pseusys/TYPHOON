@@ -58,6 +58,7 @@ There is a `go` module in `evaluation/protocols/wireguard_daita/wg-daita` as wel
 - For shell scripts, standard rules should be applied (linted with `shellcheck` tool).
 - For markdown files, standard rules should be applied (linted with `markdownlint` tool).
 - Everywhere (wherever the linting rules don't **specifically** enforce otherwise) long lines should be preferred over broken lines.
+- Avoid generated file embedding (configuration, environment, etc.), and prefer separate template files instead.
 
 ### Testing
 

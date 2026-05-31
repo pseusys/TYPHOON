@@ -14,32 +14,32 @@ Env vars:
   PROFILE_BURSTY, PROFILE_BURST_COUNT, PROFILE_BURST_IDLE_S
 """
 
-import os
-import socket
-import subprocess
-import sys
-import time
+from os import environ
+from socket import SHUT_WR, create_connection
+from subprocess import run
+from sys import exit
+from time import monotonic, sleep
 
 from _profile import run_profile
 
-observer_gw = os.environ.get("OBSERVER_GW")
-forward_subnet = os.environ.get("FORWARD_SUBNET", "172.21.0.0/24")
-server_host = os.environ["SERVER_HOST"]
-port = int(os.environ.get("LISTEN_PORT", 9000))
-retries = int(os.environ.get("CONNECT_RETRIES", 30))
+observer_gw = environ.get("OBSERVER_GW")
+forward_subnet = environ.get("FORWARD_SUBNET", "172.21.0.0/24")
+server_host = environ["SERVER_HOST"]
+port = int(environ.get("LISTEN_PORT", 9000))
+retries = int(environ.get("CONNECT_RETRIES", 30))
 
 if observer_gw:
-    subprocess.run(["ip", "route", "add", forward_subnet, "via", observer_gw], check=False, capture_output=True)
+    run(["ip", "route", "add", forward_subnet, "via", observer_gw], check=False, capture_output=True)
 
 for attempt in range(retries):
     try:
-        with socket.create_connection((server_host, port), timeout=5) as s:
+        with create_connection((server_host, port), timeout=5) as s:
             s.settimeout(None)
-            transfer_start = time.monotonic()
+            transfer_start = monotonic()
             sent, total_sleep = run_profile(s.sendall)
-            transfer_time_s = time.monotonic() - transfer_start - total_sleep
+            transfer_time_s = monotonic() - transfer_start - total_sleep
             try:
-                s.shutdown(socket.SHUT_WR)
+                s.shutdown(SHUT_WR)
                 s.settimeout(120)
                 while s.recv(65536):
                     pass
@@ -48,10 +48,10 @@ for attempt in range(retries):
 
         print(f"sent {sent} bytes", flush=True)
         print(f"transfer_time_s={transfer_time_s:.3f}", flush=True)
-        sys.exit(0)
+        exit(0)
     except (ConnectionRefusedError, OSError):
         if attempt < retries - 1:
-            time.sleep(1)
+            sleep(1)
 
 print("failed to connect after retries", flush=True)
-sys.exit(1)
+exit(1)

@@ -18,8 +18,8 @@ overhead that would otherwise leak transport-layer signal into the
 protocol-level statistics.
 """
 
-import math
 from collections import Counter
+from math import log2
 from pathlib import Path
 
 import numpy as np
@@ -43,7 +43,7 @@ def _entropy(data: bytes) -> float:
         return 0.0
     counts = Counter(data)
     n = len(data)
-    return max(0.0, -sum((c / n) * math.log2(c / n) for c in counts.values()))
+    return max(0.0, -sum((c / n) * log2(c / n) for c in counts.values()))
 
 
 def _size_entropy(sizes: np.ndarray) -> float:
@@ -58,8 +58,8 @@ def _size_entropy(sizes: np.ndarray) -> float:
     if n_unique <= 1:
         return 0.0
     n = len(sizes)
-    raw = -sum((c / n) * math.log2(c / n) for c in counts.values())
-    return raw / math.log2(n_unique) * 8.0
+    raw = -sum((c / n) * log2(c / n) for c in counts.values())
+    return raw / log2(n_unique) * 8.0
 
 
 def _app_payload(pkt: Packet) -> bytes:

@@ -48,6 +48,12 @@ const DEFAULT_PROFILE_NAME: &str = "bulk_upload";
 /// pinned per-profile FlowConfig.  Used to measure default TYPHOON blending.
 pub const RAW_DEFAULT_PROFILE: &str = "raw_default";
 
+/// Sentinel profile name for the "aggressively-tuned defaults" comparison
+/// target — same per-packet randomization and `FlowConfig::random` freedom
+/// as `raw_default`, but the eval binaries apply blending-oriented settings
+/// overrides on top (jitter, fallthrough, decoy rates).
+pub const TUNED_DEFAULT_PROFILE: &str = "tuned_default";
+
 /// Maximum number of packets a single bulk profile run will emit before
 /// stopping (safety net so a misconfigured run cannot saturate the network
 /// indefinitely).
@@ -106,10 +112,21 @@ pub struct TrafficProfile {
     pub chunk_c2s: usize,
     /// Per-packet server→client application payload size (bytes).  Zero disables s2c.
     pub chunk_s2c: usize,
+    /// Lower bound on per-packet c2s chunk size — used only by `raw_default`
+    /// for per-packet resampling; tuned profiles ignore this and use `chunk_c2s`.
+    pub chunk_c2s_min: usize,
+    pub chunk_c2s_max: usize,
+    pub chunk_s2c_min: usize,
+    pub chunk_s2c_max: usize,
     /// Inter-arrival time between client→server sends (milliseconds).
     pub iat_c2s_ms: f64,
     /// Inter-arrival time between server→client sends (milliseconds).
     pub iat_s2c_ms: f64,
+    /// IAT range bounds — same semantics as the chunk_*_min/max bounds.
+    pub iat_c2s_ms_min: f64,
+    pub iat_c2s_ms_max: f64,
+    pub iat_s2c_ms_min: f64,
+    pub iat_s2c_ms_max: f64,
     /// Target c2s byte budget; flow stops sending c2s once reached.
     pub bytes_c2s: usize,
     /// Target s2c byte budget; flow stops sending s2c once reached.
@@ -147,8 +164,19 @@ impl TrafficProfile {
         let name = var("TRAFFIC_PROFILE").unwrap_or_else(|_| DEFAULT_PROFILE_NAME.to_string());
         let chunk_c2s = read_usize("PROFILE_CHUNK_C2S", 1200)?;
         let chunk_s2c = read_usize("PROFILE_CHUNK_S2C", 0)?;
+        // MIN/MAX default to the sampled value so tuned profiles' callers get a
+        // degenerate range (lo == hi) — `sample_chunk_c2s` then returns the
+        // sampled value unchanged.
+        let chunk_c2s_min = read_usize("PROFILE_CHUNK_C2S_MIN", chunk_c2s)?;
+        let chunk_c2s_max = read_usize("PROFILE_CHUNK_C2S_MAX", chunk_c2s)?;
+        let chunk_s2c_min = read_usize("PROFILE_CHUNK_S2C_MIN", chunk_s2c)?;
+        let chunk_s2c_max = read_usize("PROFILE_CHUNK_S2C_MAX", chunk_s2c)?;
         let iat_c2s_ms = read_f64("PROFILE_IAT_C2S_MS", 0.0)?;
         let iat_s2c_ms = read_f64("PROFILE_IAT_S2C_MS", 0.0)?;
+        let iat_c2s_ms_min = read_f64("PROFILE_IAT_C2S_MIN_MS", iat_c2s_ms)?;
+        let iat_c2s_ms_max = read_f64("PROFILE_IAT_C2S_MAX_MS", iat_c2s_ms)?;
+        let iat_s2c_ms_min = read_f64("PROFILE_IAT_S2C_MIN_MS", iat_s2c_ms)?;
+        let iat_s2c_ms_max = read_f64("PROFILE_IAT_S2C_MAX_MS", iat_s2c_ms)?;
         let bytes_c2s = read_usize("PROFILE_BYTES_C2S", 10_485_760)?;
         let bytes_s2c = read_usize("PROFILE_BYTES_S2C", 0)?;
         let duration_s = read_f64("PROFILE_DURATION_S", 30.0)?;
@@ -165,8 +193,16 @@ impl TrafficProfile {
             name,
             chunk_c2s,
             chunk_s2c,
+            chunk_c2s_min,
+            chunk_c2s_max,
+            chunk_s2c_min,
+            chunk_s2c_max,
             iat_c2s_ms,
             iat_s2c_ms,
+            iat_c2s_ms_min,
+            iat_c2s_ms_max,
+            iat_s2c_ms_min,
+            iat_s2c_ms_max,
             bytes_c2s,
             bytes_s2c,
             duration_s,
@@ -221,6 +257,53 @@ impl TrafficProfile {
         Duration::from_micros((self.iat_s2c_ms * 1000.0) as u64)
     }
 
+    /// Per-packet random c2s chunk size sampled uniformly in
+    /// `[chunk_c2s_min, chunk_c2s_max]`.  Used by `raw_default` to give every
+    /// c2s packet a fresh size from the profile's range — tuned profiles' MIN
+    /// and MAX are both equal to the per-run sampled value, so the result is
+    /// deterministic for them.
+    #[inline]
+    pub fn sample_chunk_c2s(&self, rng: &mut impl Rng) -> usize {
+        if self.chunk_c2s_min >= self.chunk_c2s_max {
+            self.chunk_c2s
+        } else {
+            rng.gen_range(self.chunk_c2s_min..=self.chunk_c2s_max)
+        }
+    }
+
+    /// Per-packet random s2c chunk size — see `sample_chunk_c2s`.
+    #[inline]
+    pub fn sample_chunk_s2c(&self, rng: &mut impl Rng) -> usize {
+        if self.chunk_s2c_min >= self.chunk_s2c_max {
+            self.chunk_s2c
+        } else {
+            rng.gen_range(self.chunk_s2c_min..=self.chunk_s2c_max)
+        }
+    }
+
+    /// Per-packet random c2s delay sampled uniformly in
+    /// `[iat_c2s_ms_min, iat_c2s_ms_max]` (ms).
+    #[inline]
+    pub fn sample_c2s_delay(&self, rng: &mut impl Rng) -> Duration {
+        let ms = if self.iat_c2s_ms_min >= self.iat_c2s_ms_max {
+            self.iat_c2s_ms
+        } else {
+            rng.gen_range(self.iat_c2s_ms_min..=self.iat_c2s_ms_max)
+        };
+        Duration::from_micros((ms * 1000.0) as u64)
+    }
+
+    /// Per-packet random s2c delay — see `sample_c2s_delay`.
+    #[inline]
+    pub fn sample_s2c_delay(&self, rng: &mut impl Rng) -> Duration {
+        let ms = if self.iat_s2c_ms_min >= self.iat_s2c_ms_max {
+            self.iat_s2c_ms
+        } else {
+            rng.gen_range(self.iat_s2c_ms_min..=self.iat_s2c_ms_max)
+        };
+        Duration::from_micros((ms * 1000.0) as u64)
+    }
+
     /// Per-flow duration cap as a `Duration`.
     #[inline]
     pub fn duration(&self) -> Duration {
@@ -258,6 +341,19 @@ impl TrafficProfile {
     #[inline]
     pub fn is_raw_default(&self) -> bool {
         self.name == RAW_DEFAULT_PROFILE
+    }
+
+    /// True for the aggressively-tuned defaults target.
+    #[inline]
+    pub fn is_tuned_default(&self) -> bool {
+        self.name == TUNED_DEFAULT_PROFILE
+    }
+
+    /// True for any profile that uses per-packet random chunk/IAT sampling and
+    /// `FlowConfig::random` (no per-flow pinning).
+    #[inline]
+    pub fn is_unrestricted(&self) -> bool {
+        self.is_raw_default() || self.is_tuned_default()
     }
 }
 

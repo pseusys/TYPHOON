@@ -19,43 +19,81 @@ Usage:
     poe evaluate --diagrams-dir /tmp/diagrams
 """
 
-import datetime
-import json
-import subprocess
-import sys
+from datetime import UTC, datetime
+from json import loads
 from pathlib import Path
+from shutil import copy2
+from subprocess import DEVNULL, run
+from sys import executable, exit
 
-import click
+from click import ClickException, Command, command, option
+from click import Path as ClickPath
 from rich.console import Console
 from rich.rule import Rule
 
+from typhoon_eval.protocols_op.proto_compare_plots import main as _proto_compare_main
+from typhoon_eval.self.self_compare import main as _self_compare_main
+from typhoon_eval.self.traffic_compare import main as _traffic_compare_main
+from typhoon_eval.self.use_case_compare import main as _use_case_compare_main
 from typhoon_eval.shared.analysis import CAPTURES_ROOT, _latest_run
+from typhoon_eval.shared.analysis import main as _analysis_main
+from typhoon_eval.shared.orchestrator import main as _orchestrator_main
+from typhoon_eval.shared.pcap_flow_plot import main as _pcap_flow_plot_main
 
 console = Console()
 
 RESULTS_DIR    = Path(__file__).parent.parent.parent / "results"
 PROJECT_ROOT   = RESULTS_DIR.parent.parent
 DIAGRAMS_DIR   = PROJECT_ROOT / "diagrams"
-_PYTHON        = sys.executable
+_PYTHON        = executable
 
 _ALL_PHASES = ("capture", "analyze", "visualize", "typhoon", "ml", "report")
 
 
-# ── subprocess helper ─────────────────────────────────────────────────────────
+# ── direct-import + subprocess helpers ────────────────────────────────────────
 
-def _run(label: str, cmd: list[str], log_path: Path | None = None) -> bool:
-    """Run *cmd* inheriting the terminal's stdout/stderr so Rich output renders live.
+def _invoke(label: str, command: Command, args: list[str], log_path: Path | None = None) -> bool:
+    """Invoke a click *command* in-process with *args*, recording the call to *log_path*.
 
-    Capturing stdout via PIPE causes Rich in the subprocess to detect non-TTY
-    and suppress its Progress spinner — making the pipeline appear frozen.
-    Instead we let output flow directly to the terminal and only record the
-    command invocation and exit code in the log file.
+    Direct in-process invocation (vs ``run([python, "-m", …])``) keeps
+    a single Python interpreter, propagates exceptions to the pipeline, and
+    avoids the security surface of spawning child processes.  ``standalone_mode
+    =False`` makes click raise its own exceptions instead of calling exit;
+    we treat any exception as a phase failure (returns False).
+    """
+    console.print(f"\n  [dim]$ python -m {command.name} {' '.join(args)}[/dim]")
+    if log_path:
+        with log_path.open("a") as lf:
+            lf.write(f"\n$ python -m {command.name} {' '.join(args)}\n")
+    try:
+        command.main(args=args, standalone_mode=False)
+        exit_code = 0
+    except SystemExit as exc:
+        exit_code = int(exc.code) if isinstance(exc.code, int) else 1
+    except ClickException as exc:
+        exc.show()
+        exit_code = exc.exit_code
+    except Exception as exc:  # noqa: BLE001 — pipeline must isolate phase failures
+        console.print(f"  [red]✗ {label} raised {type(exc).__name__}: {exc}[/red]")
+        exit_code = 1
+    if log_path:
+        with log_path.open("a") as lf:
+            lf.write(f"exit_code={exit_code}\n")
+    return exit_code == 0
+
+
+def _shell(label: str, cmd: list[str], log_path: Path | None = None) -> bool:
+    """Run *cmd* as a subprocess (for modules without a direct import target).
+
+    Used for ``typhoon_eval.ml.*`` modules that are referenced but not present
+    in the codebase — subprocess invocation lets the pipeline degrade gracefully
+    when those modules are missing instead of crashing at import time.
     """
     console.print(f"\n  [dim]$ {' '.join(cmd)}[/dim]")
     if log_path:
         with log_path.open("a") as lf:
             lf.write(f"\n$ {' '.join(cmd)}\n")
-    result = subprocess.run(cmd, stdin=subprocess.DEVNULL)
+    result = run(cmd, stdin=DEVNULL)
     if log_path:
         with log_path.open("a") as lf:
             lf.write(f"exit_code={result.returncode}\n")
@@ -63,6 +101,7 @@ def _run(label: str, cmd: list[str], log_path: Path | None = None) -> bool:
 
 
 def _mod(module: str, *args: str) -> list[str]:
+    """Build a ``python -m <module> <args>`` command line for ``_shell``."""
     return [_PYTHON, "-m", module, *args]
 
 
@@ -85,11 +124,7 @@ def _phase_capture(
     # N bulk runs for ML training data.
     for i in range(classification_runs):
         console.print(f"\n  [cyan]Bulk classification run {i + 1}/{classification_runs}[/cyan]")
-        ok = _run(
-            "capture-bulk",
-            _mod("typhoon_eval.shared.orchestrator", "--all", "--profile", "bulk_upload"),
-            log_path,
-        )
+        ok = _invoke("capture-bulk", _orchestrator_main, ["--all", "--profile", "bulk_upload"], log_path)
         if ok:
             rd = _latest_run()
             if rd:
@@ -103,20 +138,12 @@ def _phase_capture(
         if profile == "bulk_upload":
             continue
         console.print(f"\n  [cyan]Profile run: {profile}[/cyan]")
-        _run(
-            f"capture-{profile}",
-            _mod("typhoon_eval.shared.orchestrator", "--all", "--profile", profile),
-            log_path,
-        )
+        _invoke(f"capture-{profile}", _orchestrator_main, ["--all", "--profile", profile], log_path)
 
     # Optional chaos run.
     if chaos:
         console.print("\n  [cyan]Chaos run (bulk + pumba)[/cyan]")
-        _run(
-            "capture-chaos",
-            _mod("typhoon_eval.shared.orchestrator", "--all", "--chaos", "--profile", "bulk_upload"),
-            log_path,
-        )
+        _invoke("capture-chaos", _orchestrator_main, ["--all", "--chaos", "--profile", "bulk_upload"], log_path)
 
     console.print(f"\n  Created {len(bulk_run_ids)} bulk classification run(s).")
     return bulk_run_ids
@@ -137,7 +164,7 @@ def _phase_analyze(run_ids: list[str], log_dir: Path) -> None:
     for rd in all_runs:
         run_id = rd.name.removeprefix("run_")
         console.print(f"\n  Analyzing [dim]{rd.name}[/dim]…")
-        _run("analyze", _mod("typhoon_eval.shared.analysis", "--run", run_id), log_path)
+        _invoke("analyze", _analysis_main, ["--run", run_id], log_path)
 
 
 # ── Phase 3: protocol visualization ──────────────────────────────────────────
@@ -152,16 +179,15 @@ def _phase_visualize(bulk_run_ids: list[str], diagrams_dir: Path, log_dir: Path)
 
     for run_id in bulk_run_ids:
         console.print(f"\n  [cyan]proto-compare[/cyan] {run_id}")
-        _run("proto-compare", _mod("typhoon_eval.protocols_op.proto_compare_plots", "--run", run_id, "--out-dir", str(proto_cmp_dir)), log_path)
+        _invoke("proto-compare", _proto_compare_main, ["--run", run_id, "--out-dir", str(proto_cmp_dir)], log_path)
         for suffix in ("_proto_compare.png", "_handshake.png", "_fingerprint.png"):
             p = proto_cmp_dir / f"run_{run_id}{suffix}"
             if p.exists():
                 generated.append(p)
 
         console.print(f"  [cyan]flow-plot[/cyan] {run_id}")
-        _run("flow-plot", _mod("typhoon_eval.shared.pcap_flow_plot", "--run", run_id, "--out-dir", str(flow_plot_dir)), log_path)
-        for p in flow_plot_dir.glob(f"run_{run_id}*.png"):
-            generated.append(p)
+        _invoke("flow-plot", _pcap_flow_plot_main, ["--run", run_id, "--out-dir", str(flow_plot_dir)], log_path)
+        generated.extend(flow_plot_dir.glob(f"run_{run_id}*.png"))
 
     return generated
 
@@ -183,17 +209,17 @@ def _phase_typhoon(
     traffic_cmp_dir = diagrams_dir / "traffic_compare"
 
     console.print(f"\n  [cyan]self-compare[/cyan] ({typhoon_runs} runs)")
-    ok = _run("self-compare", _mod("typhoon_eval.self.self_compare", "--runs", str(typhoon_runs), "--out-dir", str(self_cmp_dir)), log_path)
+    ok = _invoke("self-compare", _self_compare_main, ["--runs", str(typhoon_runs), "--out-dir", str(self_cmp_dir)], log_path)
     if ok:
         generated.extend(self_cmp_dir.glob("*.png"))
 
     console.print(f"\n  [cyan]use-case-compare[/cyan] ({typhoon_uc_runs} runs/case)")
-    ok = _run("uc-compare", _mod("typhoon_eval.self.use_case_compare", "--runs-per-case", str(typhoon_uc_runs), "--out-dir", str(uc_cmp_dir)), log_path)
+    ok = _invoke("uc-compare", _use_case_compare_main, ["--runs-per-case", str(typhoon_uc_runs), "--out-dir", str(uc_cmp_dir)], log_path)
     if ok:
         generated.extend(uc_cmp_dir.glob("*.png"))
 
     console.print("\n  [cyan]traffic-compare[/cyan]")
-    ok = _run("traffic-compare", _mod("typhoon_eval.self.traffic_compare", "--out-dir", str(traffic_cmp_dir)), log_path)
+    ok = _invoke("traffic-compare", _traffic_compare_main, ["--out-dir", str(traffic_cmp_dir)], log_path)
     if ok:
         generated.extend(traffic_cmp_dir.glob("*.png"))
 
@@ -219,10 +245,13 @@ def _phase_ml(
         return None, []
 
     # Feature extraction: aggregate all available runs.
+    # Note: `typhoon_eval.ml.*` modules are referenced but not yet in the codebase
+    # (placeholder for future ML work).  Kept as subprocess via `_shell` so the
+    # missing-module error degrades gracefully instead of crashing pipeline import.
     features_path = results_dir / "ml" / "features.npz"
     features_path.parent.mkdir(parents=True, exist_ok=True)
     console.print("\n  [cyan]ml-features[/cyan] (all runs → aggregated feature matrix)")
-    _run("ml-features", _mod("typhoon_eval.ml.ml_features", "--all-runs", "--out", str(features_path)), log_path)
+    _shell("ml-features", _mod("typhoon_eval.ml.ml_features", "--all-runs", "--out", str(features_path)), log_path)
 
     if not features_path.exists():
         console.print("  [yellow]features.npz not found — skipping ML training.[/yellow]")
@@ -235,8 +264,7 @@ def _phase_ml(
     latest_bulk_run_dir = CAPTURES_ROOT / f"run_{bulk_run_ids[-1]}"
     dest = latest_bulk_run_dir / "features.npz"
     if not dest.exists() or dest.stat().st_mtime < features_path.stat().st_mtime:
-        import shutil
-        shutil.copy2(features_path, dest)
+        copy2(features_path, dest)
 
     run_id = bulk_run_ids[-1]
     generated: list[Path] = []
@@ -248,7 +276,7 @@ def _phase_ml(
         ("ml-bytes",     "typhoon_eval.ml.ml_bytes",    []),
     ]:
         console.print(f"\n  [cyan]{label}[/cyan]")
-        _run(
+        _shell(
             label,
             _mod(module, "--run", run_id, "--out-dir", str(ml_plots), "--model-dir", str(ml_models), *extra_args),
             log_path,
@@ -271,7 +299,7 @@ def _generate_report(
     lines: list[str] = [
         "# TYPHOON Evaluation Report",
         "",
-        f"Generated: {datetime.datetime.now(datetime.UTC).isoformat()}",
+        f"Generated: {datetime.now(UTC).isoformat()}",
         f"Pipeline:  `{pipeline_id}`",
         "",
     ]
@@ -285,7 +313,7 @@ def _generate_report(
         for rd in all_runs:
             cfg_path = rd / "config.json"
             if cfg_path.exists():
-                cfg: dict = json.loads(cfg_path.read_text())
+                cfg: dict = loads(cfg_path.read_text())
                 chaos_flag = "yes" if cfg.get("chaos") else "no"
                 scenario   = cfg.get("profile", cfg.get("scenario", "?"))
                 protos     = ", ".join(cfg.get("protocols", []))
@@ -415,22 +443,22 @@ def _generate_report(
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-@click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option("--classification-runs", default=3, show_default=True, type=int,
+@command(context_settings={"help_option_names": ["-h", "--help"]})
+@option("--classification-runs", default=3, show_default=True, type=int,
               help="Number of bulk all-protocol capture runs for ML training data.")
-@click.option("--profiles", default="bulk_upload,tiny_session,medium_cbr,bulk_bursty", show_default=True,
+@option("--profiles", default="bulk_upload,tiny_session,medium_cbr,bulk_bursty", show_default=True,
               help="Comma-separated profiles to capture (one run each, beyond the bulk classification runs).")
-@click.option("--chaos/--no-chaos", default=True, show_default=True,
+@option("--chaos/--no-chaos", default=True, show_default=True,
               help="Run one chaos (pumba) capture.")
-@click.option("--bytes", "transfer_bytes", default=10_485_760, show_default=True, type=int,
+@option("--bytes", "transfer_bytes", default=10_485_760, show_default=True, type=int,
               help="Payload bytes per client for capture runs.")
-@click.option("--typhoon-runs", default=6, show_default=True, type=int,
+@option("--typhoon-runs", default=6, show_default=True, type=int,
               help="Repeated runs for self-compare.")
-@click.option("--typhoon-uc-runs", default=3, show_default=True, type=int,
+@option("--typhoon-uc-runs", default=3, show_default=True, type=int,
               help="Runs per use case for use-case-compare.")
-@click.option("--diagrams-dir", default=str(DIAGRAMS_DIR), show_default=True, type=click.Path(),
+@option("--diagrams-dir", default=str(DIAGRAMS_DIR), show_default=True, type=ClickPath(),
               help="Root directory for all generated diagram PNGs.")
-@click.option("--skip", default="", show_default=True,
+@option("--skip", default="", show_default=True,
               help=f"Comma-separated phases to skip: {', '.join(_ALL_PHASES)}.")
 def main(
     classification_runs: int,
@@ -449,13 +477,13 @@ def main(
     if invalid:
         console.print(f"[red]Unknown phases to skip:[/red] {', '.join(sorted(invalid))}")
         console.print(f"Valid phases: {', '.join(_ALL_PHASES)}")
-        sys.exit(1)
+        exit(1)
 
     profile_list = [s.strip() for s in profiles.split(",") if s.strip()]
     d_dir = Path(diagrams_dir)
     d_dir.mkdir(parents=True, exist_ok=True)
 
-    pipeline_id = "pipeline_" + datetime.datetime.now(datetime.UTC).strftime("%Y%m%d_%H%M%S")
+    pipeline_id = "pipeline_" + datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     log_dir = RESULTS_DIR / "pipeline" / pipeline_id
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -477,7 +505,7 @@ def main(
             cfg_path = rd / "config.json"
             if not cfg_path.exists():
                 continue
-            cfg: dict = json.loads(cfg_path.read_text())
+            cfg: dict = loads(cfg_path.read_text())
             if not cfg.get("chaos") and cfg.get("profile", cfg.get("scenario")) == "bulk_upload":
                 bulk_run_ids.append(rd.name.removeprefix("run_"))
             if len(bulk_run_ids) >= classification_runs:

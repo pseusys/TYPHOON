@@ -6,9 +6,13 @@ Packet records have: t (unix ms), dir, flow, kind, tailor, crypto, header, paylo
 Config records have kind="Config": dir, flow, body_mode, header_len, decoy.
 """
 
+from collections.abc import Callable
+
 import numpy as np
 
 COMPONENTS = ["tailor", "crypto", "header", "payload", "body"]
+# Minimum samples needed to compute IAT entropy (need ≥ 2 values to take a diff).
+MIN_SAMPLES_FOR_STATS = 2
 
 COMP_COLORS = {
     "tailor":  "#555555",
@@ -41,7 +45,7 @@ def _size_entropy(vals: np.ndarray) -> float:
 
 
 def _iat_entropy(vals: np.ndarray) -> float:
-    if len(vals) < 2:
+    if len(vals) < MIN_SAMPLES_FOR_STATS:
         return 0.0
     n_bins = min(50, max(5, len(vals) // 5))
     counts, _ = np.histogram(vals, bins=n_bins)
@@ -50,7 +54,7 @@ def _iat_entropy(vals: np.ndarray) -> float:
     return float(-np.sum(probs * np.log2(probs)))
 
 
-def _dist_stats(vals: np.ndarray, entropy_fn) -> dict:
+def _dist_stats(vals: np.ndarray, entropy_fn: Callable[[np.ndarray], float]) -> dict:
     if len(vals) == 0:
         return {"mean": 0.0, "std": 0.0, "p5": 0.0, "p50": 0.0, "p95": 0.0, "entropy": 0.0, "raw": []}
     return {

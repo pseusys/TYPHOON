@@ -14,13 +14,14 @@ Usage (direct):
     python -m typhoon_eval.self_compare --use-case default --runs 6
 """
 
-import json
+from json import dumps
 from pathlib import Path
 
-import click
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
-import numpy as np
+from click import Path as ClickPath
+from click import command, echo, option
+from matplotlib import patches as mpatches
+from matplotlib import pyplot as plt
+from numpy import arange, array, zeros
 
 from typhoon_eval.self.flow_plot import _DEFAULT_TYPHOON_DIR, _run_example
 from typhoon_eval.shared.capture_stats import COMP_COLORS, COMPONENTS, USE_CASE_COLORS, stats_from_records
@@ -50,7 +51,7 @@ def _plot_self_compare(run_stats: list[dict], use_case: str, out_dir: Path) -> N
     (ax_size, ax_iat), (ax_ent, ax_comp), (ax_burst, ax_reg) = axes
 
     # Panel A — packet size violin plots
-    size_data = [np.array(s["all"]["packet_size"]["raw"]) for s in run_stats]
+    size_data = [array(s["all"]["packet_size"]["raw"]) for s in run_stats]
     size_data_nz = [d[d > 0] if len(d) > 0 else d for d in size_data]
     if any(len(d) > 0 for d in size_data_nz):
         parts = ax_size.violinplot(
@@ -67,7 +68,7 @@ def _plot_self_compare(run_stats: list[dict], use_case: str, out_dir: Path) -> N
     ax_size.set_title("Packet size distribution per run")
 
     # Panel B — IAT violin plots
-    iat_data = [np.array(s["all"]["iat_ms"]["raw"]) for s in run_stats]
+    iat_data = [array(s["all"]["iat_ms"]["raw"]) for s in run_stats]
     iat_data_nz = [d[d > 0] if len(d) > 0 else d for d in iat_data]
     if any(len(d) > 0 for d in iat_data_nz):
         parts = ax_iat.violinplot(
@@ -84,7 +85,7 @@ def _plot_self_compare(run_stats: list[dict], use_case: str, out_dir: Path) -> N
     ax_iat.set_title("Inter-arrival time distribution per run")
 
     # Panel C — entropy bar chart (size entropy + IAT entropy)
-    x = np.arange(n)
+    x = arange(n)
     bar_w = 0.35
     size_entropies = [s["all"]["packet_size"]["entropy"] for s in run_stats]
     iat_entropies = [s["all"]["iat_ms"]["entropy"] for s in run_stats]
@@ -98,9 +99,9 @@ def _plot_self_compare(run_stats: list[dict], use_case: str, out_dir: Path) -> N
     ax_ent.legend(fontsize=8)
 
     # Panel D — stacked component bars (mean bytes per component)
-    bottoms = np.zeros(n)
+    bottoms = zeros(n)
     for comp in COMPONENTS:
-        heights = np.array([s["all"]["components"].get(comp, 0.0) for s in run_stats])
+        heights = array([s["all"]["components"].get(comp, 0.0) for s in run_stats])
         ax_comp.bar(x, heights, bottom=bottoms, color=COMP_COLORS[comp], label=comp)
         bottoms += heights
     ax_comp.set_xticks(x)
@@ -113,7 +114,7 @@ def _plot_self_compare(run_stats: list[dict], use_case: str, out_dir: Path) -> N
     # Panel E — burstiness bar chart per run
     burstinesses   = [s["all"].get("burstiness", 0.0) for s in run_stats]
     size_regs      = [s["all"].get("size_regularity", 0.0) for s in run_stats]
-    x = np.arange(n)
+    x = arange(n)
     ax_burst.bar(x, burstinesses, color=color, alpha=0.75)
     ax_burst.set_xticks(x)
     ax_burst.set_xticklabels(run_labels, rotation=20, ha="right")
@@ -142,18 +143,18 @@ def _plot_self_compare(run_stats: list[dict], use_case: str, out_dir: Path) -> N
     png_path = out_dir / f"{stem}.png"
     fig.savefig(png_path, format="png", bbox_inches="tight", dpi=120)
     plt.close(fig)
-    click.echo(f"Saved: {png_path}")
+    echo(f"Saved: {png_path}")
 
 
-@click.command()
-@click.option("--example", default="use_case", show_default=True, help="Rust example name to run")
-@click.option("--use-case", "use_case", default="default", show_default=True, help="TYPHOON_USE_CASE value")
-@click.option("--runs", default=6, show_default=True, help="Number of repeated runs")
-@click.option("--random-payload", is_flag=True, default=False, help="Set TYPHOON_RANDOM_PAYLOAD to randomise message sizes")
-@click.option("--random-wait", is_flag=True, default=False, help="Set TYPHOON_RANDOM_WAIT to randomise inter-cluster pauses")
-@click.option("--out-dir", default=str(_DEFAULT_OUT_DIR), show_default=True, type=click.Path(), help="Output directory for PNG and JSON")
-@click.option("--typhoon-dir", default=str(_DEFAULT_TYPHOON_DIR), show_default=True, type=click.Path(exists=True), help="Path to the typhoon Rust crate")
-@click.option("--timeout", default=60, show_default=True, help="Per-run timeout in seconds")
+@command()
+@option("--example", default="use_case", show_default=True, help="Rust example name to run")
+@option("--use-case", "use_case", default="default", show_default=True, help="TYPHOON_USE_CASE value")
+@option("--runs", default=6, show_default=True, help="Number of repeated runs")
+@option("--random-payload", is_flag=True, default=False, help="Set TYPHOON_RANDOM_PAYLOAD to randomise message sizes")
+@option("--random-wait", is_flag=True, default=False, help="Set TYPHOON_RANDOM_WAIT to randomise inter-cluster pauses")
+@option("--out-dir", default=str(_DEFAULT_OUT_DIR), show_default=True, type=ClickPath(), help="Output directory for PNG and JSON")
+@option("--typhoon-dir", default=str(_DEFAULT_TYPHOON_DIR), show_default=True, type=ClickPath(exists=True), help="Path to the typhoon Rust crate")
+@option("--timeout", default=60, show_default=True, help="Per-run timeout in seconds")
 def main(example: str, use_case: str, runs: int, random_payload: bool, random_wait: bool, out_dir: str, typhoon_dir: str, timeout: int) -> None:
     """Run a TYPHOON example N times with the same use case and compare the runs."""
     extra_env: dict = {"TYPHOON_USE_CASE": use_case}
@@ -164,15 +165,15 @@ def main(example: str, use_case: str, runs: int, random_payload: bool, random_wa
 
     run_stats: list[dict] = []
     for i in range(runs):
-        click.echo(f"Run {i + 1}/{runs} (use_case={use_case})…")
+        echo(f"Run {i + 1}/{runs} (use_case={use_case})…")
         packets, configs = _run_example(example, Path(typhoon_dir), timeout, extra_env)
         if not packets:
-            click.echo(f"  Warning: no capture records in run {i + 1}; skipping.", err=True)
+            echo(f"  Warning: no capture records in run {i + 1}; skipping.", err=True)
             continue
         run_stats.append(stats_from_records(packets, configs))
 
     if not run_stats:
-        click.echo("No successful runs; nothing to plot.", err=True)
+        echo("No successful runs; nothing to plot.", err=True)
         return
 
     _plot_self_compare(run_stats, use_case, Path(out_dir))
@@ -190,8 +191,8 @@ def main(example: str, use_case: str, runs: int, random_payload: bool, random_wa
                         entry[direction][metric] = {k: v for k, v in entry[direction][metric].items() if k != "raw"}
         entry["config"] = s.get("config", [])
         serialisable.append(entry)
-    json_path.write_text(json.dumps(serialisable, indent=2))
-    click.echo(f"Saved: {json_path}")
+    json_path.write_text(dumps(serialisable, indent=2))
+    echo(f"Saved: {json_path}")
 
 
 if __name__ == "__main__":

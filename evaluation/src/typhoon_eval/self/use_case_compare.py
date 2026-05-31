@@ -17,13 +17,14 @@ Usage (direct):
     python -m typhoon_eval.use_case_compare --runs-per-case 3
 """
 
-import json
+from json import dumps
 from pathlib import Path
 
-import click
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
-import numpy as np
+from click import Path as ClickPath
+from click import command, echo, option
+from matplotlib import patches as mpatches
+from matplotlib import pyplot as plt
+from numpy import array
 
 from typhoon_eval.self.flow_plot import _DEFAULT_TYPHOON_DIR, _run_example
 from typhoon_eval.shared.capture_stats import COMP_COLORS, COMPONENTS, USE_CASE_COLORS, pool_stats, stats_from_records
@@ -78,7 +79,7 @@ def _plot_use_case_compare(pooled_by_case: dict[str, dict], out_dir: Path) -> No
 
         # Row 0 — packet size box plot
         ax = axes[0][col]
-        sizes = np.array(ds["packet_size"]["raw"])
+        sizes = array(ds["packet_size"]["raw"])
         if len(sizes) > 0:
             ax.boxplot(sizes, vert=True, patch_artist=True,
                        boxprops=dict(facecolor=color, alpha=0.6),
@@ -90,7 +91,7 @@ def _plot_use_case_compare(pooled_by_case: dict[str, dict], out_dir: Path) -> No
 
         # Row 1 — IAT box plot
         ax = axes[1][col]
-        iats = np.array(ds["iat_ms"]["raw"])
+        iats = array(ds["iat_ms"]["raw"])
         if len(iats) > 0:
             ax.boxplot(iats, vert=True, patch_artist=True,
                        boxprops=dict(facecolor=color, alpha=0.6),
@@ -137,18 +138,18 @@ def _plot_use_case_compare(pooled_by_case: dict[str, dict], out_dir: Path) -> No
     png_path = out_dir / "use_case_compare.png"
     fig.savefig(png_path, format="png", bbox_inches="tight", dpi=120)
     plt.close(fig)
-    click.echo(f"Saved: {png_path}")
+    echo(f"Saved: {png_path}")
 
 
-@click.command()
-@click.option("--example", default="use_case", show_default=True, help="Rust example name to run")
-@click.option("--cases", default=",".join(_DEFAULT_CASES), show_default=True, help="Comma-separated list of use cases")
-@click.option("--runs-per-case", default=3, show_default=True, help="Number of runs averaged per use case")
-@click.option("--random-payload", is_flag=True, default=False, help="Set TYPHOON_RANDOM_PAYLOAD to randomise message sizes")
-@click.option("--random-wait", is_flag=True, default=False, help="Set TYPHOON_RANDOM_WAIT to randomise inter-cluster pauses")
-@click.option("--out-dir", default=str(_DEFAULT_OUT_DIR), show_default=True, type=click.Path(), help="Output directory for PNG and JSON")
-@click.option("--typhoon-dir", default=str(_DEFAULT_TYPHOON_DIR), show_default=True, type=click.Path(exists=True), help="Path to the typhoon Rust crate")
-@click.option("--timeout", default=60, show_default=True, help="Per-run timeout in seconds")
+@command()
+@option("--example", default="use_case", show_default=True, help="Rust example name to run")
+@option("--cases", default=",".join(_DEFAULT_CASES), show_default=True, help="Comma-separated list of use cases")
+@option("--runs-per-case", default=3, show_default=True, help="Number of runs averaged per use case")
+@option("--random-payload", is_flag=True, default=False, help="Set TYPHOON_RANDOM_PAYLOAD to randomise message sizes")
+@option("--random-wait", is_flag=True, default=False, help="Set TYPHOON_RANDOM_WAIT to randomise inter-cluster pauses")
+@option("--out-dir", default=str(_DEFAULT_OUT_DIR), show_default=True, type=ClickPath(), help="Output directory for PNG and JSON")
+@option("--typhoon-dir", default=str(_DEFAULT_TYPHOON_DIR), show_default=True, type=ClickPath(exists=True), help="Path to the typhoon Rust crate")
+@option("--timeout", default=60, show_default=True, help="Per-run timeout in seconds")
 def main(example: str, cases: str, runs_per_case: int, random_payload: bool, random_wait: bool, out_dir: str, typhoon_dir: str, timeout: int) -> None:
     """Run TYPHOON for each use case and compare traffic profiles side by side."""
     case_list = [c.strip() for c in cases.split(",") if c.strip()]
@@ -165,15 +166,15 @@ def main(example: str, cases: str, runs_per_case: int, random_payload: bool, ran
 
         run_stats: list[dict] = []
         for i in range(runs_per_case):
-            click.echo(f"  {use_case}  run {i + 1}/{runs_per_case}…")
+            echo(f"  {use_case}  run {i + 1}/{runs_per_case}…")
             packets, configs = _run_example(example, Path(typhoon_dir), timeout, extra_env)
             if not packets:
-                click.echo("  Warning: no capture records; skipping.", err=True)
+                echo("  Warning: no capture records; skipping.", err=True)
                 continue
             run_stats.append(stats_from_records(packets, configs))
 
         if not run_stats:
-            click.echo(f"No successful runs for {use_case}; skipping.", err=True)
+            echo(f"No successful runs for {use_case}; skipping.", err=True)
             continue
 
         pooled = pool_stats(run_stats, direction="all")
@@ -182,7 +183,7 @@ def main(example: str, cases: str, runs_per_case: int, random_payload: bool, ran
         json_data[use_case] = run_stats
 
     if not pooled_by_case:
-        click.echo("No data; nothing to plot.", err=True)
+        echo("No data; nothing to plot.", err=True)
         return
 
     _plot_use_case_compare(pooled_by_case, Path(out_dir))
@@ -203,8 +204,8 @@ def main(example: str, cases: str, runs_per_case: int, random_payload: bool, ran
             entry["config"] = s.get("config", [])
             stripped.append(entry)
         serialisable[uc] = stripped
-    json_path.write_text(json.dumps(serialisable, indent=2))
-    click.echo(f"Saved: {json_path}")
+    json_path.write_text(dumps(serialisable, indent=2))
+    echo(f"Saved: {json_path}")
 
 
 if __name__ == "__main__":

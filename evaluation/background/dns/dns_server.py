@@ -8,9 +8,9 @@ Uses dnslib so no external resolver is required inside the container.
 
 from __future__ import annotations
 
-import os
-import socket
-import sys
+from os import environ, system
+from socket import AF_INET, SOCK_DGRAM, socket, timeout
+from sys import exit
 
 from dnslib import AAAA, QTYPE, RR, TXT, A, DNSHeader, DNSRecord
 
@@ -21,10 +21,10 @@ MAX_DURATION_SAFETY_S = 600
 
 
 def _route_setup() -> None:
-    gw = os.environ.get("OBSERVER_GW")
+    gw = environ.get("OBSERVER_GW")
     if not gw:
         return
-    os.system(f"ip route add 172.20.0.0/24 via {gw} 2>/dev/null")  # noqa: S605
+    system(f"ip route add 172.20.0.0/24 via {gw} 2>/dev/null")  # noqa: S605
 
 
 def _txt_chunks() -> list[str]:
@@ -46,14 +46,14 @@ def _answer(query: DNSRecord) -> bytes:
 
 def main() -> int:
     _route_setup()
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock = socket(AF_INET, SOCK_DGRAM)
     sock.bind(("0.0.0.0", LISTEN_PORT))
     sock.settimeout(MAX_DURATION_SAFETY_S)
     print(f"dns server listening on UDP/{LISTEN_PORT}", flush=True)
     while True:
         try:
             data, peer = sock.recvfrom(4096)
-        except socket.timeout:
+        except timeout:
             break
         try:
             query = DNSRecord.parse(data)
@@ -65,4 +65,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit(main())

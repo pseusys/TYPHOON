@@ -9,30 +9,30 @@ Env vars:
   PROFILE_BURSTY, PROFILE_BURST_COUNT, PROFILE_BURST_IDLE_S
 """
 
-import os
-import signal
-import socket
-import sys
-import time
+from os import environ
+from signal import SIGTERM, signal
+from socket import AF_INET, SOCK_DGRAM, socket
+from sys import exit
+from time import monotonic, sleep
 
 from _profile import run_profile
 
-server_host = os.environ["SERVER_HOST"]
+server_host = environ["SERVER_HOST"]
 port = 9000
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock = socket(AF_INET, SOCK_DGRAM)
 sock.connect((server_host, port))
 
 # Wait 200 ms so the server socket is bound before the first packet arrives.
-time.sleep(0.2)
+sleep(0.2)
 
-transfer_start = time.monotonic()
+transfer_start = monotonic()
 sent, total_sleep = run_profile(sock.send)
-transfer_time_s = time.monotonic() - transfer_start - total_sleep
+transfer_time_s = monotonic() - transfer_start - total_sleep
 
 sock.send(b"DONE")
-signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-time.sleep(0.5)
+signal(SIGTERM, lambda *_: exit(0))
+sleep(0.5)
 print(f"sent {sent} bytes", flush=True)
 print(f"transfer_time_s={transfer_time_s:.3f}", flush=True)
-sys.exit(0)
+exit(0)

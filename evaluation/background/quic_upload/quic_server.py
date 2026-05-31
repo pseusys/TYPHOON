@@ -7,9 +7,9 @@ draining the request body silently.  Used by the QUIC upload generator.
 
 from __future__ import annotations
 
-import asyncio
-import os
-import sys
+from asyncio import run, sleep
+from os import environ, system
+from sys import path
 
 from aioquic.asyncio import serve
 from aioquic.asyncio.protocol import QuicConnectionProtocol
@@ -18,7 +18,7 @@ from aioquic.h3.events import DataReceived, H3Event, HeadersReceived
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.events import QuicEvent
 
-sys.path.insert(0, "/common")
+path.insert(0, "/common")
 from profile_env import ProfileEnv
 
 LISTEN_PORT = 443
@@ -26,16 +26,16 @@ ACK_BODY = b"OK" * 8  # 16 B
 
 
 def _route_setup() -> None:
-    gw = os.environ.get("OBSERVER_GW")
+    gw = environ.get("OBSERVER_GW")
     if not gw:
         return
-    os.system(f"ip route add 172.20.0.0/24 via {gw} 2>/dev/null")  # noqa: S605
+    system(f"ip route add 172.20.0.0/24 via {gw} 2>/dev/null")  # noqa: S605
 
 
 class HttpServerProtocol(QuicConnectionProtocol):
     """One H3 connection draining POST bodies and acknowledging."""
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self._h3: H3Connection | None = None
 
@@ -46,9 +46,7 @@ class HttpServerProtocol(QuicConnectionProtocol):
             self._handle_h3_event(h3_event)
 
     def _handle_h3_event(self, event: H3Event) -> None:
-        if isinstance(event, HeadersReceived) and event.stream_ended:
-            self._reply(event.stream_id)
-        elif isinstance(event, DataReceived) and event.stream_ended:
+        if isinstance(event, HeadersReceived) and event.stream_ended or isinstance(event, DataReceived) and event.stream_ended:
             self._reply(event.stream_id)
 
     def _reply(self, stream_id: int) -> None:
@@ -66,15 +64,15 @@ class HttpServerProtocol(QuicConnectionProtocol):
 async def main_async() -> None:
     profile = ProfileEnv.from_env()
     _route_setup()
-    cert_path = os.environ.get("CERT_PATH", "/keys/quic.pem")
-    key_path = os.environ.get("KEY_PATH", "/keys/quic.key")
+    cert_path = environ.get("CERT_PATH", "/keys/quic.pem")
+    key_path = environ.get("KEY_PATH", "/keys/quic.key")
     config = QuicConfiguration(is_client=False, alpn_protocols=H3_ALPN)
     config.load_cert_chain(cert_path, key_path)
 
     print(f"quic-u/l server: listening on UDP/{LISTEN_PORT}", flush=True)
     await serve(host="0.0.0.0", port=LISTEN_PORT, configuration=config, create_protocol=HttpServerProtocol)
-    await asyncio.sleep(profile.duration_s + 5.0)
+    await sleep(profile.duration_s + 5.0)
 
 
 if __name__ == "__main__":
-    asyncio.run(main_async())
+    run(main_async())
