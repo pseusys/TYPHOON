@@ -307,7 +307,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             } else {
                 "Data"
             };
-            let tailor_len = if fallthrough { 0 } else { identity_len + TAILOR_LENGTH };
+            let tailor_len = if fallthrough {
+                0
+            } else {
+                identity_len + TAILOR_LENGTH
+            };
             (kind, tailor_len, tailor_overhead, cap_header, data_len, cap_body)
         });
         Ok(())

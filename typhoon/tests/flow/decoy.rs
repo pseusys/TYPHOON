@@ -580,9 +580,7 @@ fn test_noisy_length_stays_below_mtu() {
     assert!(noisy_max < mtu_class, "test premise: NOISY_LENGTH_MAX should be < DECOY_LENGTH_MAX");
 
     let state_quiet = sampled_state_quiet(settings.clone());
-    let samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT)
-        .map(|_| NoisyDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_quiet))
-        .collect();
+    let samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT).map(|_| NoisyDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_quiet)).collect();
 
     for &s in &samples {
         assert!(s >= noisy_min, "Noisy length {} should be >= NOISY_MIN {}", s, noisy_min);
@@ -597,17 +595,12 @@ fn test_noisy_length_adaptive_to_quietness() {
     let state_busy = sampled_state_busy(settings.clone());
     let state_quiet = sampled_state_quiet(settings.clone());
 
-    let busy_samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT)
-        .map(|_| NoisyDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_busy))
-        .collect();
-    let quiet_samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT)
-        .map(|_| NoisyDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_quiet))
-        .collect();
+    let busy_samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT).map(|_| NoisyDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_busy)).collect();
+    let quiet_samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT).map(|_| NoisyDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_quiet)).collect();
 
     let busy_mean = mean(&busy_samples);
     let quiet_mean = mean(&quiet_samples);
-    assert!(quiet_mean > busy_mean,
-        "Noisy should grow with quietness: busy mean = {:.1}, quiet mean = {:.1}", busy_mean, quiet_mean);
+    assert!(quiet_mean > busy_mean, "Noisy should grow with quietness: busy mean = {:.1}, quiet mean = {:.1}", busy_mean, quiet_mean);
 }
 
 // Heavy: bulk-class mode — must respect HEAVY_LENGTH_MIN as floor.
@@ -618,9 +611,7 @@ fn test_heavy_length_respects_floor() {
     let length_cap = settings.get(&DECOY_LENGTH_MAX) as usize;
 
     let state_quiet = sampled_state_quiet(settings.clone());
-    let samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT)
-        .map(|_| HeavyDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_quiet))
-        .collect();
+    let samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT).map(|_| HeavyDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_quiet)).collect();
 
     for &s in &samples {
         assert!(s >= heavy_min, "Heavy length {} should be >= HEAVY_MIN {}", s, heavy_min);
@@ -634,17 +625,11 @@ fn test_heavy_length_respects_floor() {
 fn test_heavy_length_min_enforced_under_low_base() {
     // Configure a Heavy mode whose intrinsic minimum (0.8·0.3·cap = 0.24·cap)
     // would fall below the floor, then verify all samples respect the floor.
-    let settings = Arc::new(SettingsBuilder::new()
-        .set(&DECOY_HEAVY_BASE_LENGTH, 0.3)
-        .set(&DECOY_HEAVY_QUIETNESS_LENGTH, 0.0)
-        .set(&DECOY_HEAVY_LENGTH_MIN, 500)
-        .build().unwrap());
+    let settings = Arc::new(SettingsBuilder::new().set(&DECOY_HEAVY_BASE_LENGTH, 0.3).set(&DECOY_HEAVY_QUIETNESS_LENGTH, 0.0).set(&DECOY_HEAVY_LENGTH_MIN, 500).build().unwrap());
     let state = sampled_state_quiet(settings.clone());
     let length_cap = settings.get(&DECOY_LENGTH_MAX) as usize;
 
-    let samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT)
-        .map(|_| HeavyDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state))
-        .collect();
+    let samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT).map(|_| HeavyDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state)).collect();
 
     // With base=0.3·cap=420, decoy_length naturally falls in [0.8·420, 420] = [336, 420];
     // the floor at 500 must clamp every sample up to ≥ 500.
@@ -667,12 +652,8 @@ fn test_smooth_length_adaptive_and_bounded() {
     let state_busy = sampled_state_busy(settings.clone());
     let state_quiet = sampled_state_quiet(settings.clone());
 
-    let busy_samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT)
-        .map(|_| SmoothDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_busy))
-        .collect();
-    let quiet_samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT)
-        .map(|_| SmoothDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_quiet))
-        .collect();
+    let busy_samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT).map(|_| SmoothDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_busy)).collect();
+    let quiet_samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT).map(|_| SmoothDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_quiet)).collect();
 
     // All samples respect [MIN, MAX].
     for &s in busy_samples.iter().chain(quiet_samples.iter()) {
@@ -683,6 +664,5 @@ fn test_smooth_length_adaptive_and_bounded() {
     // Max sampled length grows with quietness (uniform draw ceiling tracks quietness).
     let busy_max = *busy_samples.iter().max().unwrap_or(&0);
     let quiet_max = *quiet_samples.iter().max().unwrap_or(&0);
-    assert!(quiet_max > busy_max,
-        "Smooth max should grow with quietness: busy max = {}, quiet max = {}", busy_max, quiet_max);
+    assert!(quiet_max > busy_max, "Smooth max should grow with quietness: busy max = {}, quiet max = {}", busy_max, quiet_max);
 }

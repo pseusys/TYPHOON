@@ -1,8 +1,7 @@
-use rand::Rng;
 #[cfg(test)]
 use rand::SeedableRng;
 use rand::rngs::OsRng;
-use rand::{CryptoRng, RngCore};
+use rand::{CryptoRng, Rng, RngCore};
 
 use crate::bytes::FixedByteBuffer;
 
@@ -145,7 +144,11 @@ mod tests;
 /// Sample a chunk size around `chunk` with two-sided `jitter`, clamped to `[1, max_payload]`, `chunk == 0` is the sentinel for "saturate the MTU".
 #[inline]
 pub fn jittered_chunk_size(max_payload: usize, chunk: usize, jitter: f64) -> usize {
-    let target = if chunk == 0 { max_payload } else { chunk };
+    let target = if chunk == 0 {
+        max_payload
+    } else {
+        chunk
+    };
     if max_payload <= 1 {
         return max_payload;
     }
@@ -158,7 +161,6 @@ pub fn jittered_chunk_size(max_payload: usize, chunk: usize, jitter: f64) -> usi
     }
     get_rng().gen_range(lo..=hi)
 }
-
 
 /// Picks one of several branches at random, weighted by the per-branch weights, and
 /// evaluates the chosen branch as an expression (its value is the value of the macro).

@@ -48,9 +48,8 @@ use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
 use typhoon::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, IdentityType, PacketFlags, SparseDecoyProvider, Tailor, decoy_factory};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
-use typhoon::settings::Settings;
-use typhoon::settings::SettingsBuilder;
 use typhoon::settings::consts::{FG_OFFSET, PN_OFFSET, TAILOR_LENGTH};
+use typhoon::settings::{Settings, SettingsBuilder};
 use typhoon::socket::{ClientSocketBuilder, ListenerBuilder, ServerFlowConfiguration};
 
 const SERVER_ADDR: &str = "127.0.0.1:19993";
@@ -80,10 +79,10 @@ type Exec = DefaultExecutor;
 /// enforces single-thread access while letting the contained buffers move
 /// between the producer (feed_output) and consumer (timer task).
 struct FlatIatDecoyProvider<T: IdentityType + Clone, AE: AsyncExecutor> {
-    manager:  Weak<dyn DecoyFlowSender>,
+    manager: Weak<dyn DecoyFlowSender>,
     settings: Arc<Settings<AE>>,
     identity: T,
-    state:    Arc<Mutex<FlatIatState>>,
+    state: Arc<Mutex<FlatIatState>>,
 }
 
 struct FlatIatState {
@@ -104,12 +103,7 @@ struct FlatIatState {
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlatIatDecoyProvider<T, AE> {
-    async fn timer_task(
-        manager:  Weak<dyn DecoyFlowSender>,
-        settings: Arc<Settings<AE>>,
-        identity: T,
-        state:    Arc<Mutex<FlatIatState>>,
-    ) {
+    async fn timer_task(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, state: Arc<Mutex<FlatIatState>>) {
         loop {
             sleep_ms(FLAT_IAT_MS).await;
             let Some(manager_arc) = manager.upgrade() else {
@@ -130,8 +124,8 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlatIatDeco
                     real_packet
                 } else {
                     let body_len = RANDOM_DECOY_BODY_LEN;
-                    let total    = body_len + TAILOR_LENGTH + T::length();
-                    let buf      = settings.pool().allocate(Some(total));
+                    let total = body_len + TAILOR_LENGTH + T::length();
+                    let buf = settings.pool().allocate(Some(total));
                     rand::thread_rng().fill(buf.slice_end_mut(body_len));
                     guard.packet_number += 1;
                     Tailor::decoy(buf.rebuffer_start(body_len), &identity, guard.packet_number);
@@ -154,10 +148,10 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 
     async fn start(&mut self) {
         let executor = self.settings.executor().clone();
-        let manager  = self.manager.clone();
+        let manager = self.manager.clone();
         let settings = self.settings.clone();
         let identity = self.identity.clone();
-        let state    = self.state.clone();
+        let state = self.state.clone();
         executor.spawn(Self::timer_task(manager, settings, identity, state));
     }
 

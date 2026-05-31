@@ -38,10 +38,9 @@ use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
 use typhoon::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, IdentityType, PacketFlags, SparseDecoyProvider, Tailor, decoy_factory};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
-use typhoon::settings::Settings;
 use typhoon::settings::consts::{FG_OFFSET, TAILOR_LENGTH};
 use typhoon::settings::keys::DECOY_LENGTH_MIN;
-use typhoon::settings::SettingsBuilder;
+use typhoon::settings::{Settings, SettingsBuilder};
 use typhoon::socket::{ClientSocketBuilder, ListenerBuilder, ServerFlowConfiguration};
 
 const SERVER_ADDR: &str = "127.0.0.1:19992";

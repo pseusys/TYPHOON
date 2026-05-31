@@ -27,10 +27,10 @@ use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FieldType, FieldTypeHolder, 
 ///
 /// Defaults bias structured types ~91 % vs Random 9 %.  Tunable here only
 /// (eval-side); the protocol crate's defaults remain uniform.
-const EVAL_HDR_WEIGHT_RANDOM:      u32 = 1;
-const EVAL_HDR_WEIGHT_CONSTANT:    u32 = 5;
-const EVAL_HDR_WEIGHT_VOLATILE:    u32 = 2;
-const EVAL_HDR_WEIGHT_SWITCHING:   u32 = 2;
+const EVAL_HDR_WEIGHT_RANDOM: u32 = 1;
+const EVAL_HDR_WEIGHT_CONSTANT: u32 = 5;
+const EVAL_HDR_WEIGHT_VOLATILE: u32 = 2;
+const EVAL_HDR_WEIGHT_SWITCHING: u32 = 2;
 const EVAL_HDR_WEIGHT_INCREMENTAL: u32 = 1;
 /// Range used for Volatile fields' `change_probability` (matches the
 /// protocol-side `FakeHeaderConfig::random` defaults).
@@ -404,21 +404,27 @@ fn build_weighted_header_fields(fake_header_len: usize) -> Vec<FieldTypeHolder> 
         let field = if check_bucket_takes(&mut pick, weights[0]) {
             FieldType::Random
         } else if check_bucket_takes(&mut pick, weights[1]) {
-            FieldType::Constant { value: rng.r#gen::<u8>() }
+            FieldType::Constant {
+                value: rng.r#gen::<u8>(),
+            }
         } else if check_bucket_takes(&mut pick, weights[2]) {
             FieldType::Volatile {
                 value: rng.r#gen::<u8>(),
-                change_probability: rng.gen_range(EVAL_HDR_VOLATILE_PROB_MIN..=EVAL_HDR_VOLATILE_PROB_MAX),
+                change_probability: rng
+                    .gen_range(EVAL_HDR_VOLATILE_PROB_MIN..=EVAL_HDR_VOLATILE_PROB_MAX),
             }
         } else if check_bucket_takes(&mut pick, weights[3]) {
-            let switch_timeout = rng.gen_range(EVAL_HDR_SWITCHING_MIN_MS..=EVAL_HDR_SWITCHING_MAX_MS);
+            let switch_timeout =
+                rng.gen_range(EVAL_HDR_SWITCHING_MIN_MS..=EVAL_HDR_SWITCHING_MAX_MS);
             FieldType::Switching {
                 value: rng.r#gen::<u8>(),
                 next_switch: now_ms() + switch_timeout as u128,
                 switch_timeout,
             }
         } else {
-            FieldType::Incremental { value: rng.r#gen::<u8>() }
+            FieldType::Incremental {
+                value: rng.r#gen::<u8>(),
+            }
         };
         fields.push(FieldTypeHolder::U8(field));
     }
@@ -441,5 +447,8 @@ fn check_bucket_takes(pick: &mut u32, bucket: u32) -> bool {
 /// Wall-clock milliseconds since the UNIX epoch — matches the protocol's
 /// internal `unix_timestamp_ms()` helper used by `Switching` fields.
 fn now_ms() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
 }

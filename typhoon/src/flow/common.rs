@@ -126,8 +126,16 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
             } else {
                 "Data"
             };
-            let tailor_overhead = if fallthrough { 0 } else { CP::tailor_overhead() };
-            let tailor_len = if fallthrough { 0 } else { full_tailor_len };
+            let tailor_overhead = if fallthrough {
+                0
+            } else {
+                CP::tailor_overhead()
+            };
+            let tailor_len = if fallthrough {
+                0
+            } else {
+                full_tailor_len
+            };
             (kind, tailor_len, tailor_overhead, fake_header_len, data_len, full_packet_len - fake_header_len)
         });
 
@@ -177,5 +185,4 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
         let payload_len = tailor.payload_length() as usize;
         ProcessIncomingResult::Valid(body.rebuffer_start(body.len() - payload_len).expand_end(full_tailor_len))
     }
-
 }

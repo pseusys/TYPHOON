@@ -21,13 +21,13 @@ pub use common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider};
 pub use heavy::HeavyDecoyProvider;
 use log::info;
 pub use noisy::NoisyDecoyProvider;
-pub use crate::tailor::{IdentityType, PacketFlags, Tailor};
 pub use simple::SimpleDecoyProvider;
 pub use smooth::SmoothDecoyProvider;
 pub use sparse::SparseDecoyProvider;
 
 use crate::settings::Settings;
 use crate::settings::keys::{DECOY_PROVIDER_WEIGHT_HEAVY, DECOY_PROVIDER_WEIGHT_NOISY, DECOY_PROVIDER_WEIGHT_SIMPLE, DECOY_PROVIDER_WEIGHT_SMOOTH, DECOY_PROVIDER_WEIGHT_SPARSE};
+pub use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::sync::AsyncExecutor;
 use crate::weighted_random;
 

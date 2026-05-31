@@ -183,10 +183,7 @@ fn test_env_var_override_applied() {
 // Test: FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN > MAX fails assertion.
 #[test]
 fn test_settings_fake_header_volatile_change_prob_min_exceeds_max() {
-    let result = builder()
-        .set(&FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN, 0.5)
-        .set(&FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX, 0.1)
-        .build();
+    let result = builder().set(&FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN, 0.5).set(&FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX, 0.1).build();
     assert!(result.is_err());
 }
 
@@ -200,10 +197,7 @@ fn test_settings_fake_header_volatile_change_prob_exceeds_one() {
 // Test: FAKE_HEADER_SWITCHING_TIMEOUT_MIN > MAX fails assertion.
 #[test]
 fn test_settings_fake_header_switching_timeout_min_exceeds_max() {
-    let result = builder()
-        .set(&FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS, 50_000)
-        .set(&FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS, 1_000)
-        .build();
+    let result = builder().set(&FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS, 50_000).set(&FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS, 1_000).build();
     assert!(result.is_err());
 }
 
@@ -217,20 +211,14 @@ fn test_settings_fake_header_switching_timeout_min_zero() {
 // Test: DECOY_NOISY_DECOY_LENGTH_MIN > DECOY_NOISY_LENGTH_MAX fails.
 #[test]
 fn test_settings_noisy_length_min_exceeds_max() {
-    let result = builder()
-        .set(&DECOY_NOISY_DECOY_LENGTH_MIN, 1000)
-        .set(&DECOY_NOISY_LENGTH_MAX, 500)
-        .build();
+    let result = builder().set(&DECOY_NOISY_DECOY_LENGTH_MIN, 1000).set(&DECOY_NOISY_LENGTH_MAX, 500).build();
     assert!(result.is_err());
 }
 
 // Test: DECOY_HEAVY_LENGTH_MIN > DECOY_LENGTH_MAX fails.
 #[test]
 fn test_settings_heavy_length_min_exceeds_decoy_max() {
-    let result = builder()
-        .set(&DECOY_HEAVY_LENGTH_MIN, 2000)
-        .set(&DECOY_LENGTH_MAX, 1400)
-        .build();
+    let result = builder().set(&DECOY_HEAVY_LENGTH_MIN, 2000).set(&DECOY_LENGTH_MAX, 1400).build();
     assert!(result.is_err());
 }
 

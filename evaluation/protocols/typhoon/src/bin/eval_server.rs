@@ -27,8 +27,8 @@ use typhoon_eval::profile::TrafficProfile;
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::DefaultExecutor;
 use typhoon::flow::FlowConfig;
-use typhoon::settings::SettingsBuilder;
 use typhoon::flow::decoy::{SimpleDecoyProvider, SparseDecoyProvider};
+use typhoon::settings::SettingsBuilder;
 use typhoon::settings::keys::{
     DECOY_CURRENT_ALPHA, DECOY_FALLTHROUGH_PACKETS_MAX, DECOY_FALLTHROUGH_PACKETS_MIN,
     DECOY_HEAVY_BASE_RATE, DECOY_LENGTH_MAX, DECOY_NOISY_BASE_RATE, DECOY_PROVIDER_WEIGHT_HEAVY,
@@ -69,9 +69,9 @@ const EVAL_TUNED_SEND_BYTES_CHUNK: u64 = 512;
 /// Tuned-default decoy-provider weights — mirrors eval_client.rs.
 const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SIMPLE: u64 = 1;
 const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SPARSE: u64 = 6;
-const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_NOISY:  u64 = 1;
+const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_NOISY: u64 = 1;
 const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SMOOTH: u64 = 3;
-const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_HEAVY:  u64 = 1;
+const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_HEAVY: u64 = 1;
 /// Tuned-default decoy current-rate alpha — mirrors eval_client.rs.
 const EVAL_TUNED_DECOY_CURRENT_ALPHA: f64 = 0.01;
 const EVAL_TUNED_FALLTHROUGH_MIN: f64 = 0.0;
@@ -85,10 +85,10 @@ const EVAL_TUNED_FAKE_HEADER_PROBABILITY: f64 = 0.70;
 /// Tuned-default fake-header length cap — mirrors eval_client.rs.
 const EVAL_TUNED_FAKE_HEADER_LENGTH_MAX: u64 = 48;
 /// Tuned-default field-type weights — mirrors eval_client.rs.
-const EVAL_TUNED_HDR_WEIGHT_RANDOM:      u64 = 3;
-const EVAL_TUNED_HDR_WEIGHT_CONSTANT:    u64 = 4;
-const EVAL_TUNED_HDR_WEIGHT_VOLATILE:    u64 = 3;
-const EVAL_TUNED_HDR_WEIGHT_SWITCHING:   u64 = 3;
+const EVAL_TUNED_HDR_WEIGHT_RANDOM: u64 = 3;
+const EVAL_TUNED_HDR_WEIGHT_CONSTANT: u64 = 4;
+const EVAL_TUNED_HDR_WEIGHT_VOLATILE: u64 = 3;
+const EVAL_TUNED_HDR_WEIGHT_SWITCHING: u64 = 3;
 const EVAL_TUNED_HDR_WEIGHT_INCREMENTAL: u64 = 3;
 /// Tuned-default Volatile / Switching widening — mirrors eval_client.rs.
 const EVAL_TUNED_VOLATILE_CHANGE_PROB_MAX: f64 = 0.25;
@@ -146,22 +146,61 @@ async fn main() {
         settings_builder
             .set(&FAKE_HEADER_PROBABILITY, EVAL_TUNED_FAKE_HEADER_PROBABILITY)
             .set(&FAKE_HEADER_LENGTH_MAX, EVAL_TUNED_FAKE_HEADER_LENGTH_MAX)
-            .set(&FAKE_HEADER_FIELD_WEIGHT_RANDOM,      EVAL_TUNED_HDR_WEIGHT_RANDOM)
-            .set(&FAKE_HEADER_FIELD_WEIGHT_CONSTANT,    EVAL_TUNED_HDR_WEIGHT_CONSTANT)
-            .set(&FAKE_HEADER_FIELD_WEIGHT_VOLATILE,    EVAL_TUNED_HDR_WEIGHT_VOLATILE)
-            .set(&FAKE_HEADER_FIELD_WEIGHT_SWITCHING,   EVAL_TUNED_HDR_WEIGHT_SWITCHING)
-            .set(&FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL, EVAL_TUNED_HDR_WEIGHT_INCREMENTAL)
-            .set(&FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX, EVAL_TUNED_VOLATILE_CHANGE_PROB_MAX)
-            .set(&FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS, EVAL_TUNED_SWITCHING_TIMEOUT_MIN_MS)
-            .set(&FAKE_BODY_CONSTANT_LENGTH_MAX, EVAL_TUNED_FAKE_BODY_CONSTANT_LENGTH_MAX)
+            .set(
+                &FAKE_HEADER_FIELD_WEIGHT_RANDOM,
+                EVAL_TUNED_HDR_WEIGHT_RANDOM,
+            )
+            .set(
+                &FAKE_HEADER_FIELD_WEIGHT_CONSTANT,
+                EVAL_TUNED_HDR_WEIGHT_CONSTANT,
+            )
+            .set(
+                &FAKE_HEADER_FIELD_WEIGHT_VOLATILE,
+                EVAL_TUNED_HDR_WEIGHT_VOLATILE,
+            )
+            .set(
+                &FAKE_HEADER_FIELD_WEIGHT_SWITCHING,
+                EVAL_TUNED_HDR_WEIGHT_SWITCHING,
+            )
+            .set(
+                &FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL,
+                EVAL_TUNED_HDR_WEIGHT_INCREMENTAL,
+            )
+            .set(
+                &FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX,
+                EVAL_TUNED_VOLATILE_CHANGE_PROB_MAX,
+            )
+            .set(
+                &FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS,
+                EVAL_TUNED_SWITCHING_TIMEOUT_MIN_MS,
+            )
+            .set(
+                &FAKE_BODY_CONSTANT_LENGTH_MAX,
+                EVAL_TUNED_FAKE_BODY_CONSTANT_LENGTH_MAX,
+            )
             .set(&DECOY_LENGTH_MAX, EVAL_TUNED_DECOY_LENGTH_MAX)
             .set(&SEND_BYTES_JITTER, EVAL_TUNED_SEND_BYTES_JITTER)
             .set(&SEND_BYTES_CHUNK, EVAL_TUNED_SEND_BYTES_CHUNK)
-            .set(&DECOY_PROVIDER_WEIGHT_SIMPLE, EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SIMPLE)
-            .set(&DECOY_PROVIDER_WEIGHT_SPARSE, EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SPARSE)
-            .set(&DECOY_PROVIDER_WEIGHT_NOISY,  EVAL_TUNED_DECOY_PROVIDER_WEIGHT_NOISY)
-            .set(&DECOY_PROVIDER_WEIGHT_SMOOTH, EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SMOOTH)
-            .set(&DECOY_PROVIDER_WEIGHT_HEAVY,  EVAL_TUNED_DECOY_PROVIDER_WEIGHT_HEAVY)
+            .set(
+                &DECOY_PROVIDER_WEIGHT_SIMPLE,
+                EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SIMPLE,
+            )
+            .set(
+                &DECOY_PROVIDER_WEIGHT_SPARSE,
+                EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SPARSE,
+            )
+            .set(
+                &DECOY_PROVIDER_WEIGHT_NOISY,
+                EVAL_TUNED_DECOY_PROVIDER_WEIGHT_NOISY,
+            )
+            .set(
+                &DECOY_PROVIDER_WEIGHT_SMOOTH,
+                EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SMOOTH,
+            )
+            .set(
+                &DECOY_PROVIDER_WEIGHT_HEAVY,
+                EVAL_TUNED_DECOY_PROVIDER_WEIGHT_HEAVY,
+            )
             .set(&DECOY_CURRENT_ALPHA, EVAL_TUNED_DECOY_CURRENT_ALPHA)
             .set(&DECOY_FALLTHROUGH_PACKETS_MIN, EVAL_TUNED_FALLTHROUGH_MIN)
             .set(&DECOY_FALLTHROUGH_PACKETS_MAX, EVAL_TUNED_FALLTHROUGH_MAX)
@@ -172,11 +211,21 @@ async fn main() {
             .set(&HEALTH_CHECK_NEXT_IN_MIN, EVAL_HEALTH_CHECK_NEXT_IN_MIN)
             .set(&HEALTH_CHECK_NEXT_IN_MAX, EVAL_HEALTH_CHECK_NEXT_IN_MAX)
     } else {
-        let jitter = if is_quic { EVAL_QUIC_SEND_BYTES_JITTER } else { EVAL_SEND_BYTES_JITTER };
+        let jitter = if is_quic {
+            EVAL_QUIC_SEND_BYTES_JITTER
+        } else {
+            EVAL_SEND_BYTES_JITTER
+        };
         let mut b = settings_builder
             .set(&FAKE_HEADER_PROBABILITY, EVAL_FAKE_HEADER_PROBABILITY)
-            .set(&FAKE_BODY_CONSTANT_LENGTH_MIN, EVAL_FAKE_BODY_CONSTANT_LENGTH_MIN)
-            .set(&FAKE_BODY_CONSTANT_LENGTH_MAX, EVAL_FAKE_BODY_CONSTANT_LENGTH_MAX)
+            .set(
+                &FAKE_BODY_CONSTANT_LENGTH_MIN,
+                EVAL_FAKE_BODY_CONSTANT_LENGTH_MIN,
+            )
+            .set(
+                &FAKE_BODY_CONSTANT_LENGTH_MAX,
+                EVAL_FAKE_BODY_CONSTANT_LENGTH_MAX,
+            )
             .set(&FAKE_BODY_LENGTH_MAX, EVAL_FAKE_BODY_LENGTH_MAX)
             .set(&SEND_BYTES_JITTER, jitter)
             .set(&HEALTH_CHECK_NEXT_IN_MIN, EVAL_HEALTH_CHECK_NEXT_IN_MIN)
@@ -227,10 +276,11 @@ async fn main() {
     // sized small-packet mode the chunk-driven data path can't reach).
     // raw_default skips pinning so the random per-flow draw runs as it would
     // in pure-protocol use.
-    let listener_builder = ListenerBuilder::<ShortIdentity, DefaultExecutor, EvalServerConnectionHandler>::new(
-        key_pair,
+    let listener_builder = ListenerBuilder::<
+        ShortIdentity,
+        DefaultExecutor,
         EvalServerConnectionHandler,
-    )
+    >::new(key_pair, EvalServerConnectionHandler)
     .with_flows(flows)
     .with_settings(settings.clone());
     let listener_builder = if profile.is_unrestricted() {
@@ -252,12 +302,20 @@ async fn main() {
 
     // Concurrent c2s receive and s2c send loops bounded by deadline and byte budgets.
     let recv_handle = if profile.has_c2s_traffic() {
-        Some(tokio::spawn(run_c2s_recv(client.clone(), profile.clone(), deadline)))
+        Some(tokio::spawn(run_c2s_recv(
+            client.clone(),
+            profile.clone(),
+            deadline,
+        )))
     } else {
         None
     };
     let send_handle = if profile.has_s2c_traffic() {
-        Some(tokio::spawn(run_s2c_send(client.clone(), profile.clone(), deadline)))
+        Some(tokio::spawn(run_s2c_send(
+            client.clone(),
+            profile.clone(),
+            deadline,
+        )))
     } else {
         None
     };
@@ -292,14 +350,22 @@ async fn run_c2s_recv(
 ) -> usize {
     let mut received: usize = 0;
     let now = Instant::now();
-    let mut remaining = if deadline > now { deadline - now } else { Duration::from_secs(0) };
+    let mut remaining = if deadline > now {
+        deadline - now
+    } else {
+        Duration::from_secs(0)
+    };
     while received < profile.bytes_c2s && !remaining.is_zero() {
         match timeout(remaining, client.receive_bytes()).await {
             Ok(Ok(data)) => received += data.len(),
             _ => break,
         }
         let now = Instant::now();
-        remaining = if deadline > now { deadline - now } else { Duration::from_secs(0) };
+        remaining = if deadline > now {
+            deadline - now
+        } else {
+            Duration::from_secs(0)
+        };
     }
     received
 }

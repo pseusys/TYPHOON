@@ -39,9 +39,7 @@ impl IdentityType for ShortIdentity {
     fn from_bytes(bytes: &[u8]) -> Self {
         let mut arr = [0u8; SHORT_IDENTITY_LENGTH];
         arr.copy_from_slice(&bytes[..SHORT_IDENTITY_LENGTH]);
-        Self {
-            bytes: arr,
-        }
+        Self { bytes: arr }
     }
 
     #[inline]

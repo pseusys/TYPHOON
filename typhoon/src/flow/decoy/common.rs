@@ -312,7 +312,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
         let fallthrough_probability = fallthrough_probability.unwrap_or_else(|| {
             let lo = settings.get(&DECOY_FALLTHROUGH_PACKETS_MIN);
             let hi = settings.get(&DECOY_FALLTHROUGH_PACKETS_MAX);
-            if lo >= hi { lo } else { get_rng().gen_range(lo..=hi) }
+            if lo >= hi {
+                lo
+            } else {
+                get_rng().gen_range(lo..=hi)
+            }
         });
 
         Self {
@@ -362,7 +366,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
             self.packet_rate = (1.0 - current_alpha) * self.packet_rate + current_alpha * time_delta;
             self.byte_rate = (1.0 - current_alpha) * self.byte_rate + current_alpha * (packet_length as f64);
             let refill = time_delta * byte_rate_cap / 1000.0;
-            let deduct = if outgoing_real { packet_length as f64 } else { 0.0 };
+            let deduct = if outgoing_real {
+                packet_length as f64
+            } else {
+                0.0
+            };
             self.byte_budget = (self.byte_budget + refill - deduct).clamp(0.0, byte_rate_cap * byte_rate_factor);
         }
 
