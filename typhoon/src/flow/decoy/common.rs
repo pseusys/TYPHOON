@@ -257,7 +257,7 @@ pub trait DecoyCommunicationMode<T: IdentityType + Clone, AE: AsyncExecutor>: De
 
 /// Internal state for tracking packet rates and byte budgets.
 /// This state is shared by all communication modes.
-pub(super) struct DecoyState<T: IdentityType + Clone, AE: AsyncExecutor> {
+pub(crate) struct DecoyState<T: IdentityType + Clone, AE: AsyncExecutor> {
     pub(super) settings: Arc<Settings<AE>>,
     /// Long-term reference transmission rate in packets (milliseconds between packets).
     pub(super) reference_rate: f64,

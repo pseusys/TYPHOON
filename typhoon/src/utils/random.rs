@@ -1,4 +1,3 @@
-#[cfg(feature = "client")]
 use rand::Rng;
 #[cfg(test)]
 use rand::SeedableRng;
