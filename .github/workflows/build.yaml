@@ -82,3 +82,9 @@ jobs:
         env:
           RUST_LOG: debug
         run: cargo run --example mirror_decoy
+
+      - name: Run flat_iat_decoy example 📉
+        working-directory: typhoon
+        env:
+          RUST_LOG: debug
+        run: cargo run --example flat_iat_decoy
