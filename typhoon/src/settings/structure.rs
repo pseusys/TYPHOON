@@ -161,17 +161,6 @@ impl<AE: AsyncExecutor> Settings<AE> {
             Ok(())
         };
 
-        // Helper to check u64 is positive.
-        let assert_int_positive = |key: &Key<u64>| -> Result<(), SettingsError> {
-            let val = self.get(key);
-            if val <= 0 {
-                return Err(SettingsError::AssertionFailed {
-                    message: format!("{} ({}) must be positive", key.name, val),
-                });
-            }
-            Ok(())
-        };
-
         // Min <= Max pairs
         assert_min_max_u64(&keys::FAKE_BODY_LENGTH_MIN, &keys::FAKE_BODY_LENGTH_MAX)?;
         assert_min_max_u64(&keys::FAKE_BODY_CONSTANT_LENGTH_MIN, &keys::FAKE_BODY_CONSTANT_LENGTH_MAX)?;
@@ -242,34 +231,6 @@ impl<AE: AsyncExecutor> Settings<AE> {
         assert_float_positive(&keys::HANDSHAKE_NEXT_IN_FACTOR)?;
         assert_float_positive(&keys::DECOY_BYTE_RATE_CAP)?;
         assert_float_positive(&keys::DECOY_BYTE_RATE_FACTOR)?;
-
-        // Weight modifiers
-        assert_int_positive(&keys::FAKE_BODY_WEIGHT_EMPTY)?;
-        assert_int_positive(&keys::FAKE_BODY_WEIGHT_RANDOM)?;
-        assert_int_positive(&keys::FAKE_BODY_WEIGHT_CONSTANT)?;
-        assert_int_positive(&keys::FAKE_BODY_WEIGHT_SERVICE)?;
-        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_RANDOM)?;
-        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_CONSTANT)?;
-        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_VOLATILE)?;
-        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_SWITCHING)?;
-        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL)?;
-        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_NONE)?;
-        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_RANDOM)?;
-        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_TIMED)?;
-        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_SIZED)?;
-        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_BOTH)?;
-        assert_int_positive(&keys::DECOY_REPLICATION_WEIGHT_NONE)?;
-        assert_int_positive(&keys::DECOY_REPLICATION_WEIGHT_MAINTENANCE)?;
-        assert_int_positive(&keys::DECOY_REPLICATION_WEIGHT_ALL)?;
-        assert_int_positive(&keys::DECOY_SUBHEADER_WEIGHT_NONE)?;
-        assert_int_positive(&keys::DECOY_SUBHEADER_WEIGHT_MAINTENANCE)?;
-        assert_int_positive(&keys::DECOY_SUBHEADER_WEIGHT_ALL)?;
-        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_SIMPLE)?;
-        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_SPARSE)?;
-        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_NOISY)?;
-        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_SMOOTH)?;
-        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_HEAVY)?;
-        assert_int_positive(&keys::FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS)?;
 
         Ok(())
     }

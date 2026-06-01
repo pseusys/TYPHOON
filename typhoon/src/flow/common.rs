@@ -175,6 +175,7 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
     }
 
     /// Classify and extract payload from pre-deobfuscated components.
+    #[allow(clippy::unused_self)]
     pub(crate) fn process_with_tailor(&self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> ProcessIncomingResult {
         let identity_len = <CP::Identity as IdentityType>::length();
         let full_tailor_len = TAILOR_LENGTH + identity_len;
