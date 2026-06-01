@@ -69,9 +69,7 @@ PAYLOAD_MODES = ("random_bytes", "ascii_text", "structured_ascii", "zero_padded"
 # residue is dominated by encrypted streams ntop's nDPI cannot fingerprint,
 # so the random_bytes weight is the largest single weight; the text /
 # structured / zero-padded modes are kept small because they would be
-# catalogued under their actual protocol classes if seen.  See
-# TRAFFIC_CAPTURE_REFERENCE.md §7.10 for the citation lineage (Wang CCS'15,
-# Wu USENIX'23, Trevisan ToN'20, Houmansadr S&P'13).
+# catalogued under their actual protocol classes if seen.
 PAYLOAD_MODE_WEIGHTS = (0.65, 0.05, 0.15, 0.05, 0.10)
 
 SIZE_MIN_B = 40
@@ -118,7 +116,7 @@ def _sample_params(rng: Random) -> dict:
         # only the bounds.  Log-uniform implicitly biases toward small packets,
         # which would mimic catalogued small-packet protocols (DNS, NTP, gaming)
         # — but those have their own bg classes and the `unknown` residue is
-        # explicitly *not* one of them.  See TRAFFIC_CAPTURE_REFERENCE.md §7.10.
+        # explicitly *not* one of them.
         "base_size":      rng.randint(SIZE_MIN_B, SIZE_MAX_B),
         "size_jitter":    rng.uniform(0.0, SIZE_JITTER_MAX),
         "iat_pattern":    rng.choice(IAT_PATTERNS),

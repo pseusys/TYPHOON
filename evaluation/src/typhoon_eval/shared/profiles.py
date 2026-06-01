@@ -369,7 +369,7 @@ GENERATOR_WEIGHTS: Final[dict[str, float]] = {
 # heterogeneous along profile axes.  Sourcing each bg generator from its own
 # distribution restores realistic per-class traffic.
 #
-# Parameter ranges are taken from `docs/TRAFFIC_CAPTURE_REFERENCE.md §7`:
+# Parameter ranges:
 #   * QUIC up/down — Bajpai PAM 2017, CESNET-QUIC22, RFC 9000 §14.1
 #   * DNS — APNIC measurement notes
 #   * RTP voice — Cisco VoIP bandwidth ref (G.711 / Opus)
@@ -513,8 +513,7 @@ BACKGROUND_PROFILES: Final[dict[str, BackgroundProfile]] = {
 
 
 # Network-wide chaos parameter ranges, applied via the chaos sidecar's tc/netem
-# qdisc.  Ranges are anchored to public internet-measurement studies (see
-# `docs/TRAFFIC_CAPTURE_REFERENCE.md §3.2`); the comments per parameter cite
+# qdisc.  Ranges are anchored to public internet-measurement studies; the comments per parameter cite
 # the binding constraint.
 CHAOS_LATENCY_MS: Final[Range]  = Range(10.0, 100.0)
 # Jitter is sampled relative to the per-run latency (see corpus._sample_chaos);

@@ -3,7 +3,6 @@
 A Docker-based harness that captures TYPHOON traffic alongside other protocols and common UDP traffic classes, and answers the central question: **can a passive observer distinguish TYPHOON's wire-level characteristics — packet sizes, inter-arrival times, byte entropy, handshake structure — from the rest of the mix?**
 
 For the protocol itself, see [PROTOCOL.md](../PROTOCOL.md).
-For the empirical references behind the UDP traffic mix used in Part 3 (citations, share tables), see [docs/TRAFFIC_CAPTURE_REFERENCE.md](docs/TRAFFIC_CAPTURE_REFERENCE.md).
 
 ## Contents
 

@@ -224,4 +224,4 @@ The [`evaluation/`](evaluation/) directory contains a Docker-based traffic captu
 2. **Operational comparison** — capture all 16 protocols (TYPHOON + 15 comparators) under a controlled Docker network and compare throughput, overhead, goodput efficiency, byte entropy, burstiness, and handshake metrics. _Operational, not detectability._
 3. **Background-blending evaluation** — generate a corpus of natural UDP traffic (QUIC HTTPS, DNS, RTP voice/video, gaming, control plane), run TYPHOON alongside, and measure how often a passive classifier mistakes TYPHOON for benign traffic.
 
-See [evaluation/README.md](evaluation/README.md) for requirements, install steps, CLI reference, and instructions for reading the results. The empirical grounding for the Part 3 background composition is in [evaluation/docs/TRAFFIC_CAPTURE_REFERENCE.md](evaluation/docs/TRAFFIC_CAPTURE_REFERENCE.md) §7.
+See [evaluation/README.md](evaluation/README.md) for requirements, install steps, CLI reference, and instructions for reading the results.
