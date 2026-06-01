@@ -68,7 +68,7 @@ poetry poe background-build   # build the 9 background generator images (once, o
 
 All commands run from `evaluation/` and accept `--help` for the full flag list. The most common invocations:
 
-### Part 1 — Self-comparison
+### Part 1 — Self-comparison (CLI)
 
 ```shell
 poe self-compare              # repeat TYPHOON N times under identical config
@@ -77,7 +77,7 @@ poe use-case-compare          # one capture per PROTOCOL.md use case
 poe plot --example heavy_traffic --out-dir out/   # per-flow packet-structure SVG
 ```
 
-### Part 2 — Operational comparison
+### Part 2 — Operational comparison (CLI)
 
 ```shell
 poe capture --all             # capture all 16 protocols (default: bulk, 10 MB)
@@ -88,7 +88,7 @@ poe proto-compare             # plots + comparison table for the latest run
 
 Useful flags: `--protocol <name>` (single protocol), `--scenario {bulk,interactive,streaming,burst,echo,idle}`, `--run YYYYMMDD_HHMMSS` (target an earlier run).
 
-### Part 3 — Background-blending
+### Part 3 — Background-blending (CLI)
 
 ```shell
 poe background-corpus         # randomised corpus (default 70 runs)
