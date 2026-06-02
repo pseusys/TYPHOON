@@ -3,6 +3,8 @@
 mod tests;
 
 /// Server-side session manager implementation.
+#[cfg(feature = "client")]
+use std::future::ready;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak as StdWeak};
@@ -217,7 +219,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     }
 
     #[cfg(feature = "client")]
-    async fn receive_packet(&self) -> Result<DynamicByteBuffer, SessionControllerError> {
-        Err(SessionControllerError::HealthProviderDied)
+    fn receive_packet(&self) -> impl Future<Output = Result<DynamicByteBuffer, SessionControllerError>> {
+        ready(Err(SessionControllerError::HealthProviderDied))
     }
 }

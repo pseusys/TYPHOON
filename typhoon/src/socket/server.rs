@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::ready;
 use std::hash::Hash;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -362,7 +363,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     ///   When all N drain tasks exit the `Arc<BoundedNotifyQueueSender>` refcount reaches 0,
     ///   dropping the sender and closing the channel so the route task terminates.
     /// - A **route task** that pulls from the shared channel and calls `route_incoming`.
-    pub async fn start(self: &Arc<Self>) {
+    pub fn start(self: &Arc<Self>) -> impl Future<Output = ()> {
         let drain_capacity = self.settings.get(&keys::DRAIN_CHANNEL_CAPACITY) as usize;
 
         for (index, flow) in self.flows.iter().enumerate() {
@@ -396,6 +397,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 }
             });
         }
+
+        ready(())
     }
 
     /// Route an incoming packet to the appropriate session or create a new one.
