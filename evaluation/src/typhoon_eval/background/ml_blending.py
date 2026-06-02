@@ -360,7 +360,7 @@ def _per_profile_breakdown(
         prof_conf = confidence[idx]
         prof_preds = [pred_classes[i] for i in range(len(pred_classes)) if idx[i]]
         by_pred: dict[str, list[float]] = defaultdict(list)
-        for cls, conf in zip(prof_preds, prof_conf):
+        for cls, conf in zip(prof_preds, prof_conf, strict=True):
             by_pred[cls].append(conf)
         out[prof] = {
             "n_flows":            int(idx.sum()),
@@ -402,7 +402,7 @@ def main(corpus_root: str | None, feature_set: str) -> None:
         console.print("[red]Corpus must contain both TYPHOON and background flows.[/red]")
         exit(1)
 
-    bg_classes = sorted({lbl for lbl, m in zip(y, bg_mask) if m})
+    bg_classes = sorted({lbl for lbl, m in zip(y, bg_mask, strict=True) if m})
     class_to_idx = {c: i for i, c in enumerate(bg_classes)}
     y_bg_idx_full = np.array([class_to_idx[lbl] for lbl in y if lbl != TYPHOON_CLASS])
 
@@ -470,7 +470,7 @@ def main(corpus_root: str | None, feature_set: str) -> None:
     table.add_column("Share", justify="right")
     table.add_column("Mean conf", justify="right")
     by_pred: dict[str, list[float]] = defaultdict(list)
-    for cls, conf in zip(pred_classes, confidence):
+    for cls, conf in zip(pred_classes, confidence, strict=True):
         by_pred[cls].append(conf)
     for cls, confs in sorted(by_pred.items(), key=lambda kv: -len(kv[1])):
         table.add_row(cls, str(len(confs)),

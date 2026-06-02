@@ -8,9 +8,9 @@ underlying server image, so the s2c portion of any profile is silently
 ignored on this side.
 """
 
+from collections.abc import Callable
 from os import environ, urandom
 from time import monotonic, sleep
-from typing import Callable
 
 
 def _env_int(key: str, default: int) -> int:

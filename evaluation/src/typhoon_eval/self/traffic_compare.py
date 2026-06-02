@@ -115,7 +115,7 @@ def _plot_traffic_compare(pooled_by_mode: list[tuple[str, str, dict]], use_case:
             ax.legend(fontsize=7)
 
     # Shared y-axis labels
-    for row_ax, label in zip(axes[:, 0], ["Packet size (bytes)", "IAT (ms)", "Shannon entropy (bits)", "Mean bytes", "Metric value"]):
+    for row_ax, label in zip(axes[:, 0], ["Packet size (bytes)", "IAT (ms)", "Shannon entropy (bits)", "Mean bytes", "Metric value"], strict=True):
         row_ax.set_ylabel(label, fontsize=9)
 
     comp_patches = [mpatches.Patch(color=COMP_COLORS[c], label=c) for c in COMPONENTS]

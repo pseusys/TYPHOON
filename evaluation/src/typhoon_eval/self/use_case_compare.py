@@ -122,7 +122,7 @@ def _plot_use_case_compare(pooled_by_case: dict[str, dict], out_dir: Path) -> No
         ax.set_xticks([])
 
     # Shared y-axis labels (left column only)
-    for row_ax, label in zip(axes[:, 0], ["Packet size (bytes)", "IAT (ms)", "Shannon entropy (bits)", "Mean bytes"]):
+    for row_ax, label in zip(axes[:, 0], ["Packet size (bytes)", "IAT (ms)", "Shannon entropy (bits)", "Mean bytes"], strict=True):
         row_ax.set_ylabel(label, fontsize=9)
 
     comp_patches = [mpatches.Patch(color=COMP_COLORS[c], label=c) for c in COMPONENTS]

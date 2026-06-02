@@ -9,7 +9,7 @@ Uses dnslib so no external resolver is required inside the container.
 from __future__ import annotations
 
 from os import environ, system
-from socket import AF_INET, SOCK_DGRAM, socket, timeout
+from socket import AF_INET, SOCK_DGRAM, socket
 from sys import exit
 
 from dnslib import AAAA, QTYPE, RR, TXT, A, DNSHeader, DNSRecord
@@ -53,7 +53,7 @@ def main() -> int:
     while True:
         try:
             data, peer = sock.recvfrom(4096)
-        except timeout:
+        except TimeoutError:
             break
         try:
             query = DNSRecord.parse(data)

@@ -34,7 +34,7 @@ from __future__ import annotations
 from math import exp, log
 from os import environ, system, urandom
 from random import Random, randint
-from socket import AF_INET, SOCK_DGRAM, socket, timeout
+from socket import AF_INET, SOCK_DGRAM, socket
 from string import ascii_letters, digits, punctuation
 from sys import exit
 from threading import Thread
@@ -235,7 +235,7 @@ def _recv_drain(sock: socket, deadline: float) -> None:
     while monotonic() < deadline:
         try:
             sock.recv(RECV_BUFFER)
-        except (timeout, OSError):
+        except (TimeoutError, OSError):
             continue
 
 
@@ -278,7 +278,7 @@ def main() -> int:
         while peer is None and monotonic() < deadline:
             try:
                 _, peer = sock.recvfrom(RECV_BUFFER)
-            except (timeout, OSError):
+            except (TimeoutError, OSError):
                 continue
         if peer is None:
             print("unknown server: no client contact, exiting", flush=True)

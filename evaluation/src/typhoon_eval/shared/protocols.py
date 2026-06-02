@@ -1,5 +1,5 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 # Packet record type: (timestamp_s, transport_payload_size_bytes, app_payload_bytes).
 # The size field excludes IP+UDP/TCP headers, isolating protocol-level signal

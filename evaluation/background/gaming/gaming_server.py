@@ -8,7 +8,7 @@ c2s at 30–50 ms IAT.  Runs until PROFILE_DURATION_S elapses.
 from __future__ import annotations
 
 from os import environ, system, urandom
-from socket import AF_INET, SOCK_DGRAM, socket, timeout
+from socket import AF_INET, SOCK_DGRAM, socket
 from sys import exit, path
 from threading import Thread
 from time import monotonic, sleep
@@ -34,7 +34,7 @@ def _recv_loop(sock: socket, deadline: float, peer_holder: list[tuple]) -> None:
             data, peer = sock.recvfrom(2048)
             if not peer_holder:
                 peer_holder.append(peer)
-        except timeout:
+        except TimeoutError:
             continue
         except OSError:
             break

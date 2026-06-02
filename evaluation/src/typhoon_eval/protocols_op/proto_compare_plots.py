@@ -167,9 +167,9 @@ def _plot_main(metrics: list[dict], run_name: str, out_dir: Path) -> None:
         if m.get("goodput_efficiency") is not None and not isnan(m["goodput_efficiency"])
     ]
     if valid:
-        tps, effs, clrs, lbls = zip(*valid)
+        tps, effs, clrs, lbls = zip(*valid, strict=True)
         ax_thru.scatter(tps, effs, c=clrs, s=80, zorder=3, edgecolors="white", linewidth=0.5)
-        for tp, eff, lbl in zip(tps, effs, lbls):
+        for tp, eff, lbl in zip(tps, effs, lbls, strict=True):
             ax_thru.annotate(lbl, (tp, eff), fontsize=6, textcoords="offset points", xytext=(4, 2))
         ax_thru.axhline(1.0, color="gray", linestyle="--", linewidth=0.8, label="perfect efficiency")
         ax_thru.legend(fontsize=8, loc="lower right")

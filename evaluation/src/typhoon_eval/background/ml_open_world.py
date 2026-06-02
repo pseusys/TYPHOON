@@ -215,7 +215,7 @@ def _run_pair_binary(
     *classifier_name* selects DT / RF / XGBoost — Barradas reports all three.
     """
 
-    pos_mask = np.array([(c == TYPHOON_CLASS) and (p == profile) for c, p in zip(y, profiles)])
+    pos_mask = np.array([(c == TYPHOON_CLASS) and (p == profile) for c, p in zip(y, profiles, strict=True)])
     neg_mask = np.array([c == target_class for c in y])
     if pos_mask.sum() < MIN_SAMPLES_PER_CLASS or neg_mask.sum() < MIN_SAMPLES_PER_CLASS:
         return None
@@ -295,12 +295,12 @@ def _run_closed_world(X: np.ndarray, y: list[str]) -> dict[str, object]:
     y_idx = np.array([cls_to_idx[c] for c in y])
 
     counts = np.bincount(y_idx, minlength=len(classes))
-    keep_classes = {c for c, n in zip(classes, counts) if n >= MIN_SAMPLES_PER_CLASS}
+    keep_classes = {c for c, n in zip(classes, counts, strict=True) if n >= MIN_SAMPLES_PER_CLASS}
     if len(keep_classes) < MIN_CLASSES_FOR_FIT or TYPHOON_CLASS not in keep_classes:
         return {"error": "insufficient samples per class for k-fold"}
     keep_mask = np.array([c in keep_classes for c in y])
     X_k = X[keep_mask]
-    y_k = [c for c, m in zip(y, keep_mask) if m]
+    y_k = [c for c, m in zip(y, keep_mask, strict=True) if m]
     classes_k = sorted(keep_classes)
     cls_to_idx_k = {c: i for i, c in enumerate(classes_k)}
     y_k_idx = np.array([cls_to_idx_k[c] for c in y_k])
@@ -1127,12 +1127,12 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
     if selected_profile is not None:
         keep = np.array([
             (cls != TYPHOON_CLASS) or (prof == selected_profile)
-            for cls, prof in zip(y, profiles)
+            for cls, prof in zip(y, profiles, strict=True)
         ])
         kept_typhoon = int(((np.array(y) == TYPHOON_CLASS) & keep).sum())
         X = X[keep]
-        y = [cls for cls, k in zip(y, keep) if k]
-        profiles = [prof for prof, k in zip(profiles, keep) if k]
+        y = [cls for cls, k in zip(y, keep, strict=True) if k]
+        profiles = [prof for prof, k in zip(profiles, keep, strict=True) if k]
         console.print(
             f"[dim]Pair filter active: TYPHOON profile = "
             f"[bold]{selected_profile}[/bold] ({kept_typhoon} flows kept); "

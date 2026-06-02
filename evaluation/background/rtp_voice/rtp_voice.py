@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from os import environ, system, urandom
 from random import Random, randint
-from socket import AF_INET, SOCK_DGRAM, socket, timeout
+from socket import AF_INET, SOCK_DGRAM, socket
 from sys import exit, path
 from threading import Thread
 from time import monotonic, sleep
@@ -46,7 +46,7 @@ def _recv_loop(sock: socket, deadline: float) -> None:
     while monotonic() < deadline:
         try:
             sock.recv(2048)
-        except (timeout, OSError):
+        except (TimeoutError, OSError):
             continue
 
 
