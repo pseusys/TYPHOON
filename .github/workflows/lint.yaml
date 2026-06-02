@@ -70,7 +70,7 @@ jobs:
       - name: Check Python code 📜
         uses: astral-sh/ruff-action@v3
         with:
-          args: "check --config evaluation/pyproject.toml evaluation/src evaluation/protocols"
+          args: "check --config evaluation/pyproject.toml evaluation/src evaluation/protocols evaluation/background"
 
       - name: Setup Go 🦫
         uses: actions/setup-go@v5

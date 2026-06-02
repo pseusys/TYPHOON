@@ -91,6 +91,8 @@ SINGLE_SHOT_MAX_PACKETS = 4
 # patterns where the response channel is sparse but not silent.
 HEAVY_RATIO = 3
 ASCII_CHARSET = ascii_letters + digits + punctuation + " "
+CLOCKWORK_FAST_PROB = 0.9
+CLOCKWORK_SLOW_MULTIPLIER = 10.0
 
 
 def _log_uniform(rng: Random, lo: float, hi: float) -> float:
@@ -147,7 +149,7 @@ def _sample_iat(rng: Random, pattern: str, mean: float) -> float:
         return rng.expovariate(1.0 / mean)
     if pattern == "clockwork":
         # Two-mode IAT: 90% at `mean`, 10% at 10x mean (simulating periodic stalls).
-        return mean if rng.random() < 0.9 else mean * 10.0
+        return mean if rng.random() < CLOCKWORK_FAST_PROB else mean * CLOCKWORK_SLOW_MULTIPLIER
     return mean
 
 

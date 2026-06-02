@@ -4,6 +4,7 @@ from signal import SIGTERM, signal
 from socket import AF_INET, SOCK_DGRAM, socket
 from sys import exit
 from time import monotonic
+from types import FrameType
 from typing import NoReturn
 
 transfer_bytes = int(environ.get("PROFILE_BYTES_C2S", 104_857_600))
@@ -14,7 +15,7 @@ port = 9000
 received = 0
 
 
-def _sigterm(signum, frame) -> NoReturn:
+def _sigterm(signum: int, frame: FrameType | None) -> NoReturn:
     pct = received / transfer_bytes * 100
     print(f"received {received}/{transfer_bytes} bytes ({pct:.1f}%)", flush=True)
     exit(0)

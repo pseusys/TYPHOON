@@ -16,6 +16,7 @@ from socket import AF_INET, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET, socket
 from subprocess import run
 from sys import exit
 from time import monotonic
+from types import FrameType
 from typing import NoReturn
 
 observer_gw = environ.get("OBSERVER_GW")
@@ -31,7 +32,7 @@ idle_timeout = int(environ.get("IDLE_TIMEOUT_S", 120))
 received = 0
 
 
-def _sigterm(signum, frame) -> NoReturn:
+def _sigterm(signum: int, frame: FrameType | None) -> NoReturn:
     pct = received / transfer_bytes * 100
     print(f"received {received}/{transfer_bytes} bytes ({pct:.1f}%)", flush=True)
     exit(0)
