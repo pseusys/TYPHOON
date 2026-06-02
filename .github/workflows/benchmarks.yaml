@@ -39,17 +39,25 @@ jobs:
         env:
           RUSTFLAGS: "-D warnings"
 
-      - name: Run benchmarks 📊
+      - name: Run roundtrip benchmark 📊
         working-directory: typhoon
         env:
           TYPHOON_TEST_SERVER_KEY_FAST: .bench_keys/server_fast.key
-        run: cargo bench --bench roundtrip -- --output-format bencher | tee ../bench-output.txt
+        run: cargo bench --bench roundtrip -- --output-format bencher | tee ../bench-roundtrip.txt
+
+      - name: Run handshake benchmark 🤝
+        working-directory: typhoon
+        env:
+          TYPHOON_TEST_SERVER_KEY_FAST: .bench_keys/server_fast.key
+        run: cargo bench --bench handshake -- --output-format bencher | tee ../bench-handshake.txt
 
       - name: Store benchmark results 📈
         uses: actions/upload-artifact@v4
         with:
           name: bench-results
-          path: bench-output.txt
+          path: |
+            bench-roundtrip.txt
+            bench-handshake.txt
           retention-days: 5
 
   flamegraph:

@@ -58,6 +58,7 @@ libc = "^0.2"
 [dev-dependencies]
 criterion = { version = "^0.5", features = ["async_tokio"] }
 env_logger = "^0.11"
+rand_chacha = "^0.3"
 tempfile = "^3.15"
 
 
@@ -130,6 +131,12 @@ required-features = ["server", "clap"]
 [[bench]]
 name = "roundtrip"
 path = "benches/roundtrip.rs"
+harness = false
+required-features = ["client", "server", "tokio"]
+
+[[bench]]
+name = "handshake"
+path = "benches/handshake.rs"
 harness = false
 required-features = ["client", "server", "tokio"]
 
