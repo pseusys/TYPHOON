@@ -14,10 +14,7 @@
 use std::net::UdpSocket;
 use std::sync::Arc;
 
-use classic_mceliece_rust::{
-    Ciphertext, PublicKey as McEliecePublicKey, SecretKey as McElieceSecretKey,
-    CRYPTO_BYTES, CRYPTO_CIPHERTEXTBYTES, decapsulate, encapsulate, keypair_boxed,
-};
+use classic_mceliece_rust::{CRYPTO_BYTES, CRYPTO_CIPHERTEXTBYTES, Ciphertext, PublicKey as McEliecePublicKey, SecretKey as McElieceSecretKey, decapsulate, encapsulate, keypair_boxed};
 use criterion::{Criterion, criterion_group, criterion_main};
 use ed25519_dalek::{Signer, SigningKey};
 use rand::{Rng, SeedableRng};
@@ -25,9 +22,7 @@ use rand_chacha::ChaCha20Rng;
 use tokio::runtime::Runtime;
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::certificate::ServerKeyPair;
-use typhoon::defaults::{
-    DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler,
-};
+use typhoon::defaults::{DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
 use typhoon::flow::FlowConfig;
 use typhoon::settings::SettingsBuilder;
 use typhoon::socket::{ClientSocketBuilder, ListenerBuilder, ServerFlowConfiguration};
@@ -39,10 +34,7 @@ const KEY_ENV_VAR: &str = "TYPHOON_TEST_SERVER_KEY_FAST";
 const KEY_ENV_VAR: &str = "TYPHOON_TEST_SERVER_KEY_FULL";
 
 fn free_addr() -> std::net::SocketAddr {
-    UdpSocket::bind("127.0.0.1:0")
-        .expect("OS should assign a free port")
-        .local_addr()
-        .unwrap()
+    UdpSocket::bind("127.0.0.1:0").expect("OS should assign a free port").local_addr().unwrap()
 }
 
 fn load_or_generate_key() -> ServerKeyPair {
@@ -155,9 +147,7 @@ fn bench_ed25519(c: &mut Criterion) {
 
     group.bench_function("verify", |b| {
         b.iter(|| {
-            verifying_key
-                .verify_strict(&transcript, &signature)
-                .expect("verify");
+            verifying_key.verify_strict(&transcript, &signature).expect("verify");
         });
     });
 
@@ -171,30 +161,13 @@ fn bench_ed25519(c: &mut Criterion) {
 /// session-layer exchange.
 fn bench_handshake_e2e(c: &mut Criterion) {
     let rt = Runtime::new().expect("tokio runtime");
-    let settings = Arc::new(
-        SettingsBuilder::<DefaultExecutor>::new()
-            .build()
-            .expect("settings"),
-    );
+    let settings = Arc::new(SettingsBuilder::<DefaultExecutor>::new().build().expect("settings"));
 
     let addr = free_addr();
     let key_pair = load_or_generate_key();
     let certificate = key_pair.to_client_certificate(vec![addr]);
 
-    let listener = Arc::new(rt.block_on(async {
-        ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(
-            key_pair,
-            DefaultServerConnectionHandler,
-        )
-        .add_flow(ServerFlowConfiguration::with_address(
-            FlowConfig::random(&settings),
-            addr,
-        ))
-        .with_settings(settings.clone())
-        .build()
-        .await
-        .expect("listener")
-    }));
+    let listener = Arc::new(rt.block_on(async { ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(FlowConfig::random(&settings), addr)).with_settings(settings.clone()).build().await.expect("listener") }));
     rt.block_on(async { listener.start().await });
 
     // Drain every accepted client without doing anything — the handshake-cost benchmark
@@ -217,27 +190,12 @@ fn bench_handshake_e2e(c: &mut Criterion) {
             let certificate = certificate.clone();
             let settings = settings.clone();
             async move {
-                let _socket = ClientSocketBuilder::<
-                    StaticByteBuffer,
-                    DefaultExecutor,
-                    DefaultClientConnectionHandler,
-                >::new(certificate, DefaultClientConnectionHandler)
-                .with_flow_config(addr, FlowConfig::random(&settings))
-                .with_settings(settings)
-                .build()
-                .await
-                .expect("client handshake");
+                let _socket = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DefaultClientConnectionHandler>::new(certificate, DefaultClientConnectionHandler).with_flow_config(addr, FlowConfig::random(&settings)).with_settings(settings).build().await.expect("client handshake");
             }
         });
     });
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_mceliece,
-    bench_x25519,
-    bench_ed25519,
-    bench_handshake_e2e,
-);
+criterion_group!(benches, bench_mceliece, bench_x25519, bench_ed25519, bench_handshake_e2e,);
 criterion_main!(benches);
