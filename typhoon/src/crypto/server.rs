@@ -161,7 +161,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
     /// Deobfuscate received tailor (fast mode: decrypt with shared OBFS key, defer verification).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub(crate) fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer, pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
-        Ok(self.shared_obfs_decryptor.decrypt_no_verify(ciphertext, pool))
+        self.shared_obfs_decryptor.decrypt_no_verify(ciphertext, pool)
     }
 
     /// Deobfuscate received tailor (full mode: decrypt with server's X25519 secret).

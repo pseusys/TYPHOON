@@ -181,18 +181,20 @@ impl Symmetric {
         Ok(plaintext.append(&nonce).append(&result))
     }
 
+    /// Split a deferred-verification ciphertext into plaintext + auth transcript.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub(crate) fn decrypt_no_verify(&mut self, ciphertext_authenticated: DynamicByteBuffer, pool: &BytePool) -> (DynamicByteBuffer, ObfuscationTranscript) {
-        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_ADDITIONAL_AUTH_LEN);
+    pub(crate) fn decrypt_no_verify(&mut self, ciphertext_authenticated: DynamicByteBuffer, pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+        let split_at = ciphertext_authenticated.len().checked_sub(SYMMETRIC_ADDITIONAL_AUTH_LEN).ok_or_else(|| CryptoError::authentication_error("ciphertext shorter than auth-tag length"))?;
+        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(split_at);
         let ciphertext_copy = pool.allocate_precise_from_slice_with_capacity(ciphertext_with_nonce.slice(), 0, 0);
         let plaintext = decrypt_anonymously(&self.encryption_key, &mut ciphertext_with_nonce);
-        (
+        Ok((
             plaintext,
             ObfuscationTranscript {
                 ciphertext_copy,
                 auth_transcript: authentication,
             },
-        )
+        ))
     }
 
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
@@ -208,10 +210,12 @@ impl Symmetric {
     }
 
     /// Decrypt and verify authentication tag. Args: nonce || ciphertext || tag. Returns: plaintext.
-    /// Verifies MAC over the ciphertext before decrypting; no copy or pool allocation needed.
+    /// Verifies MAC over the ciphertext before decrypting; no copy or pool
+    /// allocation needed.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub(crate) fn decrypt_auth<A: ByteBuffer>(&mut self, ciphertext_authenticated: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
-        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_ADDITIONAL_AUTH_LEN);
+        let split_at = ciphertext_authenticated.len().checked_sub(SYMMETRIC_ADDITIONAL_AUTH_LEN).ok_or_else(|| CryptoError::authentication_error("ciphertext shorter than auth-tag length"))?;
+        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(split_at);
         let hash = match additional_data {
             Some(res) => Hasher::new_keyed(&self.verification_key).update(ciphertext_with_nonce.slice()).update(res.slice()).finalize(),
             None => keyed_hash(&self.verification_key, ciphertext_with_nonce.slice()),
@@ -225,6 +229,9 @@ impl Symmetric {
     /// Decrypt and verify authentication tag. Args: nonce || ciphertext || tag. Returns: plaintext.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub(crate) fn decrypt_auth<A: ByteBuffer>(&mut self, ciphertext_authenticated: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
+        if ciphertext_authenticated.len() < SYMMETRIC_BUILT_IN_AUTH_LEN + NONCE_LEN {
+            return Err(CryptoError::authentication_error("ciphertext shorter than nonce+tag length"));
+        }
         let (ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_BUILT_IN_AUTH_LEN);
         let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf(ciphertext_with_nonce.len() - NONCE_LEN);
         let nonce_slice = nonce_bytes.slice();

@@ -100,7 +100,7 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
     /// Deobfuscate (decrypt) received tailor bytes.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer, pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
-        Ok(self.obfuscation_key.decrypt_no_verify(ciphertext, pool))
+        self.obfuscation_key.decrypt_no_verify(ciphertext, pool)
     }
 
     /// Deobfuscate (decrypt) received tailor bytes.
