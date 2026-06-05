@@ -201,6 +201,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     if notified.is_none() {
                         continue;
                     }
+                } else {
+                    debug!("server flow: non-handshake packet with unregistered identity from {source_addr}, forwarding to probe handler");
+                    self.probe_handler.lock().await.process(encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr)).await;
+                    continue;
                 }
             }
 
