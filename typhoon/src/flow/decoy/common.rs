@@ -5,6 +5,7 @@ mod tests;
 /// Shared state and utilities for decoy traffic communication modes.
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -249,8 +250,11 @@ pub trait DecoyCommunicationMode<T: IdentityType + Clone, AE: AsyncExecutor>: De
         without_generics.split("::").last().unwrap_or(without_generics)
     }
 
-    /// Create a new decoy provider; `fallthrough_probability` pins the per-flow fallthrough rate, `None` samples from the settings keys.
-    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, fallthrough_probability: Option<f64>) -> Self;
+    /// Create a new decoy provider; `counter` is the per-session monotonic packet-number
+    /// counter shared with the session manager and the health-check provider; every emitted
+    /// decoy packet advances it. `fallthrough_probability` pins the per-flow fallthrough rate,
+    /// `None` samples from the settings keys.
+    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self;
 }
 
 // ── DecoyState ──────────────────────────────────────────────────────────────
@@ -271,8 +275,9 @@ pub(crate) struct DecoyState<T: IdentityType + Clone, AE: AsyncExecutor> {
     previous_packet_time: Option<u128>,
     /// Maximum allowed length of decoy packets.
     pub(super) packet_length_cap: usize,
-    /// Incremental packet number counter.
-    packet_number: u64,
+    /// Per-session monotonic packet-number counter, shared with the session manager and the
+    /// health-check provider. Every emitted decoy advances it.
+    counter: Arc<AtomicU32>,
     /// Identity for decoy packets.
     identity: T,
     /// Next scheduled decoy time (milliseconds since epoch).
@@ -290,8 +295,10 @@ pub(crate) struct DecoyState<T: IdentityType + Clone, AE: AsyncExecutor> {
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
-    /// Build a fresh decoy state. `fallthrough_probability` pins the per-flow probability; `None` samples from `DECOY_FALLTHROUGH_PACKETS_{MIN,MAX}`.
-    pub(super) fn new(settings: Arc<Settings<AE>>, identity: T, fallthrough_probability: Option<f64>) -> Self {
+    /// Build a fresh decoy state. `counter` is the per-session monotonic PN counter shared
+    /// with the session manager and the health-check provider; `fallthrough_probability`
+    /// pins the per-flow probability, `None` samples from `DECOY_FALLTHROUGH_PACKETS_{MIN,MAX}`.
+    pub(super) fn new(settings: Arc<Settings<AE>>, identity: T, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self {
         let byte_rate_cap = settings.get(&DECOY_BYTE_RATE_CAP);
         let byte_rate_factor = settings.get(&DECOY_BYTE_RATE_FACTOR);
         let length_max = settings.get(&DECOY_LENGTH_MAX) as usize;
@@ -327,7 +334,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
             byte_budget: byte_rate_cap * byte_rate_factor / 2.0,
             previous_packet_time: None,
             packet_length_cap: length_max.max(length_min),
-            packet_number: 0,
+            counter,
             identity,
             next_decoy_time: now,
             pending_length: length_min,
@@ -382,11 +389,14 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
         ((self.reference_rate - self.packet_rate) / self.reference_rate).clamp(0.0, 1.0)
     }
 
-    /// Get next packet number and increment counter.
-    fn next_packet_number(&mut self) -> u64 {
-        self.packet_number += 1;
+    /// Bump the per-session counter and return the next packet number
+    /// (`timestamp_seconds << 32 | counter`). Decoy emissions share this counter with the
+    /// session manager and the health-check provider, so the resulting PN stream is monotonic
+    /// across every packet type the session produces.
+    fn next_packet_number(&self) -> u64 {
+        let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let timestamp = (unix_timestamp_ms() / 1000) as u32;
-        ((timestamp as u64) << 32) | self.packet_number
+        ((timestamp as u64) << 32) | counter as u64
     }
 
     /// Create a decoy packet with the given body length.

@@ -4,6 +4,7 @@ use std::future::Future;
 use std::hash::Hash;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Weak};
 
 use log::{debug, warn};
@@ -107,10 +108,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
     /// Register a per-user decoy provider and start its background timer.
     /// The user's crypto state must already be in the global SharedMap.
-    pub async fn register_user(self: &Arc<Self>, id: T) {
+    pub async fn register_user(self: &Arc<Self>, id: T, counter: Arc<AtomicU32>) {
         let weak: Weak<Self> = Arc::downgrade(self);
         let mgr: Weak<dyn DecoyFlowSender> = weak;
-        let mut dp = (self.decoy_factory)(mgr, self.settings.clone(), id.clone());
+        let mut dp = (self.decoy_factory)(mgr, self.settings.clone(), id.clone(), counter);
         dp.start().await;
         let decoy_name = dp.name();
         self.decoy_providers.write().await.insert(id.clone(), Arc::new(Mutex::new(dp)));
@@ -124,10 +125,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Called from the route task when a non-handshake packet from a known session arrives
     /// on a flow that has not yet seen this user. Registers both the source address and the
     /// decoy provider atomically so `send_packet` can never fire before the addr is known.
-    pub async fn ensure_user(self: &Arc<Self>, id: T, addr: SocketAddr) {
+    pub async fn ensure_user(self: &Arc<Self>, id: T, addr: SocketAddr, counter: Arc<AtomicU32>) {
         if !self.decoy_providers.read().await.contains_key(&id) {
             self.register_user_addr(id.clone(), addr).await;
-            self.register_user(id).await;
+            self.register_user(id, counter).await;
         }
     }
 

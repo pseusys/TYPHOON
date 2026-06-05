@@ -3,6 +3,7 @@
 mod tests;
 
 /// Health check provider implementing the decay cycle for connection liveness tracking.
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -58,8 +59,8 @@ pub(super) struct HealthState<T: IdentityType + Clone, AE: AsyncExecutor, CC: Cl
     smooth_rtt: Option<f64>,
     /// RTT variance in milliseconds.
     rtt_variance: Option<f64>,
-    /// Incremental packet number counter (lower 32 bits of PN).
-    incremental_counter: u32,
+    /// Per-session monotonic packet-number counter; shared with the session manager and the per-flow decoy providers so every emitter advances the same sequence.
+    counter: Arc<AtomicU32>,
     /// Current retry count.
     retry_count: u64,
     /// Timestamp when the last health check was sent.
@@ -84,12 +85,12 @@ pub(super) struct HealthState<T: IdentityType + Clone, AE: AsyncExecutor, CC: Cl
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> HealthState<T, AE, CC> {
-    fn new(settings: Arc<Settings<AE>>, crypto_tool: SharedValue<ClientCryptoTool<T>>, initial_data_generator: CC, response_rx: WatchReceiver<HealthResponse<T>>) -> Self {
+    fn new(settings: Arc<Settings<AE>>, crypto_tool: SharedValue<ClientCryptoTool<T>>, counter: Arc<AtomicU32>, initial_data_generator: CC, response_rx: WatchReceiver<HealthResponse<T>>) -> Self {
         Self {
             settings,
             smooth_rtt: None,
             rtt_variance: None,
-            incremental_counter: 0,
+            counter,
             retry_count: 0,
             last_sent_time: 0,
             last_sent_next_in: 0,
@@ -109,10 +110,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
     }
 
     /// Compute the next packet number: (unix_timestamp_seconds << 32) | incremental.
-    fn next_packet_number(&mut self) -> u64 {
-        self.incremental_counter += 1;
+    /// Uses the per-session shared counter, so every emitter on this session advances the same monotonic sequence.
+    fn next_packet_number(&self) -> u64 {
+        let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let timestamp = (unix_timestamp_ms() / 1000) as u32;
-        ((timestamp as u64) << 32) | (self.incremental_counter as u64)
+        ((timestamp as u64) << 32) | (counter as u64)
     }
 
     /// Compute a random next_in delay, clamped to configured bounds.
@@ -244,9 +246,10 @@ pub struct ClientHealthProvider<T: IdentityType + Clone + 'static, AE: AsyncExec
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync, CC: ClientConnectionHandler + 'static> ClientHealthProvider<T, AE, SM, CC> {
-    /// Create a new health provider with pre-created channel senders.
-    pub fn new(manager: Weak<SM>, settings: Arc<Settings<AE>>, state_crypto: SharedValue<ClientCryptoTool<T>>, response_tx: WatchSender<HealthResponse<T>>, shadowride_tx: WatchSender<()>, response_rx: WatchReceiver<HealthResponse<T>>, initial_data_generator: CC) -> Self {
-        let state = Arc::new(Mutex::new(HealthState::new(settings.clone(), state_crypto, initial_data_generator, response_rx)));
+    /// Create a new health provider with pre-created channel senders. `counter` is the
+    /// per-session monotonic PN counter shared with the session manager and per-flow decoy providers.
+    pub fn new(manager: Weak<SM>, settings: Arc<Settings<AE>>, state_crypto: SharedValue<ClientCryptoTool<T>>, counter: Arc<AtomicU32>, response_tx: WatchSender<HealthResponse<T>>, shadowride_tx: WatchSender<()>, response_rx: WatchReceiver<HealthResponse<T>>, initial_data_generator: CC) -> Self {
+        let state = Arc::new(Mutex::new(HealthState::new(settings.clone(), state_crypto, counter, initial_data_generator, response_rx)));
         Self {
             manager,
             state,

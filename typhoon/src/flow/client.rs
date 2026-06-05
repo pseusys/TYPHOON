@@ -2,6 +2,7 @@
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Weak};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
@@ -34,7 +35,7 @@ pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor> {
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowManager<T, AE> {
     /// Create a new client flow manager.
-    pub(crate) async fn new(config: FlowConfig, mut cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, sock: Socket, probe_factory: Option<&ProbeFactory<AE>>, decoy_factory: &DecoyFactory<T, AE>, addr: SocketAddr) -> Result<Arc<Self>, FlowControllerError> {
+    pub(crate) async fn new(config: FlowConfig, mut cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, sock: Socket, probe_factory: Option<&ProbeFactory<AE>>, decoy_factory: &DecoyFactory<T, AE>, counter: Arc<AtomicU32>, addr: SocketAddr) -> Result<Arc<Self>, FlowControllerError> {
         let identity = cipher.get_mut().map_err(FlowControllerError::MissingCache)?.identity();
         let send_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
         let receive_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
@@ -43,7 +44,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowM
 
         let manager_ref = Arc::new_cyclic(|m: &Weak<ClientFlowManager<T, AE>>| {
             let mgr: Weak<dyn DecoyFlowSender> = m.clone();
-            let decoy = decoy_factory(mgr, settings.clone(), identity);
+            let decoy = decoy_factory(mgr, settings.clone(), identity, counter);
             let probe_handler: Box<dyn ActiveProbeHandler<AE>> = match &handler_factory {
                 Some(f) => f(),
                 None => Box::new(NoopProbeHandler),

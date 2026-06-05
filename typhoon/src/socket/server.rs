@@ -416,7 +416,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         };
 
         if let Some(session) = session {
-            self.flows[flow_index].ensure_user(identity.clone(), raw_packet.source_addr).await;
+            self.flows[flow_index].ensure_user(identity.clone(), raw_packet.source_addr, session.counter()).await;
             session.note_active_flow(flow_index);
 
             let incoming = IncomingPacket {
@@ -494,7 +494,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         }
 
         self.flows[flow_index].register_user_addr(identity.clone(), raw_packet.source_addr).await;
-        self.flows[flow_index].register_user(identity.clone()).await;
+        self.flows[flow_index].register_user(identity.clone(), session.counter()).await;
 
         if let Err(err) = self.flows[flow_index].send_packet(response_packet, false, false).await {
             warn!("failed to send handshake response: {err}");

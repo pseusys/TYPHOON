@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 
 use log::{debug, info};
 use rand::Rng;
@@ -132,6 +133,9 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
         let tailor_wire_len = T::length() + ClientCryptoTool::<T>::tailor_overhead();
         let mut max_data_payload = usize::MAX;
 
+        // Per-session monotonic packet-number counter, created before the flow managers so it can be shared with every decoy provider, the session manager, and the health-check provider — every emitter on this session advances the same sequence.
+        let counter = Arc::new(AtomicU32::new(0));
+
         let mut flows = Vec::with_capacity(addr_configs.len());
         for (addr, config) in addr_configs {
             config.assert(settings.mtu()).map_err(ClientSocketError::FlowError)?;
@@ -140,7 +144,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
 
             let sock = Socket::new(addr, None).await.map_err(ClientSocketError::SocketError)?;
             let cipher_cache = cipher.create_cache();
-            let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock, self.probe_factory.as_ref(), &self.decoy_factory, addr).await.map_err(ClientSocketError::FlowError)?;
+            let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock, self.probe_factory.as_ref(), &self.decoy_factory, Arc::clone(&counter), addr).await.map_err(ClientSocketError::FlowError)?;
             flows.push(flow);
         }
         let max_data_payload = if max_data_payload == usize::MAX {
@@ -155,7 +159,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
         }
         info!("client socket built: max_data_payload={}B (mtu={}B, {} flow(s))", max_data_payload, settings.mtu(), flows.len());
 
-        let session = ClientSessionManager::new(cipher, flows, settings.clone(), self.initial_data_generator).map_err(ClientSocketError::SessionError)?;
+        let session = ClientSessionManager::new(cipher, flows, settings.clone(), counter, self.initial_data_generator).map_err(ClientSocketError::SessionError)?;
 
         let (incoming_tx, incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
 

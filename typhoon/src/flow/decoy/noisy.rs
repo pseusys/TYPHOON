@@ -1,4 +1,5 @@
 /// Noisy mode: sends smaller decoy packets in bursts often, resembling web or socket traffic.
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -134,8 +135,8 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyCommunicationMode<T, AE> for NoisyDecoyProvider<T, AE> {
-    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, fallthrough_probability: Option<f64>) -> Self {
-        let state = DecoyState::new(settings.clone(), identity, fallthrough_probability);
+    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self {
+        let state = DecoyState::new(settings.clone(), identity, counter, fallthrough_probability);
         let delay = Self::calculate_delay(&state);
         let length = Self::calculate_length(&state);
         let mut state = state;

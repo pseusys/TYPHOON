@@ -52,7 +52,8 @@ pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToS
     identity: T,
     /// Lock-free bitmask of flow indices from which this client has been seen.
     active_flows: AtomicBitSet,
-    incremental_counter: AtomicU32,
+    /// Per-session monotonic packet-number counter; shared with the health-check provider and every flow manager's decoy provider for this user so the PN stream is single-sequence across data, health-check, decoy, and termination packets.
+    counter: Arc<AtomicU32>,
     incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
     router: StdWeak<dyn OutgoingRouter<T>>,
     settings: Arc<Settings<AE>>,
@@ -91,7 +92,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
             crypto_recv,
             identity,
             active_flows: AtomicBitSet::new(num_flows),
-            incremental_counter: AtomicU32::new(0),
+            counter: Arc::new(AtomicU32::new(0)),
             incoming_tx,
             router,
             settings,
@@ -99,6 +100,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         });
 
         Ok((session, response_packet))
+    }
+
+    /// Per-session monotonic packet-number counter, shared with the health-check provider and per-flow decoy providers.
+    pub fn counter(&self) -> Arc<AtomicU32> {
+        Arc::clone(&self.counter)
     }
 
     /// Mark `flow_index` as active for this session (lock-free, no bounds limit).
@@ -129,7 +135,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
 
     /// Get the next packet number: (unix_timestamp_seconds << 32) | incremental.
     fn next_packet_number(&self) -> u64 {
-        let counter = self.incremental_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let timestamp = (unix_timestamp_ms() / 1000) as u32;
         ((timestamp as u64) << 32) | (counter as u64)
     }

@@ -1,4 +1,5 @@
 /// Simple mode: no-op decoy provider that passes packets through without generating any decoy traffic.
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
@@ -31,7 +32,7 @@ impl DecoyProvider for SimpleDecoyProvider {
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyCommunicationMode<T, AE> for SimpleDecoyProvider {
-    fn new(_manager: Weak<dyn DecoyFlowSender>, _settings: Arc<Settings<AE>>, _identity: T, _fallthrough_probability: Option<f64>) -> Self {
+    fn new(_manager: Weak<dyn DecoyFlowSender>, _settings: Arc<Settings<AE>>, _identity: T, _counter: Arc<AtomicU32>, _fallthrough_probability: Option<f64>) -> Self {
         Self
     }
 }

@@ -39,7 +39,8 @@ pub struct ClientSessionManager<T: IdentityType + Clone + 'static, AE: AsyncExec
     health_provider: ClientHealthProvider<T, AE, Self, CC>,
     send_internal: Mutex<ClientSessionManagerInternalSend<T>>,
     receive_internal: Mutex<ClientSessionManagerInternalReceive<T>>,
-    incremental_counter: AtomicU32,
+    /// Per-session monotonic packet-number counter; shared with the health-check provider and every flow manager's decoy provider so the PN stream is single-sequence across data, health-check, handshake, decoy, and termination packets.
+    counter: Arc<AtomicU32>,
     flows: Vec<FM>,
     settings: Arc<Settings<AE>>,
     /// Persistent per-flow receive futures and their flow indices, reused across `receive_packet` calls.
@@ -49,7 +50,7 @@ pub struct ClientSessionManager<T: IdentityType + Clone + 'static, AE: AsyncExec
 impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send + Sync, CC: ClientConnectionHandler + 'static> ClientSessionManager<T, AE, FM, CC> {
     /// Create a new client session manager without starting the handshake.
     /// Call `start()` after the background receive loop is running.
-    pub fn new(cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>, initial_data_generator: CC) -> Result<Arc<Self>, SessionControllerError> {
+    pub fn new(cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>, counter: Arc<AtomicU32>, initial_data_generator: CC) -> Result<Arc<Self>, SessionControllerError> {
         let send_cipher = cipher.create_sibling();
         let receive_cipher = cipher.create_sibling();
         let health_state_crypto = cipher.create_sibling();
@@ -58,7 +59,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
         let (shadowride_tx, _) = create_watch();
 
         let value = Arc::new_cyclic(|weak| {
-            let health_provider = ClientHealthProvider::new(weak.clone(), settings.clone(), health_state_crypto, response_tx, shadowride_tx, response_rx, initial_data_generator);
+            let health_provider = ClientHealthProvider::new(weak.clone(), settings.clone(), health_state_crypto, Arc::clone(&counter), response_tx, shadowride_tx, response_rx, initial_data_generator);
 
             ClientSessionManager {
                 health_provider,
@@ -68,7 +69,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
                 receive_internal: Mutex::new(ClientSessionManagerInternalReceive {
                     cipher: receive_cipher,
                 }),
-                incremental_counter: AtomicU32::new(0),
+                counter,
                 flows,
                 settings,
                 recv_state: Mutex::new(None),
@@ -91,7 +92,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
     }
 
     fn next_packet_number(&self) -> u64 {
-        let counter = self.incremental_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let timestamp = (crate::utils::unix_timestamp_ms() / 1000) as u32;
         ((timestamp as u64) << 32) | (counter as u64)
     }
