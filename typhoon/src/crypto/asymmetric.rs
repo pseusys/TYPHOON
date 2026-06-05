@@ -44,6 +44,7 @@ const SERVER_HANDSHAKE_HEADER_SIZE: usize = X25519_KEY_LENGTH + Signature::BYTE_
 const INITIAL_DATA_KEY: &str = "initial data obfuscation key";
 const CLIENT_HANDSHAKE_OBFUSCATION_KEY: &str = "handshake client obfuscation key";
 const SERVER_HANDSHAKE_OBFUSCATION_KEY: &str = "handshake server obfuscation key";
+const HANDSHAKE_TRANSCRIPT_KEY: &str = "handshake transcript key";
 const SESSION_KEY: &str = "session key";
 
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
@@ -121,7 +122,7 @@ impl ClientCertificate {
 
         let transcript_signed_bytes: [u8; Signature::BYTE_SIZE] = (&transcript_signed).into();
         let transcript_signed = Signature::from_bytes(&transcript_signed_bytes);
-        let transcript = Hasher::new().update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(data.nonce.slice()).update(nonce.slice()).finalize();
+        let transcript = Hasher::new_keyed(&hash_derive_key_context(HANDSHAKE_TRANSCRIPT_KEY)).update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(data.nonce.slice()).update(nonce.slice()).finalize();
         if let Err(err) = self.vpk.verify_strict(transcript.as_bytes(), &transcript_signed) {
             return Err(HandshakeError::handshake_authentication_error(&format!("server identity verification error: {err}")));
         }
@@ -220,7 +221,7 @@ impl ServerSecret<'_> {
         let mut ephemeral_public = pool.allocate_precise_from_array_with_capacity(&PublicKey::from(&ephemeral_secret).to_bytes(), 0, ANONYMOUS_NONCE_LEN);
         let shared_secret = ephemeral_secret.diffie_hellman(&data.ephemeral_key);
 
-        let transcript = Hasher::new().update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(data.nonce.slice()).update(nonce.slice()).finalize();
+        let transcript = Hasher::new_keyed(&hash_derive_key_context(HANDSHAKE_TRANSCRIPT_KEY)).update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(data.nonce.slice()).update(nonce.slice()).finalize();
         let transcript_signed = self.vsk.sign(transcript.as_bytes());
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(SERVER_HANDSHAKE_OBFUSCATION_KEY)).update(self.obfuscation_buffer().slice()).update(nonce.slice()).finalize();
