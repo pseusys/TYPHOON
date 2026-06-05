@@ -169,7 +169,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     }
                 };
                 let tailor = Tailor::<T>::new(tailor_buf);
-                if !tailor.flags().is_discardable() && !tailor.flags().contains(PacketFlags::HANDSHAKE) {
+                if !tailor.flags().contains(PacketFlags::HANDSHAKE) {
                     let identity = tailor.identity();
                     if let Err(err) = crypto.verify_tailor(&identity, transcript).await {
                         debug!("error verifying packet tailor: {err}");
