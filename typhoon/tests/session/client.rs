@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use crate::bytes::{ByteBufferMut, DynamicByteBuffer, FixedByteBuffer, StaticByteBuffer};
@@ -77,7 +78,7 @@ fn make_termination_packet(settings: &Arc<Settings<DefaultExecutor>>) -> Dynamic
 /// Build a `ClientSessionManager` with the given mock flows.
 async fn make_session(settings: Arc<Settings<DefaultExecutor>>, flows: Vec<Arc<MockFlowManager>>) -> Arc<ClientSessionManager<StaticByteBuffer, DefaultExecutor, Arc<MockFlowManager>, DefaultClientConnectionHandler>> {
     let cipher = make_crypto(&settings);
-    ClientSessionManager::new(cipher, flows, settings, DefaultClientConnectionHandler).expect("ClientSessionManager::new must succeed")
+    ClientSessionManager::new(cipher, flows, settings, Arc::new(AtomicU32::new(0)), DefaultClientConnectionHandler).expect("ClientSessionManager::new must succeed")
 }
 
 // ── receive_packet tests ───────────────────────────────────────────────────────
