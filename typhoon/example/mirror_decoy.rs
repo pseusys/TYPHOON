@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 /// Mirror-decoy example: asymmetric decoy strategies on client and server.
 ///
 /// Demonstrates how to wire a **custom** `DecoyProvider` server-side while the client
@@ -18,7 +19,7 @@
 /// To generate the flow plot:
 ///   poe plot --example mirror_decoy
 use std::sync::{Arc, Weak};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "async-std")]
 use async_io::Timer;
@@ -61,7 +62,27 @@ struct MirrorDecoyProvider<T: IdentityType + Clone, AE: AsyncExecutor> {
     manager: Weak<dyn DecoyFlowSender>,
     settings: Arc<Settings<AE>>,
     identity: T,
-    packet_number: u64,
+    counter: Arc<AtomicU32>,
+    fallthrough_probability: f64,
+}
+
+impl<T: IdentityType + Clone, AE: AsyncExecutor> MirrorDecoyProvider<T, AE> {
+    fn next_packet_number(&self) -> u64 {
+        let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        let now_millis = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis();
+        let timestamp = (now_millis / 1000) as u32;
+        ((timestamp as u64) << 32) | counter as u64
+    }
+
+    fn should_fallthrough(&self) -> bool {
+        if self.fallthrough_probability <= 0.0 {
+            false
+        } else if self.fallthrough_probability >= 1.0 {
+            true
+        } else {
+            rand::thread_rng().r#gen::<f64>() < self.fallthrough_probability
+        }
+    }
 }
 
 #[async_trait]
@@ -79,10 +100,9 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
             let total = len + TAILOR_LENGTH + T::length();
             let buf = self.settings.pool().allocate(Some(total));
             rand::thread_rng().fill(buf.slice_end_mut(len));
-            self.packet_number += 1;
-            Tailor::decoy(buf.rebuffer_start(len), &self.identity, self.packet_number);
+            Tailor::decoy(buf.rebuffer_start(len), &self.identity, self.next_packet_number());
             if let Some(mgr) = self.manager.upgrade() {
-                if let Err(err) = mgr.send_decoy_packet(buf, false).await {
+                if let Err(err) = mgr.send_decoy_packet(buf, self.should_fallthrough(), false).await {
                     warn!("MirrorDecoyProvider: send failed: {err:?}");
                 }
             }
@@ -96,12 +116,13 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyCommunicationMode<T, AE> for MirrorDecoyProvider<T, AE> {
-    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, _fallthrough_probability: Option<f64>) -> Self {
+    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self {
         Self {
             manager,
             settings,
             identity,
-            packet_number: 0,
+            counter,
+            fallthrough_probability: fallthrough_probability.unwrap_or(0.5),
         }
     }
 }

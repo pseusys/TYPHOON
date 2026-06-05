@@ -27,8 +27,9 @@
 /// To generate the flow plot:
 ///   poe plot --example flat_iat_decoy
 use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "async-std")]
 use async_io::Timer;
@@ -92,14 +93,32 @@ struct FlatIatState {
     /// packet.  The PN is stashed alongside the buffer so the timer task can
     /// mark it in `reinjected` without re-parsing the tailor.
     queue: VecDeque<(u64, DynamicByteBuffer)>,
-    /// Decoy packet-number counter — only incremented for synthesised decoys
-    /// (re-injected real packets carry their original PN inside the tailor).
-    packet_number: u64,
     /// PNs of real packets currently being re-injected via `send_decoy_packet`.
     /// `feed_output` consults this set to distinguish a re-injection (pass
     /// straight through) from a fresh app-level send (queue and drop).
     /// Without this guard, every re-injection would loop back into the queue.
     reinjected: HashSet<u64>,
+    counter: Arc<AtomicU32>,
+    fallthrough_probability: f64,
+}
+
+impl FlatIatState {
+    fn next_packet_number(&self) -> u64 {
+        let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        let now_millis = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis();
+        let timestamp = (now_millis / 1000) as u32;
+        ((timestamp as u64) << 32) | counter as u64
+    }
+
+    fn should_fallthrough(&self) -> bool {
+        if self.fallthrough_probability <= 0.0 {
+            false
+        } else if self.fallthrough_probability >= 1.0 {
+            true
+        } else {
+            rand::thread_rng().r#gen::<f64>() < self.fallthrough_probability
+        }
+    }
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlatIatDecoyProvider<T, AE> {
@@ -117,9 +136,9 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlatIatDeco
             // PN is recorded in `reinjected` *before* send_decoy_packet runs,
             // so the re-entrant feed_output call later sees the marker and
             // passes the packet through instead of looping it back into the queue.
-            let packet = {
+            let (packet, fallthrough) = {
                 let mut guard = state.lock().expect("FlatIatDecoyProvider mutex poisoned");
-                if let Some((pn, real_packet)) = guard.queue.pop_front() {
+                let packet = if let Some((pn, real_packet)) = guard.queue.pop_front() {
                     guard.reinjected.insert(pn);
                     real_packet
                 } else {
@@ -127,13 +146,13 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlatIatDeco
                     let total = body_len + TAILOR_LENGTH + T::length();
                     let buf = settings.pool().allocate(Some(total));
                     rand::thread_rng().fill(buf.slice_end_mut(body_len));
-                    guard.packet_number += 1;
-                    Tailor::decoy(buf.rebuffer_start(body_len), &identity, guard.packet_number);
+                    Tailor::decoy(buf.rebuffer_start(body_len), &identity, guard.next_packet_number());
                     buf
-                }
+                };
+                (packet, guard.should_fallthrough())
             };
 
-            if let Err(err) = manager_arc.send_decoy_packet(packet, false).await {
+            if let Err(err) = manager_arc.send_decoy_packet(packet, fallthrough, false).await {
                 warn!("FlatIatDecoyProvider: send failed: {err:?}");
             }
         }
@@ -161,11 +180,11 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 
     async fn feed_output(&mut self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         let flags = PacketFlags::from_bits_truncate(*tailor_buf.get(FG_OFFSET));
-        // Pass decoy / service / termination packets through unchanged; only
+        // Pass decoy / termination packets through unchanged; only
         // buffer real DATA.  Terminations especially must not queue: the
         // session-cleanup task sends termination then removes the user, so a
         // queued termination would be stranded when the next timer tick fires.
-        if flags.is_discardable() || flags.is_service() || flags.is_termination() {
+        if flags.is_discardable() || flags.is_termination() {
             return Some(body);
         }
         let pn_bytes: [u8; 8] = tailor_buf.slice()[PN_OFFSET..PN_OFFSET + 8].try_into().expect("8-byte PN");
@@ -189,15 +208,16 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyCommunicationMode<T, AE> for FlatIatDecoyProvider<T, AE> {
-    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, _fallthrough_probability: Option<f64>) -> Self {
+    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self {
         Self {
             manager,
             settings,
             identity,
             state: Arc::new(Mutex::new(FlatIatState {
                 queue: VecDeque::new(),
-                packet_number: 0,
                 reinjected: HashSet::new(),
+                counter,
+                fallthrough_probability: fallthrough_probability.unwrap_or(0.5),
             })),
         }
     }
