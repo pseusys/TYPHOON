@@ -24,8 +24,10 @@ cfg_if! {
 
 /// Trait for managing packet flow with encryption and decoy traffic.
 pub(crate) trait FlowManager {
-    /// Send a packet through the flow manager. `fallthrough` is set only by fallthrough decoys and skips the tailor step in `prepare_outgoing`; all other callers pass `false`.
-    fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool) -> impl Future<Output = Result<(), FlowControllerError>> + Send;
+    /// Send a packet through the flow manager.
+    /// * `fallthrough` is set only by fallthrough decoys and skips the tailor step in `prepare_outgoing`; all other callers pass `false`.
+    /// * `is_maintenance` is `true` for maintenance-sub-stream decoy packets and selects the `FakeBodyMode::Random { service: true }` emission at the fake-body stage; all non-decoy callers and non-maintenance decoy callers pass `false`.
+    fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> impl Future<Output = Result<(), FlowControllerError>> + Send;
 
     /// Receive a packet from the flow manager.
     #[cfg(feature = "client")]
@@ -33,8 +35,8 @@ pub(crate) trait FlowManager {
 }
 
 impl<T: FlowManager + Send + Sync> FlowManager for Arc<T> {
-    fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool) -> impl Future<Output = Result<(), FlowControllerError>> + Send {
-        (**self).send_packet(packet, fallthrough)
+    fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> impl Future<Output = Result<(), FlowControllerError>> + Send {
+        (**self).send_packet(packet, fallthrough, is_maintenance)
     }
 
     #[cfg(feature = "client")]
@@ -87,8 +89,10 @@ pub(crate) enum ProcessIncomingResult {
 
 #[cfg(feature = "client")]
 impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
-    /// Encrypt tailor, add fake header and body, return assembled packet ready for socket send. When `fallthrough` is set, the trailing plaintext tailor bytes are dropped and the tailor-encryption step is skipped — only fake header / body padding is added on top of the body.
-    pub(crate) fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &crate::bytes::BytePool, fallthrough: bool) -> Result<DynamicByteBuffer, FlowControllerError> {
+    /// Encrypt tailor, add fake header and body, return assembled packet ready for socket send.
+    /// * When `fallthrough` is set, the trailing plaintext tailor bytes are dropped and the tailor-encryption step is skipped --- only fake header / body padding is added on top of the body.
+    /// * When `is_maintenance` is set, the `FakeBodyMode::Random { service: true }` body is emitted on this packet (and only then); all other callers pass `false`.
+    pub(crate) fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &crate::bytes::BytePool, fallthrough: bool, is_maintenance: bool) -> Result<DynamicByteBuffer, FlowControllerError> {
         let identity_len = <CP::Identity as IdentityType>::length();
         let full_tailor_len = TAILOR_LENGTH + identity_len;
 
@@ -109,7 +113,7 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
         };
 
         let fake_header_len = self.config.fake_header_mode.len();
-        let full_packet_len = fake_header_len + self.config.fake_body_mode.get_length(mtu, fake_header_len + encrypted_packet.len(), packet_flags.is_service());
+        let full_packet_len = fake_header_len + self.config.fake_body_mode.get_length(mtu, fake_header_len + encrypted_packet.len(), is_maintenance);
         // before_capacity >= max_overhead() >= full_packet_len, so expand_start always succeeds.
         let full_packet = encrypted_packet.expand_start(full_packet_len);
 
@@ -119,10 +123,10 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
         self.capture.record_send(|| {
             let kind = if fallthrough {
                 "DecoyFallthrough"
+            } else if is_maintenance {
+                "DecoyMaintenance"
             } else if packet_flags.is_discardable() {
                 "Decoy"
-            } else if packet_flags.is_service() {
-                "Service"
             } else {
                 "Data"
             };

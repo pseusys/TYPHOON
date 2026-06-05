@@ -37,12 +37,6 @@ impl PacketFlags {
 
     /// Check if this packet should be discarded by flow manager (decoy).
     #[inline]
-    pub fn is_service(&self) -> bool {
-        self.intersects(Self::HANDSHAKE | Self::HEALTH_CHECK)
-    }
-
-    /// Check if this packet should be discarded by flow manager (decoy).
-    #[inline]
     pub fn is_discardable(&self) -> bool {
         self.contains(Self::DECOY)
     }

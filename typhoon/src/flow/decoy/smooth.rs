@@ -83,7 +83,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> SmoothDecoyProvider<T, AE> {
                     drop(state_guard);
 
                     let body_buf = should_rep.then(|| settings.pool().allocate_precise_from_slice_with_capacity(decoy_packet.slice_end(decoy_length), 0, 0));
-                    if let Err(err) = manager_arc.send_decoy_packet(decoy_packet, fallthrough).await {
+                    if let Err(err) = manager_arc.send_decoy_packet(decoy_packet, fallthrough, false).await {
                         warn!("SmoothDecoyProvider: failed to send decoy packet: {err:?}");
                     } else if let Some(body) = body_buf {
                         try_replicate(&state, &manager, false, body).await;

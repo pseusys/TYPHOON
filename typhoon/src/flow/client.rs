@@ -80,7 +80,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ProbeFlowSe
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager for ClientFlowManager<T, AE> {
-    async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool) -> Result<(), FlowControllerError> {
+    async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Result<(), FlowControllerError> {
         let tailor_len = TAILOR_LENGTH + T::length();
         let (body, tailor_buf) = packet.split_buf(packet.len() - tailor_len);
 
@@ -93,7 +93,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager
         };
 
         let mut lock = self.send_internal.lock().await;
-        let full_packet = lock.prepare_outgoing(notified_body.expand_end(tailor_buf.len()), self.mtu, self.settings.pool(), fallthrough)?;
+        let full_packet = lock.prepare_outgoing(notified_body.expand_end(tailor_buf.len()), self.mtu, self.settings.pool(), fallthrough, is_maintenance)?;
         if full_packet.len() > 0 {
             self.sock.send(full_packet).await.map_err(FlowControllerError::SocketError)?;
         }

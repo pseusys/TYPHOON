@@ -25,7 +25,7 @@ use crate::weighted_random;
 pub enum FakeBodyMode {
     /// Empty: no fake body added.
     Empty,
-    /// Random: random bytes of random length (optionally service - only applied to service packets).
+    /// Random: random bytes of random length.
     Random {
         min_length: usize,
         max_length: usize,

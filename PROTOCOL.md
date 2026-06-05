@@ -178,14 +178,14 @@ It can be either empty, random or constant:
 
 - `empty`: body is always empty, `0` bytes length.
 - `random`: body length is random, it is bound between `TYPHOON_FAKE_BODY_LENGTH_MIN` and `TYPHOON_FAKE_BODY_LENGTH_MAX` constant values, making all the packets different in size.
-- `service`: same as `random`, but is only applied to [health check](#health-check-packets) and [handshake](#handshake-packets) packets.
+- `service`: same as `random`, but is applied **only to maintenance-sub-stream decoy packets** (see [maintenance mode](#maintenance-mode)). The intent is to pad the keep-alive-mimicking decoy sub-stream so it visually resembles the small-message service traffic of mimicked protocols, while keeping data and protocol-service packets at their cryptographic-minimum size.
 - `constant`: body length is selected **once at flow initialization** by sampling a value uniformly from `[TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MIN, TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MAX]` (both clamped to `[TYPHOON_FAKE_BODY_LENGTH_MIN, MTU]`), and the resulting constant is held for every packet in that flow. Different flows therefore land at different constants, while within a flow the wire size is stable. The body length depends on the lengths of the other packet parts and complements them to that per-flow constant.
 
 > Handling `constant` body length might not be trivial, as it imposes a strict limit on packet data contents length.
 > TYPHOON protocol specifically does not support data fragmentation, so `constant` body length just won't have any effect if real packet body length is not always strictly limited.
 > If the per-flow sampled value is so large that the fixed protocol overhead consumes the entire packet budget, leaving zero bytes for user data, the client socket builder will refuse to construct the socket and return an error.
 
-Fake body mode is chosen randomly using weights `TYPHOON_FAKE_BODY_WEIGHT_EMPTY`, `TYPHOON_FAKE_BODY_WEIGHT_RANDOM`, `TYPHOON_FAKE_BODY_WEIGHT_CONSTANT` and `TYPHOON_FAKE_BODY_WEIGHT_SERVICE` (all integer, default `1` each except `service` which defaults to `2` to preserve a moderate bias toward service-only padding).
+Fake body mode is chosen randomly using weights `TYPHOON_FAKE_BODY_WEIGHT_EMPTY`, `TYPHOON_FAKE_BODY_WEIGHT_RANDOM`, `TYPHOON_FAKE_BODY_WEIGHT_CONSTANT` and `TYPHOON_FAKE_BODY_WEIGHT_SERVICE` (all integer, default `1` each except `service` which defaults to `2` to preserve a moderate bias toward maintenance-decoy-only padding).
 
 ### Fake header
 
@@ -474,6 +474,8 @@ The maintenance mode can have these values:
 - `both`: the maintenance packets are sent, both their length and delays between them are fixed.
 
 Maintenance mode is chosen randomly using weights `TYPHOON_DECOY_MAINTENANCE_WEIGHT_NONE`, `TYPHOON_DECOY_MAINTENANCE_WEIGHT_RANDOM`, `TYPHOON_DECOY_MAINTENANCE_WEIGHT_TIMED`, `TYPHOON_DECOY_MAINTENANCE_WEIGHT_SIZED` and `TYPHOON_DECOY_MAINTENANCE_WEIGHT_BOTH` (all integer, default `1` each except `none` which defaults to `3` so a flow without maintenance traffic is the most common case).
+
+> Maintenance packets are the **only** packets on which [`service` fake body mode](#fake-body) emits a random body.
 
 #### Replication mode
 

@@ -210,13 +210,13 @@ where
 /// Object-safe interface used by decoy providers to dispatch generated packets.
 /// Implemented automatically for every `FlowManager + Send + Sync` type.
 pub trait DecoyFlowSender: Send + Sync {
-    /// Send a generated decoy packet through the flow manager.  `fallthrough` skips the tailor step (see `FlowManager::send_packet`).
-    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>>;
+    /// Send a generated decoy packet through the flow manager. `fallthrough` skips the tailor step (see `FlowManager::send_packet`).
+    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>>;
 }
 
 impl<T: FlowManager + Send + Sync> DecoyFlowSender for T {
-    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>> {
-        Box::pin(self.send_packet(packet, fallthrough))
+    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>> {
+        Box::pin(self.send_packet(packet, fallthrough, is_maintenance))
     }
 }
 
@@ -570,7 +570,7 @@ where
 
         debug!("Maintenance: generated packet (len={body_length})");
 
-        if let Err(err) = manager_arc.send_decoy_packet(packet, fallthrough).await {
+        if let Err(err) = manager_arc.send_decoy_packet(packet, fallthrough, true).await {
             warn!("Maintenance: failed to send: {err:?}");
         } else if let Some(body) = body_buf {
             try_replicate(&state, &manager, true, body).await;
@@ -624,7 +624,7 @@ where
                 (replica, guard.should_fallthrough())
             };
 
-            if manager_arc.send_decoy_packet(packet, fallthrough).await.is_err() {
+            if manager_arc.send_decoy_packet(packet, fallthrough, is_maintenance).await.is_err() {
                 break;
             }
 

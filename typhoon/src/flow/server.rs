@@ -235,7 +235,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> FlowManager for ServerFlowManager<T, AE> {
-    async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool) -> Result<(), FlowControllerError> {
+    async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Result<(), FlowControllerError> {
         let identity_len = T::length();
         let tailor_len = identity_len + TAILOR_LENGTH;
         let (body, tailor_buf) = packet.split_buf(packet.len() - tailor_len);
@@ -284,7 +284,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let (full_packet, cap_header, cap_body) = {
             let mut mode = self.fake_header_mode.lock().await;
             let fake_header_len = mode.len();
-            let body_len = self.fake_body_mode.get_length(self.mtu, fake_header_len + encrypted_packet.len(), packet_flags.is_service());
+            let body_len = self.fake_body_mode.get_length(self.mtu, fake_header_len + encrypted_packet.len(), is_maintenance);
             let full_packet_len = fake_header_len + body_len;
             let full_packet = encrypted_packet.expand_start(full_packet_len);
             mode.fill(full_packet.rebuffer_end(fake_header_len));
@@ -300,10 +300,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         record_server_send(addr, || {
             let kind = if fallthrough {
                 "DecoyFallthrough"
+            } else if is_maintenance {
+                "DecoyMaintenance"
             } else if packet_flags.is_discardable() {
                 "Decoy"
-            } else if packet_flags.is_service() {
-                "Service"
             } else {
                 "Data"
             };
