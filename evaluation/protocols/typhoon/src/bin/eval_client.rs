@@ -324,12 +324,7 @@ async fn main() {
         DefaultClientConnectionHandler,
     >::new(certificate.clone(), DefaultClientConnectionHandler)
     .with_settings(settings.clone());
-    // Pin every tuned-profile flow to a concrete decoy provider so the eval
-    // measures a known traffic shape: SimpleDecoyProvider (no decoys) for most
-    // profiles, SparseDecoyProvider for QUIC profiles (supplies the ACK-sized
-    // small-packet mode the chunk-driven data path can't reach).  raw_default
-    // skips pinning so the random per-flow draws run as they would in
-    // pure-protocol use.
+
     if !profile.is_unrestricted() {
         if is_quic {
             builder = builder.with_decoy::<SparseDecoyProvider<ShortIdentity, DefaultExecutor>>();
@@ -369,18 +364,28 @@ async fn main() {
         None
     };
 
-    let sent = match send_handle {
+    let had_send = send_handle.is_some();
+    let had_recv = recv_handle.is_some();
+    let (sent, total_sleep_s) = match send_handle {
         Some(h) => h.await.expect("c2s join"),
-        None => 0,
+        None => (0, 0.0),
     };
     let received = match recv_handle {
         Some(h) => h.await.expect("s2c join"),
         None => 0,
     };
 
+    if !had_send && !had_recv {
+        let now = Instant::now();
+        if deadline > now {
+            sleep(deadline - now).await;
+        }
+    }
+
     let elapsed_s = transfer_start.elapsed().as_secs_f64();
+    let transfer_time_s = (elapsed_s - total_sleep_s).max(0.0);
     println!("Sent {sent} bytes c2s, received {received} bytes s2c — done");
-    println!("transfer_time_s={elapsed_s:.3}");
+    println!("transfer_time_s={transfer_time_s:.3}");
     exit(0);
 }
 
@@ -395,34 +400,37 @@ async fn run_c2s_send(
     >,
     profile: TrafficProfile,
     deadline: Instant,
-) -> usize {
-    // Buffer sized to the per-flow max so raw_default's per-packet random sizes
-    // (sampled in `[chunk_c2s_min, chunk_c2s_max]`) can be served by slicing.
-    // For tuned profiles MIN == MAX == chunk_c2s, so this collapses to the
-    // existing constant-size buffer.
+) -> (usize, f64) {
     let buf_size = profile.chunk_c2s.max(profile.chunk_c2s_max);
     let chunk = vec![0u8; buf_size];
     let mut sent: usize = 0;
+    let mut total_sleep_s: f64 = 0.0;
 
     if profile.bursty && profile.burst_count > 1 {
         let bytes_per_burst = profile.bytes_c2s / profile.burst_count.max(1);
         for i in 0..profile.burst_count {
-            sent += send_until(&socket, &chunk, &profile, deadline, sent + bytes_per_burst).await;
+            let (s, slept) = send_until(&socket, &chunk, &profile, deadline, sent + bytes_per_burst).await;
+            sent += s;
+            total_sleep_s += slept;
             if sent >= profile.bytes_c2s || Instant::now() >= deadline {
                 break;
             }
             if i + 1 < profile.burst_count {
-                let idle_until = Instant::now() + profile.burst_idle();
+                let burst_idle = profile.burst_idle();
+                let idle_until = Instant::now() + burst_idle;
                 if idle_until > deadline {
                     break;
                 }
-                sleep(profile.burst_idle()).await;
+                sleep(burst_idle).await;
+                total_sleep_s += burst_idle.as_secs_f64();
             }
         }
     } else {
-        sent += send_until(&socket, &chunk, &profile, deadline, profile.bytes_c2s).await;
+        let (s, slept) = send_until(&socket, &chunk, &profile, deadline, profile.bytes_c2s).await;
+        sent += s;
+        total_sleep_s += slept;
     }
-    sent
+    (sent, total_sleep_s)
 }
 
 async fn send_until(
@@ -435,13 +443,24 @@ async fn send_until(
     profile: &TrafficProfile,
     deadline: Instant,
     target: usize,
-) -> usize {
+) -> (usize, f64) {
     let mut sent = 0;
     let mut packets = 0;
+    let mut total_sleep_s: f64 = 0.0;
     let fixed_delay = profile.c2s_delay();
     let randomise = profile.is_unrestricted();
-    // `StdRng::from_entropy()` is `Send` (unlike `ThreadRng`) so the future can
-    // hold it across `.await` points inside a `tokio::spawn`ed task.
+    let inter_batch_delay_ms: f64 = var("INTER_PACKET_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(40.0);
+    let batch_size: u64 = var("DELAY_EVERY_N")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10)
+        .max(1);
+    let batch_delay = Duration::from_micros((inter_batch_delay_ms * 1000.0) as u64);
+    let mut packets_in_batch: u64 = 0;
+
     let mut rng = StdRng::from_entropy();
     while sent < target && Instant::now() < deadline && packets < profile.max_packets() {
         let pkt_size = if randomise {
@@ -458,6 +477,7 @@ async fn send_until(
         }
         sent += n;
         packets += 1;
+        packets_in_batch += 1;
         let delay = if randomise {
             profile.sample_c2s_delay(&mut rng)
         } else {
@@ -465,9 +485,15 @@ async fn send_until(
         };
         if !delay.is_zero() {
             sleep(delay).await;
+            total_sleep_s += delay.as_secs_f64();
+        }
+        if !batch_delay.is_zero() && packets_in_batch >= batch_size {
+            sleep(batch_delay).await;
+            total_sleep_s += batch_delay.as_secs_f64();
+            packets_in_batch = 0;
         }
     }
-    sent
+    (sent, total_sleep_s)
 }
 
 /// Drive the s2c receive loop until the byte budget or deadline is met.

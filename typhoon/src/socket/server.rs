@@ -416,7 +416,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         };
 
         if let Some(session) = session {
-            self.flows[flow_index].ensure_user(identity.clone(), raw_packet.source_addr, session.counter()).await;
+            self.flows[flow_index].ensure_user(identity.clone(), session.counter()).await;
             session.note_active_flow(flow_index);
 
             let incoming = IncomingPacket {
@@ -439,13 +439,14 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let (server_data, initial_key, client_initial_data) = self.secret.decapsulate_handshake_server(raw_packet.body, self.settings.pool());
 
         let client_version_identity = raw_packet.tailor.identity();
+        let handshake_pn = raw_packet.tailor.packet_number();
         if !self.identity_generator.verify_version(client_version_identity.to_bytes()) {
             {
                 let mut users = self.users.lock().await;
                 let crypto_state = self.make_initial_crypto_state(&initial_key);
                 users.insert(client_version_identity.clone(), UserServerState::new(crypto_state)).await;
             }
-            self.flows[flow_index].register_user_addr(client_version_identity.clone(), raw_packet.source_addr).await;
+            self.flows[flow_index].register_user_binding(client_version_identity.clone(), raw_packet.source_addr, handshake_pn).await;
             let pn = ((unix_timestamp_ms() / 1000) as u64) << 32;
             let buf = self.settings.pool().allocate(Some(T::length()));
             let tailor = Tailor::termination(buf, &client_version_identity, ReturnCode::VersionMismatch, pn);
@@ -493,7 +494,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             }
         }
 
-        self.flows[flow_index].register_user_addr(identity.clone(), raw_packet.source_addr).await;
+        self.flows[flow_index].register_user_binding(identity.clone(), raw_packet.source_addr, handshake_pn).await;
         self.flows[flow_index].register_user(identity.clone(), session.counter()).await;
 
         if let Err(err) = self.flows[flow_index].send_packet(response_packet, false, false).await {

@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
-from asyncio import TimeoutError, run, sleep, wait_for
+"""
+QUIC sender — runs the c2s portion of the active TRAFFIC_PROFILE over a single
+QUIC stream.  Uses `_profile.run_profile_async` so PROFILE_DURATION_S, batch
+pacing, and IAT pacing are honoured uniformly with the other senders without
+blocking the aioquic event loop on a sync `time.sleep`.
+"""
+
+from asyncio import TimeoutError, run, wait_for
 from os import environ, path
 from ssl import CERT_NONE
 from subprocess import run as subprocess_run
 from sys import exit
-from time import sleep as time_sleep
+from time import monotonic, sleep
 from traceback import print_exc
+
+from _profile import run_profile_async
 
 from aioquic.asyncio import connect
 from aioquic.asyncio.protocol import QuicConnectionProtocol
@@ -13,11 +22,7 @@ from aioquic.quic.configuration import QuicConfiguration
 
 observer_gw = environ.get("OBSERVER_GW")
 server_host = environ["SERVER_HOST"]
-transfer_bytes = int(environ.get("PROFILE_BYTES_C2S", 104_857_600))
 PORT = 9000
-CHUNK = 500
-delay_ms = float(environ.get("INTER_PACKET_DELAY_MS", 0))
-delay_every = int(environ.get("DELAY_EVERY_N", 1))
 wait_timeout = int(environ.get("QUIC_WAIT_TIMEOUT_S", 240))
 
 if observer_gw:
@@ -30,7 +35,7 @@ if observer_gw:
 for _ in range(30):
     if path.exists("/keys/quic_cert.pem"):
         break
-    time_sleep(1)
+    sleep(1)
 else:
     print("quic_cert.pem never appeared", flush=True)
     exit(1)
@@ -46,7 +51,6 @@ async def main() -> None:
     config.congestion_control_algorithm = "cubic"
 
     print("Connecting...", flush=True)
-    sent_bytes = 0
     async with connect(
         server_host,
         PORT,
@@ -55,18 +59,20 @@ async def main() -> None:
     ) as proto:
         print("Connected, sending data...", flush=True)
         stream_id = proto._quic.get_next_available_stream_id()
-        chunk = bytes(CHUNK)
-        packets = 0
-        while sent_bytes < transfer_bytes:
-            n = min(CHUNK, transfer_bytes - sent_bytes)
-            end = (sent_bytes + n) >= transfer_bytes
-            proto._quic.send_stream_data(stream_id, chunk[:n], end_stream=end)
-            sent_bytes += n
-            packets += 1
-            if end or packets % delay_every == 0:
-                proto.transmit()
-            if delay_ms > 0 and packets % delay_every == 0:
-                await sleep(delay_ms / 1000)
+
+        def send_chunk(data: bytes) -> None:
+            """Enqueue *data* on the eval stream and trigger transmission."""
+            proto._quic.send_stream_data(stream_id, data, end_stream=False)
+            proto.transmit()
+
+        transfer_start = monotonic()
+        sent_bytes, total_sleep = await run_profile_async(send_chunk)
+        transfer_time_s = monotonic() - transfer_start - total_sleep
+
+        # Close the stream cleanly; aioquic requires a final send to flip FIN.
+        proto._quic.send_stream_data(stream_id, b"", end_stream=True)
+        proto.transmit()
+
         print(f"All {sent_bytes} bytes enqueued, waiting for server close...", flush=True)
         try:
             await wait_for(proto.wait_closed(), timeout=wait_timeout)
@@ -74,6 +80,7 @@ async def main() -> None:
             print(f"wait_closed timed out after {wait_timeout}s", flush=True)
 
     print(f"sent {sent_bytes} bytes via QUIC", flush=True)
+    print(f"transfer_time_s={transfer_time_s:.3f}", flush=True)
 
 
 try:

@@ -1,5 +1,33 @@
 name: typhoon-eval
 
+x-profile-env: &profile-env
+  TRAFFIC_PROFILE:        ${TRAFFIC_PROFILE:-}
+  PROFILE_CHUNK_C2S:      ${PROFILE_CHUNK_C2S:-}
+  PROFILE_CHUNK_S2C:      ${PROFILE_CHUNK_S2C:-}
+  PROFILE_CHUNK_C2S_MIN:  ${PROFILE_CHUNK_C2S_MIN:-}
+  PROFILE_CHUNK_C2S_MAX:  ${PROFILE_CHUNK_C2S_MAX:-}
+  PROFILE_CHUNK_S2C_MIN:  ${PROFILE_CHUNK_S2C_MIN:-}
+  PROFILE_CHUNK_S2C_MAX:  ${PROFILE_CHUNK_S2C_MAX:-}
+  PROFILE_IAT_C2S_MS:     ${PROFILE_IAT_C2S_MS:-}
+  PROFILE_IAT_S2C_MS:     ${PROFILE_IAT_S2C_MS:-}
+  PROFILE_IAT_C2S_MIN_MS: ${PROFILE_IAT_C2S_MIN_MS:-}
+  PROFILE_IAT_C2S_MAX_MS: ${PROFILE_IAT_C2S_MAX_MS:-}
+  PROFILE_IAT_S2C_MIN_MS: ${PROFILE_IAT_S2C_MIN_MS:-}
+  PROFILE_IAT_S2C_MAX_MS: ${PROFILE_IAT_S2C_MAX_MS:-}
+  PROFILE_BYTES_C2S:      ${PROFILE_BYTES_C2S:-10485760}
+  PROFILE_BYTES_S2C:      ${PROFILE_BYTES_S2C:-0}
+  PROFILE_DURATION_S:     ${PROFILE_DURATION_S:-60}
+  PROFILE_FAKE_BODY_MODE: ${PROFILE_FAKE_BODY_MODE:-}
+  PROFILE_FAKE_BODY_CONST: ${PROFILE_FAKE_BODY_CONST:-}
+  PROFILE_FAKE_BODY_MIN:  ${PROFILE_FAKE_BODY_MIN:-}
+  PROFILE_FAKE_BODY_MAX:  ${PROFILE_FAKE_BODY_MAX:-}
+  PROFILE_FAKE_HEADER_LEN: ${PROFILE_FAKE_HEADER_LEN:-}
+  PROFILE_BURSTY:         ${PROFILE_BURSTY:-0}
+  PROFILE_BURST_COUNT:    ${PROFILE_BURST_COUNT:-1}
+  PROFILE_BURST_IDLE_S:   ${PROFILE_BURST_IDLE_S:-0}
+  PROFILE_DECOYS_ENABLED: ${PROFILE_DECOYS_ENABLED:-1}
+  PROFILE_ID_LENGTH:      ${PROFILE_ID_LENGTH:-}
+
 volumes:
   eval_keys: {}
 
@@ -59,6 +87,7 @@ services:
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
     environment:
+      <<: *profile-env
       # Observer's net_right IP — server adds return route via this gateway
       OBSERVER_GW: 172.21.0.2
       # Server's own externally-reachable IP — embedded in the TYPHOON certificate
@@ -66,8 +95,14 @@ services:
       CERT_HOST:   172.21.0.10
       # obfs4_iat: when set, obfs4proxy uses the given IAT mode (0=off, 1=on, 2=paranoid)
       OBFS4_IAT_MODE: ${OBFS4_IAT_MODE:-}
-      PROFILE_BYTES_C2S: ${PROFILE_BYTES_C2S:-10485760}
       RUST_LOG: ${RUST_LOG:-}
+      # TYPHOON crate settings overrides (read by SettingsBuilder via env; empty for non-typhoon protocols so they're not affected).
+      TYPHOON_DRAIN_CHANNEL_CAPACITY:  ${TYPHOON_DRAIN_CHANNEL_CAPACITY:-}
+      TYPHOON_RECEIVE_BUFFER_SIZE:     ${TYPHOON_RECEIVE_BUFFER_SIZE:-}
+      TYPHOON_DECOY_HEAVY_BASE_RATE:   ${TYPHOON_DECOY_HEAVY_BASE_RATE:-}
+      TYPHOON_DECOY_NOISY_BASE_RATE:   ${TYPHOON_DECOY_NOISY_BASE_RATE:-}
+      TYPHOON_DECOY_SPARSE_BASE_RATE:  ${TYPHOON_DECOY_SPARSE_BASE_RATE:-}
+      TYPHOON_DECOY_SMOOTH_BASE_RATE:  ${TYPHOON_DECOY_SMOOTH_BASE_RATE:-}
     volumes:
       - eval_keys:/keys
     depends_on:
@@ -87,10 +122,10 @@ services:
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
     environment:
+      <<: *profile-env
       SERVER_HOST:    172.21.0.10
       # Observer's net_left IP — client adds forward route via this gateway
       OBSERVER_GW:    172.20.0.2
-      PROFILE_BYTES_C2S:        ${PROFILE_BYTES_C2S:-10485760}
       INTER_PACKET_DELAY_MS:  ${INTER_PACKET_DELAY_MS:-40}
       DELAY_EVERY_N:          ${DELAY_EVERY_N:-10}
       TRAFFIC_SCENARIO:       ${TRAFFIC_SCENARIO:-bulk}

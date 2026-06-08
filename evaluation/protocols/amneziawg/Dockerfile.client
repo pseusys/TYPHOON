@@ -26,5 +26,6 @@ COPY --from=go-builder    /build/amneziawg-go           /usr/local/bin/amneziawg
 COPY --from=tools-builder /src/src/wg                   /usr/local/bin/awg
 COPY amneziawg/client-entrypoint.sh /entrypoint.sh
 COPY common/udp_sender.py            /app/client.py
+COPY common/_profile.py              /app/_profile.py
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]

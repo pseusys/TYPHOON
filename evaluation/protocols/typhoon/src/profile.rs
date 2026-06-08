@@ -349,11 +349,14 @@ impl TrafficProfile {
         self.name == TUNED_DEFAULT_PROFILE
     }
 
-    /// True for any profile that uses per-packet random chunk/IAT sampling and
-    /// `FlowConfig::random` (no per-flow pinning).
     #[inline]
     pub fn is_unrestricted(&self) -> bool {
         self.is_raw_default() || self.is_tuned_default()
+    }
+
+    #[inline]
+    pub fn is_bulk_upload(&self) -> bool {
+        self.name == DEFAULT_PROFILE_NAME
     }
 }
 

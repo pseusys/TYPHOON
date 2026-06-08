@@ -43,6 +43,9 @@ echo "obfs4proxy SOCKS5 on port ${SOCKS5_PORT}"
 # goptlib parses PT args with semicolons; SMETHOD ARGS uses commas — convert
 SOCKS5_USERNAME=$(echo "${OBFS4_ARGS}" | tr ',' ';') || true
 
+export PROFILE_CHUNK_C2S=500
+export PROFILE_IAT_C2S_MS=0
+
 SOCKS5_PORT="${SOCKS5_PORT}" \
 SOCKS5_USERNAME="${SOCKS5_USERNAME}" \
 SERVER_HOST="${SERVER_HOST:-172.21.0.10}" \

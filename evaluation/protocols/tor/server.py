@@ -3,11 +3,13 @@ from contextlib import suppress
 from os import environ
 from socket import AF_INET, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET, socket
 from ssl import PROTOCOL_TLS_SERVER, SSLContext, SSLError, TLSVersion
+from struct import unpack
 from subprocess import run
 from sys import exit
 
 CELL = 514
 PORT = 9001  # conventional Tor ORPort
+LENGTH_OFFSET = 14
 
 
 def recv_exact(sock: socket, n: int) -> bytes:
@@ -80,7 +82,8 @@ with suppress(SSLError, OSError, TimeoutError):
         cell = recv_exact(tls, CELL)
         if len(cell) < CELL:
             break
-        received_data += DATA_PER_CELL
+        (length,) = unpack("!H", cell[LENGTH_OFFSET:LENGTH_OFFSET + 2])
+        received_data += min(length, DATA_PER_CELL)
 
 with suppress(OSError):
     tls.close()

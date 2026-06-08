@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir --break-system-packages PySocks
 COPY shadowsocks/client-entrypoint.sh /entrypoint.sh
-COPY common/socks5_sender.py /app/client.py
+COPY common/socks5_sender.py          /app/client.py
+COPY common/_profile.py               /app/_profile.py
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]

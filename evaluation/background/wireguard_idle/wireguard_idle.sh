@@ -8,6 +8,19 @@ SERVER_HOST="${SERVER_HOST:-172.21.0.17}"
 DURATION_S="${PROFILE_DURATION_S:-60}"
 LISTEN_PORT="${LISTEN_PORT:-51820}"
 KEEPALIVE_S="${WG_KEEPALIVE_S:-25}"
+OBSERVER_GW="${OBSERVER_GW:-}"
+
+if [ -n "${OBSERVER_GW}" ]; then
+    if [ "${ROLE}" = "client" ]; then
+        ip route del 172.21.0.0/24 2>/dev/null || true
+        ip route add 172.21.0.0/24 via "${OBSERVER_GW}" \
+            || echo "wireguard_idle: WARNING: client route add failed"
+    else
+        ip route del 172.20.0.0/24 2>/dev/null || true
+        ip route add 172.20.0.0/24 via "${OBSERVER_GW}" \
+            || echo "wireguard_idle: WARNING: server route add failed"
+    fi
+fi
 
 mkdir -p /etc/wireguard
 SERVER_PRIVKEY=$(wg genkey)
@@ -51,5 +64,23 @@ fi
 
 wg-quick up wg0
 echo "wireguard_idle: ${ROLE} up, idling for ${DURATION_S} s"
+
+if [ "${ROLE}" = "client" ]; then
+    echo "wireguard_idle: client kicking handshake via ping 10.10.0.1"
+    echo "wireguard_idle: wg show wg0 BEFORE ping:"
+    wg show wg0 2>&1 || true
+    for i in 1 2 3 4 5; do
+        if ping -c 1 -W 2 10.10.0.1; then
+            echo "wireguard_idle: ping succeeded on attempt $i"
+            break
+        else
+            echo "wireguard_idle: ping attempt $i failed"
+        fi
+        sleep 1
+    done
+    echo "wireguard_idle: wg show wg0 AFTER ping:"
+    wg show wg0 2>&1 || true
+fi
+
 sleep "${DURATION_S}"
 wg-quick down wg0 || true

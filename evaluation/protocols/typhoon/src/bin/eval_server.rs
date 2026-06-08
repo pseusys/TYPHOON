@@ -14,13 +14,18 @@ use std::net::SocketAddr;
 use std::process::Command;
 use std::process::exit;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use env_logger::{Builder, Env};
 use log::info;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::Notify;
 use tokio::time::{Duration, sleep, timeout};
+
+const SIGTERM_DRAIN_GRACE: Duration = Duration::from_secs(3);
 use typhoon_eval::identity::{EvalServerConnectionHandler, ShortIdentity};
 use typhoon_eval::profile::TrafficProfile;
 
@@ -256,10 +261,6 @@ async fn main() {
         .expect("save cert to /keys/typhoon.cert");
     println!("Certificate saved to {CERT_PATH}");
 
-    // Tuned profiles pin every server flow to the profile-derived FlowConfig so
-    // the s2c side produces packets with the same shape as the c2s side.
-    // raw_default skips pinning and uses FlowConfig::random per flow, matching
-    // the client's behaviour.
     let flow_cfg: FlowConfig = if profile.is_unrestricted() {
         FlowConfig::random(&settings)
     } else {
@@ -270,12 +271,6 @@ async fn main() {
         .map(|addr| ServerFlowConfiguration::with_address(flow_cfg.clone(), addr))
         .collect();
 
-    // Tuned profiles pin every server flow to a concrete decoy provider so the
-    // eval measures a known traffic shape: SimpleDecoyProvider (no decoys) for
-    // most profiles, SparseDecoyProvider for QUIC profiles (supplies the ACK-
-    // sized small-packet mode the chunk-driven data path can't reach).
-    // raw_default skips pinning so the random per-flow draw runs as it would
-    // in pure-protocol use.
     let listener_builder = ListenerBuilder::<
         ShortIdentity,
         DefaultExecutor,
@@ -300,12 +295,28 @@ async fn main() {
     let session_start = Instant::now();
     let deadline = session_start + profile.duration();
 
+    let received_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+    let sent_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+
+    let terminate_signal: Arc<Notify> = Arc::new(Notify::new());
+    {
+        let terminate_signal = terminate_signal.clone();
+        tokio::spawn(async move {
+            let mut sigterm = signal(SignalKind::terminate())
+                .expect("install SIGTERM handler");
+            sigterm.recv().await;
+            terminate_signal.notify_one();
+        });
+    }
+
     // Concurrent c2s receive and s2c send loops bounded by deadline and byte budgets.
     let recv_handle = if profile.has_c2s_traffic() {
         Some(tokio::spawn(run_c2s_recv(
             client.clone(),
             profile.clone(),
             deadline,
+            received_counter.clone(),
+            terminate_signal.clone(),
         )))
     } else {
         None
@@ -315,11 +326,14 @@ async fn main() {
             client.clone(),
             profile.clone(),
             deadline,
+            sent_counter.clone(),
         )))
     } else {
         None
     };
 
+    let had_recv = recv_handle.is_some();
+    let had_send = send_handle.is_some();
     let received = match recv_handle {
         Some(h) => h.await.expect("c2s join"),
         None => 0,
@@ -328,6 +342,13 @@ async fn main() {
         Some(h) => h.await.expect("s2c join"),
         None => 0,
     };
+
+    if !had_recv && !had_send {
+        let now = Instant::now();
+        if deadline > now {
+            sleep(deadline - now).await;
+        }
+    }
 
     let pct_c2s = if profile.bytes_c2s > 0 {
         received as f64 / profile.bytes_c2s as f64 * 100.0
@@ -347,25 +368,35 @@ async fn run_c2s_recv(
     client: Arc<ClientHandle<ShortIdentity, DefaultExecutor>>,
     profile: TrafficProfile,
     deadline: Instant,
+    counter: Arc<AtomicUsize>,
+    terminate_signal: Arc<Notify>,
 ) -> usize {
     let mut received: usize = 0;
-    let now = Instant::now();
-    let mut remaining = if deadline > now {
-        deadline - now
-    } else {
-        Duration::from_secs(0)
-    };
-    while received < profile.bytes_c2s && !remaining.is_zero() {
-        match timeout(remaining, client.receive_bytes()).await {
-            Ok(Ok(data)) => received += data.len(),
-            _ => break,
+    let mut effective_deadline = deadline;
+    let mut signalled = false;
+
+    while received < profile.bytes_c2s && Instant::now() < effective_deadline {
+        let remaining = effective_deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
         }
-        let now = Instant::now();
-        remaining = if deadline > now {
-            deadline - now
-        } else {
-            Duration::from_secs(0)
-        };
+        tokio::select! {
+            biased;
+            // Listen for SIGTERM only while we haven't already shortened the deadline.
+            _ = terminate_signal.notified(), if !signalled => {
+                effective_deadline = (Instant::now() + SIGTERM_DRAIN_GRACE).min(deadline);
+                signalled = true;
+            }
+            result = timeout(remaining, client.receive_bytes()) => {
+                match result {
+                    Ok(Ok(data)) => {
+                        received += data.len();
+                        counter.store(received, Ordering::Relaxed);
+                    }
+                    _ => break,
+                }
+            }
+        }
     }
     received
 }
@@ -375,6 +406,7 @@ async fn run_s2c_send(
     client: Arc<ClientHandle<ShortIdentity, DefaultExecutor>>,
     profile: TrafficProfile,
     deadline: Instant,
+    counter: Arc<AtomicUsize>,
 ) -> usize {
     let buf_size = profile.chunk_s2c.max(profile.chunk_s2c_max);
     let chunk = vec![0u8; buf_size];
@@ -383,7 +415,7 @@ async fn run_s2c_send(
     if profile.bursty && profile.burst_count > 1 {
         let bytes_per_burst = profile.bytes_s2c / profile.burst_count.max(1);
         for i in 0..profile.burst_count {
-            sent += send_until_s(&client, &chunk, &profile, deadline, sent + bytes_per_burst).await;
+            sent += send_until_s(&client, &chunk, &profile, deadline, sent + bytes_per_burst, counter.clone()).await;
             if sent >= profile.bytes_s2c || Instant::now() >= deadline {
                 break;
             }
@@ -396,7 +428,7 @@ async fn run_s2c_send(
             }
         }
     } else {
-        sent += send_until_s(&client, &chunk, &profile, deadline, profile.bytes_s2c).await;
+        sent += send_until_s(&client, &chunk, &profile, deadline, profile.bytes_s2c, counter).await;
     }
     sent
 }
@@ -407,6 +439,7 @@ async fn send_until_s(
     profile: &TrafficProfile,
     deadline: Instant,
     target: usize,
+    counter: Arc<AtomicUsize>,
 ) -> usize {
     let mut sent = 0;
     let mut packets = 0;
@@ -428,6 +461,7 @@ async fn send_until_s(
             break;
         }
         sent += n;
+        counter.store(sent, Ordering::Relaxed);
         packets += 1;
         let delay = if randomise {
             profile.sample_s2c_delay(&mut rng)

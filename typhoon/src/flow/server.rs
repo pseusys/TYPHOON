@@ -33,6 +33,19 @@ pub(crate) struct RawReceivedPacket<T: IdentityType> {
     pub(crate) source_addr: SocketAddr,
 }
 
+/// Per-(flow, identity) path-binding state: the current return source address
+/// for this client on this flow, and the latest PN we have seen.
+///
+/// Path-rebinding gate: the stored `addr` is updated only when an authenticated
+/// non-handshake packet arrives with `pn > latest_pn` on this flow.  Out-of-order
+/// data packets are still accepted into session processing — they just don't
+/// move the binding.  Out-of-order decoys are dropped at the usual discardable
+/// exit point.  See PROTOCOL.md §Identification and rebinding.
+struct PathBinding {
+    addr: SocketAddr,
+    latest_pn: u64,
+}
+
 /// Server-side flow manager that handles per-user packet encryption, decoy traffic, and socket I/O.
 /// Per-user crypto state is in the global SharedMap (accessed via ServerCryptoTool).
 /// Send and receive crypto are split into independent instances so their locks never contend.
@@ -40,7 +53,8 @@ pub(crate) struct RawReceivedPacket<T: IdentityType> {
 /// When built with multiple sockets (SO_REUSEPORT on Linux), each socket is polled by its own
 /// drain task in the listener; the kernel distributes incoming datagrams across all sockets.
 pub struct ServerFlowManager<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> {
-    user_addrs: RwLock<HashMap<T, SocketAddr>>,
+    /// Per-(flow, identity) path-binding state: source address + latest PN.
+    user_bindings: RwLock<HashMap<T, RwLock<PathBinding>>>,
     /// Per-user decoy providers behind individual locks so concurrent users don't contend.
     decoy_providers: RwLock<HashMap<T, Arc<Mutex<Box<dyn DecoyProvider>>>>>,
     decoy_factory: DecoyFactory<T, AE>,
@@ -76,7 +90,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             };
             let mtu = settings.mtu();
             ServerFlowManager {
-                user_addrs: RwLock::new(HashMap::new()),
+                user_bindings: RwLock::new(HashMap::new()),
                 decoy_providers: RwLock::new(HashMap::new()),
                 decoy_factory,
                 crypto_send: Mutex::new(crypto_send),
@@ -101,9 +115,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         &self.socks
     }
 
-    /// Register a user's source address for this flow manager.
-    pub async fn register_user_addr(&self, id: T, addr: SocketAddr) {
-        self.user_addrs.write().await.insert(id, addr);
+    /// Insert (or replace) the path binding for a user on this flow.
+    pub async fn register_user_binding(&self, id: T, addr: SocketAddr, latest_pn: u64) {
+        self.user_bindings.write().await.insert(id, RwLock::new(PathBinding { addr, latest_pn }));
     }
 
     /// Register a per-user decoy provider and start its background timer.
@@ -115,27 +129,28 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         dp.start().await;
         let decoy_name = dp.name();
         self.decoy_providers.write().await.insert(id.clone(), Arc::new(Mutex::new(dp)));
-        if let Some(addr) = self.user_addrs.read().await.get(&id).copied() {
+        if let Some(binding) = self.user_bindings.read().await.get(&id) {
+            let addr = binding.read().await.addr;
             let header_len = self.max_overhead - self.fake_body_mode.max_len();
             record_flow_config(addr, "s2c", || (self.fake_body_mode.description(), header_len, decoy_name));
         }
     }
 
-    /// Lazily register a user on this flow if not already present.
-    /// Called from the route task when a non-handshake packet from a known session arrives
-    /// on a flow that has not yet seen this user. Registers both the source address and the
-    /// decoy provider atomically so `send_packet` can never fire before the addr is known.
-    pub async fn ensure_user(self: &Arc<Self>, id: T, addr: SocketAddr, counter: Arc<AtomicU32>) {
+    /// Lazily register the per-user decoy provider on this flow if not already
+    /// present.  Called from the route task when a non-handshake packet from a
+    /// known session arrives on a flow that has not yet seen this user; the
+    /// path binding has already been anchored by `receive_raw`'s first-packet
+    /// branch by the time we get here.
+    pub async fn ensure_user(self: &Arc<Self>, id: T, counter: Arc<AtomicU32>) {
         if !self.decoy_providers.read().await.contains_key(&id) {
-            self.register_user_addr(id.clone(), addr).await;
             self.register_user(id, counter).await;
         }
     }
 
-    /// Remove a user's decoy provider and source address from this flow manager.
+    /// Remove a user's decoy provider and path binding from this flow manager.
     pub async fn remove_user(&self, id: &T) {
         self.decoy_providers.write().await.remove(id);
-        self.user_addrs.write().await.remove(id);
+        self.user_bindings.write().await.remove(id);
     }
 
     /// Receive a raw packet, deobfuscating the tailor but returning the full body + tailor view.
@@ -184,28 +199,41 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             let packet_flags = tailor.flags();
             let identity = tailor.identity();
 
-            // For non-handshake packets, feed decoy provider and update source address if changed.
+            // For non-handshake packets, refresh the path binding for this
+            // identity on this flow and feed the decoy provider if one has
+            // already been instantiated locally.
             if !packet_flags.contains(PacketFlags::HANDSHAKE) {
-                let dp = {
-                    let providers = self.decoy_providers.read().await;
-                    if providers.contains_key(&identity) {
-                        providers.get(&identity).cloned()
-                    } else {
-                        None
+                let pn = tailor.packet_number();
+                let bindings = self.user_bindings.read().await;
+                match bindings.get(&identity) {
+                    Some(binding_rw) => {
+                        let latest = binding_rw.read().await.latest_pn;
+                        if pn > latest {
+                            let mut binding = binding_rw.write().await;
+                            if pn > binding.latest_pn {
+                                binding.latest_pn = pn;
+                                if binding.addr != source_addr {
+                                    binding.addr = source_addr;
+                                }
+                            }
+                        }
                     }
-                };
+                    None => {
+                        drop(bindings);
+                        self.user_bindings
+                            .write()
+                            .await
+                            .entry(identity.clone())
+                            .or_insert_with(|| RwLock::new(PathBinding { addr: source_addr, latest_pn: pn }));
+                    }
+                }
+
+                let dp = self.decoy_providers.read().await.get(&identity).cloned();
                 if let Some(dp) = dp {
-                    if self.user_addrs.read().await.get(&identity).copied() != Some(source_addr) {
-                        self.user_addrs.write().await.insert(identity.clone(), source_addr);
-                    }
                     let notified = dp.lock().await.feed_input(encrypted_packet.clone(), tailor.buffer().clone()).await;
                     if notified.is_none() {
                         continue;
                     }
-                } else {
-                    debug!("server flow: non-handshake packet with unregistered identity from {source_addr}, forwarding to probe handler");
-                    self.probe_handler.lock().await.process(encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr)).await;
-                    continue;
                 }
             }
 
@@ -261,10 +289,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         };
 
         let addr = {
-            let addrs = self.user_addrs.read().await;
-            *addrs.get(&identity).ok_or_else(|| FlowControllerError::UserNotFound {
+            let bindings = self.user_bindings.read().await;
+            let binding = bindings.get(&identity).ok_or_else(|| FlowControllerError::UserNotFound {
                 identity: identity.to_string(),
-            })?
+            })?;
+            binding.read().await.addr
         };
 
         // Fallthrough decoys: drop the plaintext tailor, skip encryption, treat the remaining body as opaque random bytes.  Non-fallthrough path is unchanged.
