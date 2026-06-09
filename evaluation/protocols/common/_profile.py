@@ -49,14 +49,6 @@ def _env_float(key: str, default: float) -> float:
 
 
 def _read_config() -> _ProfileConfig:
-    # Batch pacing — pause `inter_batch_delay_ms` every `batch_size` packets.
-    # This is the receiver-safe upper bound on send rate regardless of how
-    # tight `iat_c2s_ms` is sampled.  Without it, sustained line-rate bursts
-    # on a loopback bridge overflow the kernel UDP buffer faster than the
-    # receiver can drain (TYPHOON's per-packet AEAD path is the canonical
-    # example — see `evaluation/protocols/typhoon/src/bin/eval_client.rs`
-    # for the matching Rust-side logic).  Default 40 ms every 10 packets;
-    # setting either to 0 disables batch pacing.
     return _ProfileConfig(
         chunk_c2s=max(1, _env_int("PROFILE_CHUNK_C2S", 500)),
         iat_c2s_ms=_env_float("PROFILE_IAT_C2S_MS", 0.0),

@@ -1,4 +1,4 @@
-/// Heavy mode: sends big decoy packets occasionally, resembling file transfers or bulk updates.
+/// Heavy mode: sends large decoy packets at a low cadence (~0.1 pkt/s base, capped at 0.2 pkt/s), resembling background heartbeat / metric-push / software-update-poll traffic.
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -15,7 +15,7 @@ use crate::tailor::{IdentityType, PacketFlags};
 use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
 use crate::utils::unix_timestamp_ms;
 
-/// Heavy mode implements sending big decoy packets occasionally.
+/// Heavy mode implements sending large decoy packets at a low cadence (background-heartbeat shape).
 pub struct HeavyDecoyProvider<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> {
     manager: Weak<dyn DecoyFlowSender>,
     state: Arc<RwLock<DecoyState<T, AE>>>,

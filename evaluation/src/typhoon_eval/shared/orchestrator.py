@@ -139,10 +139,10 @@ def _run_one(
 @option(
     "--loss-pct",
     "loss_pct",
-    default=0.0,
+    default=2.0,
     show_default=True,
     type=float,
-    help="Chaos: packet loss percentage (0 = no extra loss beyond chaos default).",
+    help="Chaos: packet loss percentage applied by the netem sidecar (default 2% matches the sidecar's standalone default).",
 )
 @option(
     "--bw-mbps",

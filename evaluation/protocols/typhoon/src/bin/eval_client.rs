@@ -328,7 +328,7 @@ async fn main() {
     if !profile.is_unrestricted() {
         if is_quic {
             builder = builder.with_decoy::<SparseDecoyProvider<ShortIdentity, DefaultExecutor>>();
-        } else {
+        } else if !profile.is_bulk_upload() {
             builder = builder.with_decoy::<SimpleDecoyProvider>();
         }
         let flow_cfg = profile.flow_config();

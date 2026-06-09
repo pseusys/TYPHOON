@@ -30,9 +30,10 @@ transfer_start = monotonic()
 sent, total_sleep = run_profile(sock.send)
 transfer_time_s = monotonic() - transfer_start - total_sleep
 
+print(f"sent {sent} bytes", flush=True)
+print(f"transfer_time_s={transfer_time_s:.3f}", flush=True)
+
 sock.send(b"DONE")
 signal(SIGTERM, lambda *_: exit(0))
 sleep(0.5)
-print(f"sent {sent} bytes", flush=True)
-print(f"transfer_time_s={transfer_time_s:.3f}", flush=True)
 exit(0)

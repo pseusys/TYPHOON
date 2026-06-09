@@ -217,12 +217,12 @@ Future revisions may extend this with weighted selection driven by per-path heal
 
 On the server side, everything is a little more complex.
 The server keeps a set of clients mapped to their unique identifiers (**ID** tailor field), but it is never notified about client proxy selection.
-Each server flow manager independently tracks the last known source address per client: whenever it receives a correctly-authenticated packet from a client, it [updates the stored source address for that client](#identification-and-rebinding).
+Each server flow manager independently tracks the last known source address per client, alongside the latest packet number seen on this flow for that client: when it receives a correctly-authenticated non-handshake packet whose PN is strictly greater than the latest seen, it [updates the stored source address for that client](#identification-and-rebinding) (the new PN becomes the latest).
 When a flow manager wants to send a packet back, it uses the last known source address it has for that client.
 
 Finally, since server IP addresses and port numbers are static, clients can just send packets to it directly.
 But it's not the same for servers: according to UDP specification, the client IP address and port can change at any time.
-That is why each server flow manager should maintain its own client-to-address mapping and update it upon receiving every authenticated packet.
+That is why each server flow manager should maintain its own client-to-address mapping and update it on every authenticated packet that monotonically advances the per-flow PN watermark.
 
 ### Data packets
 
@@ -335,7 +335,8 @@ sequenceDiagram
 
 Health checking cycle is also hereinafter called "decay" cycle.
 The decay behavior is mostly defined by [**TM** and **PN** fields of the tailor](#tailor-structure).
-The _current incremental packet number_ variable starts from 0.
+The _current incremental packet number_ is a single per-session counter shared by every emitter on the session — data, health-check, handshake, decoy, and termination packets all advance the same monotonic sequence.
+The counter starts from 0 at session establishment.
 
 Client initiates the exchange (the first health check exchange is embedded into handshake), setting higher `4` bytes of **PN** field to the current unix timestamp (in seconds), [lower `4` bytes](#sockets-and-listeners) of **PN** to _current incremental packet number_ and **TM** to a [random next in delay](#next-in-computation).
 The **PN** field value is remembered and used as the _current health check packet number_.
@@ -449,7 +450,7 @@ They are updated whenever a packet leaves from or arrives to the flow manager, u
   - `byte_budget = clamp(byte_budget + (current_packet_time - previous_packet_time) * TYPHOON_DECOY_BYTE_RATE_CAP / 1000 - outgoing_real_packet_length, 0, TYPHOON_DECOY_BYTE_RATE_CAP * TYPHOON_DECOY_BYTE_RATE_FACTOR)`, where `outgoing_real_packet_length` is the byte length of the just-emitted **real outgoing** packet (0 for incoming traffic and for decoy outgoing — decoy outgoing packets deduct their length from the budget at emission time, before the timer fires, via the gating check above).
 
 Every mode defines its own equations for calculation of decoy packet length (`decoy_length`, in bytes) and delay before the next decoy packet (`decoy_delay`).
-The built-in communication mode is chosen randomly using weights `TYPHOON_DECOY_PROVIDER_WEIGHT_SIMPLE`, `TYPHOON_DECOY_PROVIDER_WEIGHT_SPARSE`, `TYPHOON_DECOY_PROVIDER_WEIGHT_NOISY`, `TYPHOON_DECOY_PROVIDER_WEIGHT_SMOOTH` and `TYPHOON_DECOY_PROVIDER_WEIGHT_HEAVY` (all integer, default `1` each).
+The built-in communication mode is chosen randomly using weights `TYPHOON_DECOY_PROVIDER_WEIGHT_SIMPLE`, `TYPHOON_DECOY_PROVIDER_WEIGHT_SPARSE`, `TYPHOON_DECOY_PROVIDER_WEIGHT_NOISY`, `TYPHOON_DECOY_PROVIDER_WEIGHT_SMOOTH` and `TYPHOON_DECOY_PROVIDER_WEIGHT_HEAVY`. The skew toward `SMOOTH` and `SIMPLE` reflects how single-flow UDP traffic is dominated by quiet keepalive / no-padding patterns in the wild; `SPARSE` matches the conversational-media share, while `NOISY` and `HEAVY` cover bursty and heartbeat-shaped flows respectively.
 
 A TYPHOON implementation should provide an "interface" for supplying custom decoy communication modes.
 The [proposed implementation](#communication-modes) defines a few general-purpose communication mode sets that are meant to be expandable by users.
@@ -529,10 +530,13 @@ Each flow draws a single probability at initialization from `[TYPHOON_DECOY_FALL
 Active probing is a technique used by censors and network auditors to probe a suspected TYPHOON endpoint directly: they send crafted packets and observe whether the server responds in a way that reveals the protocol.
 To resist this, the flow manager must handle packets that fail tailor authentication gracefully rather than closing the socket or producing a distinctive error response.
 
-Every flow manager has a single **active probe handler** (one per flow, not per user) that receives every packet the flow manager could not identify:
+Every flow manager has a single **active probe handler** (one per flow, not per user) that receives every packet the flow manager could not identify. Exactly three conditions route a packet to the handler:
 
-- **Tailor decryption or authentication failure**: any packet whose encrypted tailor cannot be deciphered or whose BLAKE3/AEAD authentication tag does not verify is forwarded to the handler. This covers both random garbage and deliberately crafted probe packets.
-- **Server only — unregistered user**: a non-handshake, non-decoy packet arriving with a valid-looking tailor but an identity not present in the registered-user table is also forwarded. This catches replayed or forged post-handshake packets sent by an active prober who has observed legitimate traffic.
+- **Undersized wire packet (no tailor header)**: any datagram shorter than `identity_len + tailor_overhead` cannot carry a valid encrypted tailor and is forwarded as a probable probe.
+- **Tailor decryption failure**: the tailor cannot be deciphered with the flow's receive key.
+- **Tailor verification failure**: the tailor decrypts but its BLAKE3/AEAD authentication tag does not verify against the identity's per-user obfuscation key. On the server this also catches non-handshake packets whose identity is absent from the global registered-users map — `verify_tailor` performs the global lookup as part of the same step.
+
+Packets whose identity is globally registered but **not yet locally registered on this flow** (multi-flow case — the client's per-packet flow selection picked a flow that did not receive the handshake) are **not** forwarded to the probe handler: their path binding is anchored on this flow and they continue to normal processing. Out-of-order packets — those whose PN is not strictly greater than the latest PN seen for this identity on this flow — are **not** forwarded either: data packets are still accepted into session processing without rebinding, and decoys are dropped at the usual discardable exit point (the same as in-order decoys).
 
 The handler receives the raw (still encrypted) wire packet together with the UDP source address (`Some(addr)` on the server, `None` on the client whose socket is already connected to a fixed peer).
 It can choose to silently drop the packet, log it, or send a raw response through the flow manager socket using `ProbeFlowSender::send_raw` — completely bypassing TYPHOON framing — to mimic whatever protocol the operator wants to impersonate.
@@ -875,7 +879,7 @@ In short, these are the main TYPHOON implementation parts:
 - Health check provider (one per session): attached to session controller, keeps internal protocol state, manages handshake message timers and injects handshake messages themselves if necessary.
 - Flow controller (one per flow): accepts data, prepends a mock header to it and sends it to the flow partner using a UDP socket.
 - Decoy provider (one per flow): attached to flow controller, observes (and probably mutates) flow packet stream and injects decoy packets whenever necessary.
-- Active probe handler (one per flow): attached to flow controller, receives every packet that could not be identified (tailor authentication failed, or — on the server — packet from an unregistered user), and may send a raw response via the flow socket to mimic another protocol.
+- Active probe handler (one per flow): attached to flow controller, receives every packet that could not be identified — undersized wire packet, tailor decryption failure, or tailor verification failure (which on the server also catches non-handshake packets from globally-unregistered identities) — and may send a raw response via the flow socket to mimic another protocol.
 
 #### Identification and rebinding
 
@@ -886,7 +890,7 @@ Another important challenge is client address binding, since client addresses ca
 In general, the client-to-identification mapping should be safe (considering client identification is unique) thanks to:
 
 - Session key authentication that is used for [tailor encryption](#tailor-encryption).
-- Incremental packet number [in tailor](#tailor-structure), stored in lower `4` bytes of **PN** field (it's always filled, even in data and decoy packets).
+- Incremental packet number [in tailor](#tailor-structure), stored in lower `4` bytes of **PN** field. A single monotonic counter is maintained per session and shared by every emitter — data, health-check, handshake, decoy, and termination packets all advance the same sequence. This makes the PN stream usable as a tie-breaker for source-address rebinding without having to disambiguate between sub-sequences.
 
 By default, the **ID** field is `16` bytes ([UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier)) long, which should be sufficient for random user **ID** assignment.
 
@@ -894,7 +898,8 @@ Alternatively, if there exists another way of identifying users (e.g. each of th
 A scenario when an attacker impersonates a user, forging a fake packet on their behalf, should not be a concern, since [tailor structure is authenticated with user session key anyway](#tailor-encryption).
 
 The UDP source address rebinding is performed independently by each server flow manager.
-A flow manager updates its [stored address for a client](#global-user-structures) only when a correctly-authenticated packet arrives from a new source address.
+A flow manager updates its [stored address for a client](#global-user-structures) only when a correctly-authenticated non-handshake packet arrives with **PN strictly greater than the latest PN seen on this flow** — out-of-order non-handshake packets are still accepted into session processing (decoys are dropped at the usual discardable point), they just do not move the binding.
+The monotonic-PN gate prevents an active prober that has captured a legitimate post-handshake packet from rebinding the return path to its own address by replaying that packet from elsewhere — the captured packet's PN is no longer strictly greater than the watermark by the time it lands on the wire.
 This per-flow-manager approach ensures that each flow path maintains the correct return address, even when a client uses multiple flow managers with different source addresses (e.g. different network interfaces), or when a client's address changes mid-session due to NAT rebinding or network handover.
 
 #### Global user structures
@@ -961,8 +966,8 @@ Some values used in computation are defined once during initialization or derive
 
 #### Heavy mode
 
-Heavy mode implements sending big decoy packets occasionally.
-It resembles file transferring or bulk update delivery.
+Heavy mode implements sending large decoy packets at a low cadence.
+It resembles background-heartbeat / metric-push / software-update-poll traffic; the name reflects packet **size**, not aggregate throughput.
 
 It defines the following equations for decoy packet delay:
 
@@ -980,7 +985,7 @@ And the following equations for decoy packet length:
 #### Noisy mode
 
 Noisy mode implements sending smaller decoy packets in bursts often.
-It resembles usual web or socket traffic.
+It resembles bursty web / DNS / interactive socket traffic.
 
 It defines the following equations for decoy packet delay:
 
@@ -999,8 +1004,8 @@ And the following equations for decoy packet length:
 
 #### Sparse mode
 
-Sparse mode implements sending average decoy packets sparsely distributed in time.
-It resembles VoIP traffic or downloading.
+Sparse mode implements sending average-sized decoy packets at the steady cadence of low-bitrate conversational media.
+It resembles light VoIP / interactive-media flows.
 
 It defines the following equations for decoy packet delay:
 

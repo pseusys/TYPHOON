@@ -278,7 +278,7 @@ async fn main() {
     >::new(key_pair, EvalServerConnectionHandler)
     .with_flows(flows)
     .with_settings(settings.clone());
-    let listener_builder = if profile.is_unrestricted() {
+    let listener_builder = if profile.is_unrestricted() || profile.is_bulk_upload() {
         listener_builder
     } else if is_quic {
         listener_builder.with_decoy::<SparseDecoyProvider<ShortIdentity, DefaultExecutor>>()

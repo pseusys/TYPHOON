@@ -237,29 +237,7 @@ PROFILES: Final[dict[str, Profile]] = {
     ),
     "bulk_upload": Profile(
         name="bulk_upload",
-        description=(
-            "Operational-comparison default for `poe capture --all`: each "
-            "protocol uploads ~10 MB at a fixed 4 ms inter-arrival cadence "
-            "over a 120 s wall-clock window.  Combined with the receiver-safe "
-            "batch pacing in common/_profile.py (40 ms every 10 packets) "
-            "this caps the sustained wire rate at ~143 KB/s, which finishes "
-            "the 10 MB budget in ~70 s for fast senders and leaves ~50 s of "
-            "headroom for TYPHOON's heavier per-packet send_bytes path "
-            "(AEAD + 3 mutex acquires + 5 await points + UDP write ≈ "
-            "2.5 ms/packet × 8 651 packets ≈ 22 s extra wall-clock).  Well "
-            "below the kernel UDP buffer drain ceiling for every UDP-native "
-            "protocol in the suite.  For TYPHOON the "
-            "Rust eval pins `SimpleDecoyProvider` (no decoys) and uses "
-            "`profile.flow_config()` for chunk / IAT shaping with "
-            "`FakeBodyMode.EMPTY` (no padding body) so each wire packet is "
-            "tailor + crypto + header + payload ≈ 1.24 KB, tightly under the "
-            "1500 B default TYPHOON MTU.  bulk_upload measures crypto + "
-            "envelope cost only, in line with §6.2's operational-comparison "
-            "framing — decoy overhead and fake-body padding are measured "
-            "separately in §6.1 (self-testing) and §7 (discussion).  Not "
-            "used for detection / mimicry tests; those use the `as_*` and "
-            "`raw_default` / `tuned_default` profiles."
-        ),
+        description="Operational-comparison default for `poe capture --all`",
         chunk_c2s=IntRange(1100, 1200),
         chunk_s2c=IntRange(0, 0),
         iat_c2s_ms=Range(4.0, 4.0),
@@ -267,8 +245,7 @@ PROFILES: Final[dict[str, Profile]] = {
         bytes_c2s=IntRange(10_000_000, 10_000_000),
         bytes_s2c=IntRange(0, 0),
         duration_s=Range(120.0, 120.0),
-        fake_body_mode=FakeBodyMode.EMPTY,
-        fake_header_len=IntRange(8, 8),
+        fake_body_mode=FakeBodyMode.RANDOM,
     ),
     "raw_default": Profile(
         name="raw_default",
