@@ -119,9 +119,9 @@ def _run_one(
 @option("--chaos", is_flag=True, default=False, help="Enable pumba chaos overlay (latency + jitter).")
 @option(
     "--timeout",
-    default=300,
+    default=900,
     show_default=True,
-    help="Per-protocol timeout in seconds before the run is killed.",
+    help="Per-protocol timeout in seconds before the run is killed. Sized to fit `bulk_upload.duration_s` (600 s) plus setup/teardown headroom under chaos.",
 )
 @option(
     "--profile",

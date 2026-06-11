@@ -244,7 +244,7 @@ PROFILES: Final[dict[str, Profile]] = {
         iat_s2c_ms=Range(0.0, 0.0),
         bytes_c2s=IntRange(10_000_000, 10_000_000),
         bytes_s2c=IntRange(0, 0),
-        duration_s=Range(120.0, 120.0),
+        duration_s=Range(600.0, 600.0),
         fake_body_mode=FakeBodyMode.RANDOM,
     ),
     "raw_default": Profile(

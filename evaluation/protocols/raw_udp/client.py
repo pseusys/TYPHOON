@@ -3,7 +3,7 @@ from os import environ
 from socket import AF_INET, SOCK_DGRAM, socket
 from subprocess import run
 from sys import exit
-from time import sleep
+from time import monotonic, sleep
 
 observer_gw = environ.get("OBSERVER_GW")
 server_host = environ["SERVER_HOST"]
@@ -30,6 +30,8 @@ sleep(0.2)
 chunk = bytes(chunk_size)
 sent = 0
 packets = 0
+total_sleep = 0.0
+transfer_start = monotonic()
 while sent < transfer_bytes:
     n = min(chunk_size, transfer_bytes - sent)
     sock.send(chunk[:n])
@@ -37,7 +39,11 @@ while sent < transfer_bytes:
     packets += 1
     if delay_ms > 0 and packets % delay_every == 0:
         sleep(delay_ms / 1000)
+        total_sleep += delay_ms / 1000
+transfer_time_s = monotonic() - transfer_start - total_sleep
+
+print(f"sent {sent} bytes", flush=True)
+print(f"transfer_time_s={transfer_time_s:.3f}", flush=True)
 
 sock.send(b"DONE")
-print(f"sent {sent} bytes", flush=True)
 exit(0)

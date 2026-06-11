@@ -582,7 +582,7 @@ def _plot_fpr_at_tpr(rows: list[tuple[str, str, str, dict[str, object] | None]],
     fig.suptitle("Test A — Barradas FPR @ TPR (higher bars = better blending)",
                  fontsize=12, fontweight="bold", y=0.995)
     fig.tight_layout(rect=(0, 0, 1, 0.985))
-    fig.savefig(out_path, dpi=120)
+    fig.savefig(out_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -1172,7 +1172,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
     # Write the Barradas FPR-at-TPR diagram (faceted by classifier).
     out_root = Path(out_dir) if out_dir else root / "plots"
     out_root.mkdir(parents=True, exist_ok=True)
-    barradas_path = out_root / "barradas_fpr_at_tpr.png"
+    barradas_path = out_root / "barradas_fpr_at_tpr.pdf"
     _plot_fpr_at_tpr(rows, barradas_path)
     console.print(f"  [green]wrote[/green] {barradas_path}\n")
 

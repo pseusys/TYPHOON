@@ -135,10 +135,10 @@ def _plot_use_case_compare(pooled_by_case: dict[str, dict], out_dir: Path) -> No
     fig.tight_layout(rect=[0, 0.04 + 0.008 * len(cases), 1, 1])
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    png_path = out_dir / "use_case_compare.png"
-    fig.savefig(png_path, format="png", bbox_inches="tight", dpi=120)
+    pdf_path = out_dir / "use_case_compare.pdf"
+    fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
-    echo(f"Saved: {png_path}")
+    echo(f"Saved: {pdf_path}")
 
 
 @command()

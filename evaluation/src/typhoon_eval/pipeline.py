@@ -180,14 +180,14 @@ def _phase_visualize(bulk_run_ids: list[str], diagrams_dir: Path, log_dir: Path)
     for run_id in bulk_run_ids:
         console.print(f"\n  [cyan]proto-compare[/cyan] {run_id}")
         _invoke("proto-compare", _proto_compare_main, ["--run", run_id, "--out-dir", str(proto_cmp_dir)], log_path)
-        for suffix in ("_proto_compare.png", "_handshake.png", "_fingerprint.png"):
+        for suffix in ("_proto_compare.pdf", "_handshake.pdf", "_fingerprint.pdf"):
             p = proto_cmp_dir / f"run_{run_id}{suffix}"
             if p.exists():
                 generated.append(p)
 
         console.print(f"  [cyan]flow-plot[/cyan] {run_id}")
         _invoke("flow-plot", _pcap_flow_plot_main, ["--run", run_id, "--out-dir", str(flow_plot_dir)], log_path)
-        generated.extend(flow_plot_dir.glob(f"run_{run_id}*.png"))
+        generated.extend(flow_plot_dir.glob(f"run_{run_id}*.pdf"))
 
     return generated
 
@@ -211,17 +211,17 @@ def _phase_typhoon(
     console.print(f"\n  [cyan]self-compare[/cyan] ({typhoon_runs} runs)")
     ok = _invoke("self-compare", _self_compare_main, ["--runs", str(typhoon_runs), "--out-dir", str(self_cmp_dir)], log_path)
     if ok:
-        generated.extend(self_cmp_dir.glob("*.png"))
+        generated.extend(self_cmp_dir.glob("*.pdf"))
 
     console.print(f"\n  [cyan]use-case-compare[/cyan] ({typhoon_uc_runs} runs/case)")
     ok = _invoke("uc-compare", _use_case_compare_main, ["--runs-per-case", str(typhoon_uc_runs), "--out-dir", str(uc_cmp_dir)], log_path)
     if ok:
-        generated.extend(uc_cmp_dir.glob("*.png"))
+        generated.extend(uc_cmp_dir.glob("*.pdf"))
 
     console.print("\n  [cyan]traffic-compare[/cyan]")
     ok = _invoke("traffic-compare", _traffic_compare_main, ["--out-dir", str(traffic_cmp_dir)], log_path)
     if ok:
-        generated.extend(traffic_cmp_dir.glob("*.png"))
+        generated.extend(traffic_cmp_dir.glob("*.pdf"))
 
     return generated
 
@@ -282,7 +282,7 @@ def _phase_ml(
             log_path,
         )
 
-    generated.extend(ml_plots.glob("*.png"))
+    generated.extend(ml_plots.glob("*.pdf"))
     return features_path, generated
 
 
@@ -338,9 +338,9 @@ def _generate_report(
     # ── Diagrams ──────────────────────────────────────────────────────────────
     lines += ["## Diagrams", ""]
     diagram_sections: dict[str, list[str]] = {}
-    for png in sorted(diagrams_dir.rglob("*.png")):
-        section = png.parent.name
-        diagram_sections.setdefault(section, []).append(f"- `{png.relative_to(PROJECT_ROOT)}`")
+    for pdf in sorted(diagrams_dir.rglob("*.pdf")):
+        section = pdf.parent.name
+        diagram_sections.setdefault(section, []).append(f"- `{pdf.relative_to(PROJECT_ROOT)}`")
 
     _descriptions = {
         "proto_compare":      "6-panel protocol comparison (violin, CDF, overhead, entropy, heatmap)",

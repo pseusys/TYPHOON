@@ -140,10 +140,10 @@ def _plot_self_compare(run_stats: list[dict], use_case: str, out_dir: Path) -> N
 
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{use_case}_self_compare"
-    png_path = out_dir / f"{stem}.png"
-    fig.savefig(png_path, format="png", bbox_inches="tight", dpi=120)
+    pdf_path = out_dir / f"{stem}.pdf"
+    fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
-    echo(f"Saved: {png_path}")
+    echo(f"Saved: {pdf_path}")
 
 
 @command()

@@ -138,8 +138,8 @@ def _plot_timeline(run_dir: Path, out_dir: Path) -> None:
     fig.tight_layout(rect=[0, 0.03, 1, 1])
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{run_dir.name}_pcap_flow.png"
-    fig.savefig(path, format="png", bbox_inches="tight", dpi=100)
+    path = out_dir / f"{run_dir.name}_pcap_flow.pdf"
+    fig.savefig(path, format="pdf", bbox_inches="tight")
     plt.close(fig)
     echo(f"Saved: {path}")
 

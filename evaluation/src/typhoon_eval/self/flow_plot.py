@@ -385,8 +385,8 @@ def _plot_all(
     fig.tight_layout()
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{name}.png"
-    fig.savefig(path, format="png", bbox_inches="tight", dpi=100)
+    path = out_dir / f"{name}.pdf"
+    fig.savefig(path, format="pdf", bbox_inches="tight")
     plt.close(fig)
     echo(f"Saved: {path}")
 
@@ -451,8 +451,8 @@ def _plot_all_per_packet(
     fig.tight_layout()
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{name}_packets.png"
-    fig.savefig(path, format="png", bbox_inches="tight", dpi=100)
+    path = out_dir / f"{name}_packets.pdf"
+    fig.savefig(path, format="pdf", bbox_inches="tight")
     plt.close(fig)
     echo(f"Saved: {path}")
 

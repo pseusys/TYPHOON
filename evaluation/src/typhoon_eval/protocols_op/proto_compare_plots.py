@@ -11,7 +11,7 @@ the wrong question.
 
 Reads pcap files from a capture run directory and produces:
 
-  {run}_proto_compare.png  — six-panel operational comparison
+  {run}_proto_compare.pdf  — six-panel operational comparison
     A) packet-size CDF
     B) inter-arrival-time CDF (log x-axis)
     C) throughput vs. goodput-efficiency scatter
@@ -19,7 +19,7 @@ Reads pcap files from a capture run directory and produces:
     E) byte entropy by phase (all / handshake / data)
     F) operational metric heatmap (normalised, 6 metrics × all protocols)
 
-  {run}_handshake.png — three-panel handshake metrics:
+  {run}_handshake.pdf — three-panel handshake metrics:
     A) handshake duration (bar)
     B) handshake packet count (bar)
     C) handshake byte fraction (bar)
@@ -247,8 +247,8 @@ def _plot_main(metrics: list[dict], run_name: str, out_dir: Path) -> None:
     fig.suptitle(f"Operational comparison — {run_name}", fontsize=14, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{run_name}_proto_compare.png"
-    fig.savefig(path, format="png", bbox_inches="tight", dpi=110)
+    path = out_dir / f"{run_name}_proto_compare.pdf"
+    fig.savefig(path, format="pdf", bbox_inches="tight")
     plt.close(fig)
     echo(f"Saved: {path}")
 
@@ -287,8 +287,8 @@ def _plot_handshake(metrics: list[dict], run_name: str, out_dir: Path) -> None:
     fig.suptitle(f"Handshake metrics — {run_name}", fontsize=13, fontweight="bold")
     fig.tight_layout()
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{run_name}_handshake.png"
-    fig.savefig(path, format="png", bbox_inches="tight", dpi=110)
+    path = out_dir / f"{run_name}_handshake.pdf"
+    fig.savefig(path, format="pdf", bbox_inches="tight")
     plt.close(fig)
     echo(f"Saved: {path}")
 

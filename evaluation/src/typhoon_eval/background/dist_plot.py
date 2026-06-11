@@ -80,24 +80,31 @@ IAT_AXIS_PCTILE = 99
 PAYLOAD_ENTROPY_WINDOW = 200
 # Minimum packets per flow required to compute IATs, percentiles, or burst stats.
 MIN_SAMPLES_FOR_STATS = 2
+# Default cap on flows retained per (class, direction) and per class during the
+# corpus walk.  All downstream plots are macro-averages over flows, so 1500
+# flows give very stable means while bounding peak memory on large corpora.
+# Set to None on the CLI (``--max-flows-per-class 0``) to disable.
+DEFAULT_MAX_FLOWS_PER_CLASS = 1500
 
 
 def _load_corpus_packets(
     corpus_root: Path,
+    max_flows_per_class: int | None = DEFAULT_MAX_FLOWS_PER_CLASS,
 ) -> tuple[
-    dict[tuple[str, str], list[tuple[float, int]]],
+    dict[tuple[str, str], int],
     dict[tuple[str, str], list[list[tuple[float, int]]]],
     dict[str, list[list[tuple[float, int, str]]]],
     dict[tuple[str, str], list[float]],
 ]:
     """Walk every run dir and assemble per-flow records in three layouts.
 
-    Returns ``(aggregated_by_class_dir, per_flow_by_class_dir,
+    Returns ``(n_packets_by_pair, per_flow_by_class_dir,
     per_flow_combined_by_class, payload_entropy_per_flow_by_class_dir)``:
 
-    * ``aggregated[(class_key, direction)] = [(ts, size), ...]`` — every
-      packet of that class flowing in that direction, pooled across runs.
-      Used for the n-packets summary line only.
+    * ``n_packets_by_pair[(class_key, direction)] = int`` — running count
+      of accepted packets per (class, direction).  Used for the summary
+      line only; storing the underlying tuples roughly doubled peak
+      memory on large corpora for zero plotting benefit.
     * ``per_flow[(class_key, direction)] = [flow_records, ...]`` — list of
       per-(run, server_port, direction) record lists.  Each entry is one
       wire flow (5-tuple), so TYPHOON's 1–3 flows per measurement appear
@@ -111,6 +118,11 @@ def _load_corpus_packets(
     * ``payload_entropy_per_flow[(class_key, direction)] = [entropy, ...]``
       — one Shannon-entropy value per wire flow per direction.
 
+    ``max_flows_per_class`` caps how many flows are retained per
+    (class, direction) pair and per class (in ``per_flow_combined``);
+    once the cap is hit further flows of that pair are skipped.  Set to
+    ``None`` (or 0 / negative) to disable the cap.
+
     Server-port discovery is automatic: for each packet, whichever side
     matches the protocol's ``server_ip`` from ``ip_map`` contributes its
     UDP port number as the flow's server-port discriminator.  Background
@@ -120,12 +132,17 @@ def _load_corpus_packets(
     run uniformly.
     """
 
-    aggregated: dict[tuple[str, str], list[tuple[float, int]]] = defaultdict(list)
+    cap = max_flows_per_class if (max_flows_per_class is not None and max_flows_per_class > 0) else None
+    n_packets_by_pair: dict[tuple[str, str], int] = defaultdict(int)
     per_flow: dict[tuple[str, str], list[list[tuple[float, int]]]] = defaultdict(list)
     per_flow_combined: dict[str, list[list[tuple[float, int, str]]]] = defaultdict(list)
     payload_entropy_per_flow: dict[tuple[str, str], list[float]] = defaultdict(list)
 
-    for run_dir in sorted(corpus_root.glob("run_*")):
+    run_dirs = sorted(corpus_root.glob("run_*"))
+    n_total = len(run_dirs)
+    for i, run_dir in enumerate(run_dirs, start=1):
+        if i % 100 == 0 or i == n_total:
+            console.print(f"  walked {i}/{n_total} runs", highlight=False)
         meta_path = run_dir / "metadata.json"
         if not meta_path.exists():
             continue
@@ -181,18 +198,21 @@ def _load_corpus_packets(
                     continue
                 records.sort(key=lambda r: r[0])
                 pair_key = (cls, direction)
-                aggregated[pair_key].extend(records)
-                per_flow[pair_key].append(records)
-                payload_entropy_per_flow[pair_key].append(
-                    _entropy(b"".join(payloads_in_pcap[(cls, _port, direction)])),
-                )
+                n_packets_by_pair[pair_key] += len(records)
+                if cap is None or len(per_flow[pair_key]) < cap:
+                    per_flow[pair_key].append(records)
+                    payload_entropy_per_flow[pair_key].append(
+                        _entropy(b"".join(payloads_in_pcap[(cls, _port, direction)])),
+                    )
             for (cls, _port), combined in flows_combined_in_pcap.items():
                 if len(combined) < MIN_SAMPLES_FOR_STATS:
+                    continue
+                if cap is not None and len(per_flow_combined[cls]) >= cap:
                     continue
                 combined.sort(key=lambda r: r[0])
                 per_flow_combined[cls].append(combined)
 
-    return aggregated, per_flow, per_flow_combined, payload_entropy_per_flow
+    return n_packets_by_pair, per_flow, per_flow_combined, payload_entropy_per_flow
 
 
 def _iats_ms_from_records(records: list[tuple[float, int]]) -> np.ndarray:
@@ -602,7 +622,7 @@ def _draw_pair(
         axes[row, 2].set_title(f"{metric} deciles — {direction}")
 
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    fig.savefig(out_path, dpi=120)
+    fig.savefig(out_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -634,7 +654,7 @@ def _draw_histogram_5b(
     ax.legend(loc="upper right", fontsize=9)
     ax.grid(alpha=0.25, linestyle="--")
     fig.tight_layout()
-    fig.savefig(out_path, dpi=120)
+    fig.savefig(out_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -683,7 +703,7 @@ def _draw_packet_index_diagnostic(
         ax_iat.set_title(f"{prof}: IAT vs packet index  (c2s={counts['c2s']}, s2c={counts['s2c']})")
         ax_iat.grid(alpha=0.25, linestyle="--")
     fig.tight_layout(rect=(0, 0, 1, 0.99))
-    fig.savefig(out_path, dpi=120)
+    fig.savefig(out_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -694,7 +714,12 @@ def _draw_packet_index_diagnostic(
               help="Output directory for plots (default: <corpus-root>/plots).")
 @option("--json/--no-json", "write_json", default=True, show_default=True,
               help="Write machine-readable JSON companion files alongside each PNG.")
-def main(corpus_root: str | None, out_dir: str | None, write_json: bool) -> None:
+@option("--max-flows-per-class", "max_flows_per_class",
+              default=DEFAULT_MAX_FLOWS_PER_CLASS, show_default=True, type=int,
+              help="Cap on flows retained per class during the corpus walk "
+                   "(bounds peak memory).  Pass 0 to disable the cap.")
+def main(corpus_root: str | None, out_dir: str | None, write_json: bool,
+         max_flows_per_class: int) -> None:
     """Generate size / IAT distribution comparison plots from a finished corpus.
 
     Each PNG ships with a machine-readable JSON companion (Barradas moments +
@@ -708,11 +733,14 @@ def main(corpus_root: str | None, out_dir: str | None, write_json: bool) -> None
     out_root = Path(out_dir) if out_dir else root / "plots"
     out_root.mkdir(parents=True, exist_ok=True)
 
-    console.print(f"[bold]Walking corpus[/bold] {root}")
-    aggregated, per_flow, per_flow_combined, payload_entropy_per_flow = _load_corpus_packets(root)
-    n_packets = sum(len(v) for v in aggregated.values())
+    cap_msg = f"{max_flows_per_class} flows/class" if max_flows_per_class and max_flows_per_class > 0 else "uncapped"
+    console.print(f"[bold]Walking corpus[/bold] {root}  (cap: {cap_msg})")
+    n_packets_by_pair, per_flow, per_flow_combined, payload_entropy_per_flow = _load_corpus_packets(
+        root, max_flows_per_class=max_flows_per_class,
+    )
+    n_packets = sum(n_packets_by_pair.values())
     n_flows   = sum(len(v) for v in per_flow.values())
-    n_keys    = len({k[0] for k in aggregated})
+    n_keys    = len({k[0] for k in n_packets_by_pair})
     console.print(f"  Loaded {n_packets} packets from {n_flows} (class, direction) flows across {n_keys} classes")
 
     for profile, target in PROFILE_TARGET_CLASS.items():
@@ -729,14 +757,14 @@ def main(corpus_root: str | None, out_dir: str | None, write_json: bool) -> None
             console.print(f"  [yellow]skip {profile} vs {target} — missing data "
                           f"(typhoon flows[{t_counts}], target flows[{g_counts}])[/yellow]")
             continue
-        out_path = out_root / f"distplot_{profile}_vs_{target}.png"
+        out_path = out_root / f"distplot_{profile}_vs_{target}.pdf"
         _draw_pair(
             profile, target,
             typhoon_per_flow_by_dir, target_per_flow_by_dir,
             typhoon_per_flow_combined, target_per_flow_combined, out_path,
         )
         console.print(f"  [green]wrote[/green] {out_path}")
-        hist_path = out_root / f"distplot_{profile}_vs_{target}_hist5b.png"
+        hist_path = out_root / f"distplot_{profile}_vs_{target}_hist5b.pdf"
         _draw_histogram_5b(
             profile, target,
             typhoon_per_flow_combined, target_per_flow_combined,
@@ -762,7 +790,7 @@ def main(corpus_root: str | None, out_dir: str | None, write_json: bool) -> None
         if prof.startswith("typhoon::")
     }
     if typhoon_flows_by_profile_direction:
-        out_path = out_root / "distplot_typhoon_packet_index.png"
+        out_path = out_root / "distplot_typhoon_packet_index.pdf"
         _draw_packet_index_diagnostic(typhoon_flows_by_profile_direction, out_path)
         console.print(f"  [green]wrote[/green] {out_path}")
         if write_json:
