@@ -1,37 +1,12 @@
-"""
-PART 2 — Operational comparison of UDP/TCP protocols from pcap captures.
+"""PART 2 — Operational comparison of UDP/TCP protocols from pcap captures.
 
-Compares throughput, overhead, goodput efficiency, byte entropy, burstiness,
-and handshake characteristics across all protocols in a capture run.  This
-deliberately does **not** include detectability or fingerprint analysis — that
-question belongs in PART 3 (background-blending evaluation), where TYPHOON
-traffic is compared against natural UDP traffic rather than against other
-tunnel/VPN protocols.  Putting tunnel-vs-tunnel ML accuracy here would frame
-the wrong question.
+Reads pcaps from a capture-run directory and produces:
 
-Reads pcap files from a capture run directory and produces:
-
-  {run}_proto_compare.pdf  — six-panel operational comparison
-    A) packet-size CDF
-    B) inter-arrival-time CDF (log x-axis)
-    C) throughput vs. goodput-efficiency scatter
-    D) protocol-overhead bar chart
-    E) byte entropy by phase (all / handshake / data)
-    F) operational metric heatmap (normalised, 6 metrics × all protocols)
-
-  {run}_handshake.pdf — three-panel handshake metrics:
-    A) handshake duration (bar)
-    B) handshake packet count (bar)
-    C) handshake byte fraction (bar)
-
-  {run}_compare_table.md — markdown comparison table
-
-Per-protocol handshake boundaries come from each Protocol's handshake_sniffer
-(see shared/protocols.py).
-
-Usage (via poe):
-    poe proto-compare
-    poe proto-compare --run 20260501_120000 --out-dir results/plots
+  {run}_proto_compare.pdf — six panels:
+    A) packet-size CDF, B) IAT CDF (log x), C) throughput vs goodput-eff scatter,
+    D) protocol-overhead bars, E) byte entropy by phase, F) operational heatmap.
+  {run}_handshake.pdf — three panels (duration, packet count, byte fraction).
+  {run}_compare_table.md — markdown comparison table.
 """
 
 from json import loads

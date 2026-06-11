@@ -1,28 +1,13 @@
-"""
-TYPHOON flow packet structure visualiser.
+"""TYPHOON flow packet-structure visualiser.
 
-Runs a TYPHOON example with capture logging (primary mode) or reads an existing
-log file (fallback), then generates a single PNG with one stacked-bar subplot
-per paired flow showing per-packet wire composition over time.
+Runs a TYPHOON example with capture logging (or reads an existing log file)
+and produces a stacked-bar PNG with one subplot per paired flow. c2s and s2c
+flows of the same connection are merged via max-Jaccard overlap of active
+time buckets (c2s positive, s2c negative; outlines encode packet kind).
 
-c2s and s2c flows that share the same logical connection are detected by
-maximising Jaccard overlap of their active time buckets and merged into one
-subplot (c2s bars positive, s2c bars negative; bar outlines encode packet kind).
-
-Two display modes:
-  - Bucketed (default): packets are summed into fixed-width time buckets.
-  - Per-packet (--per-packet): one bar per packet; x spacing is proportional
-    to the inter-packet delay so gaps between bars visually encode time.
-
-Usage (via poe):
-    poe plot --example heavy_traffic --out-dir out/
-    poe plot --log trace.log --out-dir out/
-    poe plot --example hello_world --per-packet --out-dir out/
-
-Usage (direct):
-    python -m typhoon_eval.flow_plot --example hello_world --out-dir out/
-    python -m typhoon_eval.flow_plot --log trace.log --out-dir out/
-    python -m typhoon_eval.flow_plot --example hello_world --per-packet --out-dir out/
+Display modes: bucketed (sum into fixed-width buckets, default) or
+per-packet (one bar per packet; x spacing proportional to inter-packet
+delay so gaps visually encode time).
 """
 
 from collections import defaultdict

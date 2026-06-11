@@ -1,22 +1,14 @@
-"""
-TYPHOON total evaluation pipeline.
+"""TYPHOON total evaluation pipeline (six phases).
 
-Orchestrates the full evaluation in six phases:
-  1. capture   — bulk runs (N times) + scenario variants + optional chaos run
-  2. analyze   — pcap statistics for every capture run
-  3. visualize — protocol comparison and flow plots per capture run
+  1. capture   — bulk runs + scenario variants + optional chaos run
+  2. analyze   — pcap statistics per capture run
+  3. visualize — protocol comparison and flow plots
   4. typhoon   — TYPHOON intrinsic comparisons (self, use-case, traffic)
-  5. ml        — feature extraction, supervised + sequence + byte classifiers
+  5. ml        — feature extraction + supervised/sequence/byte classifiers
   6. report    — generate evaluation/results/report.md
 
-All diagrams go to DIAGRAMS_DIR (default: ../../diagrams/).
-All analysis artefacts and model weights stay in RESULTS_DIR (default: results/).
-
-Usage:
-    poe evaluate
-    poe evaluate --classification-runs 5 --no-chaos
-    poe evaluate --skip capture,typhoon
-    poe evaluate --diagrams-dir /tmp/diagrams
+Diagrams: DIAGRAMS_DIR (default ../../diagrams/). Analysis + model weights:
+RESULTS_DIR (default results/).
 """
 
 from datetime import UTC, datetime

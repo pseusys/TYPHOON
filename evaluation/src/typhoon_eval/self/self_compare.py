@@ -1,17 +1,8 @@
-"""
-TYPHOON self-comparison: run one configuration N times and compare the runs.
+"""TYPHOON self-comparison: run one config N times and compare across runs.
 
-Shows how much TYPHOON varies across independent executions: which parameters were
-selected (body mode, header length, decoy) and how they impact packet size distribution,
-inter-arrival time, entropy, and per-component byte breakdown.
-
-Usage (via poe):
-    poe self-compare
-    poe self-compare --use-case security --runs 8 --random-payload
-    poe self-compare --example use_case --use-case default --runs 6 --out-dir results/cmp
-
-Usage (direct):
-    python -m typhoon_eval.self_compare --use-case default --runs 6
+Captures cross-execution variability: which random parameters were selected
+(body mode, header length, decoy) and their impact on packet size distribution,
+IAT, entropy, and per-component byte breakdown.
 """
 
 from json import dumps

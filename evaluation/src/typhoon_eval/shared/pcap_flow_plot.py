@@ -1,18 +1,8 @@
-"""
-Per-packet pcap timeline grid for all captured protocols.
+"""Per-packet pcap timeline grid for all captured protocols.
 
-Reads pcap files from a capture run directory and produces a single PNG with
-one subplot per protocol.  Each packet is one point: client→server packets
-are plotted above the zero line, server→client packets below it.  The
-handshake boundary (per protocol's sniffer) is shown as a dashed vertical
-line.  All subplots share the same y-axis range for direct size comparison.
-
-Usage (via poe):
-    poe proto-flow-plot
-    poe proto-flow-plot --run 20260501_120000 --out-dir results/plots
-
-Usage (direct):
-    python -m typhoon_eval.pcap_flow_plot [--run YYYYMMDD_HHMMSS] [--out-dir DIR]
+One PNG with one subplot per protocol; each packet is one point (c2s above
+the zero line, s2c below). The per-protocol handshake boundary is drawn as
+a dashed vertical line. All subplots share the y-axis for direct comparison.
 """
 
 from math import ceil

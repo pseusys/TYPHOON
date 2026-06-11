@@ -49,35 +49,27 @@ use typhoon::settings::keys::{
 };
 use typhoon::socket::{ClientHandle, ListenerBuilder, ServerFlowConfiguration};
 
-/// Eval-side override mirroring the client; both sides apply identical settings.
+// Mirrors of eval_client.rs constants. Both sides must apply identical
+// settings; consult eval_client.rs for the override rationale.
+
 const EVAL_FAKE_HEADER_PROBABILITY: f64 = 1.0;
-/// Eval-side override mirroring the client — pin per-flow constant length to 1200.
 const EVAL_FAKE_BODY_CONSTANT_LENGTH_MIN: u64 = 1200;
 const EVAL_FAKE_BODY_CONSTANT_LENGTH_MAX: u64 = 1200;
-/// Eval-side override mirroring the client.
 const EVAL_FAKE_BODY_LENGTH_MAX: u64 = 1300;
-/// Eval-side override mirroring the client — see eval_client.rs.
 const EVAL_SEND_BYTES_JITTER: f64 = 0.30;
-/// QUIC-only eval overrides — see eval_client.rs.
 const EVAL_QUIC_MTU: usize = 1450;
 const EVAL_QUIC_SEND_BYTES_JITTER: f64 = 0.10;
 const EVAL_QUIC_DECOY_SPARSE_LENGTH_MIN: u64 = 64;
 const EVAL_QUIC_DECOY_SPARSE_LENGTH_MAX: u64 = 120;
-/// Eval-side override mirroring the client — see eval_client.rs.
 const EVAL_HEALTH_CHECK_NEXT_IN_MIN: u64 = 300_000;
 const EVAL_HEALTH_CHECK_NEXT_IN_MAX: u64 = 600_000;
-
-/// Tuned-default overrides mirroring the client — see eval_client.rs.
 const EVAL_TUNED_SEND_BYTES_JITTER: f64 = 0.8;
-/// Tuned-default fragmentation target — mirrors eval_client.rs.
 const EVAL_TUNED_SEND_BYTES_CHUNK: u64 = 512;
-/// Tuned-default decoy-provider weights — mirrors eval_client.rs.
 const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SIMPLE: u64 = 1;
 const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SPARSE: u64 = 6;
 const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_NOISY: u64 = 1;
 const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SMOOTH: u64 = 3;
 const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_HEAVY: u64 = 1;
-/// Tuned-default decoy current-rate alpha — mirrors eval_client.rs.
 const EVAL_TUNED_DECOY_CURRENT_ALPHA: f64 = 0.01;
 const EVAL_TUNED_FALLTHROUGH_MIN: f64 = 0.0;
 const EVAL_TUNED_FALLTHROUGH_MAX: f64 = 0.75;
@@ -85,22 +77,16 @@ const EVAL_TUNED_DECOY_HEAVY_BASE_RATE: f64 = 0.075;
 const EVAL_TUNED_DECOY_NOISY_BASE_RATE: f64 = 4.5;
 const EVAL_TUNED_DECOY_SPARSE_BASE_RATE: f64 = 30.0;
 const EVAL_TUNED_DECOY_SMOOTH_BASE_RATE: f64 = 0.45;
-/// Tuned-default fake-header probability — mirrors eval_client.rs.
 const EVAL_TUNED_FAKE_HEADER_PROBABILITY: f64 = 0.70;
-/// Tuned-default fake-header length cap — mirrors eval_client.rs.
 const EVAL_TUNED_FAKE_HEADER_LENGTH_MAX: u64 = 48;
-/// Tuned-default field-type weights — mirrors eval_client.rs.
 const EVAL_TUNED_HDR_WEIGHT_RANDOM: u64 = 3;
 const EVAL_TUNED_HDR_WEIGHT_CONSTANT: u64 = 4;
 const EVAL_TUNED_HDR_WEIGHT_VOLATILE: u64 = 3;
 const EVAL_TUNED_HDR_WEIGHT_SWITCHING: u64 = 3;
 const EVAL_TUNED_HDR_WEIGHT_INCREMENTAL: u64 = 3;
-/// Tuned-default Volatile / Switching widening — mirrors eval_client.rs.
 const EVAL_TUNED_VOLATILE_CHANGE_PROB_MAX: f64 = 0.25;
 const EVAL_TUNED_SWITCHING_TIMEOUT_MIN_MS: u64 = 1500;
-/// Tuned-default Constant body length cap — mirrors eval_client.rs.
 const EVAL_TUNED_FAKE_BODY_CONSTANT_LENGTH_MAX: u64 = 900;
-/// Tuned-default decoy length cap — mirrors eval_client.rs.
 const EVAL_TUNED_DECOY_LENGTH_MAX: u64 = 1100;
 
 const CERT_PATH: &str = "/keys/typhoon.cert";

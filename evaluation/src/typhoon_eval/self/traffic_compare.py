@@ -1,26 +1,16 @@
-"""
-TYPHOON traffic-pattern comparison: compare four realistic application traffic shapes.
+"""TYPHOON traffic-pattern comparison across four application shapes.
 
-The four modes cross two independent axes:
+Two independent axes:
+  payload size:   const (PAYLOAD_FIXED) vs random (PAYLOAD_MIN..MAX)
+  inter-cluster:  const (INTER_CLUSTER_MS) vs random (INTER_CLUSTER_MIN..MAX)
 
-  payload size:   constant (PAYLOAD_FIXED bytes) vs random (PAYLOAD_MIN..PAYLOAD_MAX)
-  inter-cluster:  constant (INTER_CLUSTER_MS) vs random (INTER_CLUSTER_MIN..INTER_CLUSTER_MAX ms)
+Messages are sent in clusters of CLUSTER_SIZE with a short intra-cluster delay
+to produce burst-and-pause traffic instead of a steady-rate stream.
 
-Messages are sent in clusters of CLUSTER_SIZE with a short intra-cluster delay, producing
-burst-and-pause traffic rather than the artificial steady-rate stream of a simple loop.
-
-Mode 1: const payload + const wait   — uniform, predictable stream
-Mode 2: const payload + random wait  — bursty timing, uniform sizes
-Mode 3: random payload + const wait  — regular timing, variable sizes
-Mode 4: random payload + random wait — both axes random (most realistic)
-
-Usage (via poe):
-    poe traffic-compare
-    poe traffic-compare --use-case security --runs 3
-    poe traffic-compare --use-case default --out-dir results/traffic
-
-Usage (direct):
-    python -m typhoon_eval.traffic_compare --use-case interactive
+Mode 1: const payload + const wait  — uniform, predictable stream
+Mode 2: const payload + random wait — bursty timing, uniform sizes
+Mode 3: random payload + const wait — regular timing, variable sizes
+Mode 4: random payload + random wait — both axes random
 """
 
 from json import dumps

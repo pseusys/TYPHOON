@@ -1,16 +1,8 @@
-"""
-TYPHOON evaluation — pcap analysis.
+"""TYPHOON evaluation — pcap analysis.
 
-Reads all .pcap files from a capture run directory, computes per-protocol
+Reads all .pcap files from a capture-run directory, computes per-protocol
 statistics in three directions (c2s, s2c, all), and writes stats.json into
-the same run directory.
-
-Usage (via poe):
-    poe analyze                        # analyse most recent run
-    poe analyze --run 20260423_130000  # analyse a specific run
-
-Usage (direct):
-    python -m typhoon_eval.analysis [--run YYYYMMDD_HHMMSS]
+the same directory.
 """
 
 from json import dumps, loads

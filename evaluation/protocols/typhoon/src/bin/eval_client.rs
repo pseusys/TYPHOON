@@ -39,124 +39,52 @@ use typhoon::socket::ClientSocketBuilder;
 use typhoon_eval::identity::ShortIdentity;
 use typhoon_eval::profile::TrafficProfile;
 
-/// Eval-side override: every flow gets a fake header (no header-less outliers).
-/// Skipped for the `raw_default` profile so pure protocol defaults apply.
+// ── Eval-side overrides (skipped for `raw_default`) ──────────────────────────
+
 const EVAL_FAKE_HEADER_PROBABILITY: f64 = 1.0;
-/// Eval-side override: when Constant body mode is selected, pin the per-flow
-/// constant length to QUIC's typical initial-packet size (~1200 B) by giving
-/// the protocol's [MIN, MAX] sampler a degenerate range.  Tuned profiles want
-/// a stable wire shape, so MIN==MAX is correct here.
 const EVAL_FAKE_BODY_CONSTANT_LENGTH_MIN: u64 = 1200;
 const EVAL_FAKE_BODY_CONSTANT_LENGTH_MAX: u64 = 1200;
-/// Eval-side override: widen the upper bound of Random fake-body length so per-
-/// packet size variance closes the size_std fingerprint that the protocol
-/// default of 512 B leaves visible.
 const EVAL_FAKE_BODY_LENGTH_MAX: u64 = 1300;
-/// Eval-side override: per-packet user-data length is sampled from
-/// `[max_data_payload * (1 - JITTER), max_data_payload]` when fragmentation
-/// is unavoidable, breaking the otherwise-uniform per-flow chunk-size
-/// fingerprint.  Lower value used by QUIC profiles (see ``EVAL_QUIC_*``).
 const EVAL_SEND_BYTES_JITTER: f64 = 0.30;
-/// QUIC-only eval overrides.  Real QUIC s2c data caps just under 1200 B
-/// wire; setting MTU=1450 leaves headroom but stops TYPHOON pushing packets
-/// to 1500 B.  Lower jitter (0.1 vs 0.3) and a sparse decoy provider with
-/// narrow length range supply the bimodal small-packet mode (ACK frames)
-/// that the chunk-driven data path can't reach below the 76 B service-
-/// packet floor.
+
+// QUIC-only: MTU 1450 leaves ack-frame headroom; sparse decoy length range
+// supplies the bimodal small-packet mode real QUIC shows.
 const EVAL_QUIC_MTU: usize = 1450;
 const EVAL_QUIC_SEND_BYTES_JITTER: f64 = 0.10;
 const EVAL_QUIC_DECOY_SPARSE_LENGTH_MIN: u64 = 64;
 const EVAL_QUIC_DECOY_SPARSE_LENGTH_MAX: u64 = 120;
-/// Eval-side override: health-check interval pushed to 5-10 minutes so no
-/// health-check packets fire inside the 30-120 s eval flows.  Health-checks
-/// produced 0-1 off-cadence packets per flow that landed on the IAT
-/// distribution as outliers, driving `iat_std` / `iat_entropy` Δs on
-/// as_voice.  Asserted constraints: MIN > TIMEOUT_MAX (32 000), MIN < MAX.
+
+// Health-check interval pushed past flow duration so checks never fire
+// mid-eval. Constraint: MIN > TIMEOUT_MAX (32 000), MIN < MAX.
 const EVAL_HEALTH_CHECK_NEXT_IN_MIN: u64 = 300_000;
 const EVAL_HEALTH_CHECK_NEXT_IN_MAX: u64 = 600_000;
 
-/// Tuned-default overrides — applied only when `profile.is_tuned_default()`.
-/// Push fragment-size jitter and fallthrough rate to the upper end of their
-/// asserted ranges, and triple every decoy provider's base emission rate so
-/// fallthrough packets dominate enough of the wire to break the residual
-/// Constant-mode + max_user_payload modes that raw_default leaks.
+// ── Tuned-default overrides (applied only when `is_tuned_default()`) ─────────
+
 const EVAL_TUNED_SEND_BYTES_JITTER: f64 = 0.8;
-/// Tuned-default fragmentation target — 512 B with ±80 % jitter spreads
-/// fragments across `[102, ~922]` B instead of pinning the MTU.  Directly
-/// breaks the `size_max` / `size_std` discriminator that picks out
-/// MTU-saturated TYPHOON flows from `unknown` traffic.
 const EVAL_TUNED_SEND_BYTES_CHUNK: u64 = 512;
-/// Tuned-default decoy-provider weights — bias selection toward `Sparse`
-/// (gaussian around 700 B, well inside the wire-size band) and `Smooth`
-/// (adaptive growth bounded by `SMOOTH_LENGTH_MAX`), away from `Noisy` and
-/// `Heavy`, both of which saturate `DECOY_LENGTH_MAX` ≈ 1400 B during idle
-/// periods and produce the MTU-bin spike in TYPHOON flows.  Weights must
-/// stay positive (asserted by the settings layer).
 const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SIMPLE: u64 = 1;
 const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SPARSE: u64 = 6;
 const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_NOISY: u64 = 1;
 const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_SMOOTH: u64 = 3;
 const EVAL_TUNED_DECOY_PROVIDER_WEIGHT_HEAVY: u64 = 1;
-/// Tuned-default decoy current-rate alpha — slow the EWMA tracker from
-/// `0.05` to `0.01` so the decoy provider's rate doesn't snap to data
-/// bursts.  Keeps decoy emission steadier across bulk-vs-idle phases and
-/// reduces the heavy-tailed burst-bytes-skew / kurt fingerprint.
 const EVAL_TUNED_DECOY_CURRENT_ALPHA: f64 = 0.01;
 const EVAL_TUNED_FALLTHROUGH_MIN: f64 = 0.0;
 const EVAL_TUNED_FALLTHROUGH_MAX: f64 = 0.75;
-/// Tuned-default decoy base rates — halved from the previous 3× sweep
-/// (Heavy 0.15→0.075, Noisy 9.0→4.5, Sparse 60.0→30.0, Smooth 0.9→0.45).
-/// `byte_sum` regressed from -0.16σ (raw) to +0.30σ (tuned) under the 3×
-/// regime; halving brings the total bytes-per-flow back toward neutral
-/// without removing the per-flow randomization breadth that the providers
-/// still supply.
 const EVAL_TUNED_DECOY_HEAVY_BASE_RATE: f64 = 0.075;
 const EVAL_TUNED_DECOY_NOISY_BASE_RATE: f64 = 4.5;
 const EVAL_TUNED_DECOY_SPARSE_BASE_RATE: f64 = 30.0;
 const EVAL_TUNED_DECOY_SMOOTH_BASE_RATE: f64 = 0.45;
-/// Tuned-default fake-header probability: 0.70.  The empirical sweep that
-/// produced Test A FPR@95%TPR = 4.88% (vs 1.04% pre-tuning) confirmed that
-/// per-flow shape variance dominates one-class detectability.  Dropping
-/// from 0.85 → 0.70 increases the header-less outlier share to ~30%,
-/// matching the long-tail residue's natural variance band more closely.
 const EVAL_TUNED_FAKE_HEADER_PROBABILITY: f64 = 0.70;
-/// Tuned-default fake-header length cap — raise from protocol default 32 B
-/// to 48 B so the structured cleartext header section is large enough to
-/// drag per-packet entropy below the encrypted-payload floor.
 const EVAL_TUNED_FAKE_HEADER_LENGTH_MAX: u64 = 48;
-/// Tuned-default field-type weights — push toward uniform (3/4/3/3/3, sum
-/// 16) so no single field type dominates.  Constant retains a slight lean
-/// (4/16 vs 3/16) for entropy reduction, but Random and Incremental at
-/// 3/16 each (was 2/15 = 13%) add genuine field-shape variance that the
-/// OCSVM cannot enclose tightly.
 const EVAL_TUNED_HDR_WEIGHT_RANDOM: u64 = 3;
 const EVAL_TUNED_HDR_WEIGHT_CONSTANT: u64 = 4;
 const EVAL_TUNED_HDR_WEIGHT_VOLATILE: u64 = 3;
 const EVAL_TUNED_HDR_WEIGHT_SWITCHING: u64 = 3;
 const EVAL_TUNED_HDR_WEIGHT_INCREMENTAL: u64 = 3;
-/// Tuned-default Volatile change-probability cap — 0.25 (was 0.15).
-/// Continues the un-uniformify push: at 0.25 Volatile rotates noticeably
-/// faster than Switching, adding a distinct rotation regime per field and
-/// further broadening the per-flow manifold.
 const EVAL_TUNED_VOLATILE_CHANGE_PROB_MAX: f64 = 0.25;
-/// Tuned-default Switching timeout floor — 1500 ms (was 3000 ms).  Lower
-/// floor means Switching rotates several times within typical 30-120 s
-/// flows, adding cleartext-header shape variance that the previous 3 s
-/// floor partially muted.
 const EVAL_TUNED_SWITCHING_TIMEOUT_MIN_MS: u64 = 1500;
-/// Tuned-default Constant body length cap — lower from 1400 B (= MTU) to
-/// 900 B (Option A iteration: was 1100).  Empirical Test A ranking showed
-/// `total_size_max` still leading with importance 0.088 and Δz=+1.15 after
-/// the 1100 B cap, so we tighten further.  Caps every Constant-mode fake
-/// body well below MTU, attacking the per-flow `total_size_max` and
-/// `s2c_size_max` features that dominated the post-Track-A leak.
 const EVAL_TUNED_FAKE_BODY_CONSTANT_LENGTH_MAX: u64 = 900;
-/// Tuned-default decoy length cap — lower from 1400 B (= MTU) to 1100 B.
-/// Applies to every decoy provider's output via the global
-/// `DECOY_LENGTH_MAX` (Heavy / Smooth / Sparse / Noisy all clamp here),
-/// so no decoy emission can park at MTU.  Combined with the Constant body
-/// cap above, removes both remaining MTU-saturation sources from
-/// tuned_default's wire shape.
 const EVAL_TUNED_DECOY_LENGTH_MAX: u64 = 1100;
 
 const CERT_PATH: &str = "/keys/typhoon.cert";
@@ -207,11 +135,6 @@ async fn main() {
     let certificate = ClientCertificate::load(CERT_PATH).expect("load cert");
     println!("Certificate loaded");
 
-    // Tuned profiles get eval-side overrides; raw_default skips them so pure
-    // protocol defaults are exercised.  QUIC profiles get an extra layer:
-    // tighter MTU, lower send-bytes jitter, and a small-length sparse decoy
-    // provider that supplies the bimodal ACK-sized packet mode real QUIC
-    // shows.  Other tuned profiles use `SimpleDecoyProvider` (no decoys).
     let is_quic = matches!(profile.name.as_str(), "as_quic_d" | "as_quic_u");
     let settings_builder = SettingsBuilder::<DefaultExecutor>::new();
     let settings_builder = if is_quic {

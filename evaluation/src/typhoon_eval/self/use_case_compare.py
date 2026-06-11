@@ -1,20 +1,11 @@
-"""
-TYPHOON use-case comparison: run each PROTOCOL.md use case and compare traffic profiles.
+"""TYPHOON use-case comparison: per-use-case traffic profile contrast.
 
-Shows measurably different traffic characteristics for each use case:
+Use cases (from PROTOCOL.md):
   throughput  — minimal overhead, fastest throughput
   interactive — light padding, sparse decoy
   transparent — constant packet sizes, structured header, smooth decoy
   security    — large random padding, random header, heavy decoy
-  default     — randomly chosen config (baseline for comparison)
-
-Usage (via poe):
-    poe use-case-compare
-    poe use-case-compare --runs-per-case 3 --random-payload
-    poe use-case-compare --cases throughput,security --runs-per-case 5
-
-Usage (direct):
-    python -m typhoon_eval.use_case_compare --runs-per-case 3
+  default     — randomly chosen config (baseline)
 """
 
 from json import dumps

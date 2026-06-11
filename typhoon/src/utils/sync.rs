@@ -198,12 +198,9 @@ pub fn create_watch<T: Send>() -> (WatchSender<T>, WatchReceiver<T>) {
 
 // ── Notifying queues ──────────────────────────────────────────────────────────
 //
-// Design: crossbeam SegQueue/ArrayQueue for O(1) lock-free, allocation-free
-// storage; runtime-native Notify/channel for efficient async wakeup.
-//
-// Compared to the previous design (SegQueue + WatchSender which locked a mutex
-// per notify) and the naive alternative (tokio mpsc which allocates a Box<Node>
-// per push), this hybrid is optimal for both throughput and latency.
+// Crossbeam SegQueue/ArrayQueue for O(1) lock-free, allocation-free storage;
+// runtime-native Notify/channel for async wakeup. The obvious alternative
+// (tokio mpsc) allocates a Box<Node> per push — avoid.
 
 cfg_if! {
     if #[cfg(feature = "tokio")] {

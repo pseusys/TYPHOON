@@ -1,22 +1,11 @@
-"""
-TYPHOON evaluation orchestrator.
+"""TYPHOON evaluation orchestrator.
 
-Runs a Docker Compose capture session for each selected protocol, waits for
-the client container to finish transferring data, then tears down.  The
-observer container writes a pcap to results/captures/<protocol>[_chaos].pcap.
+For each selected protocol, runs a Docker Compose capture session, waits for
+the client to finish transferring, then tears down. The observer writes
+results/captures/<protocol>[_chaos].pcap.
 
-Per-run profile parameters (chunk sizes, IATs, byte budgets, FlowConfig
-overrides) are sampled from `shared/profiles.py` and passed to client and
-server containers as `TRAFFIC_PROFILE` + `PROFILE_*` env vars.
-
-Usage (via poe):
-    poe capture --all
-    poe capture --all --chaos
-    poe capture --protocol typhoon
-    poe capture --protocol wireguard --chaos --timeout 600
-
-Usage (direct):
-    python -m typhoon_eval.shared.orchestrator --all [--chaos] [--timeout 300] [--profile bulk_upload]
+Per-run profile values (sampled from `shared/profiles.py`) are passed to
+client and server containers as TRAFFIC_PROFILE + PROFILE_* env vars.
 """
 
 from datetime import UTC, datetime
