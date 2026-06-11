@@ -171,7 +171,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 continue;
             }
 
-            let (encrypted_packet, encrypted_tailor) = packet.split_buf(packet.len() - identity_len - tailor_overhead);
+            let (encrypted_packet, encrypted_tailor) = packet.split_buf_end(identity_len + tailor_overhead);
 
             // Deobfuscate tailor, verify immediately for non-handshake packets (single lock scope).
             let tailor = {
@@ -271,7 +271,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Result<(), FlowControllerError> {
         let identity_len = T::length();
         let tailor_len = identity_len + TAILOR_LENGTH;
-        let (body, tailor_buf) = packet.split_buf(packet.len() - tailor_len);
+        let (body, tailor_buf) = packet.split_buf_end(tailor_len);
         let identity = ServerCryptoTool::<T>::extract_identity(&tailor_buf);
 
         // Feed decoy provider for rate tracking (per-user lock).
@@ -302,7 +302,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             let body_len = body_only.len();
             (body_only, PacketFlags::DECOY, body_len, 0_usize)
         } else {
-            let (packet_data, packet_tailor) = notified_packet.split_buf(notified_packet.len() - identity_len - TAILOR_LENGTH);
+            let (packet_data, packet_tailor) = notified_packet.split_buf_end(identity_len + TAILOR_LENGTH);
             let flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
             let data_len = packet_data.len();
             let encrypted_tailor = {

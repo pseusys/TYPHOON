@@ -83,7 +83,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ProbeFlowSe
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager for ClientFlowManager<T, AE> {
     async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Result<(), FlowControllerError> {
         let tailor_len = TAILOR_LENGTH + T::length();
-        let (body, tailor_buf) = packet.split_buf(packet.len() - tailor_len);
+        let (body, tailor_buf) = packet.split_buf_end(tailor_len);
 
         let notified_body = {
             let mut lock = self.decoy_provider.lock().await;

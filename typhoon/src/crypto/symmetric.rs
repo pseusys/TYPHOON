@@ -109,7 +109,7 @@ pub(crate) fn encrypt_anonymously(key: &[u8], plaintext: &mut DynamicByteBuffer)
 /// Args: key (32-byte slice), ciphertext_with_nonce. Returns: plaintext.
 #[inline]
 pub(crate) fn decrypt_anonymously(key: &[u8], ciphertext_with_nonce: &mut DynamicByteBuffer) -> DynamicByteBuffer {
-    let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf(ciphertext_with_nonce.len() - ANONYMOUS_NONCE_LEN);
+    let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf_end(ANONYMOUS_NONCE_LEN);
     let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = key.try_into().expect("key must be 32 bytes");
     let nonce: [u8; ANONYMOUS_NONCE_LEN] = nonce_bytes.slice().try_into().expect("nonce must be ANONYMOUS_NONCE_LEN bytes");
     AnonymousCipher::new(&key_bytes.into(), &nonce.into()).apply_keystream(ciphertext.slice_mut());
@@ -185,7 +185,7 @@ impl Symmetric {
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub(crate) fn decrypt_no_verify(&mut self, ciphertext_authenticated: DynamicByteBuffer, pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
         let split_at = ciphertext_authenticated.len().checked_sub(SYMMETRIC_ADDITIONAL_AUTH_LEN).ok_or_else(|| CryptoError::authentication_error("ciphertext shorter than auth-tag length"))?;
-        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(split_at);
+        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf_start(split_at);
         let ciphertext_copy = pool.allocate_precise_from_slice_with_capacity(ciphertext_with_nonce.slice(), 0, 0);
         let plaintext = decrypt_anonymously(&self.encryption_key, &mut ciphertext_with_nonce);
         Ok((
@@ -215,7 +215,7 @@ impl Symmetric {
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub(crate) fn decrypt_auth<A: ByteBuffer>(&mut self, ciphertext_authenticated: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
         let split_at = ciphertext_authenticated.len().checked_sub(SYMMETRIC_ADDITIONAL_AUTH_LEN).ok_or_else(|| CryptoError::authentication_error("ciphertext shorter than auth-tag length"))?;
-        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(split_at);
+        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf_start(split_at);
         let hash = match additional_data {
             Some(res) => Hasher::new_keyed(&self.verification_key).update(ciphertext_with_nonce.slice()).update(res.slice()).finalize(),
             None => keyed_hash(&self.verification_key, ciphertext_with_nonce.slice()),
@@ -232,8 +232,8 @@ impl Symmetric {
         if ciphertext_authenticated.len() < SYMMETRIC_BUILT_IN_AUTH_LEN + NONCE_LEN {
             return Err(CryptoError::authentication_error("ciphertext shorter than nonce+tag length"));
         }
-        let (ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_BUILT_IN_AUTH_LEN);
-        let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf(ciphertext_with_nonce.len() - NONCE_LEN);
+        let (ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf_end(SYMMETRIC_BUILT_IN_AUTH_LEN);
+        let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf_end(NONCE_LEN);
         let nonce_slice = nonce_bytes.slice();
         let nonce = CipherNonce::from_slice(&nonce_slice);
         let tag_slice = authentication.slice();

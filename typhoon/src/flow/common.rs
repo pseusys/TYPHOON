@@ -102,7 +102,7 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
             let body_len = body_only.len();
             (body_only, PacketFlags::DECOY, body_len)
         } else {
-            let (packet_data, packet_tailor) = packet.split_buf(packet.len() - full_tailor_len);
+            let (packet_data, packet_tailor) = packet.split_buf_end(full_tailor_len);
             let flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
             let data_len = packet_data.len();
             let encrypted = match self.provider.get_mut().map_err(FlowControllerError::MissingCache)?.obfuscate_tailor(packet_tailor, pool) {
@@ -161,7 +161,7 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
             warn!("client flow: undersized wire packet ({} < {encrypted_tailor_len})", packet.len());
             return Ok(None);
         }
-        let (body, encrypted_tailor) = packet.split_buf(packet.len() - encrypted_tailor_len);
+        let (body, encrypted_tailor) = packet.split_buf_end(encrypted_tailor_len);
         let cipher = self.provider.get_mut().map_err(FlowControllerError::MissingCache)?;
         match cipher.deobfuscate_tailor(encrypted_tailor, pool) {
             Ok((tailor_buf, transcript)) => match cipher.verify_tailor(transcript) {

@@ -168,7 +168,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
             };
 
             // The flow manager returns: encrypted_payload || plaintext_tailor (full TAILOR_LENGTH + T::length() bytes).
-            let (payload_part, tailor_part) = packet.split_buf(packet.len() - T::length() - TAILOR_LENGTH);
+            let (payload_part, tailor_part) = packet.split_buf_end(T::length() + TAILOR_LENGTH);
             let tailor = Tailor::<T>::new(tailor_part);
 
             debug!("client session: received {:?} packet", tailor.flags());
