@@ -216,6 +216,22 @@ let settings = Arc::new(
 - **Zero-copy by design**: payload bytes travel as views over pooled `ByteBuffer`s from allocation to the UDP socket; copies are introduced only at system boundaries (user API and OS socket calls).
 - **Lock-free hot paths**: per-packet paths use `CachedMap` snapshots (wait-free reads) and `AtomicBitSet` for active-flow tracking; `Mutex`/`RwLock` is confined to session lifecycle operations (handshake, teardown).
 
+### Deployment
+
+TYPHOON's wire packet rate is amplified by its decoy stream relative to a "raw" UDP service.
+On a server using Linux's default UDP socket buffer (`net.core.rmem_default = net.core.rmem_max = 208 KB`), a bursty arrival pattern under loss/jitter (e.g. mobile-handoff, transient ISP shaping) can overrun the kernel receive buffer before TYPHOON's userspace receive loop drains it, dropping incoming packets before the protocol's authentication path sees them.
+
+**Bump the host-level UDP buffer sysctls on any production server**, the same way the WireGuard / OpenVPN / strongSwan deployment guides recommend:
+
+| `sysctl` name | required value |
+| `net.core.rmem_max` | 16777216 |
+| `net.core.rmem_default` | 4194304 |
+| `net.core.wmem_max` | 16777216 |
+| `net.core.wmem_default` | 4194304 |
+
+These are the same values the standard UDP-VPN guides recommend.
+At default sizes, both TYPHOON _and_ other UDP-native services (WireGuard, OpenVPN, raw UDP) under-deliver on heavily loaded paths; with these set, the kernel keeps up with the highest decoy rate the protocol's reference providers emit.
+
 ## Evaluation
 
 The [`evaluation/`](evaluation/) directory contains a Docker-based traffic capture and analysis harness, organised into three independent parts:

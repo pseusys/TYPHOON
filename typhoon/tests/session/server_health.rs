@@ -66,7 +66,7 @@ fn parse_response(packet: &DynamicByteBuffer) -> (u64, u32, PacketFlags) {
     let tailor_size = TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH;
     assert!(packet.len() >= tailor_size, "packet too short: {} < {tailor_size}", packet.len());
     let tailor_start = packet.len() - tailor_size;
-    let (_, tailor_buf) = packet.split_buf(tailor_start);
+    let (_, tailor_buf) = packet.split_buf_start(tailor_start);
     let tailor = Tailor::<StaticByteBuffer>::new(tailor_buf);
     (tailor.packet_number(), tailor.time(), tailor.flags())
 }

@@ -309,7 +309,9 @@ async fn main() {
     let transfer_time_s = (elapsed_s - total_sleep_s).max(0.0);
     println!("Sent {sent} bytes c2s, received {received} bytes s2c — done");
     println!("transfer_time_s={transfer_time_s:.3}");
-    exit(0);
+
+    drop(socket);
+    sleep(Duration::from_millis(500)).await;
 }
 
 /// Drive the c2s send loop, respecting `bytes_c2s`, `chunk_c2s`, IAT, and bursty mode.

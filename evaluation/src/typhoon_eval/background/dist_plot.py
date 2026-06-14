@@ -80,20 +80,25 @@ IAT_AXIS_PCTILE = 99
 PAYLOAD_ENTROPY_WINDOW = 200
 # Minimum packets per flow required to compute IATs, percentiles, or burst stats.
 MIN_SAMPLES_FOR_STATS = 2
-# Default cap on flows retained per (class, direction) and per class during the
-# corpus walk.  All downstream plots are macro-averages over flows, so 1500
-# flows give very stable means while bounding peak memory on large corpora.
-# Set to None on the CLI (``--max-flows-per-class 0``) to disable.
-DEFAULT_MAX_FLOWS_PER_CLASS = 1500
+
+# Direction encoding for ``per_flow_combined`` arrays.
+_DIR_ID_C2S = np.int8(0)
+_DIR_ID_S2C = np.int8(1)
+_DIR_ID_TO_NAME = {0: "c2s", 1: "s2c"}
+
+# Per-flow record types after ingest.  Both are tuples of NumPy arrays:
+#   * ``FlowRec``      = ``(times_s: float64[N], sizes_B: int32[N])``
+#   * ``CombinedRec``  = ``(times_s: float64[N], sizes_B: int32[N], dirs: int8[N])``
+FlowRec = tuple[np.ndarray, np.ndarray]
+CombinedRec = tuple[np.ndarray, np.ndarray, np.ndarray]
 
 
 def _load_corpus_packets(
     corpus_root: Path,
-    max_flows_per_class: int | None = DEFAULT_MAX_FLOWS_PER_CLASS,
 ) -> tuple[
     dict[tuple[str, str], int],
-    dict[tuple[str, str], list[list[tuple[float, int]]]],
-    dict[str, list[list[tuple[float, int, str]]]],
+    dict[tuple[str, str], list[FlowRec]],
+    dict[str, list[CombinedRec]],
     dict[tuple[str, str], list[float]],
 ]:
     """Walk every run dir and assemble per-flow records in three layouts.
@@ -105,23 +110,19 @@ def _load_corpus_packets(
       of accepted packets per (class, direction).  Used for the summary
       line only; storing the underlying tuples roughly doubled peak
       memory on large corpora for zero plotting benefit.
-    * ``per_flow[(class_key, direction)] = [flow_records, ...]`` — list of
-      per-(run, server_port, direction) record lists.  Each entry is one
-      wire flow (5-tuple), so TYPHOON's 1–3 flows per measurement appear
-      as 1–3 separate entries here, matching what a passive observer
-      would see in production.  Used by the macro-averaging dist-plot
-      helpers and the packet-index diagnostic.
-    * ``per_flow_combined[class_key] = [[(ts, size, direction), ...], ...]``
-      — per-flow timeline (one entry per (run, server_port)) with both
-      directions interleaved and sorted by timestamp.  Used for burst
-      statistics.
+    * ``per_flow[(class_key, direction)] = [FlowRec, ...]`` — list of one
+      ``FlowRec = (times_s, sizes_B)`` per wire flow.  Each pair of NumPy
+      arrays describes one (run, server_port, direction) flow.  TYPHOON's
+      1–3 flows per measurement appear as 1–3 separate entries here,
+      matching what a passive observer would see in production.  Used by
+      the macro-averaging dist-plot helpers and the packet-index
+      diagnostic.
+    * ``per_flow_combined[class_key] = [CombinedRec, ...]`` — list of
+      ``CombinedRec = (times_s, sizes_B, dir_ids)`` per wire flow, with
+      both directions interleaved and sorted by timestamp.  Used for
+      burst statistics.
     * ``payload_entropy_per_flow[(class_key, direction)] = [entropy, ...]``
       — one Shannon-entropy value per wire flow per direction.
-
-    ``max_flows_per_class`` caps how many flows are retained per
-    (class, direction) pair and per class (in ``per_flow_combined``);
-    once the cap is hit further flows of that pair are skipped.  Set to
-    ``None`` (or 0 / negative) to disable the cap.
 
     Server-port discovery is automatic: for each packet, whichever side
     matches the protocol's ``server_ip`` from ``ip_map`` contributes its
@@ -132,10 +133,9 @@ def _load_corpus_packets(
     run uniformly.
     """
 
-    cap = max_flows_per_class if (max_flows_per_class is not None and max_flows_per_class > 0) else None
     n_packets_by_pair: dict[tuple[str, str], int] = defaultdict(int)
-    per_flow: dict[tuple[str, str], list[list[tuple[float, int]]]] = defaultdict(list)
-    per_flow_combined: dict[str, list[list[tuple[float, int, str]]]] = defaultdict(list)
+    per_flow: dict[tuple[str, str], list[FlowRec]] = defaultdict(list)
+    per_flow_combined: dict[str, list[CombinedRec]] = defaultdict(list)
     payload_entropy_per_flow: dict[tuple[str, str], list[float]] = defaultdict(list)
 
     run_dirs = sorted(corpus_root.glob("run_*"))
@@ -158,9 +158,15 @@ def _load_corpus_packets(
             ip_to_key_role[slot["server_ip"]] = (key, "server")
 
         for pcap in run_dir.glob("*.pcap"):
-            # Per-(class_key, server_port, direction) flow records — one wire flow per server port.
-            flows_in_pcap: dict[tuple[str, int, str], list[tuple[float, int]]] = defaultdict(list)
-            flows_combined_in_pcap: dict[tuple[str, int], list[tuple[float, int, str]]] = defaultdict(list)
+            # Per-(class_key, server_port, direction) packet buffers — one wire
+            # flow per server port.  These are scratch buffers that live for the
+            # duration of this pcap; we convert them to compact NumPy arrays
+            # before transferring ownership to the persistent dicts below.
+            ts_buf:   dict[tuple[str, int, str], list[float]] = defaultdict(list)
+            size_buf: dict[tuple[str, int, str], list[int]]   = defaultdict(list)
+            comb_ts_buf:   dict[tuple[str, int], list[float]] = defaultdict(list)
+            comb_size_buf: dict[tuple[str, int], list[int]]   = defaultdict(list)
+            comb_dir_buf:  dict[tuple[str, int], list[int]]   = defaultdict(list)
             payloads_in_pcap: dict[tuple[str, int, str], list[bytes]] = defaultdict(list)
             with PcapReader(str(pcap)) as reader:
                 for pkt in reader:
@@ -178,9 +184,11 @@ def _load_corpus_packets(
                     udp_layer = pkt[UDP]
                     if src_meta[1] == "client" and dst_meta[1] == "server":
                         direction = "c2s"
+                        dir_id = _DIR_ID_C2S
                         server_port = int(udp_layer.dport)
                     elif src_meta[1] == "server" and dst_meta[1] == "client":
                         direction = "s2c"
+                        dir_id = _DIR_ID_S2C
                         server_port = int(udp_layer.sport)
                     else:
                         continue
@@ -188,52 +196,69 @@ def _load_corpus_packets(
                     payload_size = len(payload_bytes)
                     ts = float(pkt.time)
                     flow_key = (class_key, server_port, direction)
-                    flows_in_pcap[flow_key].append((ts, payload_size))
-                    flows_combined_in_pcap[(class_key, server_port)].append((ts, payload_size, direction))
+                    comb_key = (class_key, server_port)
+                    ts_buf[flow_key].append(ts)
+                    size_buf[flow_key].append(payload_size)
+                    comb_ts_buf[comb_key].append(ts)
+                    comb_size_buf[comb_key].append(payload_size)
+                    comb_dir_buf[comb_key].append(dir_id)
                     if len(payloads_in_pcap[flow_key]) < PAYLOAD_ENTROPY_WINDOW:
                         payloads_in_pcap[flow_key].append(payload_bytes)
 
-            for (cls, _port, direction), records in flows_in_pcap.items():
-                if len(records) < MIN_SAMPLES_FOR_STATS:
+            for flow_key, tlist in ts_buf.items():
+                if len(tlist) < MIN_SAMPLES_FOR_STATS:
                     continue
-                records.sort(key=lambda r: r[0])
+                cls, _port, direction = flow_key
+                times  = np.asarray(tlist,           dtype=np.float64)
+                sizes  = np.asarray(size_buf[flow_key], dtype=np.int32)
+                order  = np.argsort(times, kind="stable")
+                times  = times[order]
+                sizes  = sizes[order]
                 pair_key = (cls, direction)
-                n_packets_by_pair[pair_key] += len(records)
-                if cap is None or len(per_flow[pair_key]) < cap:
-                    per_flow[pair_key].append(records)
-                    payload_entropy_per_flow[pair_key].append(
-                        _entropy(b"".join(payloads_in_pcap[(cls, _port, direction)])),
-                    )
-            for (cls, _port), combined in flows_combined_in_pcap.items():
-                if len(combined) < MIN_SAMPLES_FOR_STATS:
+                n_packets_by_pair[pair_key] += len(times)
+                per_flow[pair_key].append((times, sizes))
+                payload_entropy_per_flow[pair_key].append(
+                    _entropy(b"".join(payloads_in_pcap[flow_key])),
+                )
+            for comb_key, tlist in comb_ts_buf.items():
+                if len(tlist) < MIN_SAMPLES_FOR_STATS:
                     continue
-                if cap is not None and len(per_flow_combined[cls]) >= cap:
-                    continue
-                combined.sort(key=lambda r: r[0])
-                per_flow_combined[cls].append(combined)
+                cls, _port = comb_key
+                times = np.asarray(tlist,                 dtype=np.float64)
+                sizes = np.asarray(comb_size_buf[comb_key], dtype=np.int32)
+                dirs  = np.asarray(comb_dir_buf[comb_key],  dtype=np.int8)
+                order = np.argsort(times, kind="stable")
+                per_flow_combined[cls].append((times[order], sizes[order], dirs[order]))
 
     return n_packets_by_pair, per_flow, per_flow_combined, payload_entropy_per_flow
 
 
-def _iats_ms_from_records(records: list[tuple[float, int]]) -> np.ndarray:
-    """Inter-arrival times in milliseconds from one flow's timestamp-sorted records."""
-    if len(records) < MIN_SAMPLES_FOR_STATS:
+def _iats_ms_from_times(times: np.ndarray) -> np.ndarray:
+    """Inter-arrival times in milliseconds from one flow's timestamp-sorted array."""
+    if len(times) < MIN_SAMPLES_FOR_STATS:
         return np.array([])
-    ts = np.array([r[0] for r in records])
-    return np.diff(ts) * 1000.0
+    return np.diff(times) * 1000.0
 
 
 def _burst_per_flow(
-    per_flow_combined: list[list[tuple[float, int, str]]],
+    per_flow_combined: list[CombinedRec],
 ) -> dict[str, dict[str, list[np.ndarray]]]:
     """Per-flow burst pkts/bytes arrays for each direction (one ndarray per flow).
 
     Returns ``{direction: {"pkts": [flow0_pkts, flow1_pkts, …], "bytes": [...]}}``
     so downstream macro-averaging can treat each flow as a single sample.
+
+    ``_compute_bursts_per_direction`` lives in ``ml_blending`` and still takes
+    ``list[(ts, size, direction_str)]``, so we materialise that representation
+    one flow at a time — bounded scope, no corpus-wide memory blow-up.
     """
     out: dict[str, dict[str, list[np.ndarray]]] = {d: {"pkts": [], "bytes": []} for d in DIRECTIONS}
-    for flow in per_flow_combined:
-        bursts = _compute_bursts_per_direction(flow)
+    for times, sizes, dirs in per_flow_combined:
+        timeline = [
+            (float(t), int(s), _DIR_ID_TO_NAME[int(d)])
+            for t, s, d in zip(times, sizes, dirs, strict=True)
+        ]
+        bursts = _compute_bursts_per_direction(timeline)
         for d in DIRECTIONS:
             if len(bursts[d]["pkts"]) > 0:
                 out[d]["pkts"].append(bursts[d]["pkts"])
@@ -241,21 +266,21 @@ def _burst_per_flow(
     return out
 
 
-def _per_flow_sizes(per_flow_records: list[list[tuple[float, int]]]) -> list[np.ndarray]:
+def _per_flow_sizes(per_flow_records: list[FlowRec]) -> list[np.ndarray]:
     """One ndarray of packet sizes per flow."""
-    return [np.array([r[1] for r in flow], dtype=np.int64) for flow in per_flow_records if flow]
+    return [sizes for _times, sizes in per_flow_records if len(sizes) > 0]
 
 
-def _per_flow_iats(per_flow_records: list[list[tuple[float, int]]]) -> list[np.ndarray]:
+def _per_flow_iats(per_flow_records: list[FlowRec]) -> list[np.ndarray]:
     """One ndarray of intra-flow IATs (ms) per flow.  Flows with <2 packets are dropped."""
-    return [a for a in (_iats_ms_from_records(f) for f in per_flow_records) if len(a) > 0]
+    return [a for a in (_iats_ms_from_times(times) for times, _sizes in per_flow_records) if len(a) > 0]
 
 
 def _total_per_flow_concat(
-    per_flow_combined: list[list[tuple[float, int, str]]],
-) -> list[list[tuple[float, int]]]:
-    """Per-flow combined records reduced to (ts, size) for total-flow IAT stats."""
-    return [[(r[0], r[1]) for r in flow] for flow in per_flow_combined]
+    per_flow_combined: list[CombinedRec],
+) -> list[FlowRec]:
+    """Per-flow combined records reduced to (times, sizes) for total-flow IAT stats."""
+    return [(times, sizes) for times, sizes, _dirs in per_flow_combined]
 
 
 def _macro_hist_density(per_flow_vals: list[np.ndarray], edges: np.ndarray) -> np.ndarray:
@@ -346,15 +371,19 @@ def _draw_overlay_hist(ax: Axes, typhoon_vals: list[np.ndarray], target_vals: li
     width = edges[1] - edges[0]
     g_density = _macro_hist_density(target_vals,  edges)
     t_density = _macro_hist_density(typhoon_vals, edges)
+    drew_any = False
     if g_density.any():
         ax.bar(centers, g_density, width=width, alpha=0.55, label=target_label, color="#3a7bd5", align="center")
+        drew_any = True
     if t_density.any():
         ax.bar(centers, t_density, width=width, alpha=0.55, label=typhoon_label, color="#d54a3a", align="center")
+        drew_any = True
     if x_max is not None:
         ax.set_xlim(0, x_max)
     ax.set_xlabel(xlabel)
     ax.set_ylabel("density (per-flow avg)")
-    ax.legend(loc="upper right", fontsize=8)
+    if drew_any:
+        ax.legend(loc="upper right", fontsize=8)
     ax.grid(alpha=0.25, linestyle="--")
 
 
@@ -368,6 +397,7 @@ def _draw_overlay_cdf(ax: Axes, typhoon_vals: list[np.ndarray], target_vals: lis
     pooled = np.concatenate(all_arrays)
     upper = float(x_max) if (x_max is not None and x_max > 0) else float(pooled.max() or 1.0)
     x_grid = np.linspace(0.0, upper, 512)
+    drew_any = False
     for vals, label, colour in (
         (target_vals,  target_label,  "#3a7bd5"),
         (typhoon_vals, typhoon_label, "#d54a3a"),
@@ -375,12 +405,14 @@ def _draw_overlay_cdf(ax: Axes, typhoon_vals: list[np.ndarray], target_vals: lis
         cdf = _macro_cdf(vals, x_grid)
         if cdf.any():
             ax.plot(x_grid, cdf, label=label, color=colour, linewidth=1.5)
+            drew_any = True
     if x_max is not None:
         ax.set_xlim(0, x_max)
     ax.set_ylim(0, 1)
     ax.set_xlabel(xlabel)
     ax.set_ylabel("cumulative (per-flow avg)")
-    ax.legend(loc="lower right", fontsize=8)
+    if drew_any:
+        ax.legend(loc="lower right", fontsize=8)
     ax.grid(alpha=0.25, linestyle="--")
 
 
@@ -488,7 +520,7 @@ def _pair_to_json(
 
 
 def _packet_index_to_json(
-    profile_to_flows: dict[tuple[str, str], list[list[tuple[float, int]]]],
+    profile_to_flows: dict[tuple[str, str], list[FlowRec]],
 ) -> dict[str, object]:
     """Build the JSON companion document for the packet-index diagnostic.
 
@@ -516,8 +548,8 @@ def _packet_index_to_json(
         for direction in DIRECTIONS:
             flows = profile_to_flows.get((prof, direction), [])
             per_dir[direction] = [
-                [int(r[1]) for r in flow[:POSITION_PLOT_PACKETS]]
-                for flow in flows
+                sizes[:POSITION_PLOT_PACKETS].tolist()
+                for _times, sizes in flows
             ]
         profiles_block[prof] = per_dir
     out["profiles"] = profiles_block
@@ -685,13 +717,17 @@ def _draw_packet_index_diagnostic(
         for direction in DIRECTIONS:
             flows = profile_to_flows.get((prof, direction), [])
             counts[direction] = len(flows)
-            for flow in flows:
-                window = flow[:POSITION_PLOT_PACKETS]
-                sizes = np.array([r[1] for r in window])
-                idxs = np.arange(len(sizes))
-                ax_size.plot(idxs, sizes, alpha=0.20, linewidth=0.8, color=direction_colours[direction])
-                iats = _iats_ms_from_records(window)
-                ax_iat.plot(np.arange(1, len(iats) + 1), iats, alpha=0.20, linewidth=0.8, color=direction_colours[direction])
+            for times, sizes in flows:
+                w = min(len(times), POSITION_PLOT_PACKETS)
+                if w == 0:
+                    continue
+                window_sizes = sizes[:w]
+                window_times = times[:w]
+                ax_size.plot(np.arange(w), window_sizes, alpha=0.20, linewidth=0.8,
+                             color=direction_colours[direction])
+                iats = _iats_ms_from_times(window_times)
+                ax_iat.plot(np.arange(1, len(iats) + 1), iats, alpha=0.20, linewidth=0.8,
+                            color=direction_colours[direction])
         ax_size.set_xlim(0, POSITION_PLOT_PACKETS)
         ax_size.set_xlabel("packet index in flow")
         ax_size.set_ylabel("size (B)")
@@ -714,12 +750,7 @@ def _draw_packet_index_diagnostic(
               help="Output directory for plots (default: <corpus-root>/plots).")
 @option("--json/--no-json", "write_json", default=True, show_default=True,
               help="Write machine-readable JSON companion files alongside each PNG.")
-@option("--max-flows-per-class", "max_flows_per_class",
-              default=DEFAULT_MAX_FLOWS_PER_CLASS, show_default=True, type=int,
-              help="Cap on flows retained per class during the corpus walk "
-                   "(bounds peak memory).  Pass 0 to disable the cap.")
-def main(corpus_root: str | None, out_dir: str | None, write_json: bool,
-         max_flows_per_class: int) -> None:
+def main(corpus_root: str | None, out_dir: str | None, write_json: bool) -> None:
     """Generate size / IAT distribution comparison plots from a finished corpus.
 
     Each PNG ships with a machine-readable JSON companion (Barradas moments +
@@ -733,11 +764,8 @@ def main(corpus_root: str | None, out_dir: str | None, write_json: bool,
     out_root = Path(out_dir) if out_dir else root / "plots"
     out_root.mkdir(parents=True, exist_ok=True)
 
-    cap_msg = f"{max_flows_per_class} flows/class" if max_flows_per_class and max_flows_per_class > 0 else "uncapped"
-    console.print(f"[bold]Walking corpus[/bold] {root}  (cap: {cap_msg})")
-    n_packets_by_pair, per_flow, per_flow_combined, payload_entropy_per_flow = _load_corpus_packets(
-        root, max_flows_per_class=max_flows_per_class,
-    )
+    console.print(f"[bold]Walking corpus[/bold] {root}")
+    n_packets_by_pair, per_flow, per_flow_combined, payload_entropy_per_flow = _load_corpus_packets(root)
     n_packets = sum(n_packets_by_pair.values())
     n_flows   = sum(len(v) for v in per_flow.values())
     n_keys    = len({k[0] for k in n_packets_by_pair})
@@ -752,10 +780,12 @@ def main(corpus_root: str | None, out_dir: str | None, write_json: bool,
         typhoon_payload_entropy_by_dir = {d: payload_entropy_per_flow.get((typhoon_key, d), []) for d in DIRECTIONS}
         target_payload_entropy_by_dir  = {d: payload_entropy_per_flow.get((target, d), [])      for d in DIRECTIONS}
         if not any(typhoon_per_flow_by_dir.values()) or not any(target_per_flow_by_dir.values()):
-            t_counts = "/".join(f"{d}={len(typhoon_per_flow_by_dir[d])}" for d in DIRECTIONS)
-            g_counts = "/".join(f"{d}={len(target_per_flow_by_dir[d])}"  for d in DIRECTIONS)
-            console.print(f"  [yellow]skip {profile} vs {target} — missing data "
-                          f"(typhoon flows[{t_counts}], target flows[{g_counts}])[/yellow]")
+            t_counts = ", ".join(f"{d}={len(typhoon_per_flow_by_dir[d])}" for d in DIRECTIONS)
+            g_counts = ", ".join(f"{d}={len(target_per_flow_by_dir[d])}"  for d in DIRECTIONS)
+            console.print(
+                f"  [yellow]skip {profile} vs {target} — missing data "
+                f"(typhoon flows: {t_counts}; target flows: {g_counts})[/yellow]",
+            )
             continue
         out_path = out_root / f"distplot_{profile}_vs_{target}.pdf"
         _draw_pair(
@@ -784,7 +814,7 @@ def main(corpus_root: str | None, out_dir: str | None, write_json: bool,
             ))
             console.print(f"  [green]wrote[/green] {json_path}")
 
-    typhoon_flows_by_profile_direction: dict[tuple[str, str], list[list[tuple[float, int]]]] = {
+    typhoon_flows_by_profile_direction: dict[tuple[str, str], list[FlowRec]] = {
         (prof.removeprefix("typhoon::"), direction): flows
         for (prof, direction), flows in per_flow.items()
         if prof.startswith("typhoon::")
