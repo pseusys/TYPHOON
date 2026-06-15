@@ -17,6 +17,7 @@ use env_logger::{Builder, Env};
 use log::info;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::{Duration, sleep, timeout};
 use typhoon::certificate::ClientCertificate;
 use typhoon::defaults::{DefaultClientConnectionHandler, DefaultExecutor};
@@ -94,6 +95,12 @@ const CERT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 #[tokio::main]
 async fn main() {
     Builder::from_env(Env::default().default_filter_or("typhoon=debug")).init();
+
+    tokio::spawn(async move {
+        let mut sigterm = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+        sigterm.recv().await;
+        exit(0);
+    });
 
     if let Ok(gw) = var("OBSERVER_GW") {
         let _ = Command::new("ip")
@@ -309,9 +316,6 @@ async fn main() {
     let transfer_time_s = (elapsed_s - total_sleep_s).max(0.0);
     println!("Sent {sent} bytes c2s, received {received} bytes s2c — done");
     println!("transfer_time_s={transfer_time_s:.3}");
-
-    drop(socket);
-    sleep(Duration::from_millis(500)).await;
 }
 
 /// Drive the c2s send loop, respecting `bytes_c2s`, `chunk_c2s`, IAT, and bursty mode.

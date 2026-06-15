@@ -117,7 +117,13 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
     /// Insert (or replace) the path binding for a user on this flow.
     pub async fn register_user_binding(&self, id: T, addr: SocketAddr, latest_pn: u64) {
-        self.user_bindings.write().await.insert(id, RwLock::new(PathBinding { addr, latest_pn }));
+        self.user_bindings.write().await.insert(
+            id,
+            RwLock::new(PathBinding {
+                addr,
+                latest_pn,
+            }),
+        );
     }
 
     /// Register a per-user decoy provider and start its background timer.
@@ -220,11 +226,12 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     }
                     None => {
                         drop(bindings);
-                        self.user_bindings
-                            .write()
-                            .await
-                            .entry(identity.clone())
-                            .or_insert_with(|| RwLock::new(PathBinding { addr: source_addr, latest_pn: pn }));
+                        self.user_bindings.write().await.entry(identity.clone()).or_insert_with(|| {
+                            RwLock::new(PathBinding {
+                                addr: source_addr,
+                                latest_pn: pn,
+                            })
+                        });
                     }
                 }
 

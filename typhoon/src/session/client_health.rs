@@ -278,6 +278,14 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         Ok(())
     }
 
+    /// Snapshot `(identity, termination_code)` for use from `Drop` paths.
+    pub(super) async fn termination_snapshot(&self) -> (T, ReturnCode) {
+        let mut guard = self.state.lock().await;
+        let identity = guard.crypto_tool.get().identity();
+        let code = guard.termination_code;
+        (identity, code)
+    }
+
     /// Called when a packet with HEALTH_CHECK flag is received.
     pub async fn feed_input(&self, tailor: Tailor<T>) -> Result<(), SessionControllerError> {
         let pn = tailor.packet_number();
@@ -561,30 +569,5 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                 }
             }
         }
-    }
-}
-
-impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync, CC: ClientConnectionHandler> Drop for ClientHealthProvider<T, AE, SM, CC> {
-    /// NB! There's no need for synchronization: even if a couple of packets slip through after termination, they will just get discarded.
-    fn drop(&mut self) {
-        let manager = self.manager.clone();
-        let state = self.state.clone();
-        let packet = self.settings.pool().allocate(Some(T::length()));
-
-        self.settings.executor().spawn(async move {
-            let (identity, termination_code) = {
-                let mut st = state.lock().await;
-                (st.crypto_tool.get().identity(), st.termination_code)
-            };
-            let packet_number = ((unix_timestamp_ms() / 1000) as u64) << 32;
-            let tailor = Tailor::termination(packet, &identity, termination_code, packet_number);
-
-            if let Some(mgr) = manager.upgrade() {
-                match mgr.send_packet(tailor.into_buffer(), true).await {
-                    Ok(()) => debug!("health provider: termination packet sent"),
-                    Err(err) => warn!("health provider: failed to send termination packet: {err}"),
-                }
-            }
-        });
     }
 }

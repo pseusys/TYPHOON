@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 
 use crate::bytes::{ByteBuffer, StaticByteBuffer};
 use crate::defaults::DefaultExecutor;
@@ -19,7 +20,7 @@ fn make_settings() -> Arc<crate::settings::Settings<DefaultExecutor>> {
 #[test]
 fn test_decoy_state_new_defaults() {
     let settings = make_settings();
-    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
 
     let expected_ref_rate = settings.get(&DECOY_REFERENCE_PACKET_RATE_DEFAULT);
     let expected_pkt_rate = settings.get(&DECOY_CURRENT_PACKET_RATE_DEFAULT);
@@ -38,7 +39,7 @@ fn test_decoy_state_new_defaults() {
 #[test]
 fn test_decoy_state_new_initial_budget() {
     let settings = make_settings();
-    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
 
     let byte_rate_cap = settings.get(&DECOY_BYTE_RATE_CAP);
     let byte_rate_factor = settings.get(&DECOY_BYTE_RATE_FACTOR);
@@ -53,7 +54,7 @@ fn test_decoy_state_new_initial_budget() {
 #[test]
 fn test_should_fallthrough_zero_probability() {
     let settings = make_settings();
-    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Some(0.0));
+    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), Some(0.0));
     for _ in 0..256 {
         assert!(!state.should_fallthrough(), "should_fallthrough must always be false at p=0.0");
     }
@@ -63,7 +64,7 @@ fn test_should_fallthrough_zero_probability() {
 #[test]
 fn test_should_fallthrough_one_probability() {
     let settings = make_settings();
-    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Some(1.0));
+    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), Some(1.0));
     for _ in 0..256 {
         assert!(state.should_fallthrough(), "should_fallthrough must always be true at p=1.0");
     }
@@ -73,7 +74,7 @@ fn test_should_fallthrough_one_probability() {
 #[test]
 fn test_should_fallthrough_rate_in_range() {
     let settings = make_settings();
-    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Some(0.5));
+    let state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), Some(0.5));
     let trials = 4_000;
     let hits: u32 = (0..trials).filter(|_| state.should_fallthrough()).count() as u32;
     let rate = hits as f64 / trials as f64;
@@ -87,7 +88,7 @@ fn test_should_fallthrough_rate_in_range() {
 #[test]
 fn test_quietness_index_busy() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.reference_rate = 100.0;
     state.packet_rate = 100.0;
     assert_eq!(state.quietness_index(), 0.0);
@@ -97,7 +98,7 @@ fn test_quietness_index_busy() {
 #[test]
 fn test_quietness_index_quiet() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.reference_rate = 1000.0;
     state.packet_rate = 1.0;
     let qi = state.quietness_index();
@@ -108,7 +109,7 @@ fn test_quietness_index_quiet() {
 #[test]
 fn test_quietness_index_clamped_to_zero() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.reference_rate = 50.0;
     state.packet_rate = 200.0;
     assert_eq!(state.quietness_index(), 0.0, "should clamp negative values to 0");
@@ -120,7 +121,7 @@ fn test_quietness_index_clamped_to_zero() {
 #[test]
 fn test_schedule_next() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
 
     let before = unix_timestamp_ms();
     state.schedule_next(500, 256);
@@ -137,7 +138,7 @@ fn test_schedule_next() {
 #[test]
 fn test_create_decoy_packet_size() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.features.subheader_mode = SubheaderMode::None;
     state.features.subheader_config = None;
 
@@ -151,7 +152,7 @@ fn test_create_decoy_packet_size() {
 #[test]
 fn test_create_decoy_packet_zero_body() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.features.subheader_mode = SubheaderMode::None;
     state.features.subheader_config = None;
 
@@ -165,7 +166,7 @@ fn test_create_decoy_packet_zero_body() {
 #[test]
 fn test_update_adjusts_packet_rate() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     let initial_packet_rate = state.packet_rate;
 
     // First call: sets previous_packet_time, no EWMA computation.
@@ -181,7 +182,7 @@ fn test_update_adjusts_packet_rate() {
 #[test]
 fn test_update_adjusts_byte_rate() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     let initial_byte_rate = state.byte_rate;
 
     state.update(10, false); // First call: no EWMA.
@@ -196,7 +197,7 @@ fn test_update_adjusts_byte_rate() {
 #[test]
 fn test_try_spend_budget_sufficient() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     let initial_budget = state.byte_budget;
     assert!(initial_budget > 100.0, "initial budget should be large enough for test");
 
@@ -208,7 +209,7 @@ fn test_try_spend_budget_sufficient() {
 #[test]
 fn test_try_spend_budget_insufficient() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     let initial_budget = state.byte_budget;
     let over_budget = (initial_budget as usize) + 1;
 
@@ -220,7 +221,7 @@ fn test_try_spend_budget_insufficient() {
 #[test]
 fn test_update_outgoing_real_depletes_budget() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     let initial_budget = state.byte_budget;
 
     // First call seeds previous_packet_time without applying EWMA / budget math.
@@ -237,7 +238,7 @@ fn test_update_outgoing_real_depletes_budget() {
 #[test]
 fn test_update_incoming_does_not_deplete_budget() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     let initial_budget = state.byte_budget;
 
     state.update(0, false);
@@ -250,7 +251,7 @@ fn test_update_incoming_does_not_deplete_budget() {
 #[test]
 fn test_update_budget_floored_at_zero() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
 
     state.update(0, true);
     // Deduct way more than the initial budget — should clamp at 0, not go negative.
@@ -339,7 +340,7 @@ fn test_decoy_feature_config_random_valid() {
 #[test]
 fn test_should_replicate_none() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.features.replication_mode = ReplicationMode::None;
     assert!(!state.should_replicate(false));
     assert!(!state.should_replicate(true));
@@ -349,7 +350,7 @@ fn test_should_replicate_none() {
 #[test]
 fn test_should_replicate_maintenance() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.features.replication_mode = ReplicationMode::Maintenance;
     state.features.replication_probability = 1.0;
     assert!(!state.should_replicate(false));
@@ -360,7 +361,7 @@ fn test_should_replicate_maintenance() {
 #[test]
 fn test_should_replicate_all() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.features.replication_mode = ReplicationMode::All;
     state.features.replication_probability = 1.0;
     assert!(state.should_replicate(false));
@@ -373,7 +374,7 @@ fn test_should_replicate_all() {
 #[test]
 fn test_subheader_length_none() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.features.subheader_mode = SubheaderMode::None;
     state.features.subheader_config = None;
     assert_eq!(state.subheader_length(false), 0);
@@ -384,7 +385,7 @@ fn test_subheader_length_none() {
 #[test]
 fn test_subheader_length_maintenance() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.features.subheader_mode = SubheaderMode::Maintenance;
     // Ensure a subheader config exists.
     let min_len = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
@@ -398,7 +399,7 @@ fn test_subheader_length_maintenance() {
 #[test]
 fn test_subheader_length_all() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.features.subheader_mode = SubheaderMode::All;
     let min_len = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
     let max_len = settings.get(&DECOY_SUBHEADER_LENGTH_MAX) as usize;
@@ -413,7 +414,7 @@ fn test_subheader_length_all() {
 #[test]
 fn test_schedule_next_maintenance() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.features.maintenance_mode = MaintenanceMode::Random;
 
     let before = unix_timestamp_ms();
@@ -427,7 +428,7 @@ fn test_schedule_next_maintenance() {
 #[test]
 fn test_schedule_next_maintenance_timed() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.features.maintenance_mode = MaintenanceMode::Timed {
         delay_ms: 1000,
     };
@@ -454,7 +455,7 @@ fn test_seeded_packet_is_deterministic() {
 
     let make_packet = |seed: u64| -> Vec<u8> {
         set_test_rng_seed(seed);
-        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
         // Override subheader to All so the subheader path is always taken.
         // The config is generated from the seeded RNG, so it is deterministic.
         state.features.subheader_mode = SubheaderMode::All;
@@ -480,7 +481,7 @@ fn test_seeded_packets_differ_with_different_seeds() {
 
     let make_packet = |seed: u64| -> Vec<u8> {
         set_test_rng_seed(seed);
-        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
         state.features.subheader_mode = SubheaderMode::All;
         state.features.subheader_config = Some(super::generate_random_fake_header(&settings, sh_min, sh_max));
         let packet = state.create_decoy_packet(64, false);
@@ -505,7 +506,7 @@ fn test_seeded_packet_snapshot() {
 
     let make_packet = |seed: u64| -> Vec<u8> {
         set_test_rng_seed(seed);
-        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+        let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
         state.features.subheader_mode = SubheaderMode::All;
         state.features.subheader_config = Some(super::generate_random_fake_header(&settings, sh_min, sh_max));
         let packet = state.create_decoy_packet(16, false);
@@ -525,7 +526,7 @@ fn test_seeded_packet_snapshot() {
 #[test]
 fn test_create_replica_packet() {
     let settings = make_settings();
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     state.features.subheader_mode = SubheaderMode::None;
     state.features.subheader_config = None;
 
@@ -551,7 +552,7 @@ fn test_create_replica_packet() {
 const LENGTH_SAMPLE_COUNT: usize = 500;
 
 fn sampled_state_busy(settings: Arc<crate::settings::Settings<DefaultExecutor>>) -> DecoyState<StaticByteBuffer, DefaultExecutor> {
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings, StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings, StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     // Equal current and reference rates → quietness_index = 0.
     state.reference_rate = 200.0;
     state.packet_rate = 200.0;
@@ -559,7 +560,7 @@ fn sampled_state_busy(settings: Arc<crate::settings::Settings<DefaultExecutor>>)
 }
 
 fn sampled_state_quiet(settings: Arc<crate::settings::Settings<DefaultExecutor>>) -> DecoyState<StaticByteBuffer, DefaultExecutor> {
-    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings, StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), None);
+    let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings, StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH), Arc::new(AtomicU32::new(0)), None);
     // Reference_rate >> packet_rate → quietness_index ≈ 1.
     state.reference_rate = 200.0;
     state.packet_rate = 0.0;

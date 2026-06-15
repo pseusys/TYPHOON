@@ -17,6 +17,8 @@ from time import monotonic, sleep
 
 from _profile import run_profile
 
+signal(SIGTERM, lambda *_: exit(0))
+
 server_host = environ["SERVER_HOST"]
 port = 9000
 
@@ -34,6 +36,5 @@ print(f"sent {sent} bytes", flush=True)
 print(f"transfer_time_s={transfer_time_s:.3f}", flush=True)
 
 sock.send(b"DONE")
-signal(SIGTERM, lambda *_: exit(0))
 sleep(0.5)
 exit(0)

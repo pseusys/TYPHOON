@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::Duration;
 
@@ -82,7 +83,7 @@ fn make_provider(mgr: Arc<MockSessionManager>, settings: Arc<Settings<DefaultExe
     let crypto = make_test_crypto_tool();
     let (response_tx, response_rx) = create_watch::<TestHealthResponse>();
     let (shadowride_tx, shadowride_rx) = create_watch::<()>();
-    let provider = ClientHealthProvider::new(Arc::downgrade(&mgr), settings, crypto, response_tx, shadowride_tx, response_rx, DefaultClientConnectionHandler);
+    let provider = ClientHealthProvider::new(Arc::downgrade(&mgr), settings, crypto, Arc::new(AtomicU32::new(0)), response_tx, shadowride_tx, response_rx, DefaultClientConnectionHandler);
     (provider, shadowride_rx)
 }
 
@@ -97,7 +98,7 @@ async fn test_health_state_compute_next_in_in_range() {
     let _ = shadowride_tx;
 
     let crypto = make_test_crypto_tool();
-    let state = HealthState::new(Arc::clone(&settings), crypto, DefaultClientConnectionHandler, response_rx);
+    let state = HealthState::new(Arc::clone(&settings), crypto, Arc::new(AtomicU32::new(0)), DefaultClientConnectionHandler, response_rx);
     let _ = response_tx;
 
     let min = settings.get(&keys::HEALTH_CHECK_NEXT_IN_MIN) as u32;
@@ -114,7 +115,7 @@ async fn test_health_state_compute_timeout_default() {
     let settings = fast_settings();
     let (_, response_rx) = create_watch::<TestHealthResponse>();
     let crypto = make_test_crypto_tool();
-    let state = HealthState::new(Arc::clone(&settings), crypto, DefaultClientConnectionHandler, response_rx);
+    let state = HealthState::new(Arc::clone(&settings), crypto, Arc::new(AtomicU32::new(0)), DefaultClientConnectionHandler, response_rx);
 
     let timeout = state.compute_timeout();
     let min = settings.get(&keys::TIMEOUT_MIN);
@@ -128,7 +129,7 @@ async fn test_health_state_compute_timeout_with_rtt() {
     let settings = fast_settings();
     let (_, response_rx) = create_watch::<TestHealthResponse>();
     let crypto = make_test_crypto_tool();
-    let mut state = HealthState::new(Arc::clone(&settings), crypto, DefaultClientConnectionHandler, response_rx);
+    let mut state = HealthState::new(Arc::clone(&settings), crypto, Arc::new(AtomicU32::new(0)), DefaultClientConnectionHandler, response_rx);
 
     state.smooth_rtt = Some(5.0);
     state.rtt_variance = Some(2.0);
@@ -146,7 +147,7 @@ async fn test_health_state_increment_retry() {
     let settings = fast_settings(); // MAX_RETRIES = 3
     let (_, response_rx) = create_watch::<TestHealthResponse>();
     let crypto = make_test_crypto_tool();
-    let mut state = HealthState::new(Arc::clone(&settings), crypto, DefaultClientConnectionHandler, response_rx);
+    let mut state = HealthState::new(Arc::clone(&settings), crypto, Arc::new(AtomicU32::new(0)), DefaultClientConnectionHandler, response_rx);
 
     assert!(state.increment_retry(), "retry 1 should be under limit");
     assert!(state.increment_retry(), "retry 2 should be under limit");
@@ -159,7 +160,7 @@ async fn test_health_state_rtt_first_measurement() {
     let settings = fast_settings();
     let (_, response_rx) = create_watch::<TestHealthResponse>();
     let crypto = make_test_crypto_tool();
-    let mut state = HealthState::new(Arc::clone(&settings), crypto, DefaultClientConnectionHandler, response_rx);
+    let mut state = HealthState::new(Arc::clone(&settings), crypto, Arc::new(AtomicU32::new(0)), DefaultClientConnectionHandler, response_rx);
 
     state.last_sent_time = 0;
     state.last_sent_next_in = 0;
@@ -181,7 +182,7 @@ async fn test_health_state_rtt_ewma_converges() {
     let settings = fast_settings();
     let (_, response_rx) = create_watch::<TestHealthResponse>();
     let crypto = make_test_crypto_tool();
-    let mut state = HealthState::new(Arc::clone(&settings), crypto, DefaultClientConnectionHandler, response_rx);
+    let mut state = HealthState::new(Arc::clone(&settings), crypto, Arc::new(AtomicU32::new(0)), DefaultClientConnectionHandler, response_rx);
 
     state.last_sent_time = 0;
     state.last_sent_next_in = 0;

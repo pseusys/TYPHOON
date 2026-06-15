@@ -198,7 +198,19 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> Drop for ClientSessionManager<T, AE, FM, CC> {
+    /// Emit a TERMINATION packet through the regular async flow path before the session is released.
     fn drop(&mut self) {
+        if self.flows.is_empty() {
+            return;
+        }
+        let pn = self.next_packet_number();
+        let executor = self.settings.executor().clone();
+        executor.block_on(async {
+            let (identity, code) = self.health_provider.termination_snapshot().await;
+            let buf = self.settings.pool().allocate(Some(T::length() + TAILOR_LENGTH));
+            let tailor = Tailor::termination(buf, &identity, code, pn);
+            let _ = self.select_flow().send_packet(tailor.into_buffer(), false, false).await;
+        });
         drop(take(&mut self.flows));
     }
 }

@@ -21,7 +21,7 @@ use crate::socket::error::ClientSocketError;
 use crate::tailor::{ClientConnectionHandler, IdentityType};
 use crate::utils::random::{SupportRng, get_rng, jittered_chunk_size};
 use crate::utils::socket::Socket;
-use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, create_notify_queue};
+use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, assert_runtime, create_notify_queue};
 
 /// Builder for constructing a `ClientSocket`.
 pub struct ClientSocketBuilder<T: IdentityType + Clone, AE: AsyncExecutor + 'static, CC: ClientConnectionHandler> {
@@ -105,6 +105,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
     /// `[TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MIN, TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MAX]` larger than
     /// the remaining packet budget after protocol overhead).
     pub async fn build(mut self) -> Result<ClientSocket<T, AE, CC>, ClientSocketError> {
+        assert_runtime().map_err(ClientSocketError::UnsupportedRuntime)?;
         let cert_addrs = self.certificate.addresses();
         if cert_addrs.is_empty() {
             return Err(ClientSocketError::CertificateError(CertificateError::NoAddresses));

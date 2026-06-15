@@ -14,8 +14,6 @@ use std::sync::{Arc, Weak};
 use async_trait::async_trait;
 use cfg_if::cfg_if;
 use log::{debug, warn};
-#[cfg(feature = "tokio")]
-use tokio::spawn;
 
 use crate::bytes::{ByteBuffer, DynamicByteBuffer, StaticByteBuffer};
 pub use crate::flow::decoy::{DecoyFactory, decoy_factory, random_decoy_factory};
@@ -26,6 +24,16 @@ pub use crate::tailor::{ClientConnectionHandler, ServerConnectionHandler};
 use crate::tailor::{IdentityType, Tailor};
 use crate::utils::random::{SupportRng, get_rng};
 pub use crate::utils::sync::AsyncExecutor;
+
+cfg_if! {
+    if #[cfg(feature = "tokio")] {
+        use tokio::spawn;
+        use tokio::runtime::Handle;
+        use tokio::task::block_in_place;
+    } else if #[cfg(feature = "async-std")] {
+        use async_io::block_on as async_io_block_on;
+    }
+}
 
 /// Parse a version byte slice of the form `"major[.minor[.patch[-tag]]]"` into `(major, minor, patch)`.
 /// Bytes after the first null are ignored. Components that cannot be parsed default to `0`.
@@ -69,6 +77,10 @@ impl AsyncExecutor for TokioExecutor {
     fn spawn<F: Future<Output = ()> + Send + 'static>(&self, future: F) {
         spawn(future);
     }
+
+    fn block_on<F: Future<Output = ()>>(&self, future: F) {
+        block_in_place(|| Handle::current().block_on(future));
+    }
 }
 
 /// async-executor-backed async executor.
@@ -88,6 +100,10 @@ impl AsyncExecutor for AsyncStdExecutor {
 
     fn spawn<F: Future<Output = ()> + Send + 'static>(&self, future: F) {
         self.executor.spawn(future).detach();
+    }
+
+    fn block_on<F: Future<Output = ()>>(&self, future: F) {
+        async_io_block_on(future);
     }
 }
 
