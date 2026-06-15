@@ -162,7 +162,7 @@ pub mod keys {
     // Channel capacity settings
     /// Capacity of the per-flow drain channel (packets buffered between drain task and route task).
     /// Excess packets are dropped by the drain task to keep the socket buffer empty.
-    pub const DRAIN_CHANNEL_CAPACITY: Key<u64> = Key::new("TYPHOON_DRAIN_CHANNEL_CAPACITY", 512);
+    pub const DRAIN_CHANNEL_CAPACITY: Key<u64> = Key::new("TYPHOON_DRAIN_CHANNEL_CAPACITY", 8192);
 
     // Debug settings
     /// Number of probes sent during the throughput phase.

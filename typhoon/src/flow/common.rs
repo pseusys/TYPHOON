@@ -13,7 +13,7 @@ cfg_if! {
         use rand::Rng;
         use crate::bytes::{ByteBuffer, ByteBufferMut};
         use crate::cache::CachedValue;
-        use crate::crypto::{CryptoError, ObfuscationTranscript};
+        use crate::crypto::ClientCryptoTool;
         use crate::flow::config::FlowConfig;
         use crate::settings::consts::TAILOR_LENGTH;
         use crate::tailor::IdentityType;
@@ -45,37 +45,18 @@ impl<T: FlowManager + Send + Sync> FlowManager for Arc<T> {
     }
 }
 
-/// Trait for tailor-level cryptographic operations used by flow managers.
-#[cfg(feature = "client")]
-pub(crate) trait FlowCryptoProvider: Clone + Send + Sync {
-    /// The identity type used in tailors.
-    type Identity: IdentityType + Clone;
-
-    /// Encrypt tailor bytes for sending.
-    fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<DynamicByteBuffer, CryptoError>;
-
-    /// Decrypt received tailor bytes.
-    fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError>;
-
-    /// Verify tailor authentication after deobfuscation.
-    fn verify_tailor(&mut self, transcript: ObfuscationTranscript) -> Result<(), CryptoError>;
-
-    /// Overhead added by tailor encryption (nonce + auth tags).
-    fn tailor_overhead() -> usize;
-}
-
 /// Shared send-side state for flow managers.
 #[cfg(feature = "client")]
-pub(crate) struct FlowSendInternal<CP: FlowCryptoProvider> {
-    pub(crate) provider: CachedValue<CP>,
+pub(crate) struct FlowSendInternal<T: IdentityType + Clone> {
+    pub(crate) provider: CachedValue<ClientCryptoTool<T>>,
     pub(crate) config: FlowConfig,
     pub(crate) capture: CaptureContext,
 }
 
 /// Shared receive-side state for flow managers.
 #[cfg(feature = "client")]
-pub(crate) struct FlowReceiveInternal<CP: FlowCryptoProvider> {
-    pub(crate) provider: CachedValue<CP>,
+pub(crate) struct FlowReceiveInternal<T: IdentityType + Clone> {
+    pub(crate) provider: CachedValue<ClientCryptoTool<T>>,
 }
 
 /// Outcome of processing an incoming packet through tailor decryption and verification.
@@ -88,12 +69,12 @@ pub(crate) enum ProcessIncomingResult {
 }
 
 #[cfg(feature = "client")]
-impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
+impl<T: IdentityType + Clone> FlowSendInternal<T> {
     /// Encrypt tailor, add fake header and body, return assembled packet ready for socket send.
     /// * When `fallthrough` is set, the trailing plaintext tailor bytes are dropped and the tailor-encryption step is skipped --- only fake header / body padding is added on top of the body.
     /// * When `is_maintenance` is set, the `FakeBodyMode::Random { service: true }` body is emitted on this packet (and only then); all other callers pass `false`.
     pub(crate) fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &crate::bytes::BytePool, fallthrough: bool, is_maintenance: bool) -> Result<DynamicByteBuffer, FlowControllerError> {
-        let identity_len = <CP::Identity as IdentityType>::length();
+        let identity_len = T::length();
         let full_tailor_len = TAILOR_LENGTH + identity_len;
 
         let (encrypted_packet, packet_flags, data_len) = if fallthrough {
@@ -133,7 +114,7 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
             let tailor_overhead = if fallthrough {
                 0
             } else {
-                CP::tailor_overhead()
+                ClientCryptoTool::<T>::tailor_overhead()
             };
             let tailor_len = if fallthrough {
                 0
@@ -148,12 +129,12 @@ impl<CP: FlowCryptoProvider> FlowSendInternal<CP> {
 }
 
 #[cfg(feature = "client")]
-impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
+impl<T: IdentityType + Clone> FlowReceiveInternal<T> {
     /// Deobfuscate the tailor from a raw wire packet.
     /// Returns `Ok(Some((body, tailor_buf)))` on success, `Ok(None)` on crypto failure
     /// (caller should treat the wire packet as unexpected), or `Err` on a programming error.
     pub(crate) fn deobfuscate_incoming(&mut self, packet: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<Option<(DynamicByteBuffer, DynamicByteBuffer)>, FlowControllerError> {
-        let encrypted_tailor_len = <CP::Identity as IdentityType>::length() + CP::tailor_overhead();
+        let encrypted_tailor_len = T::length() + ClientCryptoTool::<T>::tailor_overhead();
         // A wire packet shorter than the encrypted tailor cannot be a valid Typhoon
         // packet — caller treats `None` the same as crypto failure and forwards
         // the buffer to the probe handler, so just bail out without splitting.
@@ -181,9 +162,8 @@ impl<CP: FlowCryptoProvider> FlowReceiveInternal<CP> {
     /// Classify and extract payload from pre-deobfuscated components.
     #[allow(clippy::unused_self)]
     pub(crate) fn process_with_tailor(&self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> ProcessIncomingResult {
-        let identity_len = <CP::Identity as IdentityType>::length();
-        let full_tailor_len = TAILOR_LENGTH + identity_len;
-        let tailor = Tailor::<CP::Identity>::new(tailor_buf);
+        let full_tailor_len = TAILOR_LENGTH + T::length();
+        let tailor = Tailor::<T>::new(tailor_buf);
         if tailor.flags().is_discardable() {
             return ProcessIncomingResult::Decoy;
         }

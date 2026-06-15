@@ -14,7 +14,6 @@ use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::capture::{record_flow_config, record_server_send};
 use crate::crypto::{ObfuscationTranscript, ServerCryptoTool};
 use crate::defaults::NoopProbeHandler;
-use crate::flow::common::FlowManager;
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
@@ -289,8 +288,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> FlowManager for ServerFlowManager<T, AE> {
-    async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Result<(), FlowControllerError> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> DecoyFlowSender for ServerFlowManager<T, AE> {
+    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>> {
+        Box::pin(self.send_packet(packet, fallthrough, is_maintenance))
+    }
+}
+
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> ServerFlowManager<T, AE> {
+    /// Send a packet through this flow.
+    pub(crate) async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Result<(), FlowControllerError> {
         let identity_len = T::length();
         let tailor_len = identity_len + TAILOR_LENGTH;
         let (body, tailor_buf) = packet.split_buf_end(tailor_len);
@@ -371,20 +377,5 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             (kind, tailor_len, tailor_overhead, cap_header, data_len, cap_body)
         });
         Ok(())
-    }
-
-    #[cfg(feature = "client")]
-    async fn receive_packet(&self, packet: DynamicByteBuffer) -> Result<DynamicByteBuffer, FlowControllerError> {
-        let identity_len = T::length();
-        // receive_raw handles decoy filtering, tailor verification, source-address updates,
-        // and decoy-provider feeding. Loop only to skip the unlikely handshake case.
-        loop {
-            let raw = self.receive_raw(packet.clone(), &self.socks[0]).await?;
-            if !raw.tailor.flags().has_payload() {
-                continue;
-            }
-            let payload_len = raw.tailor.payload_length() as usize;
-            return Ok(raw.body.rebuffer_start(raw.body.len() - payload_len).expand_end(identity_len));
-        }
     }
 }

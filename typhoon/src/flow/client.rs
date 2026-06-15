@@ -24,8 +24,8 @@ use crate::utils::sync::{AsyncExecutor, Mutex};
 /// Client-side flow manager that handles packet encryption, decoy traffic, and socket I/O.
 pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor> {
     decoy_provider: Mutex<Box<dyn DecoyProvider>>,
-    send_internal: Mutex<FlowSendInternal<ClientCryptoTool<T>>>,
-    receive_internal: Mutex<FlowReceiveInternal<ClientCryptoTool<T>>>,
+    send_internal: Mutex<FlowSendInternal<T>>,
+    receive_internal: Mutex<FlowReceiveInternal<T>>,
     sock: Socket,
     mtu: usize,
     settings: Arc<Settings<AE>>,
@@ -77,6 +77,12 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowM
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ProbeFlowSender for ClientFlowManager<T, AE> {
     fn send_raw<'a>(&'a self, packet: DynamicByteBuffer, _target: SocketAddr) -> Pin<Box<dyn Future<Output = Result<(), SocketError>> + Send + 'a>> {
         Box::pin(async move { self.sock.send(packet).await.map(|_| ()) })
+    }
+}
+
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyFlowSender for ClientFlowManager<T, AE> {
+    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>> {
+        Box::pin(<Self as FlowManager>::send_packet(self, packet, fallthrough, is_maintenance))
     }
 }
 

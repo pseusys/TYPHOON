@@ -16,7 +16,7 @@ use crate::crypto::{PAYLOAD_CRYPTO_OVERHEAD, ServerCryptoTool, UserCryptoState, 
 use crate::flow::decoy::{DecoyFactory, random_decoy_factory};
 use crate::flow::probe::ProbeFactory;
 use crate::flow::server::{RawReceivedPacket, ServerFlowManager};
-use crate::flow::{FlowConfig, FlowControllerError, FlowManager};
+use crate::flow::{FlowConfig, FlowControllerError};
 use crate::session::SessionControllerError;
 use crate::session::server::{IncomingPacket, OutgoingRouter, ServerSessionManager};
 use crate::settings::consts::TAILOR_LENGTH;

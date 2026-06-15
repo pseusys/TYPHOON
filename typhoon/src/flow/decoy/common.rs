@@ -16,7 +16,6 @@ use rand::seq::SliceRandom;
 use rand_distr::{Distribution, Exp, Normal};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
-use crate::flow::common::FlowManager;
 use crate::flow::config::{FakeHeaderConfig, FieldType, FieldTypeHolder};
 use crate::flow::error::FlowControllerError;
 use crate::settings::Settings;
@@ -209,16 +208,10 @@ where
 // ── Trait ────────────────────────────────────────────────────────────────────
 
 /// Object-safe interface used by decoy providers to dispatch generated packets.
-/// Implemented automatically for every `FlowManager + Send + Sync` type.
+/// Implemented explicitly by each flow manager — `ClientFlowManager` forwards to its `FlowManager::send_packet`, `ServerFlowManager` forwards to its inherent `send_packet`.
 pub trait DecoyFlowSender: Send + Sync {
     /// Send a generated decoy packet through the flow manager. `fallthrough` skips the tailor step (see `FlowManager::send_packet`).
     fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>>;
-}
-
-impl<T: FlowManager + Send + Sync> DecoyFlowSender for T {
-    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>> {
-        Box::pin(self.send_packet(packet, fallthrough, is_maintenance))
-    }
 }
 
 /// Object-safe runtime interface for decoy traffic. Used as `Box<dyn DecoyProvider>` in
