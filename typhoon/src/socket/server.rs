@@ -12,7 +12,7 @@ use crate::cache::SharedMap;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 use crate::certificate::ObfuscationBufferContainer;
 use crate::certificate::{ServerKeyPair, ServerSecret};
-use crate::crypto::{PAYLOAD_CRYPTO_OVERHEAD, ServerCryptoTool, UserCryptoState, UserServerState};
+use crate::crypto::{PAYLOAD_CRYPTO_OVERHEAD, ServerCryptoTool, UserCryptoState, UserServerState, verify_transcript_with_key};
 use crate::flow::decoy::{DecoyFactory, random_decoy_factory};
 use crate::flow::probe::ProbeFactory;
 use crate::flow::server::{RawReceivedPacket, ServerFlowManager};
@@ -460,8 +460,23 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 
     /// Handle a handshake from a new client: create session, send response, publish ClientHandle.
-    async fn handle_new_client(self: &Arc<Self>, raw_packet: RawReceivedPacket<T>, flow_index: usize) {
+    async fn handle_new_client(self: &Arc<Self>, mut raw_packet: RawReceivedPacket<T>, flow_index: usize) {
+        let handshake_transcript = raw_packet.handshake_transcript.take();
+        let original_wire_packet = raw_packet.original_wire_packet.take();
+        let source_addr = raw_packet.source_addr;
         let (server_data, initial_key, client_initial_data) = self.secret.decapsulate_handshake_server(raw_packet.body, self.settings.pool());
+
+        // Verify the handshake tailor with the initial-data encryption key just produced by the KEM decapsulation.
+        let verified = matches!((&handshake_transcript, &original_wire_packet), (Some(transcript), Some(_)) if verify_transcript_with_key(&initial_key, transcript).is_ok());
+        if !verified {
+            if let Some(packet) = original_wire_packet {
+                debug!("handshake tailor verification failed from {source_addr}, forwarding to probe handler");
+                self.router.flows[flow_index].forward_to_probe(packet, source_addr).await;
+            } else {
+                debug!("handshake packet from {source_addr} missing deferred transcript or wire packet, dropping");
+            }
+            return;
+        }
 
         let client_version_identity = raw_packet.tailor.identity();
         let handshake_pn = raw_packet.tailor.packet_number();

@@ -12,7 +12,7 @@ use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::capture::{record_flow_config, record_server_send};
-use crate::crypto::ServerCryptoTool;
+use crate::crypto::{ObfuscationTranscript, ServerCryptoTool};
 use crate::defaults::NoopProbeHandler;
 use crate::flow::common::FlowManager;
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
@@ -31,6 +31,8 @@ pub(crate) struct RawReceivedPacket<T: IdentityType> {
     pub(crate) body: DynamicByteBuffer,
     pub(crate) tailor: Tailor<T>,
     pub(crate) source_addr: SocketAddr,
+    pub(crate) handshake_transcript: Option<ObfuscationTranscript>,
+    pub(crate) original_wire_packet: Option<DynamicByteBuffer>,
 }
 
 /// Per-(flow, identity) path-binding state: the current return source address
@@ -115,6 +117,12 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         &self.socks
     }
 
+    /// Forward a wire packet to this flow's active probe handler.
+    /// Used by the listener to route handshake-flagged packets whose deferred HMAC verification failed.
+    pub(crate) async fn forward_to_probe(&self, packet: DynamicByteBuffer, source_addr: SocketAddr) {
+        self.probe_handler.lock().await.process(packet, Some(source_addr)).await;
+    }
+
     /// Insert (or replace) the path binding for a user on this flow.
     pub async fn register_user_binding(&self, id: T, addr: SocketAddr, latest_pn: u64) {
         self.user_bindings.write().await.insert(
@@ -179,8 +187,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
             let (encrypted_packet, encrypted_tailor) = packet.split_buf_end(identity_len + tailor_overhead);
 
-            // Deobfuscate tailor, verify immediately for non-handshake packets (single lock scope).
-            let tailor = {
+            // Deobfuscate tailor; for non-handshake packets verify immediately, for handshake packets defer the HMAC check until the listener has decapsulated the body and can recompute the initial-data encryption key.
+            let (tailor, handshake_transcript) = {
                 let mut crypto = self.crypto_recv.lock().await;
                 let (tailor_buf, transcript) = match crypto.deobfuscate_tailor(encrypted_tailor, self.settings.pool()) {
                     Ok(result) => result,
@@ -191,15 +199,17 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     }
                 };
                 let tailor = Tailor::<T>::new(tailor_buf);
-                if !tailor.flags().contains(PacketFlags::HANDSHAKE) {
+                if tailor.flags().contains(PacketFlags::HANDSHAKE) {
+                    (tailor, Some(transcript))
+                } else {
                     let identity = tailor.identity();
                     if let Err(err) = crypto.verify_tailor(&identity, transcript).await {
                         debug!("error verifying packet tailor: {err}");
                         self.probe_handler.lock().await.process(encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr)).await;
                         continue;
                     }
+                    (tailor, None)
                 }
-                tailor
             };
 
             let packet_flags = tailor.flags();
@@ -249,6 +259,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 continue;
             }
 
+            // Preserve a view over the original wire bytes so a failed deferred handshake verification can route the packet to the flow's probe handler.
+            let original_wire_packet = packet_flags.contains(PacketFlags::HANDSHAKE).then(|| encrypted_packet.expand_end(identity_len + tailor_overhead));
+
             // For handshake packets, strip fake header/body using payload_length so the
             // session layer receives only the raw handshake data.
             let body = if packet_flags.contains(PacketFlags::HANDSHAKE) {
@@ -263,6 +276,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 body,
                 tailor,
                 source_addr,
+                handshake_transcript,
+                original_wire_packet,
             });
         }
     }
@@ -365,7 +380,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         // and decoy-provider feeding. Loop only to skip the unlikely handshake case.
         loop {
             let raw = self.receive_raw(packet.clone(), &self.socks[0]).await?;
-            if raw.tailor.flags().contains(PacketFlags::HANDSHAKE) {
+            if !raw.tailor.flags().has_payload() {
                 continue;
             }
             let payload_len = raw.tailor.payload_length() as usize;

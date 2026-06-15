@@ -12,7 +12,6 @@ cfg_if! {
     if #[cfg(feature = "client")] {
         pub(crate) use client::ClientCryptoTool;
         pub(crate) use client::ClientData;
-        pub(crate) use symmetric::ObfuscationTranscript;
         pub(crate) use symmetric::SYMMETRIC_KEY_LENGTH as KEY_LENGTH;
     }
 }
@@ -24,3 +23,4 @@ cfg_if! {
     }
 }
 pub(crate) use symmetric::PAYLOAD_CRYPTO_OVERHEAD;
+pub(crate) use symmetric::{ObfuscationTranscript, verify_transcript_with_key};

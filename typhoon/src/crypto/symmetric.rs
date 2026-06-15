@@ -116,6 +116,24 @@ pub(crate) fn decrypt_anonymously(key: &[u8], ciphertext_with_nonce: &mut Dynami
     ciphertext
 }
 
+/// Verify a deobfuscation transcript against an externally-supplied 32-byte verification key.
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+pub(crate) fn verify_transcript_with_key<K: ByteBuffer>(key: &K, transcript: &ObfuscationTranscript) -> Result<(), CryptoError> {
+    let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = key.slice().try_into().map_err(|_| CryptoError::authentication_error("verification key must be 32 bytes"))?;
+    let hash = keyed_hash(&key_bytes, transcript.ciphertext_copy.slice());
+    if hash.as_bytes().ct_eq(transcript.auth_transcript.slice()).unwrap_u8() == 0 {
+        return Err(CryptoError::authentication_error("authentication error (hashes not equal)"));
+    }
+    Ok(())
+}
+
+/// Verify a deobfuscation transcript against an externally-supplied key (full mode no-op).
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+#[inline]
+pub(crate) fn verify_transcript_with_key<K: ByteBuffer>(_key: &K, _transcript: &ObfuscationTranscript) -> Result<(), CryptoError> {
+    Ok(())
+}
+
 /// Authenticated symmetric cipher for marshalling encryption (XChaCha20-Poly1305 or AES-GCM).
 #[derive(Clone)]
 pub(crate) struct Symmetric {
