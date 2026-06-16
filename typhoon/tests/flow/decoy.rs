@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
 use crate::bytes::{ByteBuffer, StaticByteBuffer};
-use crate::defaults::DefaultExecutor;
 use crate::cache::DerivedValue;
+use crate::defaults::DefaultExecutor;
 use crate::flow::decoy::common::{DecoyFeatureConfig, DecoyState, MaintenanceMode, ReplicationMode, SubheaderMode, exponential_variance, random_gauss, random_uniform};
 use crate::flow::decoy::{HeavyDecoyProvider, NoisyDecoyProvider, SmoothDecoyProvider};
 use crate::settings::SettingsBuilder;

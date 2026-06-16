@@ -11,11 +11,11 @@ use log::{debug, warn};
 use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+use crate::cache::DerivedValue;
 use crate::capture::{record_flow_config, record_server_send};
 use crate::crypto::{ObfuscationTranscript, ServerCryptoTool};
 use crate::defaults::NoopProbeHandler;
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
-use crate::cache::DerivedValue;
 use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
 use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender};

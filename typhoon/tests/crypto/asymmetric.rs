@@ -6,10 +6,10 @@ use crate::bytes::{ByteBuffer, ByteBufferMut, StaticByteBuffer};
 use crate::certificate::ServerKeyPair;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
-#[cfg(all(feature = "client", feature = "server"))]
-use crate::crypto::symmetric::{PAYLOAD_CRYPTO_OVERHEAD, Symmetric};
 #[cfg(all(any(feature = "full_software", feature = "full_hardware"), feature = "client", feature = "server"))]
 use crate::crypto::symmetric::SYMMETRIC_BUILT_IN_AUTH_LEN;
+#[cfg(all(feature = "client", feature = "server"))]
+use crate::crypto::symmetric::{PAYLOAD_CRYPTO_OVERHEAD, Symmetric};
 
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 const X25519_KEY_LENGTH: usize = 32;

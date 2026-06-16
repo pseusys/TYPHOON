@@ -16,11 +16,11 @@ use rand::seq::SliceRandom;
 use rand_distr::{Distribution, Exp, Normal};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+use crate::cache::DerivedValue;
 use crate::flow::config::{FakeHeaderConfig, FieldType, FieldTypeHolder};
 use crate::flow::error::FlowControllerError;
 use crate::settings::Settings;
 use crate::settings::keys::*;
-use crate::cache::DerivedValue;
 use crate::tailor::{IdentityType, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, RwLock, sleep};

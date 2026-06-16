@@ -4,10 +4,10 @@ mod map;
 mod value;
 
 pub(crate) use common::CacheError;
-pub use value::DerivedValue;
 #[cfg(feature = "server")]
 pub(crate) use map::{CachedMap, CachedMapEntryTemplate, SharedMap};
 #[cfg(feature = "client")]
 pub(crate) use value::CachedValue;
+pub use value::DerivedValue;
 #[cfg(any(feature = "client", all(test, feature = "server")))]
 pub(crate) use value::SharedValue;
