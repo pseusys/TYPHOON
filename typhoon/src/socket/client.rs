@@ -18,7 +18,7 @@ use crate::flow::{FlowConfig, FlowControllerError};
 use crate::session::{ClientSessionManager, SessionManager};
 use crate::settings::{Settings, keys};
 use crate::socket::error::ClientSocketError;
-use crate::tailor::{ClientConnectionHandler, IdentityType};
+use crate::tailor::{ClientConnectionHandler, IdentityType, Tailor};
 use crate::utils::random::{SupportRng, get_rng, jittered_chunk_size};
 use crate::utils::socket::Socket;
 use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, assert_runtime, create_notify_queue};
@@ -131,7 +131,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
         let static_key = get_rng().random_byte_buffer::<KEY_LENGTH>();
         let cipher = SharedValue::new(ClientCryptoTool::new(self.certificate.clone(), identity_bytes, &static_key));
 
-        let tailor_wire_len = T::length() + ClientCryptoTool::<T>::tailor_overhead();
+        let tailor_wire_len = Tailor::<T>::encrypted_len_c2s();
         let mut max_data_payload = usize::MAX;
 
         // Per-session monotonic packet-number counter, created before the flow managers so it can be shared with every decoy provider, the session manager, and the health-check provider — every emitter on this session advances the same sequence.

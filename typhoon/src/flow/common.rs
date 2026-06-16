@@ -118,7 +118,7 @@ impl<T: IdentityType + Clone> FlowSendInternal<T> {
             let tailor_overhead = if fallthrough {
                 0
             } else {
-                ClientCryptoTool::<T>::tailor_overhead()
+                crate::crypto::TAILOR_C2S_OVERHEAD
             };
             let tailor_len = if fallthrough {
                 0
@@ -138,7 +138,7 @@ impl<T: IdentityType + Clone> FlowReceiveInternal<T> {
     /// Returns `Ok(Some((body, tailor_buf)))` on success, `Ok(None)` on crypto failure
     /// (caller should treat the wire packet as unexpected), or `Err` on a programming error.
     pub(crate) fn deobfuscate_incoming(&mut self, packet: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<Option<(DynamicByteBuffer, DynamicByteBuffer)>, FlowControllerError> {
-        let encrypted_tailor_len = T::length() + ClientCryptoTool::<T>::tailor_overhead();
+        let encrypted_tailor_len = Tailor::<T>::encrypted_len_s2c();
         // A wire packet shorter than the encrypted tailor cannot be a valid Typhoon
         // packet — caller treats `None` the same as crypto failure and forwards
         // the buffer to the probe handler, so just bail out without splitting.

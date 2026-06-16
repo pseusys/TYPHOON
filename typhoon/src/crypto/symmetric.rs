@@ -54,7 +54,11 @@ cfg_if! {
 }
 
 pub(crate) const SYMMETRIC_KEY_LENGTH: usize = 32;
+// Built-in (AEAD) tag is full-mode only; additional (keyed-hash) tag is fast-mode only.
+// Both are referenced by the cross-mode crypto tests, so keep them defined in every build.
+#[allow(dead_code)]
 pub(crate) const SYMMETRIC_BUILT_IN_AUTH_LEN: usize = 16;
+#[allow(dead_code)]
 pub(crate) const SYMMETRIC_ADDITIONAL_AUTH_LEN: usize = 32;
 
 /// Bytes added to a payload by `encrypt_auth` (nonce + authentication tag).
@@ -65,12 +69,28 @@ pub(crate) const PAYLOAD_CRYPTO_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRI
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 pub(crate) const PAYLOAD_CRYPTO_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN;
 
+// Tailor obfuscation overhead, split by direction because full mode is asymmetric:
+//   * s2c (server→client) is always a symmetric AEAD — the shared OBFS key in fast mode,
+//     the session key in full mode — so its size matches `PAYLOAD_CRYPTO_OVERHEAD`.
+//   * c2s (client→server) is symmetric in fast mode but asymmetric (X25519 per packet) in
+//     full mode; the full-mode c2s value lives in `asymmetric::TAILOR_C2S_OVERHEAD`..
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+pub(crate) const TAILOR_C2S_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN;
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+pub(crate) const TAILOR_S2C_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN;
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+pub(crate) const TAILOR_S2C_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN;
+
+// NONCE_LEN (the built-in AEAD nonce) is full-mode only in lib code, but the cross-mode
+// crypto tests reference it in every build, so keep it defined for fast mode too.
+#[allow(dead_code)]
 #[cfg(any(feature = "fast_software", feature = "full_software"))]
 pub(crate) const NONCE_LEN: usize = 24;
 
 #[cfg(any(feature = "fast_software", feature = "full_software"))]
 pub(crate) const ANONYMOUS_NONCE_LEN: usize = 24;
 
+#[allow(dead_code)]
 #[cfg(any(feature = "fast_hardware", feature = "full_hardware"))]
 pub(crate) const NONCE_LEN: usize = 12;
 

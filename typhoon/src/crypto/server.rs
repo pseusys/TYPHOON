@@ -20,7 +20,7 @@ pub(crate) struct ServerData {
     pub(crate) shared_secret: FixedByteBuffer<32>,
     pub(crate) nonce: FixedByteBuffer<32>,
 }
-use crate::crypto::symmetric::{NONCE_LEN, ObfuscationTranscript, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
+use crate::crypto::symmetric::{ObfuscationTranscript, Symmetric};
 use crate::settings::consts::ID_OFFSET;
 use crate::tailor::{IdentityType, Tailor};
 
@@ -134,12 +134,6 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
     pub(crate) fn extract_identity(buffer: &DynamicByteBuffer) -> T {
         let correct_buffer = buffer.ensure_size(Tailor::<T>::len());
         T::from_bytes(correct_buffer.rebuffer_both(ID_OFFSET, ID_OFFSET + T::length()).slice())
-    }
-
-    /// Overhead added by tailor encryption.
-    #[inline]
-    pub(crate) fn tailor_overhead() -> usize {
-        SYMMETRIC_BUILT_IN_AUTH_LEN + NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN
     }
 
     /// Obfuscate tailor for sending to a specific user (fast mode).

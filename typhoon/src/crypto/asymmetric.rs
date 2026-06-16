@@ -16,6 +16,8 @@ use crate::certificate::ObfuscationBufferContainer;
 #[cfg(any(feature = "client", feature = "full_software", feature = "full_hardware"))]
 use crate::crypto::error::HandshakeError;
 use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, Symmetric, decrypt_anonymously, encrypt_anonymously};
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN};
 use crate::utils::random::{SupportRng, get_rng};
 
 cfg_if! {
@@ -37,6 +39,10 @@ use crate::crypto::ClientData;
 
 const X25519_KEY_LENGTH: usize = 32;
 const NONCE_LENGTH: usize = 32;
+
+/// Bytes added to the client→server plaintext tailor by full-mode obfuscation.
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+pub(crate) const TAILOR_C2S_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN + X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN + NONCE_LENGTH;
 
 const CLIENT_HANDSHAKE_HEADER_SIZE: usize = X25519_KEY_LENGTH + CRYPTO_CIPHERTEXTBYTES + 2 * ANONYMOUS_NONCE_LEN + NONCE_LENGTH;
 const SERVER_HANDSHAKE_HEADER_SIZE: usize = X25519_KEY_LENGTH + Signature::BYTE_SIZE + ANONYMOUS_NONCE_LEN + NONCE_LENGTH;

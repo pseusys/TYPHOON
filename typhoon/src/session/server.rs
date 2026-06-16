@@ -5,9 +5,8 @@ mod tests;
 /// Server-side session manager implementation.
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::sync::Arc;
-use std::sync::Weak as StdWeak;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Weak as StdWeak};
 
 use async_trait::async_trait;
 use log::{debug, warn};

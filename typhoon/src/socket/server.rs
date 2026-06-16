@@ -179,7 +179,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let users: SharedMap<T, UserServerState> = SharedMap::new();
         let mut flows = Vec::with_capacity(self.flow_configs.len());
 
-        let tailor_wire_len = T::length() + ServerCryptoTool::<T>::tailor_overhead();
+        let tailor_wire_len = Tailor::<T>::encrypted_len_s2c();
         let mut max_data_payload = usize::MAX;
 
         let obfs_buffer = self.secret.obfuscation_buffer();
@@ -253,7 +253,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let users: SharedMap<T, UserServerState> = SharedMap::new();
         let mut flows = Vec::with_capacity(self.flow_configs.len());
 
-        let tailor_wire_len = T::length() + ServerCryptoTool::<T>::tailor_overhead();
+        let tailor_wire_len = Tailor::<T>::encrypted_len_s2c();
         let mut max_data_payload = usize::MAX;
 
         let secret_arc = Arc::new(self.secret);

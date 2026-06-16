@@ -343,6 +343,18 @@ impl<T: IdentityType> Tailor<T> {
     pub fn len() -> usize {
         T::length() + TAILOR_LENGTH
     }
+
+    /// Wire length of the obfuscated client→server tailor (plaintext tailor + c2s obfuscation overhead).
+    #[inline]
+    pub(crate) fn encrypted_len_c2s() -> usize {
+        Self::len() + crate::crypto::TAILOR_C2S_OVERHEAD
+    }
+
+    /// Wire length of the obfuscated server→client tailor (plaintext tailor + s2c obfuscation overhead).
+    #[inline]
+    pub(crate) fn encrypted_len_s2c() -> usize {
+        Self::len() + crate::crypto::TAILOR_S2C_OVERHEAD
+    }
 }
 
 impl<T: IdentityType> Clone for Tailor<T> {

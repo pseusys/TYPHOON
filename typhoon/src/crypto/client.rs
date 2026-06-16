@@ -5,7 +5,7 @@ use crate::certificate::ClientCertificate;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 use crate::certificate::ObfuscationBufferContainer;
 use crate::crypto::error::{CryptoError, HandshakeError};
-use crate::crypto::symmetric::{NONCE_LEN, ObfuscationTranscript, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
+use crate::crypto::symmetric::{ObfuscationTranscript, Symmetric};
 use crate::tailor::IdentityType;
 
 /// Ephemeral client handshake state: X25519 secret, McEliece shared secret, nonce, initial key.
@@ -53,12 +53,6 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
     #[inline]
     pub fn identity(&self) -> T {
         self.identity.clone()
-    }
-
-    /// Overhead added by tailor encryption (nonce + auth tags).
-    #[inline]
-    pub fn tailor_overhead() -> usize {
-        SYMMETRIC_BUILT_IN_AUTH_LEN + NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN
     }
 
     /// Client handshake step 1: generate ephemeral keys, encapsulate with McEliece, obfuscate.
