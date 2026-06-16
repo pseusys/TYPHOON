@@ -288,8 +288,7 @@ async fn main() {
     {
         let terminate_signal = terminate_signal.clone();
         tokio::spawn(async move {
-            let mut sigterm = signal(SignalKind::terminate())
-                .expect("install SIGTERM handler");
+            let mut sigterm = signal(SignalKind::terminate()).expect("install SIGTERM handler");
             sigterm.recv().await;
             terminate_signal.notify_one();
         });
@@ -401,7 +400,15 @@ async fn run_s2c_send(
     if profile.bursty && profile.burst_count > 1 {
         let bytes_per_burst = profile.bytes_s2c / profile.burst_count.max(1);
         for i in 0..profile.burst_count {
-            sent += send_until_s(&client, &chunk, &profile, deadline, sent + bytes_per_burst, counter.clone()).await;
+            sent += send_until_s(
+                &client,
+                &chunk,
+                &profile,
+                deadline,
+                sent + bytes_per_burst,
+                counter.clone(),
+            )
+            .await;
             if sent >= profile.bytes_s2c || Instant::now() >= deadline {
                 break;
             }
@@ -414,7 +421,15 @@ async fn run_s2c_send(
             }
         }
     } else {
-        sent += send_until_s(&client, &chunk, &profile, deadline, profile.bytes_s2c, counter).await;
+        sent += send_until_s(
+            &client,
+            &chunk,
+            &profile,
+            deadline,
+            profile.bytes_s2c,
+            counter,
+        )
+        .await;
     }
     sent
 }

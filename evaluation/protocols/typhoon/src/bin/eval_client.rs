@@ -338,7 +338,8 @@ async fn run_c2s_send(
     if profile.bursty && profile.burst_count > 1 {
         let bytes_per_burst = profile.bytes_c2s / profile.burst_count.max(1);
         for i in 0..profile.burst_count {
-            let (s, slept) = send_until(&socket, &chunk, &profile, deadline, sent + bytes_per_burst).await;
+            let (s, slept) =
+                send_until(&socket, &chunk, &profile, deadline, sent + bytes_per_burst).await;
             sent += s;
             total_sleep_s += slept;
             if sent >= profile.bytes_c2s || Instant::now() >= deadline {
