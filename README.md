@@ -28,7 +28,7 @@ The crate defines the following features:
 - `client`: include TYPHOON client implementation.
 - `debug`: include [debug diagnostic tools](PROTOCOL.md#debug-mode) (`DebugMode`, `DebugResult`, `run_debug`, `DebugServerConnectionHandler`); requires `client` and `server`.
 - `capture`: emit per-packet JSONL records to the `typhoon::capture` log target at `TRACE` level; enable at runtime with `RUST_LOG=typhoon::capture=trace`.
-- `tokio`: use [tokio](https://tokio.rs/) async runtime.
+- `tokio`: use [tokio](https://tokio.rs/) async runtime. The multi-threaded flavor is required (`#[tokio::main]` or `Builder::new_multi_thread()`); single-threaded `current_thread` is rejected at `Listener::build()` / `ClientSocket::build()` time.
 - `async-std`: use [async-std](https://async.rs/) async runtime.
 
 The default features are: `fast_software`, `server`, `client`, `tokio`.
@@ -212,7 +212,7 @@ let settings = Arc::new(
 
 ### Design choices
 
-- **Runtime agnostic**: async primitives are abstracted behind `AsyncExecutor` and the wrappers in `utils/sync.rs`; switching between `tokio` and `async-std` requires only a feature flag.
+- **Runtime agnostic**: async primitives are abstracted behind `AsyncExecutor` and the wrappers in `utils/sync.rs`; switching between `tokio` (multi-threaded flavor) and `async-std` requires only a feature flag.
 - **Zero-copy by design**: payload bytes travel as views over pooled `ByteBuffer`s from allocation to the UDP socket; copies are introduced only at system boundaries (user API and OS socket calls).
 - **Lock-free hot paths**: per-packet paths use `CachedMap` snapshots (wait-free reads) and `AtomicBitSet` for active-flow tracking; `Mutex`/`RwLock` is confined to session lifecycle operations (handshake, teardown).
 

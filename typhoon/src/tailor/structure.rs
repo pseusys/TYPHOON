@@ -63,13 +63,38 @@ pub struct Tailor<T: IdentityType> {
 
 impl<T: IdentityType> Tailor<T> {
     /// Wrap an existing buffer as a tailor view. No data is copied.
-    /// The buffer must contain at least `TAILOR_LENGTH + T::length()` bytes.
+    /// The buffer must contain at least `Self::len()` bytes.
     pub fn new(buffer: DynamicByteBuffer) -> Self {
-        let buffer = buffer.ensure_size(T::length() + TAILOR_LENGTH);
+        let buffer = buffer.ensure_size(Self::len());
         Self {
             buffer,
             _phantom: PhantomData,
         }
+    }
+
+    /// Construct a tailor view from a received buffer and validate it against the
+    /// accompanying body length. Unlike [`Tailor::new`], this constructor never
+    /// expands the buffer via the pool — receive paths must supply a slice whose
+    /// length is already at least `Self::len()`.
+    pub fn validated(buffer: DynamicByteBuffer, body_len: usize) -> Option<Self> {
+        if buffer.len() < Self::len() {
+            return None;
+        }
+        let view = Self {
+            buffer,
+            _phantom: PhantomData,
+        };
+        let flags = view.flags();
+        if flags.is_empty() {
+            return None;
+        }
+        if flags.bits().count_ones() > 1 && !flags.is_shadowride() {
+            return None;
+        }
+        if (view.payload_length() as usize) > body_len {
+            return None;
+        }
+        Some(view)
     }
 
     /// Write a data packet tailor into the buffer.
@@ -310,8 +335,13 @@ impl<T: IdentityType> Tailor<T> {
     /// Extract identity from a raw tailor buffer.
     #[inline]
     pub fn get_identity(buffer: &DynamicByteBuffer) -> T {
-        let correct_buffer = buffer.ensure_size(T::length() + TAILOR_LENGTH);
+        let correct_buffer = buffer.ensure_size(Self::len());
         T::from_bytes(correct_buffer.slice_both(ID_OFFSET, ID_OFFSET + T::length()))
+    }
+
+    #[inline]
+    pub fn len() -> usize {
+        T::length() + TAILOR_LENGTH
     }
 }
 

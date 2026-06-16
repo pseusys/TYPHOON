@@ -19,7 +19,6 @@ use crate::flow::server::{RawReceivedPacket, ServerFlowManager};
 use crate::flow::{FlowConfig, FlowControllerError};
 use crate::session::SessionControllerError;
 use crate::session::server::{IncomingPacket, OutgoingRouter, ServerSessionManager};
-use crate::settings::consts::TAILOR_LENGTH;
 use crate::settings::{Settings, keys};
 use crate::socket::error::ServerSocketError;
 use crate::tailor::{IdentityType, PacketFlags, ReturnCode, ServerConnectionHandler, Tailor};
@@ -464,7 +463,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let handshake_transcript = raw_packet.handshake_transcript.take();
         let original_wire_packet = raw_packet.original_wire_packet.take();
         let source_addr = raw_packet.source_addr;
-        let (server_data, initial_key, client_initial_data) = self.secret.decapsulate_handshake_server(raw_packet.body, self.settings.pool());
+        let Some((server_data, initial_key, client_initial_data)) = self.secret.decapsulate_handshake_server(raw_packet.body, self.settings.pool()) else {
+            if let Some(packet) = original_wire_packet {
+                debug!("handshake decapsulation failed from {source_addr} (body too short for crypto header), forwarding to probe handler");
+                self.router.flows[flow_index].forward_to_probe(packet, source_addr).await;
+            } else {
+                debug!("handshake decapsulation failed from {source_addr} and original wire packet unavailable, dropping");
+            }
+            return;
+        };
 
         // Verify the handshake tailor with the initial-data encryption key just produced by the KEM decapsulation.
         let verified = matches!((&handshake_transcript, &original_wire_packet), (Some(transcript), Some(_)) if verify_transcript_with_key(&initial_key, transcript).is_ok());
@@ -686,7 +693,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     fn drop(&mut self) {
         let executor = self.settings.executor().clone();
         let pn = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
-        let buf = self.settings.pool().allocate(Some(T::length() + TAILOR_LENGTH));
+        let buf = self.settings.pool().allocate(Some(Tailor::<T>::len()));
         let termination = Tailor::termination(buf, &self.identity, ReturnCode::Success, pn).into_buffer();
         executor.block_on(async {
             self.router.route_packet(termination, &self.identity).await;

@@ -18,7 +18,6 @@ use crate::cache::{CachedMapEntryTemplate, SharedMap};
 use crate::crypto::{UserCryptoState, UserServerState};
 use crate::session::error::SessionControllerError;
 use crate::session::server_health::ServerHealthProvider;
-use crate::settings::consts::TAILOR_LENGTH;
 use crate::settings::{Settings, keys};
 use crate::tailor::{IdentityType, PacketFlags, ReturnCode, Tailor};
 use crate::utils::bitset::AtomicBitSet;
@@ -83,7 +82,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         let response_body_len = response_body.len();
         let tailor_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
         let _response_tailor = Tailor::handshake(tailor_buf, &identity, ReturnCode::Success.into(), server_next_in, handshake_tailor.packet_number(), response_body_len as u16);
-        let response_packet = response_body.expand_end(TAILOR_LENGTH + T::length());
+        let response_packet = response_body.expand_end(Tailor::<T>::len());
 
         let health_provider = ServerHealthProvider::new(router, identity.clone(), settings, server_next_in);
 
@@ -133,7 +132,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         let encrypted_payload_len = encrypted_payload.len();
         let tailor_buf = encrypted_payload.expand_end(T::length()).rebuffer_start(encrypted_payload_len);
         let _tailor = Tailor::data(tailor_buf, &self.identity, payload_length, packet_number);
-        let assembled = encrypted_payload.expand_end(TAILOR_LENGTH + T::length());
+        let assembled = encrypted_payload.expand_end(Tailor::<T>::len());
         debug!("server session [{}]: sending data packet", self.identity.to_string());
         Ok(assembled)
     }
