@@ -15,7 +15,6 @@ cfg_if! {
         use crate::cache::CachedValue;
         use crate::crypto::ClientCryptoTool;
         use crate::flow::config::FlowConfig;
-        use crate::settings::consts::TAILOR_LENGTH;
         use crate::tailor::IdentityType;
         use crate::tailor::{PacketFlags, Tailor};
         use crate::utils::random::get_rng;
@@ -74,8 +73,7 @@ impl<T: IdentityType + Clone> FlowSendInternal<T> {
     /// * When `fallthrough` is set, the trailing plaintext tailor bytes are dropped and the tailor-encryption step is skipped --- only fake header / body padding is added on top of the body.
     /// * When `is_maintenance` is set, the `FakeBodyMode::Random { service: true }` body is emitted on this packet (and only then); all other callers pass `false`.
     pub(crate) fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &crate::bytes::BytePool, fallthrough: bool, is_maintenance: bool) -> Result<DynamicByteBuffer, FlowControllerError> {
-        let identity_len = T::length();
-        let full_tailor_len = TAILOR_LENGTH + identity_len;
+        let full_tailor_len = Tailor::<T>::len();
 
         let (encrypted_packet, packet_flags, data_len) = if fallthrough {
             // Fallthrough decoy: the input is `[random_body | plaintext_tailor]` (the tailor was written for accounting only) - truncate it to the body and forward as opaque noise.
@@ -162,8 +160,11 @@ impl<T: IdentityType + Clone> FlowReceiveInternal<T> {
     /// Classify and extract payload from pre-deobfuscated components.
     #[allow(clippy::unused_self)]
     pub(crate) fn process_with_tailor(&self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> ProcessIncomingResult {
-        let full_tailor_len = TAILOR_LENGTH + T::length();
-        let tailor = Tailor::<T>::new(tailor_buf);
+        let full_tailor_len = Tailor::<T>::len();
+        let Some(tailor) = Tailor::<T>::validated(tailor_buf, body.len()) else {
+            warn!("client flow: malformed tailor (size, flags or payload_length out of range), dropping packet");
+            return ProcessIncomingResult::Decoy;
+        };
         if tailor.flags().is_discardable() {
             return ProcessIncomingResult::Decoy;
         }

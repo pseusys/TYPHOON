@@ -19,7 +19,6 @@ use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
 use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender};
 use crate::settings::Settings;
-use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::socket::{Socket, SocketError};
@@ -171,20 +170,20 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Decoy packets are filtered. Non-handshake packets are verified per-user and fed to decoy providers.
     /// `sock` is the specific socket to read from; the caller (drain task) owns one socket per task.
     pub(crate) async fn receive_raw(&self, packet: DynamicByteBuffer, sock: &Socket) -> Result<RawReceivedPacket<T>, FlowControllerError> {
-        let identity_len = T::length();
+        let tailor_len = Tailor::<T>::len();
         let tailor_overhead = ServerCryptoTool::<T>::tailor_overhead();
 
         loop {
             let (packet, source_addr) = sock.recv_from(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
 
             // Undersized wire packets (shorter than the encrypted tailor) can't be valid Typhoon; forward to the probe handler and keep draining.
-            if packet.len() < identity_len + tailor_overhead {
-                warn!("server flow: undersized wire packet from {source_addr} ({} < {})", packet.len(), identity_len + tailor_overhead);
+            if packet.len() < tailor_len + tailor_overhead {
+                warn!("server flow: undersized wire packet from {source_addr} ({} < {})", packet.len(), tailor_len + tailor_overhead);
                 self.probe_handler.lock().await.process(packet, Some(source_addr)).await;
                 continue;
             }
 
-            let (encrypted_packet, encrypted_tailor) = packet.split_buf_end(identity_len + tailor_overhead);
+            let (encrypted_packet, encrypted_tailor) = packet.split_buf_end(tailor_len + tailor_overhead);
 
             // Deobfuscate tailor; for non-handshake packets verify immediately, for handshake packets defer the HMAC check until the listener has decapsulated the body and can recompute the initial-data encryption key.
             let (tailor, handshake_transcript) = {
@@ -193,18 +192,22 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     Ok(result) => result,
                     Err(err) => {
                         warn!("server flow: tailor decryption failed from {source_addr}: {err}");
-                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr)).await;
+                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(tailor_len + tailor_overhead), Some(source_addr)).await;
                         continue;
                     }
                 };
-                let tailor = Tailor::<T>::new(tailor_buf);
+                let Some(tailor) = Tailor::<T>::validated(tailor_buf, encrypted_packet.len()) else {
+                    warn!("server flow: malformed tailor from {source_addr} (size, flags or payload_length out of range)");
+                    self.probe_handler.lock().await.process(encrypted_packet.expand_end(tailor_len + tailor_overhead), Some(source_addr)).await;
+                    continue;
+                };
                 if tailor.flags().contains(PacketFlags::HANDSHAKE) {
                     (tailor, Some(transcript))
                 } else {
                     let identity = tailor.identity();
                     if let Err(err) = crypto.verify_tailor(&identity, transcript).await {
                         debug!("error verifying packet tailor: {err}");
-                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr)).await;
+                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(tailor_len + tailor_overhead), Some(source_addr)).await;
                         continue;
                     }
                     (tailor, None)
@@ -259,7 +262,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             }
 
             // Preserve a view over the original wire bytes so a failed deferred handshake verification can route the packet to the flow's probe handler.
-            let original_wire_packet = packet_flags.contains(PacketFlags::HANDSHAKE).then(|| encrypted_packet.expand_end(identity_len + tailor_overhead));
+            let original_wire_packet = packet_flags.contains(PacketFlags::HANDSHAKE).then(|| encrypted_packet.expand_end(tailor_len + tailor_overhead));
 
             // For handshake packets, strip fake header/body using payload_length so the
             // session layer receives only the raw handshake data.
@@ -297,8 +300,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> ServerFlowManager<T, AE> {
     /// Send a packet through this flow.
     pub(crate) async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Result<(), FlowControllerError> {
-        let identity_len = T::length();
-        let tailor_len = identity_len + TAILOR_LENGTH;
+        let tailor_len = Tailor::<T>::len();
         let (body, tailor_buf) = packet.split_buf_end(tailor_len);
         let identity = ServerCryptoTool::<T>::extract_identity(&tailor_buf);
 
@@ -326,18 +328,18 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         // Fallthrough decoys: drop the plaintext tailor, skip encryption, treat the remaining body as opaque random bytes.  Non-fallthrough path is unchanged.
         let (encrypted_packet, packet_flags, data_len, tailor_overhead) = if fallthrough {
-            let body_only = notified_packet.rebuffer_end(notified_packet.len() - identity_len - TAILOR_LENGTH);
+            let body_only = notified_packet.rebuffer_end(notified_packet.len() - tailor_len);
             let body_len = body_only.len();
             (body_only, PacketFlags::DECOY, body_len, 0_usize)
         } else {
-            let (packet_data, packet_tailor) = notified_packet.split_buf_end(identity_len + TAILOR_LENGTH);
+            let (packet_data, packet_tailor) = notified_packet.split_buf_end(tailor_len);
             let flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
             let data_len = packet_data.len();
             let encrypted_tailor = {
                 let mut crypto = self.crypto_send.lock().await;
                 crypto.obfuscate_tailor(packet_tailor, self.settings.pool()).await.map_err(FlowControllerError::TailorEncryption)?
             };
-            let tailor_overhead = encrypted_tailor.len() - identity_len;
+            let tailor_overhead = ServerCryptoTool::<T>::tailor_overhead() + Tailor::<T>::len();
             let encrypted = packet_data.expand_end(encrypted_tailor.len());
             (encrypted, flags, data_len, tailor_overhead)
         };
@@ -372,7 +374,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             let tailor_len = if fallthrough {
                 0
             } else {
-                identity_len + TAILOR_LENGTH
+                Tailor::<T>::len()
             };
             (kind, tailor_len, tailor_overhead, cap_header, data_len, cap_body)
         });

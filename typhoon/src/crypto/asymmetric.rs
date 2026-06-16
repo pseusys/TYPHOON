@@ -103,6 +103,9 @@ impl ClientCertificate {
     /// If the response contains encrypted initial data beyond the crypto header, decrypts it with the initial key.
     /// Args: client ephemeral data, server handshake, pool. Returns: (session_key, server_initial_data).
     pub(crate) fn decapsulate_handshake_client(&self, data: ClientData, handshake_secret: DynamicByteBuffer, pool: &BytePool) -> Result<(FixedByteBuffer<32>, DynamicByteBuffer), HandshakeError> {
+        if handshake_secret.len() < SERVER_HANDSHAKE_HEADER_SIZE {
+            return Err(HandshakeError::handshake_authentication_error(&format!("server handshake response too short: {} < {SERVER_HANDSHAKE_HEADER_SIZE}", handshake_secret.len())));
+        }
         let (crypto_header, encrypted_initial_data) = if handshake_secret.len() > SERVER_HANDSHAKE_HEADER_SIZE {
             let (header, enc_data) = handshake_secret.split_buf_start(SERVER_HANDSHAKE_HEADER_SIZE);
             (header, Some(enc_data))
@@ -166,8 +169,13 @@ impl ClientCertificate {
 impl ServerSecret<'_> {
     /// Server decapsulate client handshake: deobfuscate, decapsulate McEliece, derive key.
     /// If the handshake contains encrypted initial data beyond the crypto header, decrypts it with the initial key.
-    /// Args: client handshake_secret, pool. Returns: (ServerData, initial_encryption_key, client_initial_data).
-    pub fn decapsulate_handshake_server(&self, handshake_secret: DynamicByteBuffer, pool: &BytePool) -> (ServerData, FixedByteBuffer<32>, DynamicByteBuffer) {
+    /// Args: client handshake_secret, pool. Returns: `Some((ServerData, initial_encryption_key, client_initial_data))`
+    /// on success, or `None` when the handshake body is shorter than the crypto header — every subsequent
+    /// split would otherwise panic on a too-small buffer.
+    pub fn decapsulate_handshake_server(&self, handshake_secret: DynamicByteBuffer, pool: &BytePool) -> Option<(ServerData, FixedByteBuffer<32>, DynamicByteBuffer)> {
+        if handshake_secret.len() < CLIENT_HANDSHAKE_HEADER_SIZE {
+            return None;
+        }
         let (crypto_header, encrypted_initial_data) = if handshake_secret.len() > CLIENT_HANDSHAKE_HEADER_SIZE {
             let (header, enc_data) = handshake_secret.split_buf_start(CLIENT_HANDSHAKE_HEADER_SIZE);
             (header, Some(enc_data))
@@ -208,7 +216,7 @@ impl ServerSecret<'_> {
             nonce: nonce_fixed,
         };
 
-        (server_data, initial_encryption_key, client_initial_data)
+        Some((server_data, initial_encryption_key, client_initial_data))
     }
 
     /// Server handshake response: generate ephemeral X25519, sign transcript, derive session key.

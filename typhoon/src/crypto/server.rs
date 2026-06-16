@@ -21,8 +21,8 @@ pub(crate) struct ServerData {
     pub(crate) nonce: FixedByteBuffer<32>,
 }
 use crate::crypto::symmetric::{NONCE_LEN, ObfuscationTranscript, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
-use crate::settings::consts::{ID_OFFSET, TAILOR_LENGTH};
-use crate::tailor::IdentityType;
+use crate::settings::consts::ID_OFFSET;
+use crate::tailor::{IdentityType, Tailor};
 
 /// Per-user cryptographic state.
 #[derive(Clone)]
@@ -132,7 +132,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
 
     /// Extract user identity from a raw tailor buffer.
     pub(crate) fn extract_identity(buffer: &DynamicByteBuffer) -> T {
-        let correct_buffer = buffer.ensure_size(T::length() + TAILOR_LENGTH);
+        let correct_buffer = buffer.ensure_size(Tailor::<T>::len());
         T::from_bytes(correct_buffer.rebuffer_both(ID_OFFSET, ID_OFFSET + T::length()).slice())
     }
 

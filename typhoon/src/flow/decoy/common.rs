@@ -19,7 +19,6 @@ use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::flow::config::{FakeHeaderConfig, FieldType, FieldTypeHolder};
 use crate::flow::error::FlowControllerError;
 use crate::settings::Settings;
-use crate::settings::consts::TAILOR_LENGTH;
 use crate::settings::keys::*;
 use crate::tailor::{IdentityType, Tailor};
 use crate::utils::random::get_rng;
@@ -396,7 +395,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
     /// If `is_maintenance` is true and the subheader mode applies, a subheader is prepended.
     pub(super) fn create_decoy_packet(&mut self, body_length: usize, is_maintenance: bool) -> DynamicByteBuffer {
         let subheader_len = self.subheader_length(is_maintenance);
-        let total_length = body_length + TAILOR_LENGTH + T::length();
+        let total_length = body_length + Tailor::<T>::len();
         let packet = self.settings.pool().allocate(Some(total_length));
 
         get_rng().fill(packet.slice_end_mut(body_length));
@@ -419,7 +418,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
     pub(super) fn create_replica_packet(&mut self, original_body: &[u8], is_maintenance: bool) -> DynamicByteBuffer {
         let subheader_len = self.subheader_length(is_maintenance);
         let body_length = original_body.len();
-        let total_length = body_length + TAILOR_LENGTH + T::length();
+        let total_length = body_length + Tailor::<T>::len();
         let packet = self.settings.pool().allocate(Some(total_length));
 
         packet.slice_end_mut(body_length).copy_from_slice(original_body);

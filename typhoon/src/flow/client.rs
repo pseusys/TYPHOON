@@ -16,8 +16,7 @@ use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
 use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender};
 use crate::settings::Settings;
-use crate::settings::consts::TAILOR_LENGTH;
-use crate::tailor::IdentityType;
+use crate::tailor::{IdentityType, Tailor};
 use crate::utils::socket::{Socket, SocketError};
 use crate::utils::sync::{AsyncExecutor, Mutex};
 
@@ -88,7 +87,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyFlowSe
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager for ClientFlowManager<T, AE> {
     async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Result<(), FlowControllerError> {
-        let tailor_len = TAILOR_LENGTH + T::length();
+        let tailor_len = Tailor::<T>::len();
         let (body, tailor_buf) = packet.split_buf_end(tailor_len);
 
         let notified_body = {

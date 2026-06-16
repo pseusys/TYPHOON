@@ -19,7 +19,6 @@ use crate::session::client_health::ClientHealthProvider;
 use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
 use crate::settings::Settings;
-use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{ClientConnectionHandler, IdentityType, PacketFlags, Tailor};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::{AsyncExecutor, Mutex, create_watch};
@@ -123,7 +122,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
             // Clone is cheap (Arc), and writes are visible through the shared buffer.
             self.health_provider.feed_output(tailor.clone()).await?;
 
-            encrypted_payload.expand_end(TAILOR_LENGTH + T::length())
+            encrypted_payload.expand_end(Tailor::<T>::len())
         };
 
         self.select_flow().send_packet(full_packet, false, false).await.map_err(SessionControllerError::FlowError)
@@ -167,8 +166,8 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
                 result.map_err(SessionControllerError::FlowError)?
             };
 
-            // The flow manager returns: encrypted_payload || plaintext_tailor (full TAILOR_LENGTH + T::length() bytes).
-            let (payload_part, tailor_part) = packet.split_buf_end(T::length() + TAILOR_LENGTH);
+            // The flow manager returns: encrypted_payload || plaintext_tailor (full Tailor::<T>::len() bytes).
+            let (payload_part, tailor_part) = packet.split_buf_end(Tailor::<T>::len());
             let tailor = Tailor::<T>::new(tailor_part);
 
             debug!("client session: received {:?} packet", tailor.flags());
@@ -207,7 +206,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
         let executor = self.settings.executor().clone();
         executor.block_on(async {
             let (identity, code) = self.health_provider.termination_snapshot().await;
-            let buf = self.settings.pool().allocate(Some(T::length() + TAILOR_LENGTH));
+            let buf = self.settings.pool().allocate(Some(Tailor::<T>::len()));
             let tailor = Tailor::termination(buf, &identity, code, pn);
             let _ = self.select_flow().send_packet(tailor.into_buffer(), false, false).await;
         });

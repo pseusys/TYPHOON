@@ -49,7 +49,7 @@ use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
 use typhoon::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, IdentityType, PacketFlags, SparseDecoyProvider, Tailor, decoy_factory};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
-use typhoon::settings::consts::{FG_OFFSET, PN_OFFSET, TAILOR_LENGTH};
+use typhoon::settings::consts::{FG_OFFSET, PN_OFFSET};
 use typhoon::settings::{Settings, SettingsBuilder};
 use typhoon::socket::{ClientSocketBuilder, ListenerBuilder, ServerFlowConfiguration};
 
@@ -143,7 +143,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlatIatDeco
                     real_packet
                 } else {
                     let body_len = RANDOM_DECOY_BODY_LEN;
-                    let total = body_len + TAILOR_LENGTH + T::length();
+                    let total = body_len + Tailor::<T>::len();
                     let buf = settings.pool().allocate(Some(total));
                     rand::thread_rng().fill(buf.slice_end_mut(body_len));
                     Tailor::decoy(buf.rebuffer_start(body_len), &identity, guard.next_packet_number());

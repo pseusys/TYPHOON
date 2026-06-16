@@ -16,7 +16,6 @@ use crate::crypto::{ClientCryptoTool, ClientData};
 use crate::session::SessionControllerError;
 use crate::session::common::SessionManager;
 use crate::settings::Settings;
-use crate::settings::consts::TAILOR_LENGTH;
 use crate::settings::keys::*;
 use crate::tailor::{ClientConnectionHandler, IdentityType, PacketFlags, ReturnCode, Tailor};
 use crate::utils::random::get_rng;
@@ -196,7 +195,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
         self.client_data = Some(client_data);
         self.crypto_tool.set(updated_tool);
 
-        let tailor_buffer = settings.pool().allocate(Some(T::length() + TAILOR_LENGTH));
+        let tailor_buffer = settings.pool().allocate(Some(Tailor::<T>::len()));
         let tailor = Tailor::handshake(tailor_buffer, &identity, 0, next_in, pn, handshake_secret.len() as u16);
         handshake_secret.append(tailor.buffer().slice())
     }

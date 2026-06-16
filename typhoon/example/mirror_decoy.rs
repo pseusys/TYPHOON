@@ -39,7 +39,7 @@ use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
 use typhoon::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, IdentityType, PacketFlags, SparseDecoyProvider, Tailor, decoy_factory};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
-use typhoon::settings::consts::{FG_OFFSET, TAILOR_LENGTH};
+use typhoon::settings::consts::FG_OFFSET;
 use typhoon::settings::keys::DECOY_LENGTH_MIN;
 use typhoon::settings::{Settings, SettingsBuilder};
 use typhoon::socket::{ClientSocketBuilder, ListenerBuilder, ServerFlowConfiguration};
@@ -97,7 +97,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         let flags = PacketFlags::from_bits_truncate(*tailor_buf.get(FG_OFFSET));
         if flags.is_discardable() {
             let len = self.settings.get(&DECOY_LENGTH_MIN) as usize;
-            let total = len + TAILOR_LENGTH + T::length();
+            let total = len + Tailor::<T>::len();
             let buf = self.settings.pool().allocate(Some(total));
             rand::thread_rng().fill(buf.slice_end_mut(len));
             Tailor::decoy(buf.rebuffer_start(len), &self.identity, self.next_packet_number());
