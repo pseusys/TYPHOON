@@ -27,9 +27,8 @@ from subprocess import run
 from sys import exit
 from time import monotonic, sleep
 
-from socks import SOCKS5, socksocket  # PySocks
-
 from _profile import run_profile
+from socks import SOCKS5, socksocket  # PySocks
 
 observer_gw = environ.get("OBSERVER_GW")
 forward_subnet = environ.get("FORWARD_SUBNET", "172.21.0.0/24")

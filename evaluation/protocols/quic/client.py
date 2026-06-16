@@ -15,7 +15,6 @@ from time import monotonic, sleep
 from traceback import print_exc
 
 from _profile import run_profile_async
-
 from aioquic.asyncio import connect
 from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.quic.configuration import QuicConfiguration

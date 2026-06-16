@@ -9,10 +9,11 @@ controls the application data unit while the wire continues to use Tor's
 fixed 514-byte cell size.
 """
 
+from collections.abc import Callable
 from contextlib import suppress
 from os import environ, path, urandom
 from socket import SHUT_WR, create_connection
-from ssl import PROTOCOL_TLS_CLIENT, SSLContext, SSLError, TLSVersion
+from ssl import PROTOCOL_TLS_CLIENT, SSLContext, SSLError, SSLSocket, TLSVersion
 from struct import pack
 from subprocess import run
 from sys import exit
@@ -71,16 +72,19 @@ for attempt in range(retries):
         raw.settimeout(None)
         tls = ctx.wrap_socket(raw, server_hostname="tor-eval")
 
-        def send_in_cells(data: bytes) -> None:
-            """Split *data* into ≤DATA_PER_CELL chunks and emit RELAY cells."""
-            offset = 0
-            while offset < len(data):
-                n = min(DATA_PER_CELL, len(data) - offset)
-                tls.sendall(make_relay_cell(data[offset:offset + n]))
-                offset += n
+        def _create_send_function(tls: SSLSocket) -> Callable[[bytes], None]:
+            """Return a function that sends *data* in RELAY cells over *tls*."""
+            def send_in_cells(data: bytes) -> None:
+                """Split *data* into ≤DATA_PER_CELL chunks and emit RELAY cells."""
+                offset = 0
+                while offset < len(data):
+                    n = min(DATA_PER_CELL, len(data) - offset)
+                    tls.sendall(make_relay_cell(data[offset:offset + n]))
+                    offset += n
+            return send_in_cells
 
         transfer_start = monotonic()
-        sent, total_sleep = run_profile(send_in_cells)
+        sent, total_sleep = run_profile(_create_send_function(tls))
         transfer_time_s = monotonic() - transfer_start - total_sleep
 
         try:
