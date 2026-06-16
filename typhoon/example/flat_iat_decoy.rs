@@ -47,7 +47,7 @@ use tokio::time::sleep;
 use typhoon::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
-use typhoon::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, IdentityType, PacketFlags, SparseDecoyProvider, Tailor, decoy_factory};
+use typhoon::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DerivedValue, IdentityType, PacketFlags, SparseDecoyProvider, Tailor, decoy_factory};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::consts::{FG_OFFSET, PN_OFFSET};
 use typhoon::settings::{Settings, SettingsBuilder};
@@ -82,7 +82,7 @@ type Exec = DefaultExecutor;
 struct FlatIatDecoyProvider<T: IdentityType + Clone, AE: AsyncExecutor> {
     manager: Weak<dyn DecoyFlowSender>,
     settings: Arc<Settings<AE>>,
-    identity: T,
+    identity: DerivedValue<T>,
     state: Arc<Mutex<FlatIatState>>,
 }
 
@@ -122,7 +122,7 @@ impl FlatIatState {
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlatIatDecoyProvider<T, AE> {
-    async fn timer_task(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, state: Arc<Mutex<FlatIatState>>) {
+    async fn timer_task(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: DerivedValue<T>, state: Arc<Mutex<FlatIatState>>) {
         loop {
             sleep_ms(FLAT_IAT_MS).await;
             let Some(manager_arc) = manager.upgrade() else {
@@ -146,7 +146,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlatIatDeco
                     let total = body_len + Tailor::<T>::len();
                     let buf = settings.pool().allocate(Some(total));
                     rand::thread_rng().fill(buf.slice_end_mut(body_len));
-                    Tailor::decoy(buf.rebuffer_start(body_len), &identity, guard.next_packet_number());
+                    Tailor::decoy(buf.rebuffer_start(body_len), &identity.get(), guard.next_packet_number());
                     buf
                 };
                 (packet, guard.should_fallthrough())
@@ -208,7 +208,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyCommunicationMode<T, AE> for FlatIatDecoyProvider<T, AE> {
-    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self {
+    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: DerivedValue<T>, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self {
         Self {
             manager,
             settings,

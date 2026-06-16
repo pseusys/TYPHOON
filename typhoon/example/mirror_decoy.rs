@@ -37,7 +37,7 @@ use tokio::time::sleep;
 use typhoon::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
-use typhoon::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, IdentityType, PacketFlags, SparseDecoyProvider, Tailor, decoy_factory};
+use typhoon::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DerivedValue, IdentityType, PacketFlags, SparseDecoyProvider, Tailor, decoy_factory};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::consts::FG_OFFSET;
 use typhoon::settings::keys::DECOY_LENGTH_MIN;
@@ -61,7 +61,7 @@ type Exec = DefaultExecutor;
 struct MirrorDecoyProvider<T: IdentityType + Clone, AE: AsyncExecutor> {
     manager: Weak<dyn DecoyFlowSender>,
     settings: Arc<Settings<AE>>,
-    identity: T,
+    identity: DerivedValue<T>,
     counter: Arc<AtomicU32>,
     fallthrough_probability: f64,
 }
@@ -100,7 +100,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
             let total = len + Tailor::<T>::len();
             let buf = self.settings.pool().allocate(Some(total));
             rand::thread_rng().fill(buf.slice_end_mut(len));
-            Tailor::decoy(buf.rebuffer_start(len), &self.identity, self.next_packet_number());
+            Tailor::decoy(buf.rebuffer_start(len), &self.identity.get(), self.next_packet_number());
             if let Some(mgr) = self.manager.upgrade() {
                 if let Err(err) = mgr.send_decoy_packet(buf, self.should_fallthrough(), false).await {
                     warn!("MirrorDecoyProvider: send failed: {err:?}");
@@ -116,7 +116,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyCommunicationMode<T, AE> for MirrorDecoyProvider<T, AE> {
-    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self {
+    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: DerivedValue<T>, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self {
         Self {
             manager,
             settings,

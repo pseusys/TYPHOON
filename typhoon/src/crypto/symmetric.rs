@@ -54,11 +54,11 @@ cfg_if! {
 }
 
 pub(crate) const SYMMETRIC_KEY_LENGTH: usize = 32;
-// Built-in (AEAD) tag is full-mode only; additional (keyed-hash) tag is fast-mode only.
-// Both are referenced by the cross-mode crypto tests, so keep them defined in every build.
-#[allow(dead_code)]
+/// Built-in AEAD tag length — full mode only (ChaCha20-Poly1305 / AES-GCM).
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
 pub(crate) const SYMMETRIC_BUILT_IN_AUTH_LEN: usize = 16;
-#[allow(dead_code)]
+/// Additional keyed-hash (BLAKE3) tag length — fast mode only.
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 pub(crate) const SYMMETRIC_ADDITIONAL_AUTH_LEN: usize = 32;
 
 /// Bytes added to a payload by `encrypt_auth` (nonce + authentication tag).
@@ -81,18 +81,14 @@ pub(crate) const TAILOR_S2C_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRIC_AD
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 pub(crate) const TAILOR_S2C_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN;
 
-// NONCE_LEN (the built-in AEAD nonce) is full-mode only in lib code, but the cross-mode
-// crypto tests reference it in every build, so keep it defined for fast mode too.
-#[allow(dead_code)]
-#[cfg(any(feature = "fast_software", feature = "full_software"))]
+// NONCE_LEN is the built-in AEAD nonce — full mode only; its length depends on the cipher.
+#[cfg(feature = "full_software")]
 pub(crate) const NONCE_LEN: usize = 24;
+#[cfg(feature = "full_hardware")]
+pub(crate) const NONCE_LEN: usize = 12;
 
 #[cfg(any(feature = "fast_software", feature = "full_software"))]
 pub(crate) const ANONYMOUS_NONCE_LEN: usize = 24;
-
-#[allow(dead_code)]
-#[cfg(any(feature = "fast_hardware", feature = "full_hardware"))]
-pub(crate) const NONCE_LEN: usize = 12;
 
 #[cfg(any(feature = "fast_hardware", feature = "full_hardware"))]
 pub(crate) const ANONYMOUS_NONCE_LEN: usize = 16;

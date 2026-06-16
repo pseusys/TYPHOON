@@ -1,4 +1,4 @@
-use crate::cache::{CacheError, SharedValue};
+use crate::cache::{CacheError, DerivedValue, SharedValue};
 
 // ── SharedValue ───────────────────────────────────────────────────────────────
 
@@ -86,4 +86,44 @@ fn test_cached_value_sibling_source_dropped() {
     let cache = sv.create_cache();
     drop(sv);
     assert!(matches!(cache.create_sibling(), Err(CacheError::SourceDropped)));
+}
+
+// ── DerivedValue ───────────────────────────────────────────────────────────────
+
+#[test]
+fn test_derived_value_constant() {
+    let d = DerivedValue::constant(7u32);
+    assert_eq!(d.get(), 7);
+    // Clones share the same source.
+    assert_eq!(d.clone().get(), 7);
+}
+
+#[test]
+fn test_derived_value_projects_and_tracks_set() {
+    let mut sv = SharedValue::new(10u32);
+    let cache = sv.create_cache();
+    let derived = cache.derive(|v| *v * 2).unwrap();
+    assert_eq!(derived.get(), 20);
+    // A published set() is observed on the next read.
+    sv.set(15u32);
+    assert_eq!(derived.get(), 30);
+}
+
+#[test]
+fn test_derived_value_ignores_local_mutations() {
+    let mut sv = SharedValue::new(10u32);
+    let cache = sv.create_cache();
+    let derived = cache.derive(|v| *v).unwrap();
+    // get_mut mutates only the local copy; it is never published, so the derived view
+    // continues to report the published value.
+    *sv.get_mut() += 100;
+    assert_eq!(derived.get(), 10);
+}
+
+#[test]
+fn test_derived_value_source_dropped() {
+    let sv = SharedValue::new(1u32);
+    let cache = sv.create_cache();
+    drop(sv);
+    assert!(matches!(cache.derive(|v| *v), Err(CacheError::SourceDropped)));
 }

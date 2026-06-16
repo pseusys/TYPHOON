@@ -5,6 +5,7 @@ use std::sync::{Arc, Weak};
 use async_trait::async_trait;
 
 use crate::bytes::DynamicByteBuffer;
+use crate::cache::DerivedValue;
 use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider};
 use crate::settings::Settings;
 use crate::tailor::IdentityType;
@@ -32,7 +33,7 @@ impl DecoyProvider for SimpleDecoyProvider {
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyCommunicationMode<T, AE> for SimpleDecoyProvider {
-    fn new(_manager: Weak<dyn DecoyFlowSender>, _settings: Arc<Settings<AE>>, _identity: T, _counter: Arc<AtomicU32>, _fallthrough_probability: Option<f64>) -> Self {
+    fn new(_manager: Weak<dyn DecoyFlowSender>, _settings: Arc<Settings<AE>>, _identity: DerivedValue<T>, _counter: Arc<AtomicU32>, _fallthrough_probability: Option<f64>) -> Self {
         Self
     }
 }

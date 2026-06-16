@@ -7,7 +7,9 @@ use crate::certificate::ServerKeyPair;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
 #[cfg(all(feature = "client", feature = "server"))]
-use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
+use crate::crypto::symmetric::{PAYLOAD_CRYPTO_OVERHEAD, Symmetric};
+#[cfg(all(any(feature = "full_software", feature = "full_hardware"), feature = "client", feature = "server"))]
+use crate::crypto::symmetric::SYMMETRIC_BUILT_IN_AUTH_LEN;
 
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 const X25519_KEY_LENGTH: usize = 32;
@@ -48,7 +50,7 @@ fn test_handshake_cycle() {
 
     // Verify session keys match by encrypting/decrypting a test message.
     let session_data_data = b"Secret session data message";
-    let session_data = TEST_POOL.allocate_precise_from_slice_with_capacity(session_data_data, 0, NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN);
+    let session_data = TEST_POOL.allocate_precise_from_slice_with_capacity(session_data_data, 0, PAYLOAD_CRYPTO_OVERHEAD);
 
     let mut server_session_cipher = Symmetric::new(&server_session_key);
     let session_data_encrypted = server_session_cipher.encrypt_auth(session_data, None::<&StaticByteBuffer>).expect("session data encryption failed");

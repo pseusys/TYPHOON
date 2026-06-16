@@ -2,13 +2,15 @@
 #[path = "../../tests/cache/value.rs"]
 mod tests;
 
+use std::sync::Arc;
+
 use cfg_if::cfg_if;
 
 cfg_if! {
     if #[cfg(any(feature = "client", all(test, feature = "server")))] {
         use std::cell::UnsafeCell;
         use std::marker::PhantomData;
-        use std::sync::{Arc, Weak};
+        use std::sync::Weak;
         use arc_swap::ArcSwap;
         use crate::cache::common::CacheError;
     }
@@ -134,6 +136,23 @@ impl<T: Clone + Send + Sync> CachedValue<T> {
         Ok(Arc::make_mut(&mut self.local))
     }
 
+    /// Project this cache's *published* value into a read-only, `Send + Sync` [`DerivedValue`].
+    #[inline]
+    pub(crate) fn derive<R, F>(&self, f: F) -> Result<DerivedValue<R>, CacheError>
+    where
+        T: 'static,
+        R: 'static,
+        F: Fn(&T) -> R + Send + Sync + 'static,
+    {
+        let state = self.source.upgrade().ok_or(CacheError::SourceDropped)?;
+        Ok(DerivedValue {
+            read: Arc::new(move || {
+                let guard = state.load();
+                f(&guard)
+            }),
+        })
+    }
+
     /// Create a sibling [`CachedValue`] pointing at the same source, or `Err` if dropped.
     #[inline]
     pub(crate) fn create_sibling(&self) -> Result<CachedValue<T>, CacheError> {
@@ -157,5 +176,39 @@ impl<T: Clone + Send + Sync> CachedValue<T> {
             self.local = Arc::clone(&current);
         }
         Ok(())
+    }
+}
+
+/// Read-only, `Send + Sync`, live projection of a [`SharedValue`]'s published value.
+pub struct DerivedValue<R> {
+    read: Arc<dyn Fn() -> R + Send + Sync>,
+}
+
+impl<R> DerivedValue<R> {
+    /// A `DerivedValue` that always yields `value` — for fixed sources such as a server-side per-user identity that never rotates.
+    #[cfg(any(feature = "server", test))]
+    #[inline]
+    pub(crate) fn constant(value: R) -> Self
+    where
+        R: Clone + Send + Sync + 'static,
+    {
+        Self {
+            read: Arc::new(move || value.clone()),
+        }
+    }
+
+    /// Read the current projected value.
+    #[inline]
+    pub fn get(&self) -> R {
+        (self.read)()
+    }
+}
+
+impl<R> Clone for DerivedValue<R> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            read: Arc::clone(&self.read),
+        }
     }
 }

@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use log::warn;
 
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
+use crate::cache::DerivedValue;
 use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DecoyState, exponential_variance, maintenance_timer_task, random_uniform, try_replicate};
 use crate::settings::Settings;
 use crate::settings::consts::FG_OFFSET;
@@ -137,7 +138,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyCommunicationMode<T, AE> for HeavyDecoyProvider<T, AE> {
-    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self {
+    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: DerivedValue<T>, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self {
         let state = DecoyState::new(settings.clone(), identity, counter, fallthrough_probability);
         let delay = Self::calculate_delay(&state);
         let length = Self::calculate_length(&state);

@@ -26,14 +26,15 @@ pub use simple::SimpleDecoyProvider;
 pub use smooth::SmoothDecoyProvider;
 pub use sparse::SparseDecoyProvider;
 
+pub use crate::cache::DerivedValue;
 use crate::settings::Settings;
 use crate::settings::keys::{DECOY_PROVIDER_WEIGHT_HEAVY, DECOY_PROVIDER_WEIGHT_NOISY, DECOY_PROVIDER_WEIGHT_SIMPLE, DECOY_PROVIDER_WEIGHT_SMOOTH, DECOY_PROVIDER_WEIGHT_SPARSE};
 pub use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::sync::AsyncExecutor;
 use crate::weighted_random;
 
-/// A factory that constructs a `Box<dyn DecoyProvider>` for a given identity and flow manager.
-pub type DecoyFactory<T, AE> = Arc<dyn Fn(Weak<dyn DecoyFlowSender>, Arc<Settings<AE>>, T, Arc<AtomicU32>) -> Box<dyn DecoyProvider> + Send + Sync>;
+/// A factory that constructs a `Box<dyn DecoyProvider>` for a given identity source and flow manager.
+pub type DecoyFactory<T, AE> = Arc<dyn Fn(Weak<dyn DecoyFlowSender>, Arc<Settings<AE>>, DerivedValue<T>, Arc<AtomicU32>) -> Box<dyn DecoyProvider> + Send + Sync>;
 
 /// Lift a concrete `DecoyCommunicationMode` type into a `DecoyFactory`.
 pub fn decoy_factory<T, AE, DP>() -> DecoyFactory<T, AE>

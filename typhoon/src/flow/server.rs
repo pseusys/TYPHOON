@@ -15,6 +15,7 @@ use crate::capture::{record_flow_config, record_server_send};
 use crate::crypto::{ObfuscationTranscript, ServerCryptoTool};
 use crate::defaults::NoopProbeHandler;
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
+use crate::cache::DerivedValue;
 use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
 use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender};
@@ -137,7 +138,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     pub async fn register_user(self: &Arc<Self>, id: T, counter: Arc<AtomicU32>) {
         let weak: Weak<Self> = Arc::downgrade(self);
         let mgr: Weak<dyn DecoyFlowSender> = weak;
-        let mut dp = (self.decoy_factory)(mgr, self.settings.clone(), id.clone(), counter);
+        let mut dp = (self.decoy_factory)(mgr, self.settings.clone(), DerivedValue::constant(id.clone()), counter);
         dp.start().await;
         let decoy_name = dp.name();
         self.decoy_providers.write().await.insert(id.clone(), Arc::new(Mutex::new(dp)));

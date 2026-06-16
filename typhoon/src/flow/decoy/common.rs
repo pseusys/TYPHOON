@@ -20,6 +20,7 @@ use crate::flow::config::{FakeHeaderConfig, FieldType, FieldTypeHolder};
 use crate::flow::error::FlowControllerError;
 use crate::settings::Settings;
 use crate::settings::keys::*;
+use crate::cache::DerivedValue;
 use crate::tailor::{IdentityType, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
@@ -246,7 +247,7 @@ pub trait DecoyCommunicationMode<T: IdentityType + Clone, AE: AsyncExecutor>: De
     /// counter shared with the session manager and the health-check provider; every emitted
     /// decoy packet advances it. `fallthrough_probability` pins the per-flow fallthrough rate,
     /// `None` samples from the settings keys.
-    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: T, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self;
+    fn new(manager: Weak<dyn DecoyFlowSender>, settings: Arc<Settings<AE>>, identity: DerivedValue<T>, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self;
 }
 
 // ── DecoyState ──────────────────────────────────────────────────────────────
@@ -270,8 +271,9 @@ pub(crate) struct DecoyState<T: IdentityType + Clone, AE: AsyncExecutor> {
     /// Per-session monotonic packet-number counter, shared with the session manager and the
     /// health-check provider. Every emitted decoy advances it.
     counter: Arc<AtomicU32>,
-    /// Identity for decoy packets.
-    identity: T,
+    /// Live source of the current session identity for decoy tailors; re-read on every emitted
+    /// decoy so the identity follows session-identity rotation rather than freezing at construction.
+    identity: DerivedValue<T>,
     /// Next scheduled decoy time (milliseconds since epoch).
     pub(super) next_decoy_time: u128,
     /// Pre-computed length for next decoy.
@@ -290,7 +292,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
     /// Build a fresh decoy state. `counter` is the per-session monotonic PN counter shared
     /// with the session manager and the health-check provider; `fallthrough_probability`
     /// pins the per-flow probability, `None` samples from `DECOY_FALLTHROUGH_PACKETS_{MIN,MAX}`.
-    pub(super) fn new(settings: Arc<Settings<AE>>, identity: T, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self {
+    pub(super) fn new(settings: Arc<Settings<AE>>, identity: DerivedValue<T>, counter: Arc<AtomicU32>, fallthrough_probability: Option<f64>) -> Self {
         let byte_rate_cap = settings.get(&DECOY_BYTE_RATE_CAP);
         let byte_rate_factor = settings.get(&DECOY_BYTE_RATE_FACTOR);
         let length_max = settings.get(&DECOY_LENGTH_MAX) as usize;
@@ -401,7 +403,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
         get_rng().fill(packet.slice_end_mut(body_length));
 
         let pn = self.next_packet_number();
-        Tailor::decoy(packet.rebuffer_start(body_length), &self.identity, pn);
+        Tailor::decoy(packet.rebuffer_start(body_length), &self.identity.get(), pn);
 
         if subheader_len > 0 {
             let expanded = packet.expand_start(subheader_len);
@@ -424,7 +426,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
         packet.slice_end_mut(body_length).copy_from_slice(original_body);
 
         let pn = self.next_packet_number();
-        Tailor::decoy(packet.rebuffer_start(body_length), &self.identity, pn);
+        Tailor::decoy(packet.rebuffer_start(body_length), &self.identity.get(), pn);
 
         if subheader_len > 0 {
             let expanded = packet.expand_start(subheader_len);
