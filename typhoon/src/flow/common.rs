@@ -1,11 +1,15 @@
+#[cfg(feature = "client")]
 use std::future::Future;
+#[cfg(feature = "client")]
 use std::sync::Arc;
 
 use cfg_if::cfg_if;
 
+#[cfg(feature = "client")]
 use crate::bytes::DynamicByteBuffer;
 #[cfg(feature = "client")]
 use crate::capture::CaptureContext;
+#[cfg(feature = "client")]
 use crate::flow::error::FlowControllerError;
 cfg_if! {
     if #[cfg(feature = "client")] {
@@ -22,6 +26,7 @@ cfg_if! {
 }
 
 /// Trait for managing packet flow with encryption and decoy traffic.
+#[cfg(feature = "client")]
 pub(crate) trait FlowManager {
     /// Send a packet through the flow manager.
     /// * `fallthrough` is set only by fallthrough decoys and skips the tailor step in `prepare_outgoing`; all other callers pass `false`.
@@ -33,6 +38,7 @@ pub(crate) trait FlowManager {
     fn receive_packet(&self, packet: DynamicByteBuffer) -> impl Future<Output = Result<DynamicByteBuffer, FlowControllerError>> + Send;
 }
 
+#[cfg(feature = "client")]
 impl<T: FlowManager + Send + Sync> FlowManager for Arc<T> {
     fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> impl Future<Output = Result<(), FlowControllerError>> + Send {
         (**self).send_packet(packet, fallthrough, is_maintenance)

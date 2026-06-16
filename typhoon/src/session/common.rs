@@ -1,10 +1,15 @@
-/// Session manager trait for managing encrypted data transfer and health checking.
+//! Session manager trait for managing encrypted data transfer and health checking.
+
+#[cfg(feature = "client")]
 use std::future::Future;
 
+#[cfg(feature = "client")]
 use crate::bytes::DynamicByteBuffer;
+#[cfg(feature = "client")]
 use crate::session::error::SessionControllerError;
 
 /// Trait for managing session-level packet processing with encryption and health checking.
+#[cfg(feature = "client")]
 pub trait SessionManager {
     /// Send a packet through the session manager.
     /// If `generated` is true, the packet is already assembled (body + tailor) by the health provider.
