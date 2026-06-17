@@ -138,18 +138,18 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlatIatDeco
             // passes the packet through instead of looping it back into the queue.
             let (packet, fallthrough) = {
                 let mut guard = state.lock().expect("FlatIatDecoyProvider mutex poisoned");
-                let packet = if let Some((pn, real_packet)) = guard.queue.pop_front() {
+                if let Some((pn, real_packet)) = guard.queue.pop_front() {
                     guard.reinjected.insert(pn);
-                    real_packet
+                    (real_packet, false)
                 } else {
                     let body_len = RANDOM_DECOY_BODY_LEN;
                     let total = body_len + Tailor::<T>::len();
                     let buf = settings.pool().allocate(Some(total));
                     rand::thread_rng().fill(buf.slice_end_mut(body_len));
                     Tailor::decoy(buf.rebuffer_start(body_len), &identity.get(), guard.next_packet_number());
-                    buf
-                };
-                (packet, guard.should_fallthrough())
+                    let fallthrough = guard.should_fallthrough();
+                    (buf, fallthrough)
+                }
             };
 
             if let Err(err) = manager_arc.send_decoy_packet(packet, fallthrough, false).await {
@@ -180,11 +180,14 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 
     async fn feed_output(&self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         let flags = PacketFlags::from_bits_truncate(*tailor_buf.get(FG_OFFSET));
-        // Pass decoy / termination packets through unchanged; only
-        // buffer real DATA.  Terminations especially must not queue: the
-        // session-cleanup task sends termination then removes the user, so a
-        // queued termination would be stranded when the next timer tick fires.
-        if flags.is_discardable() || flags.is_termination() {
+        // Pass everything except real DATA through unchanged: decoys, terminations,
+        // handshake responses, and pure health checks all need immediate delivery.
+        // Terminations especially must not queue: the session-cleanup task sends
+        // termination then removes the user, so a queued termination would be
+        // stranded when the next timer tick fires. Handshake responses are even more
+        // fragile — queueing one risks it being drained as a fallthrough decoy, which
+        // discards the plaintext tailor the client needs to complete the handshake.
+        if !flags.has_payload() {
             return Some(body);
         }
         let pn_bytes: [u8; 8] = tailor_buf.slice()[PN_OFFSET..PN_OFFSET + 8].try_into().expect("8-byte PN");
