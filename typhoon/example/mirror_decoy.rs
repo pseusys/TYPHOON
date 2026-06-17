@@ -55,9 +55,8 @@ type Exec = DefaultExecutor;
 
 // ── Custom decoy provider ─────────────────────────────────────────────────────
 
-/// Reaction-based decoy provider: sends one decoy packet back for every incoming
-/// decoy packet.  Intended for server-side use alongside a timer-driven client
-/// strategy such as `SparseDecoyProvider`.
+/// Reaction-based decoy provider: sends one decoy packet back for every incoming decoy packet.  Intended for server-side use alongside a timer-driven client strategy such as `SparseDecoyProvider`.
+/// `feed_input` calls `send_decoy_packet` synchronously and inline — this is safe.
 struct MirrorDecoyProvider<T: IdentityType + Clone, AE: AsyncExecutor> {
     manager: Weak<dyn DecoyFlowSender>,
     settings: Arc<Settings<AE>>,
@@ -91,9 +90,9 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         "MirrorDecoyProvider"
     }
 
-    async fn start(&mut self) {}
+    async fn start(&self) {}
 
-    async fn feed_input(&mut self, packet: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_input(&self, packet: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         let flags = PacketFlags::from_bits_truncate(*tailor_buf.get(FG_OFFSET));
         if flags.is_discardable() {
             let len = self.settings.get(&DECOY_LENGTH_MIN) as usize;
@@ -110,7 +109,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         Some(packet)
     }
 
-    async fn feed_output(&mut self, body: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_output(&self, body: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         Some(body)
     }
 }

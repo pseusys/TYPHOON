@@ -21,13 +21,13 @@ impl DecoyProvider for SimpleDecoyProvider {
         "SimpleDecoyProvider"
     }
 
-    async fn start(&mut self) {}
+    async fn start(&self) {}
 
-    async fn feed_input(&mut self, packet: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_input(&self, packet: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         Some(packet)
     }
 
-    async fn feed_output(&mut self, body: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_output(&self, body: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         Some(body)
     }
 }

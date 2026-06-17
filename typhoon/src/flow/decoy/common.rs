@@ -214,23 +214,25 @@ pub trait DecoyFlowSender: Send + Sync {
     fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>>;
 }
 
-/// Object-safe runtime interface for decoy traffic. Used as `Box<dyn DecoyProvider>` in
-/// flow managers. All async methods are boxed automatically by `async_trait`.
+/// Object-safe runtime interface for decoy traffic. Used as `Arc<dyn DecoyProvider>` in
+/// flow managers — no external lock wraps it, so implementations must manage their own
+/// mutable state via interior mutability (e.g. `Arc<RwLock<_>>`, as every built-in provider
+/// does). All async methods are boxed automatically by `async_trait`.
 #[async_trait]
 pub trait DecoyProvider: Send + Sync {
     /// Short display name of this provider (e.g. "SparseDecoyProvider").
     fn name(&self) -> &'static str;
 
     /// Start the background decoy generation timer.
-    async fn start(&mut self);
+    async fn start(&self);
 
     /// Process an incoming packet, updating internal rate tracking.
     /// `tailor_buf` is the deobfuscated tailor for the packet (flags, packet number, etc.).
-    async fn feed_input(&mut self, packet: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer>;
+    async fn feed_input(&self, packet: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer>;
 
     /// Process an outgoing packet body and its plaintext tailor, updating internal rate tracking.
     /// Returns the (possibly modified) body, or `None` to suppress the packet entirely.
-    async fn feed_output(&mut self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer>;
+    async fn feed_output(&self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer>;
 }
 
 /// Construction contract for decoy providers. Extends `DecoyProvider` so that any

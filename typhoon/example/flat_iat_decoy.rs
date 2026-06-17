@@ -165,7 +165,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         "FlatIatDecoyProvider"
     }
 
-    async fn start(&mut self) {
+    async fn start(&self) {
         let executor = self.settings.executor().clone();
         let manager = self.manager.clone();
         let settings = self.settings.clone();
@@ -174,11 +174,11 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         executor.spawn(Self::timer_task(manager, settings, identity, state));
     }
 
-    async fn feed_input(&mut self, packet: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_input(&self, packet: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         Some(packet)
     }
 
-    async fn feed_output(&mut self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_output(&self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         let flags = PacketFlags::from_bits_truncate(*tailor_buf.get(FG_OFFSET));
         // Pass decoy / termination packets through unchanged; only
         // buffer real DATA.  Terminations especially must not queue: the

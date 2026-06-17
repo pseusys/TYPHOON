@@ -22,13 +22,12 @@ use crate::utils::sync::{AsyncExecutor, Mutex};
 
 /// Client-side flow manager that handles packet encryption, decoy traffic, and socket I/O.
 pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor> {
-    decoy_provider: Mutex<Box<dyn DecoyProvider>>,
+    decoy_provider: Box<dyn DecoyProvider>,
     send_internal: Mutex<FlowSendInternal<T>>,
     receive_internal: Mutex<FlowReceiveInternal<T>>,
     sock: Socket,
     mtu: usize,
     settings: Arc<Settings<AE>>,
-    /// Handler for unidentified packets. Locked only for rare unexpected arrivals.
     probe_handler: Mutex<Box<dyn ActiveProbeHandler<AE>>>,
 }
 
@@ -51,7 +50,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowM
             let mtu = settings.mtu();
             record_flow_config(addr, "c2s", || (config.fake_body_mode.description(), config.fake_header_mode.len(), decoy.name()));
             ClientFlowManager {
-                decoy_provider: Mutex::new(decoy),
+                decoy_provider: decoy,
                 send_internal: Mutex::new(FlowSendInternal {
                     provider: send_provider,
                     config,
@@ -66,7 +65,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowM
                 probe_handler: Mutex::new(probe_handler),
             }
         });
-        manager_ref.decoy_provider.lock().await.start().await;
+        manager_ref.decoy_provider.start().await;
         let weak: Weak<dyn ProbeFlowSender> = Arc::downgrade(&manager_ref) as Weak<dyn ProbeFlowSender>;
         manager_ref.probe_handler.lock().await.start(weak, settings_for_start).await;
         Ok(manager_ref)
@@ -90,12 +89,9 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager
         let tailor_len = Tailor::<T>::len();
         let (body, tailor_buf) = packet.split_buf_end(tailor_len);
 
-        let notified_body = {
-            let mut lock = self.decoy_provider.lock().await;
-            match lock.feed_output(body, tailor_buf.clone()).await {
-                None => return Ok(()),
-                Some(b) => b,
-            }
+        let notified_body = match self.decoy_provider.feed_output(body, tailor_buf.clone()).await {
+            None => return Ok(()),
+            Some(b) => b,
         };
 
         let mut lock = self.send_internal.lock().await;
@@ -121,12 +117,9 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager
                 }
             };
 
-            let notified_body = {
-                let mut lock = self.decoy_provider.lock().await;
-                match lock.feed_input(body.clone(), tailor_buf.clone()).await {
-                    None => continue,
-                    Some(b) => b,
-                }
+            let notified_body = match self.decoy_provider.feed_input(body.clone(), tailor_buf.clone()).await {
+                None => continue,
+                Some(b) => b,
             };
 
             let incoming_packet = {

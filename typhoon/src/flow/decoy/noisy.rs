@@ -107,7 +107,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         "NoisyDecoyProvider"
     }
 
-    async fn start(&mut self) {
+    async fn start(&self) {
         let executor = {
             let lock = self.state.read().await;
             lock.settings.executor().clone()
@@ -119,13 +119,13 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         executor.spawn(maintenance_timer_task(manager, state));
     }
 
-    async fn feed_input(&mut self, packet: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_input(&self, packet: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         let mut state = self.state.write().await;
         state.update(packet.len(), false);
         Some(packet)
     }
 
-    async fn feed_output(&mut self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_output(&self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         let flags = PacketFlags::from_bits_truncate(*tailor_buf.get(FG_OFFSET));
         if !flags.is_discardable() {
             let mut state = self.state.write().await;

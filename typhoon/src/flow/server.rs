@@ -54,22 +54,17 @@ struct PathBinding {
 /// When built with multiple sockets (SO_REUSEPORT on Linux), each socket is polled by its own
 /// drain task in the listener; the kernel distributes incoming datagrams across all sockets.
 pub struct ServerFlowManager<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> {
-    /// Per-(flow, identity) path-binding state: source address + latest PN.
     user_bindings: RwLock<HashMap<T, RwLock<PathBinding>>>,
-    /// Per-user decoy providers behind individual locks so concurrent users don't contend.
-    decoy_providers: RwLock<HashMap<T, Arc<Mutex<Box<dyn DecoyProvider>>>>>,
+    decoy_providers: RwLock<HashMap<T, Arc<dyn DecoyProvider>>>,
     decoy_factory: DecoyFactory<T, AE>,
     crypto_send: Mutex<ServerCryptoTool<T>>,
     crypto_recv: Mutex<ServerCryptoTool<T>>,
     fake_body_mode: FakeBodyMode,
     fake_header_mode: Mutex<FakeHeaderConfig>,
-    /// Precomputed worst-case prefix length: fake_header.len() + fake_body.max_len().
-    /// Used to guard expand_start without locking fake_header_mode on every send.
     max_overhead: usize,
     socks: Vec<Arc<Socket>>,
     mtu: usize,
     settings: Arc<Settings<AE>>,
-    /// Handler for unidentified packets. Locked only for rare unexpected arrivals.
     probe_handler: Mutex<Box<dyn ActiveProbeHandler<AE>>>,
 }
 
@@ -138,10 +133,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     pub async fn register_user(self: &Arc<Self>, id: T, counter: Arc<AtomicU32>) {
         let weak: Weak<Self> = Arc::downgrade(self);
         let mgr: Weak<dyn DecoyFlowSender> = weak;
-        let mut dp = (self.decoy_factory)(mgr, self.settings.clone(), DerivedValue::constant(id.clone()), counter);
+        let dp = (self.decoy_factory)(mgr, self.settings.clone(), DerivedValue::constant(id.clone()), counter);
         dp.start().await;
         let decoy_name = dp.name();
-        self.decoy_providers.write().await.insert(id.clone(), Arc::new(Mutex::new(dp)));
+        self.decoy_providers.write().await.insert(id.clone(), Arc::from(dp));
         if let Some(binding) = self.user_bindings.read().await.get(&id) {
             let addr = binding.read().await.addr;
             let header_len = self.max_overhead - self.fake_body_mode.max_len();
@@ -246,7 +241,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
                 let dp = self.decoy_providers.read().await.get(&identity).cloned();
                 if let Some(dp) = dp {
-                    let notified = dp.lock().await.feed_input(encrypted_packet.clone(), tailor.buffer().clone()).await;
+                    let notified = dp.feed_input(encrypted_packet.clone(), tailor.buffer().clone()).await;
                     if notified.is_none() {
                         continue;
                     }
@@ -301,11 +296,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let (body, tailor_buf) = packet.split_buf_end(tailor_len);
         let identity = ServerCryptoTool::<T>::extract_identity(&tailor_buf);
 
-        // Feed decoy provider for rate tracking (per-user lock).
+        // Feed decoy provider for rate tracking.
         let notified_packet = {
             let dp = self.decoy_providers.read().await.get(&identity).cloned();
             if let Some(dp) = dp {
-                let notified = dp.lock().await.feed_output(body, tailor_buf.clone()).await;
+                let notified = dp.feed_output(body, tailor_buf.clone()).await;
                 match notified {
                     None => return Ok(()),
                     Some(b) => b.expand_end(tailor_len),
