@@ -9,12 +9,16 @@ typhoon/target
 
 # Tests:
 
+typhoon/.bench_keys
 typhoon/.test_keys
 
 # Evaluation:
 
 evaluation/protocols/wireguard_daita/wg-daita/go.sum
 evaluation/protocols/wireguard_daita/wireguard-go
+
+evaluation/protocols/wireguard_daita/machines-printer/target
+evaluation/protocols/wireguard_daita/machines-printer/Cargo.lock
 
 # Python
 evaluation/**/__pycache__/
