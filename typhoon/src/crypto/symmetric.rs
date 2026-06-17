@@ -133,7 +133,7 @@ pub(crate) fn decrypt_anonymously(key: &[u8], ciphertext_with_nonce: &mut Dynami
 }
 
 /// Verify a deobfuscation transcript against an externally-supplied 32-byte verification key.
-#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+#[cfg(all(feature = "server", any(feature = "fast_software", feature = "fast_hardware")))]
 pub(crate) fn verify_transcript_with_key<K: ByteBuffer>(key: &K, transcript: &ObfuscationTranscript) -> Result<(), CryptoError> {
     let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = key.slice().try_into().map_err(|_| CryptoError::authentication_error("verification key must be 32 bytes"))?;
     let hash = keyed_hash(&key_bytes, transcript.ciphertext_copy.slice());
@@ -144,7 +144,7 @@ pub(crate) fn verify_transcript_with_key<K: ByteBuffer>(key: &K, transcript: &Ob
 }
 
 /// Verify a deobfuscation transcript against an externally-supplied key (full mode no-op).
-#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+#[cfg(all(feature = "server", any(feature = "full_software", feature = "full_hardware")))]
 #[inline]
 pub(crate) fn verify_transcript_with_key<K: ByteBuffer>(_key: &K, _transcript: &ObfuscationTranscript) -> Result<(), CryptoError> {
     Ok(())

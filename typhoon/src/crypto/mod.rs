@@ -15,17 +15,18 @@ cfg_if! {
         pub(crate) use symmetric::SYMMETRIC_KEY_LENGTH as KEY_LENGTH;
     }
 }
-pub(crate) use error::CryptoError;
 cfg_if! {
     if #[cfg(feature = "server")] {
         pub(crate) use server::ServerData;
         pub(crate) use server::{ServerCryptoTool, UserCryptoState, UserServerState};
+        pub(crate) use symmetric::{ObfuscationTranscript, verify_transcript_with_key};
     }
 }
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 pub(crate) use asymmetric::TAILOR_C2S_OVERHEAD;
+pub(crate) use error::CryptoError;
+pub(crate) use symmetric::PAYLOAD_CRYPTO_OVERHEAD;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 pub(crate) use symmetric::TAILOR_C2S_OVERHEAD;
 /// Bytes that tailor obfuscation adds to the plaintext tailor, per direction.
 pub(crate) use symmetric::TAILOR_S2C_OVERHEAD;
-pub(crate) use symmetric::{ObfuscationTranscript, PAYLOAD_CRYPTO_OVERHEAD, verify_transcript_with_key};
