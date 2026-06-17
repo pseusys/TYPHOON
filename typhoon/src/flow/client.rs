@@ -89,9 +89,8 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager
         let tailor_len = Tailor::<T>::len();
         let (body, tailor_buf) = packet.split_buf_end(tailor_len);
 
-        let notified_body = match self.decoy_provider.feed_output(body, tailor_buf.clone()).await {
-            None => return Ok(()),
-            Some(b) => b,
+        let Some(notified_body) = self.decoy_provider.feed_output(body, tailor_buf.clone()).await else {
+            return Ok(());
         };
 
         let mut lock = self.send_internal.lock().await;
@@ -117,9 +116,8 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager
                 }
             };
 
-            let notified_body = match self.decoy_provider.feed_input(body.clone(), tailor_buf.clone()).await {
-                None => continue,
-                Some(b) => b,
+            let Some(notified_body) = self.decoy_provider.feed_input(body.clone(), tailor_buf.clone()).await else {
+                continue;
             };
 
             let incoming_packet = {
