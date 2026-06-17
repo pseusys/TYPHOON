@@ -17,6 +17,7 @@ jobs:
   typhoon-build:
     name: Build and Run TYPHOON Binaries and Examples
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout 🛎️
@@ -64,6 +65,12 @@ jobs:
         env:
           RUST_LOG: debug
         run: cargo run --example long_session --features debug
+
+      - name: Run heavy_traffic example 🏋️
+        working-directory: typhoon
+        env:
+          RUST_LOG: info
+        run: cargo run --release --example heavy_traffic
 
       - name: Run multi_client example 👥
         working-directory: typhoon

@@ -63,6 +63,7 @@ jobs:
   flamegraph:
     name: Generate TYPHOON Example Flamegraphs
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
 
     steps:
       - name: Checkout 🛎️
@@ -91,6 +92,7 @@ jobs:
           for example in hello_world multi_flow multi_client long_session heavy_traffic use_case mirror_decoy flat_iat_decoy; do
             cargo flamegraph --example "$example" -o "../flamegraphs/${example}.svg"
           done
+          cargo flamegraph --example debug_probe --features debug -o "../flamegraphs/debug_probe.svg"
 
       - name: Upload flamegraphs 📈
         uses: actions/upload-artifact@v4
