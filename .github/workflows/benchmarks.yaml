@@ -39,22 +39,31 @@ jobs:
         env:
           RUSTFLAGS: "-D warnings"
 
-      - name: Run benchmarks 📊
+      - name: Run roundtrip benchmark 📊
         working-directory: typhoon
         env:
           TYPHOON_TEST_SERVER_KEY_FAST: .bench_keys/server_fast.key
-        run: cargo bench --bench roundtrip -- --output-format bencher | tee ../bench-output.txt
+        run: cargo bench --bench roundtrip -- --output-format bencher | tee ../bench-roundtrip.txt
+
+      - name: Run handshake benchmark 🤝
+        working-directory: typhoon
+        env:
+          TYPHOON_TEST_SERVER_KEY_FAST: .bench_keys/server_fast.key
+        run: cargo bench --bench handshake -- --output-format bencher | tee ../bench-handshake.txt
 
       - name: Store benchmark results 📈
         uses: actions/upload-artifact@v4
         with:
           name: bench-results
-          path: bench-output.txt
+          path: |
+            bench-roundtrip.txt
+            bench-handshake.txt
           retention-days: 5
 
   flamegraph:
     name: Generate TYPHOON Example Flamegraphs
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
 
     steps:
       - name: Checkout 🛎️
@@ -69,6 +78,7 @@ jobs:
 
       - name: Install perf and flamegraph 🔥
         run: |
+          sudo apt-get update
           sudo apt-get install -y linux-tools-common linux-tools-generic
           echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid
           cargo install flamegraph
@@ -79,9 +89,10 @@ jobs:
           RUSTFLAGS: "-D warnings"
         run: |
           mkdir -p ../flamegraphs
-          for example in hello_world multi_flow multi_client long_session heavy_traffic; do
-            cargo flamegraph --example "$example" -o "../flamegraphs/${example}.svg" || true
+          for example in hello_world multi_flow multi_client long_session heavy_traffic use_case mirror_decoy flat_iat_decoy; do
+            cargo flamegraph --example "$example" -o "../flamegraphs/${example}.svg"
           done
+          cargo flamegraph --example debug_probe --features debug -o "../flamegraphs/debug_probe.svg"
 
       - name: Upload flamegraphs 📈
         uses: actions/upload-artifact@v4
@@ -89,32 +100,3 @@ jobs:
           name: flamegraphs
           path: flamegraphs/
           retention-days: 5
-
-  plotting:
-    name: Generate TYPHOON Example Plots
-    runs-on: ubuntu-24.04
-
-    steps:
-      - name: Checkout 🛎️
-        uses: actions/checkout@v4
-
-      - name: Install Python and matplotlib 🐍
-        run: pip install matplotlib numpy click rich
-
-      - name: Generate flow diagrams 📉
-        env:
-          RUSTFLAGS: "-D warnings"
-          PYTHONPATH: evaluation/src
-        run: |
-          mkdir -p flow-diagrams
-          for example in hello_world multi_flow multi_client long_session heavy_traffic; do
-            python -m typhoon_eval.flow_plot --example "$example" --typhoon-dir typhoon --out-dir "flow-diagrams/${example}" --per-packet || true
-          done
-
-      - name: Upload flow diagrams 📈
-        uses: actions/upload-artifact@v4
-        with:
-          name: flow-diagrams
-          path: flow-diagrams/
-          retention-days: 5
-

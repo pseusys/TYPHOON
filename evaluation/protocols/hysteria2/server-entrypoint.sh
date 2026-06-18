@@ -28,7 +28,7 @@ auth:
 EOF
 
 # tcp_sink receives the data proxied through Hysteria2
-TRANSFER_BYTES="${TRANSFER_BYTES:-104857600}" \
+PROFILE_BYTES_C2S="${PROFILE_BYTES_C2S:-104857600}" \
 OBSERVER_GW="" \
 python3 /app/server.py &
 SINK_PID=$!

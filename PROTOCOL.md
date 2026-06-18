@@ -55,6 +55,9 @@ If imitating a specific protocol is required, encrypted data should be embedded 
 Finally, flow control and reliable data delivery are not goals of this protocol — they should be implemented by user applications.
 Still, the protocol partly facilitates this goal by providing a health checking mechanism, so that a connection won't go down silently.
 
+By default, TYPHOON makes no attempt to hide the **inter-arrival timing** or **length distribution** of the user's own traffic: it neither fragments large packets into smaller ones nor introduces artificial send delays, delivering data on a best-effort basis.
+What it does conceal instead is **its own protocol signature** — the decoy traffic patterns, packet framing, and header layouts that would otherwise make TYPHOON itself identifiable, regardless of what the user is sending.
+
 ## Architecture
 
 ```mermaid
@@ -175,14 +178,14 @@ It can be either empty, random or constant:
 
 - `empty`: body is always empty, `0` bytes length.
 - `random`: body length is random, it is bound between `TYPHOON_FAKE_BODY_LENGTH_MIN` and `TYPHOON_FAKE_BODY_LENGTH_MAX` constant values, making all the packets different in size.
-- `service`: same as `random`, but is only applied to [health check](#health-check-packets) and [handshake](#handshake-packets) packets.
-- `constant`: body length depends on the lengths of the other packet parts and complement them to a constant size equal to `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` (clamped to `[TYPHOON_FAKE_BODY_LENGTH_MIN, MTU]`).
+- `service`: same as `random`, but is applied **only to maintenance-sub-stream decoy packets** (see [maintenance mode](#maintenance-mode)). The intent is to pad the keep-alive-mimicking decoy sub-stream so it visually resembles the small-message service traffic of mimicked protocols, while keeping data and protocol-service packets at their cryptographic-minimum size.
+- `constant`: body length is selected **once at flow initialization** by sampling a value uniformly from `[TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MIN, TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MAX]` (both clamped to `[TYPHOON_FAKE_BODY_LENGTH_MIN, MTU]`), and the resulting constant is held for every packet in that flow. Different flows therefore land at different constants, while within a flow the wire size is stable. The body length depends on the lengths of the other packet parts and complements them to that per-flow constant.
 
 > Handling `constant` body length might not be trivial, as it imposes a strict limit on packet data contents length.
 > TYPHOON protocol specifically does not support data fragmentation, so `constant` body length just won't have any effect if real packet body length is not always strictly limited.
-> If `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` is set so large that the fixed protocol overhead consumes the entire packet budget, leaving zero bytes for user data, the client socket builder will refuse to construct the socket and return an error.
+> If the per-flow sampled value is so large that the fixed protocol overhead consumes the entire packet budget, leaving zero bytes for user data, the client socket builder will refuse to construct the socket and return an error.
 
-By default, fake body mode is chosen with equal probability for every option except for `random`, which is `TYPHOON_FAKE_BODY_RANDOM_PROBABILITY` heavier than the others.
+Fake body mode is chosen randomly using weights `TYPHOON_FAKE_BODY_WEIGHT_EMPTY`, `TYPHOON_FAKE_BODY_WEIGHT_RANDOM`, `TYPHOON_FAKE_BODY_WEIGHT_CONSTANT` and `TYPHOON_FAKE_BODY_WEIGHT_SERVICE` (all integer, default `1` each except `service` which defaults to `2` to preserve a moderate bias toward maintenance-decoy-only padding).
 
 ### Fake header
 
@@ -198,7 +201,10 @@ Each of these fields can be one of these types: random, constant, volatile, swit
 - `incremental`: fields add `1` to their value in every packet.
 
 By default, fake header is enabled with `TYPHOON_FAKE_HEADER_PROBABILITY` probability.
-All the fake header field modes are chosen with equal probability.
+Each field mode is chosen randomly using weights `TYPHOON_FAKE_HEADER_FIELD_WEIGHT_RANDOM`, `TYPHOON_FAKE_HEADER_FIELD_WEIGHT_CONSTANT`, `TYPHOON_FAKE_HEADER_FIELD_WEIGHT_VOLATILE`, `TYPHOON_FAKE_HEADER_FIELD_WEIGHT_SWITCHING` and `TYPHOON_FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL` (all integer, default `1` each).
+
+For `volatile` fields, the per-field change probability is sampled from `[TYPHOON_FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN, TYPHOON_FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX]` at flow init (both asserted floats in `[0, 1]`, default range `[0.01, 0.20]`).
+For `switching` fields, the per-field switch timeout in milliseconds is sampled from `[TYPHOON_FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS, TYPHOON_FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS]` at flow init (asserted positive, default range `[1000, 30000]`).
 
 ## Packet behavior
 
@@ -206,18 +212,17 @@ In general, the packet behavior is defined not only by packet type (explained be
 The decoy packets are generated by the flow manager, and so they are sent directly as they are.
 All the other packets are generated by the session manager - and so they should be delivered to one of the flow managers.
 
-On the client side, the flow manager selection is weighted random.
-Upon connection startup, a set of server proxies is selected and a flow manager with a random weight is created for every one of them.
-During packet delivery, a random flow manager picks up the packet, where randomness is regulated by its weight.
+On the client side, the flow manager selection is uniform random: when a packet is ready to be sent, one of the available flow managers is picked with equal probability.
+Future revisions may extend this with weighted selection driven by per-path health scores — see [Path degrading](#path-degrading).
 
 On the server side, everything is a little more complex.
 The server keeps a set of clients mapped to their unique identifiers (**ID** tailor field), but it is never notified about client proxy selection.
-Each server flow manager independently tracks the last known source address per client: whenever it receives a correctly-authenticated packet from a client, it [updates the stored source address for that client](#identification-and-rebinding).
+Each server flow manager independently tracks the last known source address per client, alongside the latest packet number seen on this flow for that client: when it receives a correctly-authenticated non-handshake packet whose PN is strictly greater than the latest seen, it [updates the stored source address for that client](#identification-and-rebinding) (the new PN becomes the latest).
 When a flow manager wants to send a packet back, it uses the last known source address it has for that client.
 
 Finally, since server IP addresses and port numbers are static, clients can just send packets to it directly.
 But it's not the same for servers: according to UDP specification, the client IP address and port can change at any time.
-That is why each server flow manager should maintain its own client-to-address mapping and update it upon receiving every authenticated packet.
+That is why each server flow manager should maintain its own client-to-address mapping and update it on every authenticated packet that monotonically advances the per-flow PN watermark.
 
 ### Data packets
 
@@ -330,7 +335,8 @@ sequenceDiagram
 
 Health checking cycle is also hereinafter called "decay" cycle.
 The decay behavior is mostly defined by [**TM** and **PN** fields of the tailor](#tailor-structure).
-The _current incremental packet number_ variable starts from 0.
+The _current incremental packet number_ is a single per-session counter shared by every emitter on the session — data, health-check, handshake, decoy, and termination packets all advance the same monotonic sequence.
+The counter starts from 0 at session establishment.
 
 Client initiates the exchange (the first health check exchange is embedded into handshake), setting higher `4` bytes of **PN** field to the current unix timestamp (in seconds), [lower `4` bytes](#sockets-and-listeners) of **PN** to _current incremental packet number_ and **TM** to a [random next in delay](#next-in-computation).
 The **PN** field value is remembered and used as the _current health check packet number_.
@@ -431,7 +437,7 @@ For that, it keeps track of three internal values:
 - `reference_rate`: defines the long-term reference transmission rate _in packets_, equals `TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT` by default.
 - `packet_rate`: defines the current transmission rate _in packets_, equals `TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT` by default.
 - `byte_rate`: defines the current transmission rate _in bytes_, equals `TYPHOON_DECOY_CURRENT_BYTE_RATE_DEFAULT` by default.
-- `byte_budget`: defines the number of decoy packet bytes that are allowed to send now, equals `TYPHOON_DECOY_BYTE_RATE_CAP * TYPHOON_DECOY_BYTE_RATE_FACTOR / 2` by default.
+- `byte_budget`: defines a shared bandwidth pool consumed by both decoy and real outgoing traffic. Decoys may be sent only while the budget covers their length (see [insertion and processing](#insertion-and-processing)); heavy real outgoing traffic depletes the budget and silently suppresses subsequent decoys. Real traffic is **never gated** by the budget — it always goes through; the budget records bookkeeping after the packet has already been emitted.  Initial value is `TYPHOON_DECOY_BYTE_RATE_CAP * TYPHOON_DECOY_BYTE_RATE_FACTOR / 2`.
 
 They are updated whenever a packet leaves from or arrives to the flow manager, using `TYPHOON_DECOY_CURRENT_ALPHA` and `TYPHOON_DECOY_REFERENCE_ALPHA` constant values:
 
@@ -441,10 +447,10 @@ They are updated whenever a packet leaves from or arrives to the flow manager, u
   - `reference_rate = (1 - TYPHOON_DECOY_REFERENCE_ALPHA) * reference_rate + TYPHOON_DECOY_REFERENCE_ALPHA * (current_packet_time - previous_packet_time)`
   - `packet_rate = (1 - TYPHOON_DECOY_CURRENT_ALPHA) * packet_rate + TYPHOON_DECOY_CURRENT_ALPHA * (current_packet_time - previous_packet_time)`
   - `byte_rate = (1 - TYPHOON_DECOY_CURRENT_ALPHA) * byte_rate + TYPHOON_DECOY_CURRENT_ALPHA * packet_length`
-  - `byte_budget = min(byte_budget + (current_packet_time - previous_packet_time) * TYPHOON_DECOY_BYTE_RATE_CAP / 1000, TYPHOON_DECOY_BYTE_RATE_CAP * TYPHOON_DECOY_BYTE_RATE_FACTOR)`
+  - `byte_budget = clamp(byte_budget + (current_packet_time - previous_packet_time) * TYPHOON_DECOY_BYTE_RATE_CAP / 1000 - outgoing_real_packet_length, 0, TYPHOON_DECOY_BYTE_RATE_CAP * TYPHOON_DECOY_BYTE_RATE_FACTOR)`, where `outgoing_real_packet_length` is the byte length of the just-emitted **real outgoing** packet (0 for incoming traffic and for decoy outgoing — decoy outgoing packets deduct their length from the budget at emission time, before the timer fires, via the gating check above).
 
 Every mode defines its own equations for calculation of decoy packet length (`decoy_length`, in bytes) and delay before the next decoy packet (`decoy_delay`).
-By default, communication mode is chosen with equal probability for every option.
+The built-in communication mode is chosen randomly using weights `TYPHOON_DECOY_PROVIDER_WEIGHT_SIMPLE`, `TYPHOON_DECOY_PROVIDER_WEIGHT_SPARSE`, `TYPHOON_DECOY_PROVIDER_WEIGHT_NOISY`, `TYPHOON_DECOY_PROVIDER_WEIGHT_SMOOTH` and `TYPHOON_DECOY_PROVIDER_WEIGHT_HEAVY`. The skew toward `SMOOTH` and `SIMPLE` reflects how single-flow UDP traffic is dominated by quiet keepalive / no-padding patterns in the wild; `SPARSE` matches the conversational-media share, while `NOISY` and `HEAVY` cover bursty and heartbeat-shaped flows respectively.
 
 A TYPHOON implementation should provide an "interface" for supplying custom decoy communication modes.
 The [proposed implementation](#communication-modes) defines a few general-purpose communication mode sets that are meant to be expandable by users.
@@ -468,7 +474,9 @@ The maintenance mode can have these values:
 - `sized`: the maintenance packets are sent, delays between them are random, but their length is fixed.
 - `both`: the maintenance packets are sent, both their length and delays between them are fixed.
 
-By default, maintenance mode is chosen with equal probability for every option except for `none`, which is `TYPHOON_DECOY_MAINTENANCE_MODE_NONE_PROBABILITY` heavier than the others.
+Maintenance mode is chosen randomly using weights `TYPHOON_DECOY_MAINTENANCE_WEIGHT_NONE`, `TYPHOON_DECOY_MAINTENANCE_WEIGHT_RANDOM`, `TYPHOON_DECOY_MAINTENANCE_WEIGHT_TIMED`, `TYPHOON_DECOY_MAINTENANCE_WEIGHT_SIZED` and `TYPHOON_DECOY_MAINTENANCE_WEIGHT_BOTH` (all integer, default `1` each except `none` which defaults to `3` so a flow without maintenance traffic is the most common case).
+
+> Maintenance packets are the **only** packets on which [`service` fake body mode](#fake-body) emits a random body.
 
 #### Replication mode
 
@@ -487,7 +495,7 @@ The replication mode can have these values:
 - `maintenance`: Only maintenance packets can be replicated (just like in TYPHOON protocol).
 - `all`: All packets can be replicated.
 
-By default, replication mode is chosen with equal probability for every option except for `none`, which is `TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY` heavier than the others.
+Replication mode is chosen randomly using weights `TYPHOON_DECOY_REPLICATION_WEIGHT_NONE`, `TYPHOON_DECOY_REPLICATION_WEIGHT_MAINTENANCE` and `TYPHOON_DECOY_REPLICATION_WEIGHT_ALL` (all integer, default `1` each except `none` which defaults to `3` so a flow without replication is the most common case).
 
 #### Subheader pattern
 
@@ -504,17 +512,31 @@ The subheader mode can have these values:
 - `maintenance`: subheader is present in decoy maintenance packets only, this option is effectively set to `none` in this case if decoy maintenance mode is set to `none` (naturally).
 - `all`: subheader is present in all decoy packets.
 
-By default, subheader mode is chosen with equal probability for every option.
+Subheader mode is chosen randomly using weights `TYPHOON_DECOY_SUBHEADER_WEIGHT_NONE`, `TYPHOON_DECOY_SUBHEADER_WEIGHT_MAINTENANCE` and `TYPHOON_DECOY_SUBHEADER_WEIGHT_ALL` (all integer, default `1` each).
+
+#### Fallthrough decoys
+
+A fraction of decoy packets — controlled per-flow — may be emitted as **fallthrough** decoys: the wire packet is built without the [tailor](#tailor-structure) section.  Such a packet carries no flags, no payload-length field, no packet number, and no identity; it is just `[fake_header? | fake_body | random_body]`, where each piece is generated by the normal flow-manager pipeline (the fake header / fake body may be empty exactly as for a regular packet whose dice did not roll for them).
+
+Fallthrough decoys broaden TYPHOON's wire-size distribution into the band that the tailor + identity + AEAD-tag overhead otherwise puts a hard floor on, letting the protocol blend with the long tail of arbitrary UDP traffic (NAT mishaps, ICMP-shaped echoes, malformed gaming heartbeats, niche control-plane protocols).
+
+Each flow draws a single probability at initialization from `[TYPHOON_DECOY_FALLTHROUGH_PACKETS_MIN, TYPHOON_DECOY_FALLTHROUGH_PACKETS_MAX]` (asserted floats in `[0, 1]`, default range `[0.0, 0.25]`) and holds it constant; every subsequent decoy emission rolls a coin against that probability to decide whether to emit a fallthrough decoy or a regular tailored one.  A custom decoy factory may override the per-flow range to bias a specific provider toward more (or fewer) fallthrough decoys without changing global settings.
+
+> NB! Valid fallthrough decoys arriving at the peer fail tailor authentication and therefore land in the [active probe handler](#active-probing-protection) bucket alongside genuine probes.
+> The handler must tolerate the rate `MAX × baseline_decoy_rate` of failed tailor decryptions per peer without escalating heuristics.
 
 ### Active probing protection
 
 Active probing is a technique used by censors and network auditors to probe a suspected TYPHOON endpoint directly: they send crafted packets and observe whether the server responds in a way that reveals the protocol.
 To resist this, the flow manager must handle packets that fail tailor authentication gracefully rather than closing the socket or producing a distinctive error response.
 
-Every flow manager has a single **active probe handler** (one per flow, not per user) that receives every packet the flow manager could not identify:
+Every flow manager has a single **active probe handler** (one per flow, not per user) that receives every packet the flow manager could not identify. Exactly three conditions route a packet to the handler:
 
-- **Tailor decryption or authentication failure**: any packet whose encrypted tailor cannot be deciphered or whose BLAKE3/AEAD authentication tag does not verify is forwarded to the handler. This covers both random garbage and deliberately crafted probe packets.
-- **Server only — unregistered user**: a non-handshake, non-decoy packet arriving with a valid-looking tailor but an identity not present in the registered-user table is also forwarded. This catches replayed or forged post-handshake packets sent by an active prober who has observed legitimate traffic.
+- **Undersized wire packet (no tailor header)**: any datagram shorter than `identity_len + tailor_overhead` cannot carry a valid encrypted tailor and is forwarded as a probable probe.
+- **Tailor decryption failure**: the tailor cannot be deciphered with the flow's receive key.
+- **Tailor verification failure**: the tailor decrypts but its BLAKE3/AEAD authentication tag does not verify against the identity's per-user obfuscation key. On the server this also catches non-handshake packets whose identity is absent from the global registered-users map — `verify_tailor` performs the global lookup as part of the same step.
+
+Packets whose identity is globally registered but **not yet locally registered on this flow** (multi-flow case — the client's per-packet flow selection picked a flow that did not receive the handshake) are **not** forwarded to the probe handler: their path binding is anchored on this flow and they continue to normal processing. Out-of-order packets — those whose PN is not strictly greater than the latest PN seen for this identity on this flow — are **not** forwarded either: data packets are still accepted into session processing without rebinding, and decoys are dropped at the usual discardable exit point (the same as in-order decoys).
 
 The handler receives the raw (still encrypted) wire packet together with the UDP source address (`Some(addr)` on the server, `None` on the client whose socket is already connected to a fixed peer).
 It can choose to silently drop the packet, log it, or send a raw response through the flow manager socket using `ProbeFlowSender::send_raw` — completely bypassing TYPHOON framing — to mimic whatever protocol the operator wants to impersonate.
@@ -831,6 +853,18 @@ The number of reader sockets is set per-flow via `ServerFlowConfiguration::with_
 With `N = 1` (the default) a single ordinary socket is created and the behavior is identical to a non-SO_REUSEPORT setup.
 With `N > 1` on Linux, `N` SO_REUSEPORT sockets are created; on non-Linux platforms the value is silently clamped to 1.
 
+#### Jittered send-bytes chunking
+
+`ClientSocket::send_bytes` and `ClientHandle::send_bytes` split the incoming byte slice into wire-packet-sized chunks before encryption.
+By default each chunk is exactly `max_data_payload` bytes, which produces a fingerprintably-uniform per-flow chunk size that a passive observer can latch onto.
+
+To break that uniformity, both senders read two settings — `TYPHOON_SEND_BYTES_CHUNK` (asserted integer in `[0, MTU]`, default `0`) and `TYPHOON_SEND_BYTES_JITTER` (asserted float in `[0, 1]`, default `0.2`) — and on every iteration where fragmentation is unavoidable (i.e. `remaining > max_data_payload`) sample the chunk size from `[max(target − target * jitter, 1), min(target + target * jitter, max_data_payload)]`, where `target` is `TYPHOON_SEND_BYTES_CHUNK` when that setting is positive and `max_data_payload` otherwise.
+`TYPHOON_SEND_BYTES_CHUNK = 0` is the "saturate the MTU" sentinel — the formula above collapses to the historical single-sided `[max_data_payload * (1 − jitter), max_data_payload]` range.
+A positive `TYPHOON_SEND_BYTES_CHUNK` centres the sampler at the requested chunk size with two-sided jitter, useful for profiles that should not pin the MTU as their characteristic packet size.
+
+When the remaining data fits into a single packet (`remaining ≤ max_data_payload`) — including any send shorter than one MTU's worth and the trailing chunk of a multi-packet send — that packet is emitted as-is, **without** sampling a smaller jittered size.
+This avoids fabricating a synthetic small-packet tail that an observer could fingerprint; jitter only affects the _interior_ chunks of genuinely multi-packet sends.
+
 #### Insertion and processing
 
 It is suggested that every "manager" is divided into two parts:
@@ -845,7 +879,7 @@ In short, these are the main TYPHOON implementation parts:
 - Health check provider (one per session): attached to session controller, keeps internal protocol state, manages handshake message timers and injects handshake messages themselves if necessary.
 - Flow controller (one per flow): accepts data, prepends a mock header to it and sends it to the flow partner using a UDP socket.
 - Decoy provider (one per flow): attached to flow controller, observes (and probably mutates) flow packet stream and injects decoy packets whenever necessary.
-- Active probe handler (one per flow): attached to flow controller, receives every packet that could not be identified (tailor authentication failed, or — on the server — packet from an unregistered user), and may send a raw response via the flow socket to mimic another protocol.
+- Active probe handler (one per flow): attached to flow controller, receives every packet that could not be identified — undersized wire packet, tailor decryption failure, or tailor verification failure (which on the server also catches non-handshake packets from globally-unregistered identities) — and may send a raw response via the flow socket to mimic another protocol.
 
 #### Identification and rebinding
 
@@ -856,7 +890,7 @@ Another important challenge is client address binding, since client addresses ca
 In general, the client-to-identification mapping should be safe (considering client identification is unique) thanks to:
 
 - Session key authentication that is used for [tailor encryption](#tailor-encryption).
-- Incremental packet number [in tailor](#tailor-structure), stored in lower `4` bytes of **PN** field (it's always filled, even in data and decoy packets).
+- Incremental packet number [in tailor](#tailor-structure), stored in lower `4` bytes of **PN** field. A single monotonic counter is maintained per session and shared by every emitter — data, health-check, handshake, decoy, and termination packets all advance the same sequence. This makes the PN stream usable as a tie-breaker for source-address rebinding without having to disambiguate between sub-sequences.
 
 By default, the **ID** field is `16` bytes ([UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier)) long, which should be sufficient for random user **ID** assignment.
 
@@ -864,7 +898,8 @@ Alternatively, if there exists another way of identifying users (e.g. each of th
 A scenario when an attacker impersonates a user, forging a fake packet on their behalf, should not be a concern, since [tailor structure is authenticated with user session key anyway](#tailor-encryption).
 
 The UDP source address rebinding is performed independently by each server flow manager.
-A flow manager updates its [stored address for a client](#global-user-structures) only when a correctly-authenticated packet arrives from a new source address.
+A flow manager updates its [stored address for a client](#global-user-structures) only when a correctly-authenticated non-handshake packet arrives with **PN strictly greater than the latest PN seen on this flow** — out-of-order non-handshake packets are still accepted into session processing (decoys are dropped at the usual discardable point), they just do not move the binding.
+The monotonic-PN gate prevents an active prober that has captured a legitimate post-handshake packet from rebinding the return path to its own address by replaying that packet from elsewhere — the captured packet's PN is no longer strictly greater than the watermark by the time it lands on the wire.
 This per-flow-manager approach ensures that each flow path maintains the correct return address, even when a client uses multiple flow managers with different source addresses (e.g. different network interfaces), or when a client's address changes mid-session due to NAT rebinding or network handover.
 
 #### Global user structures
@@ -926,13 +961,13 @@ They are designed to be general-purpose, suitable for most network environments,
 
 Some values used in computation are defined once during initialization or derived from the state:
 
-- `packet_length_cap`: maximum allowed length of the decoy packet, capped between `TYPHOON_DECOY_LENGTH_MAX` and `TYPHOON_DECOY_LENGTH_MIN` constants.
+- `packet_length_cap`: maximum allowed length of any decoy packet, capped between `TYPHOON_DECOY_LENGTH_MAX` and `TYPHOON_DECOY_LENGTH_MIN` constants. Individual communication modes may impose tighter, mode-specific length ceilings (e.g. `TYPHOON_DECOY_NOISY_LENGTH_MAX`, `TYPHOON_DECOY_SMOOTH_LENGTH_MAX`, `TYPHOON_DECOY_SPARSE_LENGTH_MAX`) when their intended traffic shape differs from "any packet up to MTU".
 - `quietness_index`: a value used for checking how busy the current traffic situation is, computed as `(reference_rate - packet_rate) / reference_rate`, clamped between `0` and `1`.
 
 #### Heavy mode
 
-Heavy mode implements sending big decoy packets occasionally.
-It resembles file transferring or bulk update delivery.
+Heavy mode implements sending large decoy packets at a low cadence.
+It resembles background-heartbeat / metric-push / software-update-poll traffic; the name reflects packet **size**, not aggregate throughput.
 
 It defines the following equations for decoy packet delay:
 
@@ -943,14 +978,14 @@ It defines the following equations for decoy packet delay:
 And the following equations for decoy packet length:
 
 - `base_length = packet_length_cap * (TYPHOON_DECOY_HEAVY_BASE_LENGTH + TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH * quietness_index)`.
-- `decoy_length = random_uniform(TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR * base_length, base_length)`, clamped between `packet_length_cap / 2` and `packet_length_cap`.
+- `decoy_length = random_uniform(TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR * base_length, base_length)`, clamped between `TYPHOON_DECOY_HEAVY_LENGTH_MIN` and `packet_length_cap`.
 
 > The `exponential_variance` and `random_uniform` functions are defined in the [supporting math](#supporting-math) chapter.
 
 #### Noisy mode
 
 Noisy mode implements sending smaller decoy packets in bursts often.
-It resembles usual web or socket traffic.
+It resembles bursty web / DNS / interactive socket traffic.
 
 It defines the following equations for decoy packet delay:
 
@@ -960,15 +995,17 @@ It defines the following equations for decoy packet delay:
 
 And the following equations for decoy packet length:
 
-- `mean_length = TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN + quietness_index * exp(-packet_rate / reference_rate) * (packet_length_cap - TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN)`.
-- `decoy_length = random_gauss(mean_length, TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER * mean_length)`, clamped between `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` and `packet_length_cap`.
+- `mean_length = TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN + quietness_index * exp(-packet_rate / reference_rate) * (TYPHOON_DECOY_NOISY_LENGTH_MAX - TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN)`.
+- `decoy_length = random_gauss(mean_length, TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER * mean_length)`, clamped between `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` and `TYPHOON_DECOY_NOISY_LENGTH_MAX`.
+
+`TYPHOON_DECOY_NOISY_LENGTH_MAX` is intentionally smaller than `packet_length_cap` (default 800 B vs 1400 B): noisy mode mimics small/medium bursty traffic such as web or socket payloads, so even at maximum `quietness_index` the mean packet size stays well below MTU.
 
 > The `exponential_variance`, `random_uniform`, and `random_gauss` functions are defined in the [supporting math](#supporting-math) chapter.
 
 #### Sparse mode
 
-Sparse mode implements sending average decoy packets sparsely distributed in time.
-It resembles VoIP traffic or downloading.
+Sparse mode implements sending average-sized decoy packets at the steady cadence of low-bitrate conversational media.
+It resembles light VoIP / interactive-media flows.
 
 It defines the following equations for decoy packet delay:
 
@@ -984,7 +1021,7 @@ And the following equations for decoy packet length:
 
 #### Smooth mode
 
-Smooth mode implements sending few average decoy packets during quiet periods.
+Smooth mode implements adaptive decoy packets that scale with the level of real traffic activity: small and rare during high-load periods, with both the emission rate and the per-packet size ceiling growing during quiet periods.
 It fills gaps between data packets and prevents the connection from going silent.
 
 It defines the following equations for decoy packet delay:
@@ -1019,103 +1056,36 @@ The sample valid **CD** values are given below:
 
 ### Constants and defaults
 
-The constant default values were selected from experience.
-Still, there are some important universal values to consider:
+The full list of tunable constants — names, types, and default values — lives in [`typhoon/src/settings/statics.rs`](./typhoon/src/settings/statics.rs), which is the single source of truth.
+Each constant referenced by name elsewhere in this document (`TYPHOON_*`) corresponds 1:1 to a `Key` in that file.
 
-- Number of bytes in **ID** tailor field (as it was [mentioned before](#identification-and-rebinding)) should be chosen depending on the implementation requirements.
-- Normally, the `MTU` value is around `1500` bytes, so it might be useful to keep datagram length below that value to avoid IP-level fragmentation.
-- Many applications keep timeouts at around half of a minute, so having timeout around that value might improve user experience.
-- Packet retransmission attempts number varies around `10`, so a value like that should be selected for the sake of safety.
+Some non-obvious universal values to keep in mind when tuning:
 
-These constants are used in some of the protocol values computation:
+- The **ID** tailor field length (as [mentioned earlier](#identification-and-rebinding)) should be chosen based on the implementation's identification requirements.
+- A typical `MTU` is around `1500` bytes; keeping datagram length below that avoids IP-level fragmentation.
+- Many applications keep timeouts at around half a minute, so a default in that range tends to align with user expectations.
+- Packet retransmission attempts hover around `10` in most reliable protocols; that order of magnitude is a safe baseline.
 
-| Constant | Meaning | Default |
-| --- | --- | :---: |
-| `TYPHOON_FAKE_BODY_LENGTH_MIN` | Minimum length of the fake body random byte string | `32` |
-| `TYPHOON_FAKE_BODY_LENGTH_MAX` | Maximum length of the fake body random byte string | `512` |
-| `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` | Target packet length for `constant` fake body mode; clamped to `[FAKE_BODY_LENGTH_MIN, MTU]` | `512` |
-| `TYPHOON_FAKE_BODY_RANDOM_PROBABILITY` | Multiplier of `random` fake body mode probability | `3` |
-| `TYPHOON_FAKE_HEADER_LENGTH_MIN` | Minimum length of the fake header structure | `4` |
-| `TYPHOON_FAKE_HEADER_PROBABILITY` | Probability of fake header presence | `0.6` |
-| `TYPHOON_FAKE_HEADER_LENGTH_MAX` | Maximum length of the fake header structure | `32` |
-| `TYPHOON_HEALTH_CHECK_NEXT_IN_MIN` | Minimum delay between health checking packets | `64000` |
-| `TYPHOON_HEALTH_CHECK_NEXT_IN_MAX` | Maximum delay between health checking packets | `256000` |
-| `TYPHOON_HANDSHAKE_NEXT_IN_FACTOR` | During handshake, next in values will be multiplied by this number | `0.02` |
-| `TYPHOON_MAX_RETRIES` | Maximum number of decay cycle iterations before protocol failure is registered | `12` |
-| `TYPHOON_TIMEOUT_DEFAULT` | Default decay timeout value, used in cases when RTT is not available (in milliseconds) | `30000` |
-| `TYPHOON_TIMEOUT_MIN` | Minimum decay timeout value (in milliseconds) | `4000` |
-| `TYPHOON_TIMEOUT_MAX` | Maximum decay timeout value (in milliseconds) | `32000` |
-| `TYPHOON_TIMEOUT_RTT_FACTOR` | If RTT is available, it will be multiplied by this value in order to receive timeout | `5` |
-| `TYPHOON_RTT_ALPHA` | Alpha constant for SRTT algorithm | `0.125` |
-| `TYPHOON_RTT_BETA` | Beta constant for SRTT algorithm | `0.25` |
-| `TYPHOON_RTT_DEFAULT` | Default RTT value, used in cases when no packet roundtrip was registered yet (in milliseconds) | `5000` |
-| `TYPHOON_RTT_MIN` | Minimum RTT value (in milliseconds) | `200` |
-| `TYPHOON_RTT_MAX` | Maximum RTT value (in milliseconds) | `8000` |
-| `TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT` | Default reference packet rate (in milliseconds) | `200` |
-| `TYPHOON_DECOY_CURRENT_PACKET_RATE_DEFAULT` | Default current packet rate (in milliseconds) | `1` |
-| `TYPHOON_DECOY_CURRENT_BYTE_RATE_DEFAULT` | Default reference byte rate (in bytes) | `5000` |
-| `TYPHOON_DECOY_BYTE_RATE_CAP` | Maximum bytes that can be sent in a flow per second | `1000000` |
-| `TYPHOON_DECOY_BYTE_RATE_FACTOR` | Multiplier of bytes per second cap for bursts | `3` |
-| `TYPHOON_DECOY_CURRENT_ALPHA` | Current byte rate calculation multiplier (updates fast) | `0.05` |
-| `TYPHOON_DECOY_REFERENCE_ALPHA` | Reference byte rate calculation multiplier (updates slowly) | `0.001` |
-| `TYPHOON_DECOY_LENGTH_MAX` | Maximum length of a decoy packet | `512` |
-| `TYPHOON_DECOY_LENGTH_MIN` | Minimum length of a decoy packet | `16` |
-| `TYPHOON_DECOY_BASE_RATE_RND` | Randomization jitter for decoy modes | `0.25` |
-| `TYPHOON_DECOY_HEAVY_BASE_RATE` | Base rate of the heavy decoy mode | `0.05` |
-| `TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR` | Quietness score factor that is used for heavy decoy mode rate calculation | `3` |
-| `TYPHOON_DECOY_HEAVY_DELAY_MIN` | Minimum delay for heavy decoy mode (in milliseconds) | `5000` |
-| `TYPHOON_DECOY_HEAVY_DELAY_MAX` | Maximum delay for heavy decoy mode (in milliseconds) | `300000` |
-| `TYPHOON_DECOY_HEAVY_DELAY_DEFAULT` | Default delay for heavy decoy mode (in milliseconds) | `64000` |
-| `TYPHOON_DECOY_HEAVY_BASE_LENGTH` | The size of a heavy decoy mode packet (as a fraction of MTU) | `0.7` |
-| `TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH` | The size of a heavy decoy mode packet (multiplied by quietness index) | `0.3` |
-| `TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR` | Random heavy decoy mode packet length jitter | `0.8` |
-| `TYPHOON_DECOY_NOISY_BASE_RATE` | Base rate of the noisy decoy mode | `3` |
-| `TYPHOON_DECOY_NOISY_DELAY_MIN` | Minimum delay for noisy decoy mode (in milliseconds) | `10` |
-| `TYPHOON_DECOY_NOISY_DELAY_MAX` | Maximum delay for noisy decoy mode (in milliseconds) | `2000` |
-| `TYPHOON_DECOY_NOISY_DELAY_DEFAULT` | Default delay for noisy decoy mode (in milliseconds) | `500` |
-| `TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN` | Minimum packet size for noisy decoy mode (in bytes) | `128` |
-| `TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER` | Random noisy decoy mode packet length jitter multiplier | `0.3` |
-| `TYPHOON_DECOY_SPARSE_BASE_RATE` | Base rate of the sparse decoy mode | `20` |
-| `TYPHOON_DECOY_SPARSE_RATE_FACTOR` | Exponential reference rate of the sparse decoy mode multiplier | `3` |
-| `TYPHOON_DECOY_SPARSE_JITTER` | Delay jitter for sparse decoy mode | `0.15` |
-| `TYPHOON_DECOY_SPARSE_DELAY_FACTOR` | Reference delay of the sparse decoy mode multiplier | `3` |
-| `TYPHOON_DECOY_SPARSE_DELAY_MIN` | Minimum delay for sparse decoy mode (in milliseconds) | `20` |
-| `TYPHOON_DECOY_SPARSE_DELAY_MAX` | Maximum delay for sparse decoy mode (in milliseconds) | `2000` |
-| `TYPHOON_DECOY_SPARSE_DELAY_DEFAULT` | Default delay for sparse decoy mode (in milliseconds) | `100` |
-| `TYPHOON_DECOY_SPARSE_LENGTH_FACTOR` | Mean multiplier for sparse decoy mode packet length computation | `120` |
-| `TYPHOON_DECOY_SPARSE_LENGTH_SIGMA` | Random sparse decoy mode packet length jitter | `20` |
-| `TYPHOON_DECOY_SPARSE_LENGTH_MIN` | Minimum packet size for sparse decoy mode (in bytes) | `75` |
-| `TYPHOON_DECOY_SPARSE_LENGTH_MAX` | Maximum packet size for sparse decoy mode (in bytes) | `250` |
-| `TYPHOON_DECOY_SMOOTH_BASE_RATE` | Base rate of the smooth decoy mode | `0.3` |
-| `TYPHOON_DECOY_SMOOTH_QUIETNESS_FACTOR` | Quietness score factor that is used for smooth decoy mode rate calculation | `2` |
-| `TYPHOON_DECOY_SMOOTH_RATE_FACTOR` | Exponential reference rate of the smooth decoy mode multiplier | `3` |
-| `TYPHOON_DECOY_SMOOTH_JITTER` | Delay jitter for smooth decoy mode | `0.2` |
-| `TYPHOON_DECOY_SMOOTH_DELAY_FACTOR` | Reference delay of the smooth decoy mode multiplier | `2` |
-| `TYPHOON_DECOY_SMOOTH_DELAY_MIN` | Minimum delay for smooth decoy mode (in milliseconds) | `300` |
-| `TYPHOON_DECOY_SMOOTH_DELAY_MAX` | Maximum delay for smooth decoy mode (in milliseconds) | `300000` |
-| `TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT` | Default delay for smooth decoy mode (in milliseconds) | `5000` |
-| `TYPHOON_DECOY_SMOOTH_LENGTH_MIN` | Minimum packet size for smooth decoy mode (in bytes) | `48` |
-| `TYPHOON_DECOY_SMOOTH_LENGTH_MAX` | Maximum packet size for smooth decoy mode (in bytes) | `512` |
-| `TYPHOON_DECOY_MAINTENANCE_LENGTH_MIN` | Minimum packet size for maintenance decoy packets (in bytes) | `8` |
-| `TYPHOON_DECOY_MAINTENANCE_LENGTH_MAX` | Maximum packet size for maintenance decoy packets (in bytes) | `256` |
-| `TYPHOON_DECOY_MAINTENANCE_DELAY_MIN` | Minimum delay for maintenance decoy packets (in milliseconds) | `3000` |
-| `TYPHOON_DECOY_MAINTENANCE_DELAY_MAX` | Maximum delay for maintenance decoy packets (in milliseconds) | `720000` |
-| `TYPHOON_DECOY_MAINTENANCE_MODE_NONE_PROBABILITY` | Probability multiplier for no maintenance decoy packets to be sent | `3` |
-| `TYPHOON_DECOY_REPLICATION_PROBABILITY_MIN` | Minimum probability of decoy packets replication | `0.01` |
-| `TYPHOON_DECOY_REPLICATION_PROBABILITY_MAX` | Maximum probability of decoy packets replication | `0.1` |
-| `TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE` | Subsequent decoy packet replication probability multiplier | `3` |
-| `TYPHOON_DECOY_REPLICATION_DELAY_MIN` | Minimum decoy packets replication delay (in milliseconds) | `2500` |
-| `TYPHOON_DECOY_REPLICATION_DELAY_MAX` | Maximum decoy packets replication delay (in milliseconds) | `10000` |
-| `TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY` | Probability multiplier for no decoy packets replication | `3` |
-| `TYPHOON_DECOY_SUBHEADER_LENGTH_MIN` | Minimum decoy packets subheader length | `4` |
-| `TYPHOON_DECOY_SUBHEADER_LENGTH_MAX` | Maximum decoy packets subheader length | `16` |
-| `TYPHOON_DEBUG_PROBE_COUNT` | Number of probes sent in the throughput phase | `10` |
-| `TYPHOON_DEBUG_PROBE_SIZE` | Payload size of each throughput probe in bytes | `65000` |
-| `TYPHOON_DEBUG_PROBE_TIMEOUT` | Per-probe receive timeout in milliseconds | `5000` |
+#### Per-packet wire-overhead floor
+
+Every payload-bearing TYPHOON packet carries a fixed amount of cryptographic and structural overhead.
+With the reference implementation's defaults this is:
+
+| Component | Default | Notes |
+| --- | --- | --- |
+| Identity (`DEFAULT_TYPHOON_ID_LENGTH`) | 16 B | configurable; trades collision resistance against per-packet cost |
+| Tailor encryption (nonce + auth tags) | 72 B | sum of `NONCE_LEN` + `SYMMETRIC_BUILT_IN_AUTH_LEN` + `SYMMETRIC_ADDITIONAL_AUTH_LEN` |
+| Payload AEAD (nonce + tag) | 56 B | `ANONYMOUS_NONCE_LEN` + `SYMMETRIC_ADDITIONAL_AUTH_LEN` for software profile; only present on payload-bearing packets |
+| **Floor for data-bearing packets** | **144 B** | sum of the three above; minimum on-wire packet size before any user data or fake-body padding |
+| **Floor for decoy / health-check packets** | **88 B** | identity + tailor only; no payload AEAD |
+
+This per-packet floor is a structural constant of the protocol and bounds what TYPHOON can mimic at the small-packet end of the size distribution.
+Natural UDP traffic classes that produce packets below this floor — gaming server-to-client ticks (~40 B), DNS queries (~60 B), NTP (~76 B), STUN (~60 B), WireGuard keepalives (~60 B) — fall outside TYPHOON's reachable size range as long as the default identity length is in use.
+Reducing `DEFAULT_TYPHOON_ID_LENGTH` lowers both floors proportionally; setting it to 4 brings the data-packet floor to 132 B and the decoy floor to 76 B (matching NTP, gaming-c2s, STUN, etc.), at the cost of stronger per-flow identity collisions in deployments that share the same listener across many clients.
 
 A protocol implementation should allow overriding these values at runtime.
 Still keep in mind that it might be dangerous because some of these constants affect both client and server behavior at the same time.
-As a final attempt, an implementation should attempt to read these constants from environment during initialization.
+As a final attempt, an implementation should read these constants from the environment during initialization.
 
 ### Debug mode
 
@@ -1365,12 +1335,13 @@ A reasonable default might be derived from health check timing (e.g. `2 × TYPHO
 
 ### Path degrading
 
-In the current design, each client connects to each server through multiple paths (every server flow manager listed in the user certificate connects to every user flow manager).
-In more complex deployments - particularly those with remote server flow managers or multi-hop routes - some of these paths may degrade or become temporarily unavailable.
+In the current design, each client connects to each server through multiple paths (every server flow manager listed in the user certificate connects to every user flow manager), and a path is picked uniformly at random for every outgoing packet.
+In more complex deployments - particularly those with remote server flow managers or multi-hop routes - some of these paths may degrade or become temporarily unavailable, and uniform selection wastes traffic on dead paths.
 
 To handle this gracefully, both client and server should track the availability of each path and adjust their selection strategies accordingly.
 Paths known to be active and responsive should be preferred, while stale paths should still be periodically tested to detect when they recover.
-This can be achieved by applying dynamic weight modifications to the random flow manager selection algorithm on both sides.
+This can be achieved by replacing uniform flow manager selection with weighted random selection, where each flow manager carries a per-path weight derived from its observed health.
+Furthermore, some of the flows can be initially defined to have less probability of bring selected to simulate different "activity" fingerprint on different flows.
 
 For example, a path could accumulate a "health score" based on successful packet exchanges, with the score decaying over time without activity.
 Selectors would prefer paths with higher health scores, but always maintain a small probability of testing dormant paths to detect recovery.
@@ -1425,3 +1396,26 @@ A shared queue that accumulates `(payload, addr)` pairs across concurrent sessio
 Flushing too eagerly (on every packet) eliminates the syscall reduction; flushing too lazily (large threshold or long deadline) adds artificial delay that interferes with health-check timing.
 The queue must also account for the fact that `sendmmsg` batches datagrams for a single socket, while the server may manage multiple sockets simultaneously (one per flow on SO_REUSEPORT platforms), meaning coalescing must happen per-socket.
 The right flush policy — fixed threshold, fixed deadline, or adaptive — requires empirical benchmarking under realistic load patterns.
+
+### Per-deployment randomisation seed
+
+In the current design, every TYPHOON deployment draws `FlowConfig` and decoy parameters from the same global distributions defined in `TYPHOON_*` settings keys.
+Across deployments, every operator's traffic surface lives inside the same multi-dimensional feature box.
+A labelled-data adversary who has gathered samples from one or several deployments can therefore train a classifier that recognises any new deployment from the same code base — the classifier learns the _joint distribution of parameter draws_, not the specific instances.
+
+A per-deployment secret seed could be introduced as a single high-entropy value (e.g. 32 random bytes derived once at server-key generation time and embedded in the certificate) that perturbs every probabilistic choice the deployment makes.
+Concrete points where the seed could shift the parameter ranges:
+
+- The fake-body weight vector (`FAKE_BODY_WEIGHT_*`) — re-normalised by per-seed-derived multipliers.
+- The fake-body length bounds (`FAKE_BODY_LENGTH_MIN`, `FAKE_BODY_LENGTH_MAX`) — shifted within deployment-safe limits.
+- The fake-header probability and length distribution — similarly shifted.
+- Every decoy mode's base rate, length factor, and length sigma — perturbed.
+
+Two deployments using the same code base but different seeds would then occupy _non-overlapping_ sub-regions of the parameter space.
+A classifier trained on samples from one deployment would carry only weak signal for another, raising the labelled-data adversary's per-deployment sample cost from "one calibration run" to "one calibration run per deployment" — a substantial increase when the population of deployments is large.
+
+**The challenge**: balancing diversification against statistical safety.
+Each parameter has bounds outside which the protocol either fails (e.g. fake-body length below per-packet overhead) or becomes weakly obfuscated (e.g. always-empty fake bodies).
+The seed-derived shift function must stay inside those bounds for every possible seed while still producing _meaningfully_ different distributions across seeds — otherwise the seed adds entropy without adding deployment-distinguishability.
+A second concern is that the seed itself must not leak: it lives only on the server, never enters the wire, and is rotated alongside the server key pair.
+Pinning the parameter shift to the seed allows an adversary who has compromised one deployment's seed to fingerprint _its_ future flows but not other deployments'.

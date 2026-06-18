@@ -5,7 +5,7 @@ use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler};
 use super::common::{connect_simple, default_settings, free_addr, setup_server};
 
 // Test: client sends a message, server echoes it back.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_echo_single_message() {
     let settings = default_settings();
     let addr = free_addr();
@@ -30,7 +30,7 @@ async fn test_echo_single_message() {
 }
 
 // Test: several sequential messages all arrive intact.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_echo_sequential_messages() {
     const COUNT: usize = 20;
     let settings = default_settings();
@@ -62,7 +62,7 @@ async fn test_echo_sequential_messages() {
 }
 
 // Test: binary payload (all byte values 0–255 cyclically) survives a round-trip.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_echo_binary_payload() {
     let settings = default_settings();
     let addr = free_addr();
@@ -84,7 +84,7 @@ async fn test_echo_binary_payload() {
 }
 
 // Test: max_data_payload() reports a non-zero value.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_max_data_payload_nonzero() {
     let settings = default_settings();
     let addr = free_addr();

@@ -13,9 +13,21 @@ python-on-whales   = "^0.73"
 scapy              = "^2.6"
 numpy              = "^2.0"
 matplotlib         = "^3.9"
+jinja2             = "^3.1"
+umap-learn = { version = "^0.5", optional = true }
+torch      = { version = "^2.2", optional = true }
+xgboost    = { version = "^2.0", optional = true }
 
 [tool.poetry.group.dev.dependencies]
-ruff = "^0.11"
+ruff = "^0.15"
+
+[tool.poetry.group.ml.dependencies]
+scikit-learn = "^1.4"
+
+[tool.poetry.extras]
+xgboost = ["xgboost"]
+umap    = ["umap-learn"]
+torch   = ["torch"]
 
 [tool.poetry.requires-plugins]
 poethepoet = { version = ">=0.24", extras = ["poetry_plugin"] }
@@ -28,30 +40,129 @@ build-backend = "poetry.core.masonry.api"
 line-length = 320
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+preview = true
+select = [
+    "E", "F", "I", "UP", "B",       # pyflakes / pycodestyle / isort / pyupgrade / bugbear
+    "ANN",                          # flake8-annotations — AGENTS: type hints
+    "PLC0415",                      # pylint convention: no imports inside functions — AGENTS
+    "PLR2004",                      # pylint refactor: magic-value-comparison — AGENTS: use constants
+    "PERF",                         # perflint — efficiency
+    "SIM",                          # flake8-simplify
+    "ICN001",                       # flake8-import-conventions — enforce idiomatic aliases (numpy/matplotlib)
+]
+ignore = [
+    "ANN401",                       # allow `Any` (matplotlib axes, scapy packets)
+    "RUF001", "RUF002", "RUF003",   # ambiguous-unicode in docstrings — intentional typography
+    "PERF203",                      # try/except in loops is the right pattern for UDP recv
+    "E221", "E222", "E231", "E241", "E251", "E272",  # whitespace rules — conflict with the project's deliberate column-alignment style (e.g. `RESULTS_DIR    = …`)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/typhoon_eval/background/ml_blending.py"   = ["N806", "N803"]   # sklearn X / X_train convention
+"src/typhoon_eval/background/ml_open_world.py" = ["N806", "N803"]   # sklearn X / X_train convention
+"protocols/common/_profile.py"                 = ["ANN001"]         # script entrypoint
+"protocols/common/*sender.py"                  = ["ANN001"]         # script entrypoint
+"protocols/common/*sink.py"                    = ["ANN001"]         # script entrypoint (signal handlers)
+"background/*/*.py"                            = ["PLR2004"]        # inline numeric constants in protocol generators
+
+[tool.ruff.lint.flake8-import-conventions.aliases]
+numpy                = "np"
+"matplotlib.pyplot"  = "plt"
+"matplotlib.patches" = "mpatches"
+pandas               = "pd"
 
 
 [tool.poe.tasks]
 
+  # ── shared (capture / analyse / orchestrate) ─────────────────────────────
   [tool.poe.tasks.build]
   cmd  = "docker compose -f compose/docker-compose.build.yml build"
   help = "Build all protocol Docker images"
 
   [tool.poe.tasks.capture]
-  cmd  = "python -m typhoon_eval.orchestrator"
+  cmd  = "python -m typhoon_eval.shared.orchestrator"
   help = "Run captures — pass --all or --protocol <name>, optionally --chaos"
 
-  [tool.poe.tasks.lint]
-  cmd  = "ruff check src/ protocols/"
-  help = "Lint Python sources with ruff"
-
   [tool.poe.tasks.analyze]
-  cmd  = "python -m typhoon_eval.analysis"
+  cmd  = "python -m typhoon_eval.shared.analysis"
   help = "Analyze captured pcap files — pass --run <YYYYMMDD_HHMMSS> or omit for latest"
 
+  [tool.poe.tasks.lint]
+  cmd  = "ruff check src/ protocols/ background/"
+  help = "Lint Python sources with ruff"
+
+  # ── PART 1 — TYPHOON self comparison (intrinsic) ─────────────────────────
   [tool.poe.tasks.plot]
-  cmd  = "python -m typhoon_eval.flow_plot"
+  cmd  = "python -m typhoon_eval.self.flow_plot"
   help = "Generate per-flow packet structure diagrams — pass --example <name> or --log <file>, and --out-dir <dir>"
+
+  [tool.poe.tasks.self-compare]
+  cmd  = "python -m typhoon_eval.self.self_compare"
+  help = "Run TYPHOON N times and compare runs (variability analysis)"
+
+  [tool.poe.tasks.use-case-compare]
+  cmd  = "python -m typhoon_eval.self.use_case_compare"
+  help = "Run TYPHOON for each PROTOCOL.md use case and compare profiles"
+
+  [tool.poe.tasks.traffic-compare]
+  cmd  = "python -m typhoon_eval.self.traffic_compare"
+  help = "Run TYPHOON with all 4 payload×wait traffic modes and compare results"
+
+  # ── PART 2 — Operational comparison vs other protocols ───────────────────
+  [tool.poe.tasks.proto-flow-plot]
+  cmd  = "python -m typhoon_eval.shared.pcap_flow_plot"
+  help = "Per-packet timeline grid from pcap captures — pass --run <YYYYMMDD_HHMMSS> or omit for latest"
+
+  [tool.poe.tasks.proto-compare]
+  cmd  = "python -m typhoon_eval.protocols_op.proto_compare_plots"
+  help = "Multi-protocol comparison plots from pcap captures — pass --run <YYYYMMDD_HHMMSS> or omit for latest"
+
+  # ── ML utilities (kept for reuse in PART 3 — background blending) ────────
+  [tool.poe.tasks.ml-features]
+  cmd  = "python -m typhoon_eval.ml.ml_features"
+  help = "Extract ML feature matrix from stats.json — pass --run or omit for latest"
+
+  [tool.poe.tasks.ml-classify]
+  cmd  = "python -m typhoon_eval.ml.ml_classify"
+  help = "Supervised protocol classification (RF, SVM, GB) from feature matrix"
+
+  [tool.poe.tasks.ml-cluster]
+  cmd  = "python -m typhoon_eval.ml.ml_cluster"
+  help = "Unsupervised clustering + PCA/UMAP visualisation from feature matrix"
+
+  [tool.poe.tasks.ml-sequence]
+  cmd  = "python -m typhoon_eval.ml.ml_sequence"
+  help = "Sequence-based classification (MLP / 1D-CNN) from first-100-packet sizes"
+
+  [tool.poe.tasks.ml-bytes]
+  cmd  = "python -m typhoon_eval.ml.ml_bytes"
+  help = "Header-byte classification (RF / 1D-CNN) from first-50-packet IP+UDP headers"
+
+  # ── PART 3 — Background-blending evaluation ──────────────────────────────
+  [tool.poe.tasks.background-build]
+  cmd  = "docker compose -f background/compose/docker-compose.build.yml build"
+  help = "Build all background generator Docker images (DNS, gaming, RTP, QUIC, control plane, WG idle)"
+
+  [tool.poe.tasks.background-corpus]
+  cmd  = "python -m typhoon_eval.background.corpus"
+  help = "Run the randomised background-blending corpus (default 70 runs)"
+
+  [tool.poe.tasks.background-blending]
+  cmd  = "python -m typhoon_eval.background.ml_blending"
+  help = "Compute primary blending metric (confident-blend fraction) from corpus"
+
+  [tool.poe.tasks.background-openworld]
+  cmd  = "python -m typhoon_eval.background.ml_open_world"
+  help = "Held-out detectability — Test A (pair-binary AUC) + Test B (closed-world n+1, k-fold CV)"
+
+  [tool.poe.tasks.background-distplot]
+  cmd  = "python -m typhoon_eval.background.dist_plot"
+  help = "Plot size / IAT distribution overlays per TYPHOON-vs-target pair + per-flow packet-index diagnostic"
+
+  # ── Pipeline orchestrator ────────────────────────────────────────────────
+  [tool.poe.tasks.evaluate]
+  cmd  = "python -m typhoon_eval.pipeline"
+  help = "Run the full evaluation pipeline: capture → analyze → visualize → ML → report"
 
   [tool.poe.tasks.clean]
   shell = "rm -rf results/captures results/logs"

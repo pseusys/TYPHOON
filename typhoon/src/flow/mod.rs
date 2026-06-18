@@ -17,7 +17,6 @@ pub mod probe;
 pub mod server;
 
 #[cfg(feature = "client")]
-pub(crate) use common::FlowCryptoProvider;
 pub(crate) use common::FlowManager;
 pub use config::{FakeBodyMode, FakeHeaderConfig, FieldType, FieldTypeHolder, FlowConfig};
 pub use error::FlowControllerError;

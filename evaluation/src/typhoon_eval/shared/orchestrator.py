@@ -1,36 +1,38 @@
-"""
-TYPHOON evaluation orchestrator.
+"""TYPHOON evaluation orchestrator.
 
-Runs a Docker Compose capture session for each selected protocol, waits for
-the client container to finish transferring data, then tears down.  The
-observer container writes a pcap to results/captures/<protocol>[_chaos].pcap.
+For each selected protocol, runs a Docker Compose capture session, waits for
+the client to finish transferring, then tears down. The observer writes
+results/captures/<protocol>[_chaos].pcap.
 
-Usage (via poe):
-    poe capture --all
-    poe capture --all --chaos
-    poe capture --protocol typhoon
-    poe capture --protocol wireguard --chaos --timeout 600
-
-Usage (direct):
-    python -m typhoon_eval.orchestrator --all [--chaos] [--timeout 300] [--bytes 10485760] [--delay-ms 40] [--delay-every 10]
+Per-run profile values (sampled from `shared/profiles.py`) are passed to
+client and server containers as TRAFFIC_PROFILE + PROFILE_* env vars.
 """
 
-import datetime
-import json
-import sys
+from datetime import UTC, datetime
+from json import dumps
 from pathlib import Path
+from random import Random
+from sys import exit
 
-import click
+from click import Choice, command, option
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from .docker_utils import COMPOSE_DIR, _purge_stale_stacks, compose_up
+from .profiles import DEFAULT_PROFILE, PROFILES, profile_to_env
 from .protocols import ALL, BY_NAME, Protocol
 
 console = Console()
 
-RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
+RESULTS_DIR = Path(__file__).parent.parent.parent.parent / "results"
+
+# Minimum pcap size to consider non-empty / capture-worthy (bytes).  Below this
+# the file is essentially just the libpcap global header (24 B) plus a stub.
+MIN_PCAP_SIZE_B = 100
+# Delivery-rate colour bands — mirrors `shared/analysis.py`.
+DELIVERY_GREEN_PCT = 99.9
+DELIVERY_YELLOW_PCT = 80.0
 ENV_DIR = COMPOSE_DIR / "env"
 
 
@@ -38,9 +40,9 @@ def _run_one(
     protocol: Protocol,
     chaos: bool,
     timeout: int,
-    transfer_bytes: int,
-    delay_ms: float,
-    delay_every: int,
+    profile_env: dict[str, str],
+    loss_pct: float,
+    bw_mbps: float,
     captures_dir: Path,
     log_dir: Path,
 ) -> tuple[bool, str, float | None, float | None, float | None]:
@@ -50,7 +52,7 @@ def _run_one(
     """
     env_file = ENV_DIR / f".env.{protocol.name}"
     if not env_file.exists():
-        return False, f"missing env file: {env_file}", None
+        return False, f"missing env file: {env_file}", None, None, None
 
     suffix = "_chaos" if chaos else ""
     pumba_target = f"re2:typhoon-eval-{protocol.name.replace('_', '-')}-client-1"
@@ -63,17 +65,17 @@ def _run_one(
         elif key == "TIMEOUT":
             effective_timeout = int(val)
 
-    extra_env = {
+    extra_env: dict[str, str] = {
         "PROTOCOL": protocol.name,
         "PROTOCOL_SUFFIX": suffix,
         "CLIENT_IMAGE": protocol.client_image,
         "SERVER_IMAGE": protocol.server_image,
-        "TRANSFER_BYTES": str(transfer_bytes),
         "CAPTURES_DIR": str(captures_dir.resolve()),
         "PUMBA_TARGET": pumba_target,
-        "INTER_PACKET_DELAY_MS": str(delay_ms),
-        "DELAY_EVERY_N": str(delay_every),
+        "CHAOS_LOSS_PCT": str(loss_pct),
+        "CHAOS_BW_MBPS": str(bw_mbps),
     }
+    extra_env.update(profile_env)
 
     success, delivery_pct, transfer_time_s, recv_time_s = compose_up(
         protocol_name=protocol.name,
@@ -88,99 +90,105 @@ def _run_one(
     if success:
         if not pcap.exists():
             return False, "observer did not write pcap", None, None, None
-        if pcap.stat().st_size < 100:
+        if pcap.stat().st_size < MIN_PCAP_SIZE_B:
             return False, f"pcap is empty ({pcap.stat().st_size} bytes)", None, None, None
 
     return success, "" if success else "non-zero exit or timeout", delivery_pct, transfer_time_s, recv_time_s
 
 
-@click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option("--all", "run_all", is_flag=True, help="Capture all protocols.")
-@click.option(
+@command(context_settings={"help_option_names": ["-h", "--help"]})
+@option("--all", "run_all", is_flag=True, help="Capture all protocols.")
+@option(
     "--protocol",
     "protocol_name",
     default=None,
     metavar="NAME",
     help=f"Capture one protocol. Choices: {', '.join(BY_NAME)}.",
 )
-@click.option("--chaos", is_flag=True, default=False, help="Enable pumba chaos overlay (latency + jitter).")
-@click.option(
+@option("--chaos", is_flag=True, default=False, help="Enable pumba chaos overlay (latency + jitter).")
+@option(
     "--timeout",
-    default=300,
+    default=900,
     show_default=True,
-    help="Per-protocol timeout in seconds before the run is killed.",
+    help="Per-protocol timeout in seconds before the run is killed. Sized to fit `bulk_upload.duration_s` (600 s) plus setup/teardown headroom under chaos.",
 )
-@click.option(
-    "--bytes",
-    "transfer_bytes",
-    default=10_485_760,
+@option(
+    "--profile",
+    default=DEFAULT_PROFILE,
     show_default=True,
+    type=Choice(list(PROFILES.keys())),
+    help="Traffic profile (chunk sizes, IATs, byte budgets, FlowConfig overrides).",
+)
+@option(
+    "--seed",
+    default=None,
     type=int,
-    help="Payload bytes transferred by each client.",
+    help="RNG seed for sampling profile parameters (default: random).",
 )
-@click.option(
-    "--delay-ms",
-    "delay_ms",
-    default=40.0,
+@option(
+    "--loss-pct",
+    "loss_pct",
+    default=2.0,
     show_default=True,
     type=float,
-    help="Inter-packet sleep injected every --delay-every packets (ms). 0 = no delay.",
+    help="Chaos: packet loss percentage applied by the netem sidecar (default 2% matches the sidecar's standalone default).",
 )
-@click.option(
-    "--delay-every",
-    "delay_every",
-    default=10,
+@option(
+    "--bw-mbps",
+    "bw_mbps",
+    default=0.0,
     show_default=True,
-    type=int,
-    help="Apply inter-packet delay after every N packets.",
+    type=float,
+    help="Chaos: bandwidth cap in Mbps via tbf (0 = unlimited).",
 )
-def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, transfer_bytes: int, delay_ms: float, delay_every: int) -> None:
+def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, profile: str, seed: int | None, loss_pct: float, bw_mbps: float) -> None:
     """TYPHOON evaluation — run traffic captures for protocol comparison."""
 
     if not run_all and not protocol_name:
         console.print("[red]Error:[/red] specify --all or --protocol <name>.")
         console.print(f"Available protocols: {', '.join(BY_NAME)}")
-        sys.exit(1)
+        exit(1)
 
     if protocol_name and protocol_name not in BY_NAME:
         console.print(f"[red]Unknown protocol:[/red] {protocol_name!r}")
         console.print(f"Available: {', '.join(BY_NAME)}")
-        sys.exit(1)
+        exit(1)
 
     protocols = list(ALL) if run_all else [BY_NAME[protocol_name]]
     chaos_note = " [yellow](chaos mode)[/yellow]" if chaos else ""
 
-    # injected_delay_s is deterministic and identical for all senders with the same params
-    chunk_size = 500
-    n_sleep_points = (transfer_bytes // chunk_size) // delay_every
-    injected_delay_s = n_sleep_points * delay_ms / 1000 if delay_ms > 0 else 0.0
+    rng = Random(seed)
+    profile_obj = PROFILES[profile]
+    profile_env = profile_to_env(profile_obj, rng)
+    transfer_bytes = int(profile_env["PROFILE_BYTES_C2S"])
 
     console.print(f"\n[bold]TYPHOON evaluation{chaos_note}[/bold]")
     console.print(f"  Protocols : {', '.join(p.name for p in protocols)}")
     console.print(f"  Timeout   : {timeout}s per run (env file may override per protocol)")
-    console.print(f"  Transfer  : {transfer_bytes / 1_048_576:.0f} MB")
-    if delay_ms > 0:
-        console.print(f"  Delay     : {delay_ms}ms every {delay_every} packets → {injected_delay_s:.1f}s injected\n")
-    else:
-        console.print()
+    console.print(f"  Profile   : {profile}  ({profile_obj.description})")
+    console.print(f"  Transfer  : c2s={int(profile_env['PROFILE_BYTES_C2S']) / 1_048_576:.1f} MB / s2c={int(profile_env['PROFILE_BYTES_S2C']) / 1_048_576:.1f} MB")
+    if chaos and (loss_pct > 0 or bw_mbps > 0):
+        console.print(f"  Chaos     : loss={loss_pct}%  bw={bw_mbps or 'unlimited'} Mbps")
+    console.print()
 
-    run_id = "run_" + datetime.datetime.now(datetime.UTC).strftime("%Y%m%d_%H%M%S")
+    run_id = "run_" + datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     captures_dir = RESULTS_DIR / "captures" / run_id
     captures_dir.mkdir(parents=True, exist_ok=True)
     console.print(f"  Run ID    : [dim]{run_id}[/dim]\n")
 
     config: dict = {
         "run_id": run_id,
-        "started_at": datetime.datetime.now(datetime.UTC).isoformat(),
+        "started_at": datetime.now(UTC).isoformat(),
         "protocols": [p.name for p in protocols],
         "chaos": chaos,
         "timeout_s": timeout,
+        "profile": profile,
+        "profile_env": profile_env,
         "transfer_bytes": transfer_bytes,
-        "delay_ms": delay_ms,
-        "delay_every": delay_every,
-        "injected_delay_s": injected_delay_s,
+        "loss_pct": loss_pct,
+        "bw_mbps": bw_mbps,
     }
-    (captures_dir / "config.json").write_text(json.dumps(config, indent=2))
+    (captures_dir / "config.json").write_text(dumps(config, indent=2))
 
     run_results: dict[str, dict] = {}
 
@@ -197,20 +205,20 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
                     f"  [cyan]{protocol.name:<16}[/cyan] {protocol.description}",
                     total=None,
                 )
-                started_at = datetime.datetime.now(datetime.UTC)
+                started_at = datetime.now(UTC)
 
                 success, error, delivery_pct, transfer_time_s, recv_time_s = _run_one(
                     protocol=protocol,
                     chaos=chaos,
                     timeout=timeout,
-                    transfer_bytes=transfer_bytes,
-                    delay_ms=delay_ms,
-                    delay_every=delay_every,
+                    profile_env=profile_env,
+                    loss_pct=loss_pct,
+                    bw_mbps=bw_mbps,
                     captures_dir=captures_dir,
                     log_dir=captures_dir / "logs" / protocol.name,
                 )
 
-                elapsed = (datetime.datetime.now(datetime.UTC) - started_at).total_seconds()
+                elapsed = (datetime.now(UTC) - started_at).total_seconds()
                 run_results[protocol.name] = {
                     "success": success,
                     "error": error,
@@ -220,7 +228,7 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
                     "chaos": chaos,
                     "transfer_bytes": transfer_bytes,
                     "delivery_pct": delivery_pct,
-                    "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                 }
 
                 icon = "[green]✓[/green]" if success else "[red]✗[/red]"
@@ -234,20 +242,17 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
     except KeyboardInterrupt:
         _purge_stale_stacks()
         console.print("\n[yellow]Interrupted — containers cleaned up.[/yellow]")
-        sys.exit(1)
+        exit(1)
 
     _purge_stale_stacks()
 
-    # Summary table
-    show_eff = True
     table = Table(title="Capture summary", show_lines=True)
     table.add_column("Protocol", style="cyan", no_wrap=True)
     table.add_column("Transport", style="dim")
     table.add_column("Status")
     table.add_column("Delivery", justify="right")
     table.add_column("Elapsed (s)", justify="right", style="dim")
-    if show_eff:
-        table.add_column("Eff.Time (s)", justify="right")
+    table.add_column("Eff.Time (s)", justify="right")
 
     ok = 0
     for p in protocols:
@@ -256,17 +261,15 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
         pct = r.get("delivery_pct")
         if pct is None:
             delivery = "[dim]—[/dim]"
-        elif pct >= 99.9:
+        elif pct >= DELIVERY_GREEN_PCT:
             delivery = f"[green]{pct:.1f}%[/green]"
-        elif pct >= 80.0:
+        elif pct >= DELIVERY_YELLOW_PCT:
             delivery = f"[yellow]{pct:.1f}%[/yellow]"
         else:
             delivery = f"[red]{pct:.1f}%[/red]"
-        row = [p.name, p.transport, status, delivery, str(r["elapsed_s"])]
-        if show_eff:
-            eff = r.get("transfer_time_s")
-            row.append(f"{eff:.3f}" if eff is not None else "[dim]—[/dim]")
-        table.add_row(*row)
+        eff = r.get("transfer_time_s")
+        table.add_row(p.name, p.transport, status, delivery, str(r["elapsed_s"]),
+                      f"{eff:.3f}" if eff is not None else "[dim]—[/dim]")
         if r["success"]:
             ok += 1
 
@@ -274,10 +277,10 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, tr
     console.print(f"\n{ok}/{len(protocols)} captures succeeded.\n")
 
     meta_path = captures_dir / "metadata.json"
-    meta_path.write_text(json.dumps(run_results, indent=2))
+    meta_path.write_text(dumps(run_results, indent=2))
     console.print(f"Metadata → [dim]{meta_path}[/dim]\n")
 
-    sys.exit(0 if ok == len(protocols) else 1)
+    exit(0 if ok == len(protocols) else 1)
 
 
 if __name__ == "__main__":

@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-import asyncio
-import os
-import subprocess
-import sys
+from asyncio import Event, run, sleep
+from os import environ
+from subprocess import run as subprocess_run
+from sys import exit
 
 from aioquic.asyncio import serve
 from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.events import ConnectionTerminated, QuicEvent, StreamDataReceived
 
-transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
-observer_gw = os.environ.get("OBSERVER_GW")
+transfer_bytes = int(environ.get("PROFILE_BYTES_C2S", 104_857_600))
+observer_gw = environ.get("OBSERVER_GW")
 PORT = 9000
 
 if observer_gw:
-    subprocess.run(
+    subprocess_run(
         ["ip", "route", "add", "172.20.0.0/24", "via", observer_gw],
         check=False,
         capture_output=True,
     )
 
-subprocess.run(
+subprocess_run(
     [
         "openssl",
         "req",
@@ -45,10 +45,10 @@ subprocess.run(
 
 
 class SinkProtocol(QuicConnectionProtocol):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self._received = 0
-        self._done = asyncio.Event()
+        self._done = Event()
 
     def quic_event_received(self, event: QuicEvent) -> None:
         if isinstance(event, StreamDataReceived):
@@ -75,7 +75,7 @@ async def main() -> None:
 
     protocols: list[SinkProtocol] = []
 
-    def factory(*args, **kwargs) -> SinkProtocol:
+    def factory(*args: object, **kwargs: object) -> SinkProtocol:
         p = SinkProtocol(*args, **kwargs)
         protocols.append(p)
         print(f"connection accepted (total: {len(protocols)})", flush=True)
@@ -85,10 +85,10 @@ async def main() -> None:
     server = await serve("0.0.0.0", PORT, configuration=config, create_protocol=factory)
 
     while not protocols:
-        await asyncio.sleep(0.1)
+        await sleep(0.1)
     await protocols[0].wait_done()
     server.close()
 
 
-asyncio.run(main())
-sys.exit(0)
+run(main())
+exit(0)

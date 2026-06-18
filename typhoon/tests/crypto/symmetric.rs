@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use crate::bytes::{ByteBuffer, BytePool, StaticByteBuffer};
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 use crate::crypto::symmetric::SYMMETRIC_ADDITIONAL_AUTH_LEN;
-use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, SYMMETRIC_KEY_LENGTH, Symmetric, decrypt_anonymously, encrypt_anonymously};
+use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, PAYLOAD_CRYPTO_OVERHEAD, SYMMETRIC_KEY_LENGTH, Symmetric, decrypt_anonymously, encrypt_anonymously};
 
 static TEST_POOL: LazyLock<BytePool> = LazyLock::new(|| BytePool::new(32, 256, 32, 4, 16));
 
@@ -44,7 +44,7 @@ fn test_symmetric_encrypt_decrypt_cycle() {
     let mut cipher = Symmetric::new(&key);
 
     let plaintext_data = b"Authenticated encryption test";
-    let plaintext = TEST_POOL.allocate_precise_from_slice_with_capacity(plaintext_data, 0, NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN);
+    let plaintext = TEST_POOL.allocate_precise_from_slice_with_capacity(plaintext_data, 0, PAYLOAD_CRYPTO_OVERHEAD);
 
     let ciphertext = cipher.encrypt_auth(plaintext, None::<&StaticByteBuffer>).expect("encryption failed");
     let decrypted = cipher.decrypt_auth(ciphertext, None::<&StaticByteBuffer>).expect("decryption failed");
@@ -65,7 +65,7 @@ fn test_symmetric_encrypt_decrypt_auth_cycle() {
 
     let ciphertext = cipher.encrypt_auth(plaintext, None::<&StaticByteBuffer>).expect("encryption failed");
 
-    let (decrypted, transcript) = cipher.decrypt_no_verify(ciphertext.copy(), &TEST_POOL);
+    let (decrypted, transcript) = cipher.decrypt_no_verify(ciphertext.copy(), &TEST_POOL).expect("decrypt_no_verify failed");
     assert_eq!(decrypted.slice(), plaintext_data.as_slice(), "decrypted should match original");
     let verify_result = cipher.verify_decrypted(transcript, None::<&StaticByteBuffer>);
     assert!(verify_result.is_ok(), "authentication should verify correctly");
@@ -98,7 +98,7 @@ fn test_symmetric_decrypt_wrong_key_fails() {
     let mut decrypt_cipher = Symmetric::new(&wrong_key);
 
     let plaintext_data = b"Wrong key auth test";
-    let plaintext = TEST_POOL.allocate_precise_from_slice_with_capacity(plaintext_data, 0, NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN);
+    let plaintext = TEST_POOL.allocate_precise_from_slice_with_capacity(plaintext_data, 0, PAYLOAD_CRYPTO_OVERHEAD);
 
     let ciphertext = encrypt_cipher.encrypt_auth(plaintext, None::<&StaticByteBuffer>).expect("encryption failed");
     let result = decrypt_cipher.decrypt_auth(ciphertext, None::<&StaticByteBuffer>);

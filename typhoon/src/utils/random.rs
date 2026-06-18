@@ -1,9 +1,7 @@
-#[cfg(feature = "client")]
-use rand::Rng;
 #[cfg(test)]
 use rand::SeedableRng;
 use rand::rngs::OsRng;
-use rand::{CryptoRng, RngCore};
+use rand::{CryptoRng, Rng, RngCore};
 
 use crate::bytes::FixedByteBuffer;
 
@@ -137,4 +135,102 @@ pub fn get_rng() -> TyphoonRng {
         }
     }
     TyphoonRng::Os(OsRng)
+}
+
+#[cfg(test)]
+#[path = "../../tests/utils/random.rs"]
+mod tests;
+
+/// Sample a chunk size around `chunk` with two-sided `jitter`, clamped to `[1, max_payload]`, `chunk == 0` is the sentinel for "saturate the MTU".
+#[inline]
+pub fn jittered_chunk_size(max_payload: usize, chunk: usize, jitter: f64) -> usize {
+    let target = if chunk == 0 {
+        max_payload
+    } else {
+        chunk
+    };
+    if max_payload <= 1 {
+        return max_payload;
+    }
+    let target_f = target as f64;
+    let delta = (target_f * jitter).round() as usize;
+    let lo = target.saturating_sub(delta).max(1);
+    let hi = target.saturating_add(delta).min(max_payload);
+    if lo >= hi {
+        return hi;
+    }
+    get_rng().gen_range(lo..=hi)
+}
+
+/// Picks one of several branches at random, weighted by the per-branch weights, and
+/// evaluates the chosen branch as an expression (its value is the value of the macro).
+///
+/// Each branch is either `weight => body` or just `body` (implied weight `1u32`).
+/// Weights must be `u32` expressions; bodies must all evaluate to the same type.
+/// Branches are separated by commas; trailing block bodies may omit the comma.
+#[macro_export]
+macro_rules! weighted_random {
+    // ── Final step: emit the weighted dispatch ────────────────────────────────
+    (@parse {} -> ($($weights:expr,)*) ($($bodies:expr,)*)) => {{
+        use weighted_rand::builder::NewBuilder as _;
+        let __weights: &[u32] = &[$( ($weights) as u32 ),*];
+        let __table = weighted_rand::builder::WalkerTableBuilder::new(__weights).build();
+        let mut __rng = $crate::utils::random::get_rng();
+        let __idx = __table.next_rng(&mut __rng);
+        'wr: {
+            let mut __i = 0usize;
+            $(
+                if __idx == __i { break 'wr ($bodies); }
+                #[allow(unused_assignments)]
+                { __i += 1; }
+            )*
+            unreachable!()
+        }
+    }};
+
+    // ── Skip leading comma (allows trailing/leading commas naturally) ─────────
+    (@parse {, $($rest:tt)*} -> ($($weights:expr,)*) ($($bodies:expr,)*)) => {
+        $crate::weighted_random!(@parse {$($rest)*} -> ($($weights,)*) ($($bodies,)*))
+    };
+
+    // ── `weight => { block }` followed by more (no trailing comma needed) ─────
+    (@parse {$weight:expr => $body:block $($rest:tt)*} -> ($($weights:expr,)*) ($($bodies:expr,)*)) => {
+        $crate::weighted_random!(@parse {$($rest)*} -> ($($weights,)* $weight,) ($($bodies,)* $body,))
+    };
+
+    // ── Bare `{ block }` followed by more (no trailing comma needed) ──────────
+    (@parse {$body:block $($rest:tt)*} -> ($($weights:expr,)*) ($($bodies:expr,)*)) => {
+        $crate::weighted_random!(@parse {$($rest)*} -> ($($weights,)* 1u32,) ($($bodies,)* $body,))
+    };
+
+    // ── `weight => expr, ...` ─────────────────────────────────────────────────
+    (@parse {$weight:expr => $body:expr, $($rest:tt)*} -> ($($weights:expr,)*) ($($bodies:expr,)*)) => {
+        $crate::weighted_random!(@parse {$($rest)*} -> ($($weights,)* $weight,) ($($bodies,)* $body,))
+    };
+    // ── final `weight => expr` (no trailing comma) ────────────────────────────
+    (@parse {$weight:expr => $body:expr} -> ($($weights:expr,)*) ($($bodies:expr,)*)) => {
+        $crate::weighted_random!(@parse {} -> ($($weights,)* $weight,) ($($bodies,)* $body,))
+    };
+
+    // ── bare `expr, ...` ──────────────────────────────────────────────────────
+    (@parse {$body:expr, $($rest:tt)*} -> ($($weights:expr,)*) ($($bodies:expr,)*)) => {
+        $crate::weighted_random!(@parse {$($rest)*} -> ($($weights,)* 1u32,) ($($bodies,)* $body,))
+    };
+    // ── final bare `expr` (no trailing comma) ─────────────────────────────────
+    (@parse {$body:expr} -> ($($weights:expr,)*) ($($bodies:expr,)*)) => {
+        $crate::weighted_random!(@parse {} -> ($($weights,)* 1u32,) ($($bodies,)* $body,))
+    };
+
+    // ── Catch-all: malformed @parse input fails fast (prevents infinite recursion
+    //    via the entry arm below).
+    (@parse $($_rest:tt)*) => {
+        ::core::compile_error!(
+            "malformed `weighted_random!` input — expected comma-separated `weight => expr` or `expr` branches"
+        )
+    };
+
+    // ── Entry point ───────────────────────────────────────────────────────────
+    ($($input:tt)*) => {
+        $crate::weighted_random!(@parse {$($input)*} -> () ())
+    };
 }

@@ -1,0 +1,12 @@
+FROM python:3.12-alpine
+
+RUN apk add --no-cache iproute2 \
+    && apk add --no-cache --virtual .build-deps gcc musl-dev libffi-dev openssl-dev cargo \
+    && pip install --no-cache-dir "aioquic>=0.9.25,<0.10" \
+    && apk del .build-deps
+
+COPY evaluation/background/common/ /common/
+COPY evaluation/background/quic_upload/quic_client.py /usr/local/bin/quic_client
+RUN chmod +x /usr/local/bin/quic_client
+
+CMD ["python3", "/usr/local/bin/quic_client"]

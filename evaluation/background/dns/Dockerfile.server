@@ -1,0 +1,9 @@
+FROM python:3.12-alpine
+
+RUN apk add --no-cache iproute2 \
+    && pip install --no-cache-dir dnslib==0.9.24
+
+COPY evaluation/background/dns/dns_server.py /usr/local/bin/dns_server
+RUN chmod +x /usr/local/bin/dns_server
+
+CMD ["python3", "/usr/local/bin/dns_server"]

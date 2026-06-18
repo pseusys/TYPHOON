@@ -7,7 +7,7 @@ use typhoon::socket::ClientSocketError;
 use super::common::{connect_simple, default_settings, free_addr, setup_server_multi};
 
 // Test: all messages arrive when the session uses two flows.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_multi_flow_echo() {
     const COUNT: usize = 20;
     let settings = default_settings();
@@ -46,7 +46,7 @@ async fn test_multi_flow_echo() {
 }
 
 // Test: max_data_payload is positive even with two flows active.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_multi_flow_max_payload_positive() {
     let settings = default_settings();
     let addr1 = free_addr();

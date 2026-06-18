@@ -71,7 +71,10 @@ pub trait ByteBufferMut: ByteBuffer + AsMut<[u8]> {
     fn expand_end(&self, size: usize) -> Self;
 
     /// Split into two buffer views at `divide` point. Returns (left, right).
-    fn split_buf(&self, divide: usize) -> (Self, Self);
+    fn split_buf_start(&self, divide: usize) -> (Self, Self);
+
+    /// Split into two buffer views at `len(buffer) - divide` point. Returns (left, right).
+    fn split_buf_end(&self, divide: usize) -> (Self, Self);
 
     /// Append `other` slice to end. Returns expanded view.
     fn append(&self, other: &[u8]) -> Self;

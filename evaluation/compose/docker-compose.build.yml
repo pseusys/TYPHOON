@@ -62,8 +62,8 @@ services:
 
   tls-client:
     build:
-      context: ../protocols/tls
-      dockerfile: Dockerfile.client
+      context: ../protocols
+      dockerfile: tls/Dockerfile.client
     image: typhoon-eval-tls-client
 
   # ── wireguard ─────────────────────────────────────────────────────────────
@@ -88,8 +88,8 @@ services:
 
   quic-client:
     build:
-      context: ../protocols/quic
-      dockerfile: Dockerfile.client
+      context: ../protocols
+      dockerfile: quic/Dockerfile.client
     image: typhoon-eval-quic-client
 
   # ── obfs4 ─────────────────────────────────────────────────────────────────
@@ -127,8 +127,8 @@ services:
 
   tor-client:
     build:
-      context: ../protocols/tor
-      dockerfile: Dockerfile.client
+      context: ../protocols
+      dockerfile: tor/Dockerfile.client
     image: typhoon-eval-tor-client
 
   # ── vless_reality ─────────────────────────────────────────────────────────

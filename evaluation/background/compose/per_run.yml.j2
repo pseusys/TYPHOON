@@ -1,0 +1,128 @@
+name: typhoon-eval-bg-{{ run_id_dashed }}
+
+volumes:
+  eval_keys: {}
+  wg_shared: {}
+
+networks:
+  net_left:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+  net_right:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
+
+services:
+
+  observer:
+    image: typhoon-eval-observer
+    networks:
+      net_left: 
+        ipv4_address: {{ observer_left_ip }}
+      net_right: 
+        ipv4_address: {{ observer_right_ip }}
+    privileged: true
+    pid: "host"
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.disable_ipv6=1
+    volumes:
+      - {{ run_dir_abs }}:/captures
+    environment:
+      PROTOCOL: background
+      PROTOCOL_SUFFIX: ""
+      CAPTURE_FILTER: "{{ capture_filter }}"
+
+  typhoon-server:
+    image: typhoon-eval-typhoon-server
+    networks:
+      net_right: 
+        ipv4_address: {{ typhoon_server_ip }}
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    sysctls: [net.ipv6.conf.all.disable_ipv6=1]
+    volumes: [eval_keys:/keys]
+    stop_grace_period: 5s
+    environment:
+      OBSERVER_GW: {{ observer_right_ip }}
+      CERT_HOST: {{ typhoon_server_ip }}
+{%- for k, v in profile_env.items() %}
+      {{ k }}: "{{ v }}"
+{%- endfor %}
+    depends_on: [observer]
+
+  typhoon-client:
+    image: typhoon-eval-typhoon-client
+    networks:
+      net_left: 
+        ipv4_address: {{ typhoon_client_ip }}
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    sysctls: [net.ipv6.conf.all.disable_ipv6=1]
+    volumes: [eval_keys:/keys]
+    stop_grace_period: 5s
+    environment:
+      OBSERVER_GW: {{ observer_left_ip }}
+{%- for k, v in profile_env.items() %}
+      {{ k }}: "{{ v }}"
+{%- endfor %}
+    depends_on: [typhoon-server]
+{% for gen in generators %}
+  {{ gen.name }}-server:
+    image: {{ gen.image_prefix }}-server
+    networks:
+      net_right: 
+        ipv4_address: {{ gen.server_ip }}
+    cap_add: [NET_ADMIN]
+    sysctls: [net.ipv6.conf.all.disable_ipv6=1]
+{%- if gen.extra_mount %}
+    volumes: [{{ gen.extra_mount }}]
+{%- endif %}
+    stop_grace_period: 5s
+    environment:
+      OBSERVER_GW: {{ observer_right_ip }}
+      SERVER_HOST: {{ gen.server_ip }}
+{%- for k, v in gen.env.items() %}
+      {{ k }}: "{{ v }}"
+{%- endfor %}
+    depends_on: [observer]
+
+  {{ gen.name }}-client:
+    image: {{ gen.image_prefix }}-client
+    networks:
+      net_left: { ipv4_address: {{ gen.client_ip }} }
+    cap_add: [NET_ADMIN]
+    sysctls: [net.ipv6.conf.all.disable_ipv6=1]
+{%- if gen.extra_mount %}
+    volumes: [{{ gen.extra_mount }}]
+{%- endif %}
+    stop_grace_period: 5s
+    environment:
+      OBSERVER_GW: {{ observer_left_ip }}
+      SERVER_HOST: {{ gen.server_ip }}
+{%- for k, v in gen.env.items() %}
+      {{ k }}: "{{ v }}"
+{%- endfor %}
+    depends_on: [{{ gen.name }}-server]
+{% endfor %}
+{%- if chaos %}
+  chaos:
+    init: true
+    image: typhoon-eval-chaos
+    network_mode: "service:observer"
+    cap_add:
+      - NET_ADMIN
+    environment:
+      CHAOS_DELAY_MS: "{{ chaos.delay_ms }}"
+      CHAOS_JITTER_MS: "{{ chaos.jitter_ms }}"
+      CHAOS_LOSS_PCT: "{{ chaos.loss_pct }}"
+      CHAOS_DUPLICATE_PCT: "{{ chaos.duplicate_pct }}"
+      CHAOS_REORDER_PCT: "{{ chaos.reorder_pct }}"
+      CHAOS_BW_MBPS: "0"
+    depends_on: [observer]
+    stop_grace_period: 5s
+{%- endif %}

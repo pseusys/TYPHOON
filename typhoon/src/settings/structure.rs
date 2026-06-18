@@ -151,7 +151,7 @@ impl<AE: AsyncExecutor> Settings<AE> {
         };
 
         // Helper to check f64 is positive.
-        let assert_positive = |key: &Key<f64>| -> Result<(), SettingsError> {
+        let assert_float_positive = |key: &Key<f64>| -> Result<(), SettingsError> {
             let val = self.get(key);
             if val <= 0.0 {
                 return Err(SettingsError::AssertionFailed {
@@ -161,13 +161,28 @@ impl<AE: AsyncExecutor> Settings<AE> {
             Ok(())
         };
 
+        // Helper to check u64 is positive.
+        let assert_int_positive = |key: &Key<u64>| -> Result<(), SettingsError> {
+            let val = self.get(key);
+            if val == 0 {
+                return Err(SettingsError::AssertionFailed {
+                    message: format!("{} ({}) must be greater than zero", key.name, val),
+                });
+            }
+            Ok(())
+        };
+
         // Min <= Max pairs
         assert_min_max_u64(&keys::FAKE_BODY_LENGTH_MIN, &keys::FAKE_BODY_LENGTH_MAX)?;
+        assert_min_max_u64(&keys::FAKE_BODY_CONSTANT_LENGTH_MIN, &keys::FAKE_BODY_CONSTANT_LENGTH_MAX)?;
+        assert_min_max_f64(&keys::DECOY_FALLTHROUGH_PACKETS_MIN, &keys::DECOY_FALLTHROUGH_PACKETS_MAX)?;
         assert_min_max_u64(&keys::FAKE_HEADER_LENGTH_MIN, &keys::FAKE_HEADER_LENGTH_MAX)?;
         assert_min_max_u64(&keys::HEALTH_CHECK_NEXT_IN_MIN, &keys::HEALTH_CHECK_NEXT_IN_MAX)?;
         assert_min_max_u64(&keys::TIMEOUT_MIN, &keys::TIMEOUT_MAX)?;
         assert_min_max_u64(&keys::RTT_MIN, &keys::RTT_MAX)?;
         assert_min_max_u64(&keys::DECOY_LENGTH_MIN, &keys::DECOY_LENGTH_MAX)?;
+        assert_min_max_u64(&keys::DECOY_NOISY_DECOY_LENGTH_MIN, &keys::DECOY_NOISY_LENGTH_MAX)?;
+        assert_min_max_u64(&keys::DECOY_HEAVY_LENGTH_MIN, &keys::DECOY_LENGTH_MAX)?;
         assert_min_max_u64(&keys::DECOY_HEAVY_DELAY_MIN, &keys::DECOY_HEAVY_DELAY_MAX)?;
         assert_min_max_u64(&keys::DECOY_NOISY_DELAY_MIN, &keys::DECOY_NOISY_DELAY_MAX)?;
         assert_min_max_u64(&keys::DECOY_SPARSE_DELAY_MIN, &keys::DECOY_SPARSE_DELAY_MAX)?;
@@ -179,6 +194,8 @@ impl<AE: AsyncExecutor> Settings<AE> {
         assert_min_max_u64(&keys::DECOY_REPLICATION_DELAY_MIN, &keys::DECOY_REPLICATION_DELAY_MAX)?;
         assert_min_max_u64(&keys::DECOY_SUBHEADER_LENGTH_MIN, &keys::DECOY_SUBHEADER_LENGTH_MAX)?;
         assert_min_max_f64(&keys::DECOY_REPLICATION_PROBABILITY_MIN, &keys::DECOY_REPLICATION_PROBABILITY_MAX)?;
+        assert_min_max_f64(&keys::FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN, &keys::FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX)?;
+        assert_min_max_u64(&keys::FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS, &keys::FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS)?;
 
         // Defaults within bounds
         assert_default_in_range(&keys::RTT_MIN, &keys::RTT_DEFAULT, &keys::RTT_MAX)?;
@@ -205,15 +222,55 @@ impl<AE: AsyncExecutor> Settings<AE> {
 
         // Probability must be in [0, 1]
         assert_unit_inclusive(&keys::FAKE_HEADER_PROBABILITY)?;
+        assert_unit_inclusive(&keys::SEND_BYTES_JITTER)?;
+        assert_unit_inclusive(&keys::DECOY_FALLTHROUGH_PACKETS_MIN)?;
+        assert_unit_inclusive(&keys::DECOY_FALLTHROUGH_PACKETS_MAX)?;
+        assert_unit_inclusive(&keys::FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN)?;
+        assert_unit_inclusive(&keys::FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX)?;
+
+        // SEND_BYTES_CHUNK must fit inside the MTU.
+        // Zero is the "use max_user_payload" sentinel and bypasses the check.
+        let chunk = self.get(&keys::SEND_BYTES_CHUNK);
+        if chunk != 0 && (chunk as usize) > self.mtu() {
+            return Err(SettingsError::AssertionFailed {
+                message: format!("{} ({}) must be ≤ MTU ({}) or 0 (sentinel)", keys::SEND_BYTES_CHUNK.name, chunk, self.mtu()),
+            });
+        }
 
         // Positive multipliers
-        assert_positive(&keys::FAKE_BODY_RANDOM_PROBABILITY)?;
-        assert_positive(&keys::DECOY_MAINTENANCE_MODE_NONE_PROBABILITY)?;
-        assert_positive(&keys::DECOY_REPLICATION_MODE_NONE_PROBABILITY)?;
-        assert_positive(&keys::TIMEOUT_RTT_FACTOR)?;
-        assert_positive(&keys::HANDSHAKE_NEXT_IN_FACTOR)?;
-        assert_positive(&keys::DECOY_BYTE_RATE_CAP)?;
-        assert_positive(&keys::DECOY_BYTE_RATE_FACTOR)?;
+        assert_float_positive(&keys::TIMEOUT_RTT_FACTOR)?;
+        assert_float_positive(&keys::HANDSHAKE_NEXT_IN_FACTOR)?;
+        assert_float_positive(&keys::DECOY_BYTE_RATE_CAP)?;
+        assert_float_positive(&keys::DECOY_BYTE_RATE_FACTOR)?;
+
+        // Weight modifiers
+        assert_int_positive(&keys::FAKE_BODY_WEIGHT_EMPTY)?;
+        assert_int_positive(&keys::FAKE_BODY_WEIGHT_RANDOM)?;
+        assert_int_positive(&keys::FAKE_BODY_WEIGHT_CONSTANT)?;
+        assert_int_positive(&keys::FAKE_BODY_WEIGHT_SERVICE)?;
+        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_RANDOM)?;
+        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_CONSTANT)?;
+        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_VOLATILE)?;
+        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_SWITCHING)?;
+        assert_int_positive(&keys::FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL)?;
+        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_NONE)?;
+        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_RANDOM)?;
+        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_TIMED)?;
+        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_SIZED)?;
+        assert_int_positive(&keys::DECOY_MAINTENANCE_WEIGHT_BOTH)?;
+        assert_int_positive(&keys::DECOY_REPLICATION_WEIGHT_NONE)?;
+        assert_int_positive(&keys::DECOY_REPLICATION_WEIGHT_MAINTENANCE)?;
+        assert_int_positive(&keys::DECOY_REPLICATION_WEIGHT_ALL)?;
+        assert_int_positive(&keys::DECOY_SUBHEADER_WEIGHT_NONE)?;
+        assert_int_positive(&keys::DECOY_SUBHEADER_WEIGHT_MAINTENANCE)?;
+        assert_int_positive(&keys::DECOY_SUBHEADER_WEIGHT_ALL)?;
+        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_SIMPLE)?;
+        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_SPARSE)?;
+        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_NOISY)?;
+        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_SMOOTH)?;
+        assert_int_positive(&keys::DECOY_PROVIDER_WEIGHT_HEAVY)?;
+        assert_int_positive(&keys::FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS)?;
+
         Ok(())
     }
 }

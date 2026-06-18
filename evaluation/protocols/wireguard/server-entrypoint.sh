@@ -10,7 +10,7 @@ ip addr add 10.100.0.1/24 dev wg0
 wg set wg0 private-key /keys/wg_server.key listen-port 51820
 ip link set wg0 up
 
-TRANSFER_BYTES="${TRANSFER_BYTES:-104857600}" \
+PROFILE_BYTES_C2S="${PROFILE_BYTES_C2S:-104857600}" \
 OBSERVER_GW="" \
 python3 /app/server.py &
 SINK_PID=$!

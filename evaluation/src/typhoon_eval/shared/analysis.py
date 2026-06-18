@@ -1,33 +1,36 @@
-"""
-TYPHOON evaluation — pcap analysis.
+"""TYPHOON evaluation — pcap analysis.
 
-Reads all .pcap files from a capture run directory, computes per-protocol
+Reads all .pcap files from a capture-run directory, computes per-protocol
 statistics in three directions (c2s, s2c, all), and writes stats.json into
-the same run directory.
-
-Usage (via poe):
-    poe analyze                        # analyse most recent run
-    poe analyze --run 20260423_130000  # analyse a specific run
-
-Usage (direct):
-    python -m typhoon_eval.analysis [--run YYYYMMDD_HHMMSS]
+the same directory.
 """
 
-import json
-import sys
+from json import dumps, loads
 from pathlib import Path
+from sys import exit
 
-import click
+from click import command, option
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from .pcap_stats import analyze_pcap
+from .protocols import BY_NAME
 
 console = Console()
 
-RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
+RESULTS_DIR = Path(__file__).parent.parent.parent.parent / "results"
 CAPTURES_ROOT = RESULTS_DIR / "captures"
+
+# Delivery-rate colour bands (green = lossless, yellow = lossy-but-usable, red = broken).
+DELIVERY_GREEN_PCT = 99.9
+DELIVERY_YELLOW_PCT = 80.0
+# Payload-entropy colour bands (green = encrypted ≥ 7.5 b/B, yellow = padded plaintext, red = predictable).
+ENTROPY_GREEN_BITS = 7.5
+ENTROPY_YELLOW_BITS = 6.0
+# Direction-asymmetry / loss-shift magnitude bands (red = big shift, yellow = moderate, green = none).
+ASYMMETRY_RED_FRAC = 0.5
+ASYMMETRY_YELLOW_FRAC = 0.1
 
 
 def _latest_run() -> Path | None:
@@ -35,8 +38,8 @@ def _latest_run() -> Path | None:
     return runs[-1] if runs else None
 
 
-@click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option(
+@command(context_settings={"help_option_names": ["-h", "--help"]})
+@option(
     "--run",
     "run_id",
     default=None,
@@ -50,25 +53,25 @@ def main(run_id: str | None) -> None:
         run_dir = CAPTURES_ROOT / f"run_{run_id}"
         if not run_dir.is_dir():
             console.print(f"[red]Run not found:[/red] {run_dir}")
-            sys.exit(1)
+            exit(1)
     else:
         run_dir = _latest_run()
         if run_dir is None:
             console.print("[red]No capture runs found.[/red] Run [bold]poe capture[/bold] first.")
-            sys.exit(1)
+            exit(1)
 
     pcaps = sorted(run_dir.glob("*.pcap"))
     if not pcaps:
         console.print(f"[red]No pcap files in[/red] {run_dir}")
-        sys.exit(1)
+        exit(1)
 
     meta_path = run_dir / "metadata.json"
-    metadata: dict = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    metadata: dict = loads(meta_path.read_text()) if meta_path.exists() else {}
 
     cfg: dict = {}
     cfg_path = run_dir / "config.json"
     if cfg_path.exists():
-        cfg = json.loads(cfg_path.read_text())
+        cfg = loads(cfg_path.read_text())
 
     console.print("\n[bold]TYPHOON pcap analysis[/bold]")
     console.print(f"  Run       : [dim]{run_dir.name}[/dim]")
@@ -95,15 +98,16 @@ def main(run_id: str | None) -> None:
             # transfer_bytes stored per protocol name in metadata (strip _chaos suffix)
             proto_key = name.removesuffix("_chaos")
             transfer_bytes: int | None = metadata.get(proto_key, {}).get("transfer_bytes")
+            sniffer = BY_NAME[proto_key].handshake_sniffer if proto_key in BY_NAME else None
 
-            stats = analyze_pcap(pcap, transfer_bytes=transfer_bytes)
+            stats = analyze_pcap(pcap, transfer_bytes=transfer_bytes, handshake_sniffer=sniffer)
             all_stats[name] = stats
 
             progress.update(task, total=1, completed=1,
                             description=f"  [green]✓[/green] [cyan]{name:<22}[/cyan]")
 
     out_path = run_dir / "stats.json"
-    out_path.write_text(json.dumps(all_stats, indent=2))
+    out_path.write_text(dumps(all_stats, indent=2))
     console.print(f"\nStats → [dim]{out_path}[/dim]")
 
     _print_summary(all_stats, metadata, cfg)
@@ -112,21 +116,21 @@ def main(run_id: str | None) -> None:
 def _fmt_delivery(v: float | None) -> str:
     if v is None:
         return "[dim]—[/dim]"
-    color = "green" if v >= 99.9 else ("yellow" if v >= 80.0 else "red")
+    color = "green" if v >= DELIVERY_GREEN_PCT else ("yellow" if v >= DELIVERY_YELLOW_PCT else "red")
     return f"[{color}]{v:.1f}%[/{color}]"
 
 
 def _fmt_entropy(e: float | None) -> str:
     if e is None:
         return "[dim]—[/dim]"
-    color = "green" if e >= 7.5 else ("yellow" if e >= 6.0 else "red")
+    color = "green" if e >= ENTROPY_GREEN_BITS else ("yellow" if e >= ENTROPY_YELLOW_BITS else "red")
     return f"[{color}]{e:.2f}[/{color}]"
 
 
 def _fmt_pct(v: float | None) -> str:
     if v is None:
         return "[dim]—[/dim]"
-    color = "red" if v > 0.5 else ("yellow" if v > 0.1 else "green")
+    color = "red" if v > ASYMMETRY_RED_FRAC else ("yellow" if v > ASYMMETRY_YELLOW_FRAC else "green")
     return f"[{color}]{v:+.1%}[/{color}]"
 
 
@@ -154,6 +158,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
         table.add_column("Throughput", justify="right")
         table.add_column("Overhead", justify="right")
         table.add_column("Size p5/p50/p95 (B)", justify="right")
+        table.add_column("Burst / Reg / Eff", justify="right")
 
     for name, dirs in sorted(all_stats.items()):
         proto_key = name.removesuffix("_chaos")
@@ -214,6 +219,16 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                 else:
                     throughput = "[dim]—[/dim]"
                 overhead = _fmt_pct(s.get("overhead_ratio"))
+                if direction == "all":
+                    burst = s.get("burstiness")
+                    sreg  = s.get("size_regularity")
+                    geff  = s.get("goodput_efficiency")
+                    burst_str = f"{burst:.2f}" if burst is not None else "—"
+                    sreg_str  = f"{sreg:.2f}"  if sreg  is not None else "—"
+                    geff_str  = f"{geff:.2f}"  if geff  is not None else "—"
+                    fingerprint = f"{burst_str} / {sreg_str} / {geff_str}"
+                else:
+                    fingerprint = "[dim]—[/dim]"
                 table.add_row(
                     name if first else "",
                     direction,
@@ -222,6 +237,7 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                     throughput,
                     overhead,
                     f"{p5} / {p50} / {p95}" if ps else "[dim]—[/dim]",
+                    fingerprint,
                 )
             first = False
 

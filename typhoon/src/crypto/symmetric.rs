@@ -54,7 +54,11 @@ cfg_if! {
 }
 
 pub(crate) const SYMMETRIC_KEY_LENGTH: usize = 32;
+/// Built-in AEAD tag length — full mode only (ChaCha20-Poly1305 / AES-GCM).
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
 pub(crate) const SYMMETRIC_BUILT_IN_AUTH_LEN: usize = 16;
+/// Additional keyed-hash (BLAKE3) tag length — fast mode only.
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 pub(crate) const SYMMETRIC_ADDITIONAL_AUTH_LEN: usize = 32;
 
 /// Bytes added to a payload by `encrypt_auth` (nonce + authentication tag).
@@ -65,14 +69,26 @@ pub(crate) const PAYLOAD_CRYPTO_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRI
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 pub(crate) const PAYLOAD_CRYPTO_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN;
 
-#[cfg(any(feature = "fast_software", feature = "full_software"))]
+// Tailor obfuscation overhead, split by direction because full mode is asymmetric:
+//   * s2c (server→client) is always a symmetric AEAD — the shared OBFS key in fast mode,
+//     the session key in full mode — so its size matches `PAYLOAD_CRYPTO_OVERHEAD`.
+//   * c2s (client→server) is symmetric in fast mode but asymmetric (X25519 per packet) in
+//     full mode; the full-mode c2s value lives in `asymmetric::TAILOR_C2S_OVERHEAD`..
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+pub(crate) const TAILOR_C2S_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN;
+#[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
+pub(crate) const TAILOR_S2C_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN;
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+pub(crate) const TAILOR_S2C_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN;
+
+// NONCE_LEN is the built-in AEAD nonce — full mode only; its length depends on the cipher.
+#[cfg(feature = "full_software")]
 pub(crate) const NONCE_LEN: usize = 24;
+#[cfg(feature = "full_hardware")]
+pub(crate) const NONCE_LEN: usize = 12;
 
 #[cfg(any(feature = "fast_software", feature = "full_software"))]
 pub(crate) const ANONYMOUS_NONCE_LEN: usize = 24;
-
-#[cfg(any(feature = "fast_hardware", feature = "full_hardware"))]
-pub(crate) const NONCE_LEN: usize = 12;
 
 #[cfg(any(feature = "fast_hardware", feature = "full_hardware"))]
 pub(crate) const ANONYMOUS_NONCE_LEN: usize = 16;
@@ -109,11 +125,29 @@ pub(crate) fn encrypt_anonymously(key: &[u8], plaintext: &mut DynamicByteBuffer)
 /// Args: key (32-byte slice), ciphertext_with_nonce. Returns: plaintext.
 #[inline]
 pub(crate) fn decrypt_anonymously(key: &[u8], ciphertext_with_nonce: &mut DynamicByteBuffer) -> DynamicByteBuffer {
-    let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf(ciphertext_with_nonce.len() - ANONYMOUS_NONCE_LEN);
+    let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf_end(ANONYMOUS_NONCE_LEN);
     let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = key.try_into().expect("key must be 32 bytes");
     let nonce: [u8; ANONYMOUS_NONCE_LEN] = nonce_bytes.slice().try_into().expect("nonce must be ANONYMOUS_NONCE_LEN bytes");
     AnonymousCipher::new(&key_bytes.into(), &nonce.into()).apply_keystream(ciphertext.slice_mut());
     ciphertext
+}
+
+/// Verify a deobfuscation transcript against an externally-supplied 32-byte verification key.
+#[cfg(all(feature = "server", any(feature = "fast_software", feature = "fast_hardware")))]
+pub(crate) fn verify_transcript_with_key<K: ByteBuffer>(key: &K, transcript: &ObfuscationTranscript) -> Result<(), CryptoError> {
+    let key_bytes: [u8; SYMMETRIC_KEY_LENGTH] = key.slice().try_into().map_err(|_| CryptoError::authentication_error("verification key must be 32 bytes"))?;
+    let hash = keyed_hash(&key_bytes, transcript.ciphertext_copy.slice());
+    if hash.as_bytes().ct_eq(transcript.auth_transcript.slice()).unwrap_u8() == 0 {
+        return Err(CryptoError::authentication_error("authentication error (hashes not equal)"));
+    }
+    Ok(())
+}
+
+/// Verify a deobfuscation transcript against an externally-supplied key (full mode no-op).
+#[cfg(all(feature = "server", any(feature = "full_software", feature = "full_hardware")))]
+#[inline]
+pub(crate) fn verify_transcript_with_key<K: ByteBuffer>(_key: &K, _transcript: &ObfuscationTranscript) -> Result<(), CryptoError> {
+    Ok(())
 }
 
 /// Authenticated symmetric cipher for marshalling encryption (XChaCha20-Poly1305 or AES-GCM).
@@ -181,18 +215,20 @@ impl Symmetric {
         Ok(plaintext.append(&nonce).append(&result))
     }
 
+    /// Split a deferred-verification ciphertext into plaintext + auth transcript.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub(crate) fn decrypt_no_verify(&mut self, ciphertext_authenticated: DynamicByteBuffer, pool: &BytePool) -> (DynamicByteBuffer, ObfuscationTranscript) {
-        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_ADDITIONAL_AUTH_LEN);
+    pub(crate) fn decrypt_no_verify(&mut self, ciphertext_authenticated: DynamicByteBuffer, pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+        let split_at = ciphertext_authenticated.len().checked_sub(SYMMETRIC_ADDITIONAL_AUTH_LEN).ok_or_else(|| CryptoError::authentication_error("ciphertext shorter than auth-tag length"))?;
+        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf_start(split_at);
         let ciphertext_copy = pool.allocate_precise_from_slice_with_capacity(ciphertext_with_nonce.slice(), 0, 0);
         let plaintext = decrypt_anonymously(&self.encryption_key, &mut ciphertext_with_nonce);
-        (
+        Ok((
             plaintext,
             ObfuscationTranscript {
                 ciphertext_copy,
                 auth_transcript: authentication,
             },
-        )
+        ))
     }
 
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
@@ -208,10 +244,12 @@ impl Symmetric {
     }
 
     /// Decrypt and verify authentication tag. Args: nonce || ciphertext || tag. Returns: plaintext.
-    /// Verifies MAC over the ciphertext before decrypting; no copy or pool allocation needed.
+    /// Verifies MAC over the ciphertext before decrypting; no copy or pool
+    /// allocation needed.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub(crate) fn decrypt_auth<A: ByteBuffer>(&mut self, ciphertext_authenticated: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
-        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_ADDITIONAL_AUTH_LEN);
+        let split_at = ciphertext_authenticated.len().checked_sub(SYMMETRIC_ADDITIONAL_AUTH_LEN).ok_or_else(|| CryptoError::authentication_error("ciphertext shorter than auth-tag length"))?;
+        let (mut ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf_start(split_at);
         let hash = match additional_data {
             Some(res) => Hasher::new_keyed(&self.verification_key).update(ciphertext_with_nonce.slice()).update(res.slice()).finalize(),
             None => keyed_hash(&self.verification_key, ciphertext_with_nonce.slice()),
@@ -225,8 +263,11 @@ impl Symmetric {
     /// Decrypt and verify authentication tag. Args: nonce || ciphertext || tag. Returns: plaintext.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub(crate) fn decrypt_auth<A: ByteBuffer>(&mut self, ciphertext_authenticated: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
-        let (ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf(ciphertext_authenticated.len() - SYMMETRIC_BUILT_IN_AUTH_LEN);
-        let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf(ciphertext_with_nonce.len() - NONCE_LEN);
+        if ciphertext_authenticated.len() < SYMMETRIC_BUILT_IN_AUTH_LEN + NONCE_LEN {
+            return Err(CryptoError::authentication_error("ciphertext shorter than nonce+tag length"));
+        }
+        let (ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf_end(SYMMETRIC_BUILT_IN_AUTH_LEN);
+        let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf_end(NONCE_LEN);
         let nonce_slice = nonce_bytes.slice();
         let nonce = CipherNonce::from_slice(&nonce_slice);
         let tag_slice = authentication.slice();

@@ -20,9 +20,9 @@ pub(crate) struct ServerData {
     pub(crate) shared_secret: FixedByteBuffer<32>,
     pub(crate) nonce: FixedByteBuffer<32>,
 }
-use crate::crypto::symmetric::{NONCE_LEN, ObfuscationTranscript, SYMMETRIC_ADDITIONAL_AUTH_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
-use crate::settings::consts::{ID_OFFSET, TAILOR_LENGTH};
-use crate::tailor::IdentityType;
+use crate::crypto::symmetric::{ObfuscationTranscript, Symmetric};
+use crate::settings::consts::ID_OFFSET;
+use crate::tailor::{IdentityType, Tailor};
 
 /// Per-user cryptographic state.
 #[derive(Clone)]
@@ -132,14 +132,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
 
     /// Extract user identity from a raw tailor buffer.
     pub(crate) fn extract_identity(buffer: &DynamicByteBuffer) -> T {
-        let correct_buffer = buffer.ensure_size(T::length() + TAILOR_LENGTH);
+        let correct_buffer = buffer.ensure_size(Tailor::<T>::len());
         T::from_bytes(correct_buffer.rebuffer_both(ID_OFFSET, ID_OFFSET + T::length()).slice())
-    }
-
-    /// Overhead added by tailor encryption.
-    #[inline]
-    pub(crate) fn tailor_overhead() -> usize {
-        SYMMETRIC_BUILT_IN_AUTH_LEN + NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN
     }
 
     /// Obfuscate tailor for sending to a specific user (fast mode).
@@ -161,7 +155,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
     /// Deobfuscate received tailor (fast mode: decrypt with shared OBFS key, defer verification).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub(crate) fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer, pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
-        Ok(self.shared_obfs_decryptor.decrypt_no_verify(ciphertext, pool))
+        self.shared_obfs_decryptor.decrypt_no_verify(ciphertext, pool)
     }
 
     /// Deobfuscate received tailor (full mode: decrypt with server's X25519 secret).

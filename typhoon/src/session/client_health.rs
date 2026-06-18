@@ -3,6 +3,7 @@
 mod tests;
 
 /// Health check provider implementing the decay cycle for connection liveness tracking.
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -15,7 +16,6 @@ use crate::crypto::{ClientCryptoTool, ClientData};
 use crate::session::SessionControllerError;
 use crate::session::common::SessionManager;
 use crate::settings::Settings;
-use crate::settings::consts::TAILOR_LENGTH;
 use crate::settings::keys::*;
 use crate::tailor::{ClientConnectionHandler, IdentityType, PacketFlags, ReturnCode, Tailor};
 use crate::utils::random::get_rng;
@@ -58,8 +58,8 @@ pub(super) struct HealthState<T: IdentityType + Clone, AE: AsyncExecutor, CC: Cl
     smooth_rtt: Option<f64>,
     /// RTT variance in milliseconds.
     rtt_variance: Option<f64>,
-    /// Incremental packet number counter (lower 32 bits of PN).
-    incremental_counter: u32,
+    /// Per-session monotonic packet-number counter; shared with the session manager and the per-flow decoy providers so every emitter advances the same sequence.
+    counter: Arc<AtomicU32>,
     /// Current retry count.
     retry_count: u64,
     /// Timestamp when the last health check was sent.
@@ -84,12 +84,12 @@ pub(super) struct HealthState<T: IdentityType + Clone, AE: AsyncExecutor, CC: Cl
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> HealthState<T, AE, CC> {
-    fn new(settings: Arc<Settings<AE>>, crypto_tool: SharedValue<ClientCryptoTool<T>>, initial_data_generator: CC, response_rx: WatchReceiver<HealthResponse<T>>) -> Self {
+    fn new(settings: Arc<Settings<AE>>, crypto_tool: SharedValue<ClientCryptoTool<T>>, counter: Arc<AtomicU32>, initial_data_generator: CC, response_rx: WatchReceiver<HealthResponse<T>>) -> Self {
         Self {
             settings,
             smooth_rtt: None,
             rtt_variance: None,
-            incremental_counter: 0,
+            counter,
             retry_count: 0,
             last_sent_time: 0,
             last_sent_next_in: 0,
@@ -109,10 +109,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
     }
 
     /// Compute the next packet number: (unix_timestamp_seconds << 32) | incremental.
-    fn next_packet_number(&mut self) -> u64 {
-        self.incremental_counter += 1;
+    /// Uses the per-session shared counter, so every emitter on this session advances the same monotonic sequence.
+    fn next_packet_number(&self) -> u64 {
+        let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let timestamp = (unix_timestamp_ms() / 1000) as u32;
-        ((timestamp as u64) << 32) | (self.incremental_counter as u64)
+        ((timestamp as u64) << 32) | (counter as u64)
     }
 
     /// Compute a random next_in delay, clamped to configured bounds.
@@ -194,7 +195,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
         self.client_data = Some(client_data);
         self.crypto_tool.set(updated_tool);
 
-        let tailor_buffer = settings.pool().allocate(Some(T::length() + TAILOR_LENGTH));
+        let tailor_buffer = settings.pool().allocate(Some(Tailor::<T>::len()));
         let tailor = Tailor::handshake(tailor_buffer, &identity, 0, next_in, pn, handshake_secret.len() as u16);
         handshake_secret.append(tailor.buffer().slice())
     }
@@ -244,9 +245,10 @@ pub struct ClientHealthProvider<T: IdentityType + Clone + 'static, AE: AsyncExec
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync, CC: ClientConnectionHandler + 'static> ClientHealthProvider<T, AE, SM, CC> {
-    /// Create a new health provider with pre-created channel senders.
-    pub fn new(manager: Weak<SM>, settings: Arc<Settings<AE>>, state_crypto: SharedValue<ClientCryptoTool<T>>, response_tx: WatchSender<HealthResponse<T>>, shadowride_tx: WatchSender<()>, response_rx: WatchReceiver<HealthResponse<T>>, initial_data_generator: CC) -> Self {
-        let state = Arc::new(Mutex::new(HealthState::new(settings.clone(), state_crypto, initial_data_generator, response_rx)));
+    /// Create a new health provider with pre-created channel senders. `counter` is the
+    /// per-session monotonic PN counter shared with the session manager and per-flow decoy providers.
+    pub fn new(manager: Weak<SM>, settings: Arc<Settings<AE>>, state_crypto: SharedValue<ClientCryptoTool<T>>, counter: Arc<AtomicU32>, response_tx: WatchSender<HealthResponse<T>>, shadowride_tx: WatchSender<()>, response_rx: WatchReceiver<HealthResponse<T>>, initial_data_generator: CC) -> Self {
+        let state = Arc::new(Mutex::new(HealthState::new(settings.clone(), state_crypto, counter, initial_data_generator, response_rx)));
         Self {
             manager,
             state,
@@ -258,18 +260,29 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
 
     /// Perform the handshake and start the background health check timer.
     /// Must be called exactly once, after the background receive loop is running.
-    pub async fn perform_handshake(&self) {
+    pub async fn perform_handshake(&self) -> Result<(), SessionControllerError> {
         let mut response_rx = self.state.lock().await.response_rx.take().expect("perform_handshake() must be called exactly once");
         let handshake_factor = self.settings.get(&HANDSHAKE_NEXT_IN_FACTOR);
-        let initial_server_next_in = self.do_handshake(&mut response_rx, handshake_factor).await;
+        let Some(initial_server_next_in) = self.do_handshake(&mut response_rx, handshake_factor).await else {
+            return Err(SessionControllerError::InitialHandshakeFailed(self.settings.get(&MAX_RETRIES)));
+        };
 
         let timer_response_rx = self.response_tx.subscribe();
         let timer_shadowride_rx = self.shadowride_tx.subscribe();
         let manager = self.manager.clone();
         let state = self.state.clone();
         let executor = self.settings.executor().clone();
-        executor.spawn(Self::timer_task(manager, state, timer_response_rx, timer_shadowride_rx, initial_server_next_in));
+        executor.spawn(Self::timer_task(manager, state, timer_response_rx, timer_shadowride_rx, Some(initial_server_next_in)));
         debug!("health provider: decay cycle started");
+        Ok(())
+    }
+
+    /// Snapshot `(identity, termination_code)` for use from `Drop` paths.
+    pub(super) async fn termination_snapshot(&self) -> (T, ReturnCode) {
+        let mut guard = self.state.lock().await;
+        let identity = guard.crypto_tool.get().identity();
+        let code = guard.termination_code;
+        (identity, code)
     }
 
     /// Called when a packet with HEALTH_CHECK flag is received.
@@ -555,30 +568,5 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                 }
             }
         }
-    }
-}
-
-impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Sync, CC: ClientConnectionHandler> Drop for ClientHealthProvider<T, AE, SM, CC> {
-    /// NB! There's no need for synchronization: even if a couple of packets slip through after termination, they will just get discarded.
-    fn drop(&mut self) {
-        let manager = self.manager.clone();
-        let state = self.state.clone();
-        let packet = self.settings.pool().allocate(Some(T::length()));
-
-        self.settings.executor().spawn(async move {
-            let (identity, termination_code) = {
-                let mut st = state.lock().await;
-                (st.crypto_tool.get().identity(), st.termination_code)
-            };
-            let packet_number = ((unix_timestamp_ms() / 1000) as u64) << 32;
-            let tailor = Tailor::termination(packet, &identity, termination_code, packet_number);
-
-            if let Some(mgr) = manager.upgrade() {
-                match mgr.send_packet(tailor.into_buffer(), true).await {
-                    Ok(()) => debug!("health provider: termination packet sent"),
-                    Err(err) => warn!("health provider: failed to send termination packet: {err}"),
-                }
-            }
-        });
     }
 }

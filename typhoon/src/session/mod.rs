@@ -18,5 +18,6 @@ mod server_health;
 
 #[cfg(feature = "client")]
 pub use client::ClientSessionManager;
+#[cfg(feature = "client")]
 pub use common::SessionManager;
 pub use error::SessionControllerError;

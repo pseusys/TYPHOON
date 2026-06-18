@@ -65,6 +65,36 @@ fn test_settings_fake_header_probability_zero_ok() {
     assert!(result.is_ok());
 }
 
+// Test: SEND_BYTES_JITTER > 1.0 fails assertion.
+#[test]
+fn test_settings_send_bytes_jitter_exceeds_one() {
+    let result = builder().set(&SEND_BYTES_JITTER, 1.5).build();
+    assert!(result.is_err());
+}
+
+// Test: SEND_BYTES_JITTER negative fails assertion.
+#[test]
+fn test_settings_send_bytes_jitter_negative() {
+    let result = builder().set(&SEND_BYTES_JITTER, -0.1).build();
+    assert!(result.is_err());
+}
+
+// Test: SEND_BYTES_JITTER = 0.0 and 1.0 pass assertion (inclusive range).
+#[test]
+fn test_settings_send_bytes_jitter_unit_bounds_ok() {
+    assert!(builder().set(&SEND_BYTES_JITTER, 0.0).build().is_ok());
+    assert!(builder().set(&SEND_BYTES_JITTER, 1.0).build().is_ok());
+}
+
+// Test: SEND_BYTES_CHUNK = 0 (sentinel) passes; positive ≤ MTU passes; > MTU fails.
+#[test]
+fn test_settings_send_bytes_chunk_bounds() {
+    assert!(builder().set(&SEND_BYTES_CHUNK, 0).build().is_ok());
+    assert!(builder().set(&SEND_BYTES_CHUNK, 512).build().is_ok());
+    assert!(builder().set(&SEND_BYTES_CHUNK, 1500).build().is_ok());
+    assert!(builder().set(&SEND_BYTES_CHUNK, 9000).build().is_err());
+}
+
 // Test: HEALTH_CHECK_NEXT_IN_MIN <= TIMEOUT_MAX fails assertion (next_in must be > timeout).
 #[test]
 fn test_settings_next_in_not_greater_than_timeout() {
@@ -86,18 +116,39 @@ fn test_settings_decoy_current_alpha_exceeds_one() {
     assert!(result.is_err());
 }
 
-// Test: negative FAKE_BODY_RANDOM_PROBABILITY fails assertion.
-#[test]
-fn test_settings_negative_service_probability() {
-    let result = builder().set(&FAKE_BODY_RANDOM_PROBABILITY, -1.0).build();
-    assert!(result.is_err());
-}
-
 // Test: DECOY_LENGTH_MIN > DECOY_LENGTH_MAX fails assertion.
 #[test]
 fn test_settings_decoy_length_min_exceeds_max() {
     let result = builder().set(&DECOY_LENGTH_MIN, 2000).set(&DECOY_LENGTH_MAX, 100).build();
     assert!(result.is_err());
+}
+
+// Test: DECOY_FALLTHROUGH_PACKETS_MIN > DECOY_FALLTHROUGH_PACKETS_MAX fails assertion.
+#[test]
+fn test_settings_decoy_fallthrough_min_exceeds_max() {
+    let result = builder().set(&DECOY_FALLTHROUGH_PACKETS_MIN, 0.5).set(&DECOY_FALLTHROUGH_PACKETS_MAX, 0.1).build();
+    assert!(result.is_err());
+}
+
+// Test: DECOY_FALLTHROUGH_PACKETS_MIN outside [0, 1] fails assertion.
+#[test]
+fn test_settings_decoy_fallthrough_min_out_of_unit_range() {
+    assert!(builder().set(&DECOY_FALLTHROUGH_PACKETS_MIN, -0.1).build().is_err());
+    assert!(builder().set(&DECOY_FALLTHROUGH_PACKETS_MIN, 1.5).build().is_err());
+}
+
+// Test: DECOY_FALLTHROUGH_PACKETS_MAX outside [0, 1] fails assertion.
+#[test]
+fn test_settings_decoy_fallthrough_max_out_of_unit_range() {
+    assert!(builder().set(&DECOY_FALLTHROUGH_PACKETS_MAX, -0.1).build().is_err());
+    assert!(builder().set(&DECOY_FALLTHROUGH_PACKETS_MAX, 1.5).build().is_err());
+}
+
+// Test: DECOY_FALLTHROUGH_PACKETS_* unit bounds and equal bounds pass assertion.
+#[test]
+fn test_settings_decoy_fallthrough_unit_bounds_ok() {
+    assert!(builder().set(&DECOY_FALLTHROUGH_PACKETS_MIN, 0.0).set(&DECOY_FALLTHROUGH_PACKETS_MAX, 1.0).build().is_ok());
+    assert!(builder().set(&DECOY_FALLTHROUGH_PACKETS_MIN, 0.5).set(&DECOY_FALLTHROUGH_PACKETS_MAX, 0.5).build().is_ok());
 }
 
 // Test: valid custom settings pass assertions.
@@ -127,6 +178,48 @@ fn test_env_var_override_applied() {
             None => env::remove_var(env_name),
         }
     }
+}
+
+// Test: FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN > MAX fails assertion.
+#[test]
+fn test_settings_fake_header_volatile_change_prob_min_exceeds_max() {
+    let result = builder().set(&FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN, 0.5).set(&FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX, 0.1).build();
+    assert!(result.is_err());
+}
+
+// Test: FAKE_HEADER_VOLATILE_CHANGE_PROB out of [0, 1] fails assertion.
+#[test]
+fn test_settings_fake_header_volatile_change_prob_exceeds_one() {
+    let result = builder().set(&FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX, 1.5).build();
+    assert!(result.is_err());
+}
+
+// Test: FAKE_HEADER_SWITCHING_TIMEOUT_MIN > MAX fails assertion.
+#[test]
+fn test_settings_fake_header_switching_timeout_min_exceeds_max() {
+    let result = builder().set(&FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS, 50_000).set(&FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS, 1_000).build();
+    assert!(result.is_err());
+}
+
+// Test: FAKE_HEADER_SWITCHING_TIMEOUT_MIN = 0 fails assertion (must be positive).
+#[test]
+fn test_settings_fake_header_switching_timeout_min_zero() {
+    let result = builder().set(&FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS, 0).build();
+    assert!(result.is_err());
+}
+
+// Test: DECOY_NOISY_DECOY_LENGTH_MIN > DECOY_NOISY_LENGTH_MAX fails.
+#[test]
+fn test_settings_noisy_length_min_exceeds_max() {
+    let result = builder().set(&DECOY_NOISY_DECOY_LENGTH_MIN, 1000).set(&DECOY_NOISY_LENGTH_MAX, 500).build();
+    assert!(result.is_err());
+}
+
+// Test: DECOY_HEAVY_LENGTH_MIN > DECOY_LENGTH_MAX fails.
+#[test]
+fn test_settings_heavy_length_min_exceeds_decoy_max() {
+    let result = builder().set(&DECOY_HEAVY_LENGTH_MIN, 2000).set(&DECOY_LENGTH_MAX, 1400).build();
+    assert!(result.is_err());
 }
 
 // Test: explicit override takes precedence over environment variable.

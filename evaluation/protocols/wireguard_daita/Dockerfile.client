@@ -37,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=go-build /usr/local/bin/wg-daita /usr/local/bin/wg-daita
 COPY --from=rust-build /build/machines-client.txt /etc/daita/machines.txt
 COPY common/tcp_sender.py /app/client.py
+COPY common/_profile.py   /app/_profile.py
 COPY wireguard_daita/client-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

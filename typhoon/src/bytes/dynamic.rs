@@ -229,7 +229,7 @@ impl ByteBufferMut for DynamicByteBuffer {
         }
     }
 
-    fn split_buf(&self, divide: usize) -> (Self, Self) {
+    fn split_buf_start(&self, divide: usize) -> (Self, Self) {
         let new_divide = self.start + divide;
         assert!(new_divide <= self.end, "DynamicByteBuffer has negative length ({new_divide} > {})!", self.end);
         (
@@ -248,6 +248,11 @@ impl ByteBufferMut for DynamicByteBuffer {
                 _not_sync: PhantomData,
             },
         )
+    }
+
+    #[inline]
+    fn split_buf_end(&self, divide: usize) -> (Self, Self) {
+        self.split_buf_start(self.len() - divide)
     }
 
     fn append(&self, other: &[u8]) -> Self {
@@ -351,7 +356,7 @@ impl Clone for DynamicByteBuffer {
     /// Both the original and the clone share the same raw memory.  The caller must ensure that
     /// no two live mutable views (via `slice_mut`, `set`, etc.) to **overlapping** byte ranges
     /// are used concurrently — including across threads, since `DynamicByteBuffer: Send`.
-    /// Non-overlapping views (e.g. produced by `split_buf`) may be used independently.
+    /// Non-overlapping views (e.g. produced by `split_buf_start`/`split_buf_end`) may be used independently.
     #[inline]
     fn clone(&self) -> Self {
         DynamicByteBuffer {

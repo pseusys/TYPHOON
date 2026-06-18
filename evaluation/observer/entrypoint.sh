@@ -31,8 +31,11 @@ nft add chain ip nat POSTROUTING '{ type nat hook postrouting priority 100; }'
 nft add rule ip nat POSTROUTING oifname "${RIGHT_IF}" masquerade
 
 PCAP="/captures/${PROTOCOL}${PROTOCOL_SUFFIX}.pcap"
-echo "[observer] protocol=${PROTOCOL} capture=${PCAP}"
+# CAPTURE_FILTER lets background-corpus runs widen the BPF filter to cover all
+# per-service IP slots; defaults to the legacy single-pair filter.
+CAPTURE_FILTER="${CAPTURE_FILTER:-host 172.20.0.10 or host 172.21.0.10}"
+echo "[observer] protocol=${PROTOCOL} capture=${PCAP} filter=${CAPTURE_FILTER}"
 
 exec tcpdump -U -i any -n -q \
-    "host 172.20.0.10 or host 172.21.0.10" \
+    "${CAPTURE_FILTER}" \
     -w "${PCAP}"

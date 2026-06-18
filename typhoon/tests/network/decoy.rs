@@ -48,7 +48,7 @@ where
 // ── SimpleDecoyProvider (passthrough, original tests) ─────────────────────────
 
 // Test: many messages through SimpleDecoyProvider — exercises feed_input / feed_output paths.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_decoy_simple_burst() {
     const N: usize = 30;
     let settings = default_settings();
@@ -80,7 +80,7 @@ async fn test_decoy_simple_burst() {
 }
 
 // Test: with SimpleDecoyProvider, max_data_payload() is stable across calls.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_decoy_payload_size_stable() {
     let settings = default_settings();
     let addr = free_addr();
@@ -94,28 +94,28 @@ async fn test_decoy_payload_size_stable() {
 
 // ── HeavyDecoyProvider ────────────────────────────────────────────────────────
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_decoy_heavy_burst() {
     run_echo_burst::<HeavyDecoyProvider<StaticByteBuffer, DefaultExecutor>>(10, "heavy").await;
 }
 
 // ── NoisyDecoyProvider ────────────────────────────────────────────────────────
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_decoy_noisy_burst() {
     run_echo_burst::<NoisyDecoyProvider<StaticByteBuffer, DefaultExecutor>>(10, "noisy").await;
 }
 
 // ── SmoothDecoyProvider ───────────────────────────────────────────────────────
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_decoy_smooth_burst() {
     run_echo_burst::<SmoothDecoyProvider<StaticByteBuffer, DefaultExecutor>>(10, "smooth").await;
 }
 
 // ── SparseDecoyProvider ───────────────────────────────────────────────────────
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_decoy_sparse_burst() {
     run_echo_burst::<SparseDecoyProvider<StaticByteBuffer, DefaultExecutor>>(10, "sparse").await;
 }

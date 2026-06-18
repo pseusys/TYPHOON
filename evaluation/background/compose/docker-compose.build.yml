@@ -1,0 +1,111 @@
+name: typhoon-eval-background-build
+
+services:
+
+  bg-dns-client:
+    image: typhoon-eval-bg-dns-client
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/dns/Dockerfile.client
+
+  bg-dns-server:
+    image: typhoon-eval-bg-dns-server
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/dns/Dockerfile.server
+
+  bg-gaming-client:
+    image: typhoon-eval-bg-gaming-client
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/gaming/Dockerfile.client
+
+  bg-gaming-server:
+    image: typhoon-eval-bg-gaming-server
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/gaming/Dockerfile.server
+
+  bg-rtp-voice-client:
+    image: typhoon-eval-bg-rtp-voice-client
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/rtp_voice/Dockerfile.client
+
+  bg-rtp-voice-server:
+    image: typhoon-eval-bg-rtp-voice-server
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/rtp_voice/Dockerfile.server
+
+  bg-rtp-video-client:
+    image: typhoon-eval-bg-rtp-video-client
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/rtp_video/Dockerfile.client
+
+  bg-rtp-video-server:
+    image: typhoon-eval-bg-rtp-video-server
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/rtp_video/Dockerfile.server
+
+  bg-quic-download-client:
+    image: typhoon-eval-bg-quic-download-client
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/quic_download/Dockerfile.client
+
+  bg-quic-download-server:
+    image: typhoon-eval-bg-quic-download-server
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/quic_download/Dockerfile.server
+
+  bg-quic-upload-client:
+    image: typhoon-eval-bg-quic-upload-client
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/quic_upload/Dockerfile.client
+
+  bg-quic-upload-server:
+    image: typhoon-eval-bg-quic-upload-server
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/quic_upload/Dockerfile.server
+
+  bg-control-plane-client:
+    image: typhoon-eval-bg-control-plane-client
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/control_plane/Dockerfile.client
+
+  bg-control-plane-server:
+    image: typhoon-eval-bg-control-plane-server
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/control_plane/Dockerfile.server
+
+  bg-wireguard-idle-client:
+    image: typhoon-eval-bg-wireguard-idle-client
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/wireguard_idle/Dockerfile.client
+
+  bg-wireguard-idle-server:
+    image: typhoon-eval-bg-wireguard-idle-server
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/wireguard_idle/Dockerfile.server
+
+  bg-unknown-client:
+    image: typhoon-eval-bg-unknown-client
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/unknown/Dockerfile.client
+
+  bg-unknown-server:
+    image: typhoon-eval-bg-unknown-server
+    build:
+      context: ../../..
+      dockerfile: evaluation/background/unknown/Dockerfile.server

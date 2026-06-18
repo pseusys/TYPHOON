@@ -1,47 +1,36 @@
-"""
-TYPHOON flow packet structure visualiser.
+"""TYPHOON flow packet-structure visualiser.
 
-Runs a TYPHOON example with capture logging (primary mode) or reads an existing
-log file (fallback), then generates a single PNG with one stacked-bar subplot
-per paired flow showing per-packet wire composition over time.
+Runs a TYPHOON example with capture logging (or reads an existing log file)
+and produces a stacked-bar PNG with one subplot per paired flow. c2s and s2c
+flows of the same connection are merged via max-Jaccard overlap of active
+time buckets (c2s positive, s2c negative; outlines encode packet kind).
 
-c2s and s2c flows that share the same logical connection are detected by
-maximising Jaccard overlap of their active time buckets and merged into one
-subplot (c2s bars positive, s2c bars negative with hatching).
-
-Two display modes:
-  - Bucketed (default): packets are summed into fixed-width time buckets.
-  - Per-packet (--per-packet): one bar per packet; x spacing is proportional
-    to the inter-packet delay so gaps between bars visually encode time.
-
-Usage (via poe):
-    poe plot --example heavy_traffic --out-dir out/
-    poe plot --log trace.log --out-dir out/
-    poe plot --example hello_world --per-packet --out-dir out/
-
-Usage (direct):
-    python -m typhoon_eval.flow_plot --example hello_world --out-dir out/
-    python -m typhoon_eval.flow_plot --log trace.log --out-dir out/
-    python -m typhoon_eval.flow_plot --example hello_world --per-packet --out-dir out/
+Display modes: bucketed (sum into fixed-width buckets, default) or
+per-packet (one bar per packet; x spacing proportional to inter-packet
+delay so gaps visually encode time).
 """
 
-import json
-import os
-import subprocess
-import sys
 from collections import defaultdict
+from json import JSONDecodeError, loads
+from os import environ
 from pathlib import Path
+from subprocess import TimeoutExpired, run
+from sys import exit, stdin
 
-import click
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
 import numpy as np
+from click import Path as ClickPath
+from click import UsageError, command, echo, option
+from matplotlib import patches as mpatches
+from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
 
 # Default path to the typhoon Rust crate, relative to this file.
-_DEFAULT_TYPHOON_DIR = Path(__file__).parent.parent.parent.parent / "typhoon"
+_DEFAULT_TYPHOON_DIR = Path(__file__).parent.parent.parent.parent.parent / "typhoon"
 
 # Wire-packet component order (bottom → top in each bar).
 _COMPONENTS = ["tailor", "crypto", "header", "payload", "body"]
+# Minimum records to autoscale a histogram bucket — below this we fall back to 10 ms.
+MIN_RECORDS_FOR_AUTO_BUCKET = 2
 
 _COLORS = {
     "tailor":  "#555555",
@@ -49,6 +38,12 @@ _COLORS = {
     "header":  "#e67e22",
     "payload": "#2980b9",
     "body":    "#95a5a6",
+}
+
+_KIND_EDGE_COLORS = {
+    "Data":    "#2c3e50",
+    "Service": "#f39c12",
+    "Decoy":   "#e74c3c",
 }
 
 
@@ -69,8 +64,8 @@ def _parse_lines(lines: list[str]) -> tuple[list[dict], list[dict]]:
         if brace == -1:
             continue
         try:
-            rec = json.loads(line[brace:])
-        except json.JSONDecodeError:
+            rec = loads(line[brace:])
+        except JSONDecodeError:
             continue
         if rec.get("kind") == "Config":
             configs.append(rec)
@@ -79,11 +74,11 @@ def _parse_lines(lines: list[str]) -> tuple[list[dict], list[dict]]:
     return packets, configs
 
 
-def _run_example(example: str, typhoon_dir: Path, timeout: int) -> tuple[list[dict], list[dict]]:
+def _run_example(example: str, typhoon_dir: Path, timeout: int, extra_env: dict | None = None) -> tuple[list[dict], list[dict]]:
     """Build and run a TYPHOON example with capture logging; return (packets, configs)."""
-    env = {**os.environ, "RUST_LOG": "typhoon::capture=trace"}
+    env = {**environ, "RUST_LOG": "typhoon::capture=trace", **(extra_env or {})}
     try:
-        result = subprocess.run(
+        result = run(
             ["cargo", "run", "--features", "capture", "--example", example],
             cwd=typhoon_dir,
             capture_output=True,
@@ -91,7 +86,7 @@ def _run_example(example: str, typhoon_dir: Path, timeout: int) -> tuple[list[di
             timeout=timeout,
             env=env,
         )
-    except subprocess.TimeoutExpired as exc:
+    except TimeoutExpired as exc:
         stderr = exc.stderr or ""
         return _parse_lines((stderr if isinstance(stderr, str) else stderr.decode()).splitlines())
     return _parse_lines(result.stderr.splitlines())
@@ -99,7 +94,7 @@ def _run_example(example: str, typhoon_dir: Path, timeout: int) -> tuple[list[di
 
 def _auto_bucket_ms(records: list[dict], target_bars: int = 200) -> int:
     """Choose a bucket width (ms) that produces roughly target_bars bars."""
-    if len(records) < 2:
+    if len(records) < MIN_RECORDS_FOR_AUTO_BUCKET:
         return 10
     duration = max(r["t"] for r in records) - min(r["t"] for r in records)
     return max(1, duration // target_bars)
@@ -109,7 +104,7 @@ def _bucket(records: list[dict], bucket_ms: int) -> dict[str, dict[int, dict]]:
     """Group records into time buckets per flow address."""
     t_min = min(r["t"] for r in records)
 
-    def _empty():
+    def _empty() -> dict[str, dict[str, int]]:
         return {"c2s": {c: 0 for c in _COMPONENTS}, "s2c": {c: 0 for c in _COMPONENTS}}
 
     flows: dict[str, dict[int, dict]] = defaultdict(lambda: defaultdict(_empty))
@@ -184,12 +179,8 @@ def _pair_flows(flows: dict[str, dict]) -> list[tuple[str | None, str | None, di
                     merged[t] = {"c2s": {c: 0 for c in _COMPONENTS}, "s2c": dict(dirs["s2c"])}
         paired.append((c2s_addr, best_match, merged))
 
-    for s2c_addr in s2c_sorted:
-        if s2c_addr not in used_s2c:
-            paired.append((None, s2c_addr, s2c_only[s2c_addr]))
-
-    for addr, buckets in mixed.items():
-        paired.append((addr, addr, buckets))
+    paired.extend((None, s2c_addr, s2c_only[s2c_addr]) for s2c_addr in s2c_sorted if s2c_addr not in used_s2c)
+    paired.extend((addr, addr, buckets) for addr, buckets in mixed.items())
 
     return paired
 
@@ -215,6 +206,7 @@ def _pair_records(records: list[dict]) -> list[tuple[str | None, str | None, lis
         if s2c_addr and s2c_addr != c2s_addr:
             pair_recs.extend(flow_records.get(s2c_addr, []))
         pair_recs.sort(key=lambda r: r["t"])
+        pair_recs.sort(key=lambda r: r["t"])
         result.append((c2s_addr, s2c_addr, pair_recs))
     return result
 
@@ -225,7 +217,9 @@ def _compute_xpos(timestamps: list[int]) -> np.ndarray:
 
     Each packet occupies exactly 1 unit on the x axis; the gap between consecutive
     packets grows with their time difference, normalised by the median inter-packet
-    gap so typical neighbours are ~2 units apart and outliers are proportionally wider.
+    gap so typical neighbours are ~2 units apart. Gaps larger than 10× the median
+    are capped to prevent rare large delays (e.g. infrequent decoy packets) from
+    compressing all other bars to sub-pixel width.
     """
     n = len(timestamps)
     if n <= 1:
@@ -234,9 +228,10 @@ def _compute_xpos(timestamps: list[int]) -> np.ndarray:
     positive = diffs[diffs > 0]
     median_gap = float(np.median(positive)) if len(positive) > 0 else 1.0
     gap_weight = 1.0 / median_gap
+    gap_cap = median_gap * 10.0
     xpos = np.zeros(n)
     for i, d in enumerate(diffs, start=1):
-        xpos[i] = xpos[i - 1] + 1.0 + gap_weight * d
+        xpos[i] = xpos[i - 1] + 1.0 + gap_weight * min(float(d), gap_cap)
     return xpos
 
 
@@ -293,37 +288,42 @@ def _subplot_title(
     return base
 
 
-def _draw_bars(ax, times_or_xpos, values_by_direction: dict[str, dict[int | float, dict]]) -> None:
+def _draw_bars(ax: Axes, times_or_xpos: list[float] | list[int], values_by_direction: dict[str, dict[int | float, dict]], kind_by_xpos: dict | None = None) -> None:
     """Draw stacked bars for both directions onto ax."""
-    def _empty_dirs() -> dict:
-        return {"c2s": {c: 0 for c in _COMPONENTS}, "s2c": {c: 0 for c in _COMPONENTS}}
-
     for direction, sign in (("c2s", 1), ("s2c", -1)):
         bottoms: dict = {}
         for comp in _COMPONENTS:
             xs = list(values_by_direction[direction].keys())
             heights = [values_by_direction[direction][x][comp] for x in xs]
             bots = [bottoms.get(x, 0.0) * sign for x in xs]
+            if kind_by_xpos is not None:
+                edge_colors = [_KIND_EDGE_COLORS.get(kind_by_xpos.get(x, "Data"), "#2c3e50") for x in xs]
+                lw = 0.4
+            else:
+                edge_colors = "white"
+                lw = 0.3
             ax.bar(
                 xs,
                 [h * sign for h in heights],
                 bottom=bots,
                 color=_COLORS[comp],
-                hatch="/" if direction == "s2c" else None,
-                edgecolor="white",
-                linewidth=0.3,
+                edgecolor=edge_colors,
+                linewidth=lw,
                 width=0.8,
             )
             for x, h in zip(xs, heights, strict=True):
                 bottoms[x] = bottoms.get(x, 0.0) + h
 
 
-def _make_legend() -> tuple[list, list]:
+def _make_legend(with_kinds: bool = False) -> tuple[list, list]:
     component_patches = [mpatches.Patch(color=_COLORS[c], label=c) for c in _COMPONENTS]
     direction_patches = [
         mpatches.Patch(facecolor="white", edgecolor="gray", label="c2s (positive)"),
-        mpatches.Patch(facecolor="white", edgecolor="gray", hatch="///", label="s2c (negative)"),
+        mpatches.Patch(facecolor="white", edgecolor="gray", label="s2c (negative)"),
     ]
+    if with_kinds:
+        kind_patches = [mpatches.Patch(facecolor="gray", edgecolor=ec, linewidth=1.5, label=k) for k, ec in _KIND_EDGE_COLORS.items()]
+        return component_patches, direction_patches, kind_patches
     return component_patches, direction_patches
 
 
@@ -358,7 +358,7 @@ def _plot_all(
             dirs = buckets.get(t, _empty_dirs())
             for direction in ("c2s", "s2c"):
                 values_by_dir[direction][t] = dirs[direction]
-        _draw_bars(ax, times, values_by_dir)
+        _draw_bars(ax, times, values_by_dir, kind_by_xpos=None)
 
         ax.axhline(0, color="black", linewidth=0.8)
         ax.set_xlabel(f"Time ({bucket_ms} ms buckets)")
@@ -370,10 +370,10 @@ def _plot_all(
     fig.tight_layout()
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{name}.png"
-    fig.savefig(path, format="png", bbox_inches="tight", dpi=100)
+    path = out_dir / f"{name}.pdf"
+    fig.savefig(path, format="pdf", bbox_inches="tight")
     plt.close(fig)
-    click.echo(f"Saved: {path}")
+    echo(f"Saved: {path}")
 
 
 def _plot_all_per_packet(
@@ -393,29 +393,33 @@ def _plot_all_per_packet(
     if not pairs_with_records:
         return
 
-    max_packets = max(len(r) for _, _, r in pairs_with_records)
-    fig_width = min(60, max(18, max_packets * 0.08))
+    # Pre-compute xpos for all pairs to size the figure so bars are always ≥ 2 px.
+    all_xpos = [_compute_xpos([r["t"] for r in recs]) for _, _, recs in pairs_with_records]
+    max_xpos_range = max((xp[-1] - xp[0]) for xp in all_xpos if len(xp) > 1) if all_xpos else 1.0
+    fig_width = max(18.0, max_xpos_range * 5.0 / (0.8 * 100))  # ensure ≥ 5 px/bar at 100 dpi
+    fig_width = min(120.0, fig_width)
+
     n = len(pairs_with_records)
     fig, axes = plt.subplots(n, 1, figsize=(fig_width, 4.5 * n), squeeze=False)
     axes_flat = axes[:, 0]
 
-    component_patches, direction_patches = _make_legend()
+    component_patches, direction_patches, kind_patches = _make_legend(with_kinds=True)
 
-    for ax, (c2s_addr, s2c_addr, pair_records) in zip(axes_flat, pairs_with_records, strict=True):
+    for ax, (c2s_addr, s2c_addr, pair_records), xpos in zip(axes_flat, pairs_with_records, all_xpos, strict=True):
         timestamps = [r["t"] for r in pair_records]
-        xpos = _compute_xpos(timestamps)
 
         values_by_dir: dict[str, dict] = {"c2s": {}, "s2c": {}}
+        kind_by_xpos: dict[float, str] = {}
         for xi, r in zip(xpos, pair_records, strict=True):
             direction = r.get("dir", "c2s")
             values_by_dir[direction][xi] = {comp: r.get(comp, 0) for comp in _COMPONENTS}
-        # Ensure both directions have entries (empty dicts are fine for _draw_bars)
-        _draw_bars(ax, xpos, values_by_dir)
+            kind_by_xpos[xi] = r.get("kind", "Data")
+        _draw_bars(ax, xpos, values_by_dir, kind_by_xpos=kind_by_xpos)
 
         ax.axhline(0, color="black", linewidth=0.8)
         ax.set_ylabel("Bytes")
         ax.set_title(_subplot_title(c2s_addr, s2c_addr, configs), fontsize=8)
-        ax.legend(handles=component_patches + direction_patches, loc="upper right", fontsize=8)
+        ax.legend(handles=component_patches + direction_patches + kind_patches, loc="upper right", fontsize=8)
 
         # Place ~10 time-reference ticks labelled with ms-since-start.
         n_ticks = min(10, len(timestamps))
@@ -432,45 +436,45 @@ def _plot_all_per_packet(
     fig.tight_layout()
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{name}_packets.png"
-    fig.savefig(path, format="png", bbox_inches="tight", dpi=100)
+    path = out_dir / f"{name}_packets.pdf"
+    fig.savefig(path, format="pdf", bbox_inches="tight")
     plt.close(fig)
-    click.echo(f"Saved: {path}")
+    echo(f"Saved: {path}")
 
 
-@click.command()
-@click.option("--example", default=None, help="Rust example name to compile and run")
-@click.option("--log", "log_file", default=None, type=click.Path(), help="Existing log file (use '-' for stdin)")
-@click.option("--out-dir", required=True, type=click.Path(), help="Directory for output PNG(s)")
-@click.option("--typhoon-dir", default=str(_DEFAULT_TYPHOON_DIR), show_default=True, type=click.Path(exists=True), help="Path to the typhoon Rust crate")
-@click.option("--timeout", default=30, show_default=True, help="Timeout in seconds when running an example")
-@click.option("--bucket-ms", default=0, show_default=True, help="Time bucket width in ms (0 = auto); ignored with --per-packet")
-@click.option("--per-packet", is_flag=True, default=False, help="One bar per packet; x spacing proportional to inter-packet delay")
+@command()
+@option("--example", default=None, help="Rust example name to compile and run")
+@option("--log", "log_file", default=None, type=ClickPath(), help="Existing log file (use '-' for stdin)")
+@option("--out-dir", required=True, type=ClickPath(), help="Directory for output PNG(s)")
+@option("--typhoon-dir", default=str(_DEFAULT_TYPHOON_DIR), show_default=True, type=ClickPath(exists=True), help="Path to the typhoon Rust crate")
+@option("--timeout", default=30, show_default=True, help="Timeout in seconds when running an example")
+@option("--bucket-ms", default=0, show_default=True, help="Time bucket width in ms (0 = auto); ignored with --per-packet")
+@option("--per-packet/--bucketed", default=True, help="One bar per packet (default) or bucket-aggregated bars")
 def main(example: str, log_file: str, out_dir: str, typhoon_dir: str, timeout: int, bucket_ms: int, per_packet: bool) -> None:
     """Generate paired-flow packet structure diagrams from TYPHOON capture logs."""
     if not example and not log_file:
-        raise click.UsageError("Provide either --example or --log.")
+        raise UsageError("Provide either --example or --log.")
     if example and log_file:
-        raise click.UsageError("--example and --log are mutually exclusive.")
+        raise UsageError("--example and --log are mutually exclusive.")
 
     if example:
         records, configs = _run_example(example, Path(typhoon_dir), timeout)
         name = example
     elif log_file == "-":
-        records, configs = _parse_lines(sys.stdin.readlines())
+        records, configs = _parse_lines(stdin.readlines())
         name = "capture"
     else:
         records, configs = _parse_lines(Path(log_file).read_text().splitlines())
         name = Path(log_file).stem
 
     if not records:
-        click.echo(
+        echo(
             "No capture records found.\n"
             "Ensure the typhoon crate is built with --features capture and "
             "RUST_LOG=typhoon::capture=trace is set.",
             err=True,
         )
-        sys.exit(1)
+        exit(1)
 
     out = Path(out_dir)
     if per_packet:

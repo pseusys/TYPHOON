@@ -2,9 +2,10 @@
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Weak};
 
-use crate::bytes::DynamicByteBuffer;
+use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::CachedValue;
 use crate::capture::{CaptureContext, record_flow_config};
 use crate::crypto::ClientCryptoTool;
@@ -15,26 +16,25 @@ use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
 use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender};
 use crate::settings::Settings;
-use crate::tailor::IdentityType;
+use crate::tailor::{IdentityType, Tailor};
 use crate::utils::socket::{Socket, SocketError};
 use crate::utils::sync::{AsyncExecutor, Mutex};
 
 /// Client-side flow manager that handles packet encryption, decoy traffic, and socket I/O.
 pub struct ClientFlowManager<T: IdentityType + Clone, AE: AsyncExecutor> {
-    decoy_provider: Mutex<Box<dyn DecoyProvider>>,
-    send_internal: Mutex<FlowSendInternal<ClientCryptoTool<T>>>,
-    receive_internal: Mutex<FlowReceiveInternal<ClientCryptoTool<T>>>,
+    decoy_provider: Box<dyn DecoyProvider>,
+    send_internal: Mutex<FlowSendInternal<T>>,
+    receive_internal: Mutex<FlowReceiveInternal<T>>,
     sock: Socket,
     mtu: usize,
     settings: Arc<Settings<AE>>,
-    /// Handler for unidentified packets. Locked only for rare unexpected arrivals.
     probe_handler: Mutex<Box<dyn ActiveProbeHandler<AE>>>,
 }
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowManager<T, AE> {
     /// Create a new client flow manager.
-    pub(crate) async fn new(config: FlowConfig, mut cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, sock: Socket, probe_factory: Option<&ProbeFactory<AE>>, decoy_factory: &DecoyFactory<T, AE>, addr: SocketAddr) -> Result<Arc<Self>, FlowControllerError> {
-        let identity = cipher.get_mut().map_err(FlowControllerError::MissingCache)?.identity();
+    pub(crate) async fn new(config: FlowConfig, cipher: CachedValue<ClientCryptoTool<T>>, settings: Arc<Settings<AE>>, sock: Socket, probe_factory: Option<&ProbeFactory<AE>>, decoy_factory: &DecoyFactory<T, AE>, counter: Arc<AtomicU32>, addr: SocketAddr) -> Result<Arc<Self>, FlowControllerError> {
+        let identity = cipher.derive(ClientCryptoTool::<T>::identity).map_err(FlowControllerError::MissingCache)?;
         let send_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
         let receive_provider = cipher.create_sibling().map_err(FlowControllerError::MissingCache)?;
         let handler_factory = probe_factory.cloned();
@@ -42,7 +42,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowM
 
         let manager_ref = Arc::new_cyclic(|m: &Weak<ClientFlowManager<T, AE>>| {
             let mgr: Weak<dyn DecoyFlowSender> = m.clone();
-            let decoy = decoy_factory(mgr, settings.clone(), identity);
+            let decoy = decoy_factory(mgr, settings.clone(), identity, counter);
             let probe_handler: Box<dyn ActiveProbeHandler<AE>> = match &handler_factory {
                 Some(f) => f(),
                 None => Box::new(NoopProbeHandler),
@@ -50,7 +50,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowM
             let mtu = settings.mtu();
             record_flow_config(addr, "c2s", || (config.fake_body_mode.description(), config.fake_header_mode.len(), decoy.name()));
             ClientFlowManager {
-                decoy_provider: Mutex::new(decoy),
+                decoy_provider: decoy,
                 send_internal: Mutex::new(FlowSendInternal {
                     provider: send_provider,
                     config,
@@ -65,7 +65,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ClientFlowM
                 probe_handler: Mutex::new(probe_handler),
             }
         });
-        manager_ref.decoy_provider.lock().await.start().await;
+        manager_ref.decoy_provider.start().await;
         let weak: Weak<dyn ProbeFlowSender> = Arc::downgrade(&manager_ref) as Weak<dyn ProbeFlowSender>;
         manager_ref.probe_handler.lock().await.start(weak, settings_for_start).await;
         Ok(manager_ref)
@@ -78,43 +78,55 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ProbeFlowSe
     }
 }
 
+impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyFlowSender for ClientFlowManager<T, AE> {
+    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>> {
+        Box::pin(<Self as FlowManager>::send_packet(self, packet, fallthrough, is_maintenance))
+    }
+}
+
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager for ClientFlowManager<T, AE> {
-    async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {
-        let notified_packet = {
-            let mut lock = self.decoy_provider.lock().await;
-            let notified_packet = lock.feed_output(packet, generated).await;
-            if notified_packet.is_none() {
-                return Ok(());
-            }
-            notified_packet
+    async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Result<(), FlowControllerError> {
+        let tailor_len = Tailor::<T>::len();
+        let (body, tailor_buf) = packet.split_buf_end(tailor_len);
+
+        let Some(notified_body) = self.decoy_provider.feed_output(body, tailor_buf.clone()).await else {
+            return Ok(());
         };
 
         let mut lock = self.send_internal.lock().await;
-        let full_packet = lock.prepare_outgoing(notified_packet.unwrap(), self.mtu, self.settings.pool())?;
-        self.sock.send(full_packet).await.map_err(FlowControllerError::SocketError)?;
+        let full_packet = lock.prepare_outgoing(notified_body.expand_end(tailor_buf.len()), self.mtu, self.settings.pool(), fallthrough, is_maintenance)?;
+        if full_packet.len() > 0 {
+            self.sock.send(full_packet).await.map_err(FlowControllerError::SocketError)?;
+        }
         Ok(())
     }
 
     async fn receive_packet(&self, packet: DynamicByteBuffer) -> Result<DynamicByteBuffer, FlowControllerError> {
         loop {
-            let packet = self.sock.recv(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
-            let notified_packet = {
-                let mut lock = self.decoy_provider.lock().await;
-                let notified_packet = lock.feed_input(packet).await;
-                if notified_packet.is_none() {
-                    continue;
+            let wire_packet = self.sock.recv(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
+
+            let (body, tailor_buf) = {
+                let mut lock = self.receive_internal.lock().await;
+                match lock.deobfuscate_incoming(wire_packet.clone(), self.settings.pool())? {
+                    None => {
+                        self.probe_handler.lock().await.process(wire_packet, None).await;
+                        continue;
+                    }
+                    Some(pair) => pair,
                 }
-                notified_packet.unwrap()
+            };
+
+            let Some(notified_body) = self.decoy_provider.feed_input(body.clone(), tailor_buf.clone()).await else {
+                continue;
             };
 
             let incoming_packet = {
-                let mut lock = self.receive_internal.lock().await;
-                lock.process_incoming(notified_packet, self.settings.pool())?
+                let lock = self.receive_internal.lock().await;
+                lock.process_with_tailor(notified_body, tailor_buf)
             };
-            if let ProcessIncomingResult::Unexpected(pkt) = incoming_packet {
-                self.probe_handler.lock().await.process(pkt, None).await;
-            } else if let ProcessIncomingResult::Valid(result) = incoming_packet {
-                return Ok(result);
+            match incoming_packet {
+                ProcessIncomingResult::Decoy => {}
+                ProcessIncomingResult::Valid(result) => return Ok(result),
             }
         }
     }

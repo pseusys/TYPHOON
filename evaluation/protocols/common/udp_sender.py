@@ -1,42 +1,40 @@
 #!/usr/bin/env python3
-import os
-import signal
-import socket
-import sys
-import time
+"""
+UDP sender — sends the c2s portion of the active TRAFFIC_PROFILE to SERVER_HOST:9000, exits 0.
 
-server_host = os.environ["SERVER_HOST"]
-transfer_bytes = int(os.environ.get("TRANSFER_BYTES", 104_857_600))
+Env vars:
+  SERVER_HOST       destination IP or hostname (required)
+  TRAFFIC_PROFILE   profile name (informational)
+  PROFILE_CHUNK_C2S, PROFILE_IAT_C2S_MS, PROFILE_BYTES_C2S, PROFILE_DURATION_S,
+  PROFILE_BURSTY, PROFILE_BURST_COUNT, PROFILE_BURST_IDLE_S
+"""
+
+from os import environ
+from signal import SIGTERM, signal
+from socket import AF_INET, SOCK_DGRAM, socket
+from sys import exit
+from time import monotonic, sleep
+
+from _profile import run_profile
+
+signal(SIGTERM, lambda *_: exit(0))
+
+server_host = environ["SERVER_HOST"]
 port = 9000
-chunk_size = 500  # small payload so padding protocols show distinct wire-size distributions
 
-delay_ms = float(os.environ.get("INTER_PACKET_DELAY_MS", 0))
-delay_every = int(os.environ.get("DELAY_EVERY_N", 1))
-
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock = socket(AF_INET, SOCK_DGRAM)
 sock.connect((server_host, port))
 
-# Brief pause so the server socket is definitely bound before first packet.
-time.sleep(0.2)
+# Wait 200 ms so the server socket is bound before the first packet arrives.
+sleep(0.2)
 
-chunk = bytes(chunk_size)
-sent = 0
-packets = 0
-total_sleep = 0.0
-transfer_start = time.monotonic()
-while sent < transfer_bytes:
-    n = min(chunk_size, transfer_bytes - sent)
-    sock.send(chunk[:n])
-    sent += n
-    packets += 1
-    if delay_ms > 0 and packets % delay_every == 0:
-        time.sleep(delay_ms / 1000)
-        total_sleep += delay_ms / 1000
-transfer_time_s = time.monotonic() - transfer_start - total_sleep
+transfer_start = monotonic()
+sent, total_sleep = run_profile(sock.send)
+transfer_time_s = monotonic() - transfer_start - total_sleep
 
-sock.send(b"DONE")
-signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-time.sleep(0.5)  # let the VPN daemon flush the last packet before the container exits
 print(f"sent {sent} bytes", flush=True)
 print(f"transfer_time_s={transfer_time_s:.3f}", flush=True)
-sys.exit(0)
+
+sock.send(b"DONE")
+sleep(0.5)
+exit(0)

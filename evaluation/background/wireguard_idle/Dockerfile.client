@@ -1,0 +1,9 @@
+FROM alpine:3.20
+
+RUN apk add --no-cache iproute2 wireguard-tools
+
+COPY evaluation/background/wireguard_idle/wireguard_idle.sh /usr/local/bin/wireguard_idle
+RUN chmod +x /usr/local/bin/wireguard_idle
+
+ENV ROLE=client
+CMD ["/usr/local/bin/wireguard_idle"]

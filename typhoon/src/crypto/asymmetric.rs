@@ -16,6 +16,8 @@ use crate::certificate::ObfuscationBufferContainer;
 #[cfg(any(feature = "client", feature = "full_software", feature = "full_hardware"))]
 use crate::crypto::error::HandshakeError;
 use crate::crypto::symmetric::{ANONYMOUS_NONCE_LEN, Symmetric, decrypt_anonymously, encrypt_anonymously};
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN};
 use crate::utils::random::{SupportRng, get_rng};
 
 cfg_if! {
@@ -38,12 +40,17 @@ use crate::crypto::ClientData;
 const X25519_KEY_LENGTH: usize = 32;
 const NONCE_LENGTH: usize = 32;
 
+/// Bytes added to the client→server plaintext tailor by full-mode obfuscation.
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+pub(crate) const TAILOR_C2S_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN + X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN + NONCE_LENGTH;
+
 const CLIENT_HANDSHAKE_HEADER_SIZE: usize = X25519_KEY_LENGTH + CRYPTO_CIPHERTEXTBYTES + 2 * ANONYMOUS_NONCE_LEN + NONCE_LENGTH;
 const SERVER_HANDSHAKE_HEADER_SIZE: usize = X25519_KEY_LENGTH + Signature::BYTE_SIZE + ANONYMOUS_NONCE_LEN + NONCE_LENGTH;
 
 const INITIAL_DATA_KEY: &str = "initial data obfuscation key";
 const CLIENT_HANDSHAKE_OBFUSCATION_KEY: &str = "handshake client obfuscation key";
 const SERVER_HANDSHAKE_OBFUSCATION_KEY: &str = "handshake server obfuscation key";
+const HANDSHAKE_TRANSCRIPT_KEY: &str = "handshake transcript key";
 const SESSION_KEY: &str = "session key";
 
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
@@ -83,7 +90,7 @@ impl ClientCertificate {
             initial_key: initial_encryption_key,
         };
 
-        let handshake_buffer = pool.allocate_precise(0, 0, CLIENT_HANDSHAKE_HEADER_SIZE);
+        let handshake_buffer = pool.allocate_precise(0, pool.before_cap(), CLIENT_HANDSHAKE_HEADER_SIZE);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append_buf(&ciphertext_obfuscated).append_buf(&nonce);
 
         let handshake_secret = if initial_data.is_empty() {
@@ -102,15 +109,18 @@ impl ClientCertificate {
     /// If the response contains encrypted initial data beyond the crypto header, decrypts it with the initial key.
     /// Args: client ephemeral data, server handshake, pool. Returns: (session_key, server_initial_data).
     pub(crate) fn decapsulate_handshake_client(&self, data: ClientData, handshake_secret: DynamicByteBuffer, pool: &BytePool) -> Result<(FixedByteBuffer<32>, DynamicByteBuffer), HandshakeError> {
+        if handshake_secret.len() < SERVER_HANDSHAKE_HEADER_SIZE {
+            return Err(HandshakeError::handshake_authentication_error(&format!("server handshake response too short: {} < {SERVER_HANDSHAKE_HEADER_SIZE}", handshake_secret.len())));
+        }
         let (crypto_header, encrypted_initial_data) = if handshake_secret.len() > SERVER_HANDSHAKE_HEADER_SIZE {
-            let (header, enc_data) = handshake_secret.split_buf(SERVER_HANDSHAKE_HEADER_SIZE);
+            let (header, enc_data) = handshake_secret.split_buf_start(SERVER_HANDSHAKE_HEADER_SIZE);
             (header, Some(enc_data))
         } else {
             (handshake_secret, None)
         };
 
-        let (mut ephemeral_public_obfuscated, rest) = crypto_header.split_buf(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN);
-        let (transcript_signed, nonce) = rest.split_buf(Signature::BYTE_SIZE);
+        let (mut ephemeral_public_obfuscated, rest) = crypto_header.split_buf_start(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN);
+        let (transcript_signed, nonce) = rest.split_buf_start(Signature::BYTE_SIZE);
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(SERVER_HANDSHAKE_OBFUSCATION_KEY)).update(self.obfuscation_buffer().slice()).update(nonce.slice()).finalize();
         let ephemeral_public_deobfuscated = decrypt_anonymously(masking_key_hash.as_bytes(), &mut ephemeral_public_obfuscated);
@@ -121,7 +131,7 @@ impl ClientCertificate {
 
         let transcript_signed_bytes: [u8; Signature::BYTE_SIZE] = (&transcript_signed).into();
         let transcript_signed = Signature::from_bytes(&transcript_signed_bytes);
-        let transcript = Hasher::new().update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(data.nonce.slice()).update(nonce.slice()).finalize();
+        let transcript = Hasher::new_keyed(&hash_derive_key_context(HANDSHAKE_TRANSCRIPT_KEY)).update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(data.nonce.slice()).update(nonce.slice()).finalize();
         if let Err(err) = self.vpk.verify_strict(transcript.as_bytes(), &transcript_signed) {
             return Err(HandshakeError::handshake_authentication_error(&format!("server identity verification error: {err}")));
         }
@@ -165,17 +175,22 @@ impl ClientCertificate {
 impl ServerSecret<'_> {
     /// Server decapsulate client handshake: deobfuscate, decapsulate McEliece, derive key.
     /// If the handshake contains encrypted initial data beyond the crypto header, decrypts it with the initial key.
-    /// Args: client handshake_secret, pool. Returns: (ServerData, initial_encryption_key, client_initial_data).
-    pub fn decapsulate_handshake_server(&self, handshake_secret: DynamicByteBuffer, pool: &BytePool) -> (ServerData, FixedByteBuffer<32>, DynamicByteBuffer) {
+    /// Args: client handshake_secret, pool. Returns: `Some((ServerData, initial_encryption_key, client_initial_data))`
+    /// on success, or `None` when the handshake body is shorter than the crypto header — every subsequent
+    /// split would otherwise panic on a too-small buffer.
+    pub fn decapsulate_handshake_server(&self, handshake_secret: DynamicByteBuffer, pool: &BytePool) -> Option<(ServerData, FixedByteBuffer<32>, DynamicByteBuffer)> {
+        if handshake_secret.len() < CLIENT_HANDSHAKE_HEADER_SIZE {
+            return None;
+        }
         let (crypto_header, encrypted_initial_data) = if handshake_secret.len() > CLIENT_HANDSHAKE_HEADER_SIZE {
-            let (header, enc_data) = handshake_secret.split_buf(CLIENT_HANDSHAKE_HEADER_SIZE);
+            let (header, enc_data) = handshake_secret.split_buf_start(CLIENT_HANDSHAKE_HEADER_SIZE);
             (header, Some(enc_data))
         } else {
             (handshake_secret, None)
         };
 
-        let (mut ephemeral_public_obfuscated, rest) = crypto_header.split_buf(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN);
-        let (mut ciphertext_obfuscated, nonce) = rest.split_buf(CRYPTO_CIPHERTEXTBYTES + ANONYMOUS_NONCE_LEN);
+        let (mut ephemeral_public_obfuscated, rest) = crypto_header.split_buf_start(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN);
+        let (mut ciphertext_obfuscated, nonce) = rest.split_buf_start(CRYPTO_CIPHERTEXTBYTES + ANONYMOUS_NONCE_LEN);
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(CLIENT_HANDSHAKE_OBFUSCATION_KEY)).update(self.obfuscation_buffer().slice()).update(nonce.slice()).finalize();
 
@@ -207,7 +222,7 @@ impl ServerSecret<'_> {
             nonce: nonce_fixed,
         };
 
-        (server_data, initial_encryption_key, client_initial_data)
+        Some((server_data, initial_encryption_key, client_initial_data))
     }
 
     /// Server handshake response: generate ephemeral X25519, sign transcript, derive session key.
@@ -220,7 +235,7 @@ impl ServerSecret<'_> {
         let mut ephemeral_public = pool.allocate_precise_from_array_with_capacity(&PublicKey::from(&ephemeral_secret).to_bytes(), 0, ANONYMOUS_NONCE_LEN);
         let shared_secret = ephemeral_secret.diffie_hellman(&data.ephemeral_key);
 
-        let transcript = Hasher::new().update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(data.nonce.slice()).update(nonce.slice()).finalize();
+        let transcript = Hasher::new_keyed(&hash_derive_key_context(HANDSHAKE_TRANSCRIPT_KEY)).update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(data.nonce.slice()).update(nonce.slice()).finalize();
         let transcript_signed = self.vsk.sign(transcript.as_bytes());
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(SERVER_HANDSHAKE_OBFUSCATION_KEY)).update(self.obfuscation_buffer().slice()).update(nonce.slice()).finalize();
@@ -229,7 +244,7 @@ impl ServerSecret<'_> {
         let session_key_hash = Hasher::new_keyed(&hash_derive_key_context(SESSION_KEY)).update(data.shared_secret.slice()).update(shared_secret.as_bytes()).update(transcript.as_bytes()).finalize();
         let session_key = FixedByteBuffer::from(*session_key_hash.as_bytes());
 
-        let handshake_buffer = pool.allocate_precise(0, 0, SERVER_HANDSHAKE_HEADER_SIZE);
+        let handshake_buffer = pool.allocate_precise(0, pool.before_cap(), SERVER_HANDSHAKE_HEADER_SIZE);
         let handshake_secret = handshake_buffer.append_buf(&ephemeral_public_obfuscated).append(&transcript_signed.to_bytes()).append_buf(&nonce);
 
         let handshake_secret = if initial_data.is_empty() {
@@ -248,8 +263,8 @@ impl ServerSecret<'_> {
     /// Args: ciphertext || obfuscated_key || nonce. Returns: plaintext.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn decrypt_deobfuscate(&self, ciphertext: DynamicByteBuffer) -> Result<DynamicByteBuffer, HandshakeError> {
-        let (ciphertext, rest) = ciphertext.split_buf(ciphertext.len() - X25519_KEY_LENGTH - ANONYMOUS_NONCE_LEN - NONCE_LENGTH);
-        let (mut ephemeral_public_obfuscated, nonce) = rest.split_buf(rest.len() - NONCE_LENGTH);
+        let (ciphertext, rest) = ciphertext.split_buf_end(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN + NONCE_LENGTH);
+        let (mut ephemeral_public_obfuscated, nonce) = rest.split_buf_end(NONCE_LENGTH);
 
         let masking_key_hash = Hasher::new_keyed(&hash_derive_key_context(MARSHALLING_OBFUSCATION_KEY)).update(self.opk.as_bytes()).update(nonce.slice()).finalize();
         let ephemeral_public_deobfuscated = decrypt_anonymously(masking_key_hash.as_bytes(), &mut ephemeral_public_obfuscated);

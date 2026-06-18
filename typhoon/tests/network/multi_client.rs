@@ -14,7 +14,7 @@ const CLIENTS: usize = 3;
 const MSGS: usize = 5;
 
 // Test: N clients connect and get their own echo sessions from a single sequential accept loop.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_multi_client_isolated_sessions() {
     let settings = default_settings();
     let addr = free_addr();

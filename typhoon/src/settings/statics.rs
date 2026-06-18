@@ -23,14 +23,43 @@ pub mod keys {
     pub const MAX_RETRIES: Key<u64> = Key::new("TYPHOON_MAX_RETRIES", 12);
     pub const RECEIVE_BUFFER_SIZE: Key<u64> = Key::new("TYPHOON_RECEIVE_BUFFER_SIZE", 512);
 
+    // Send-bytes chunking jitter
+    pub const SEND_BYTES_JITTER: Key<f64> = Key::new("TYPHOON_SEND_BYTES_JITTER", 0.2);
+    // Send-bytes target chunk size. `0` means "use `max_user_payload`".
+    pub const SEND_BYTES_CHUNK: Key<u64> = Key::new("TYPHOON_SEND_BYTES_CHUNK", 0);
+
     // Fake body/header settings
     pub const FAKE_BODY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_BODY_LENGTH_MIN", 32);
     pub const FAKE_BODY_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_FAKE_BODY_LENGTH_MAX", 512);
-    pub const FAKE_BODY_CONSTANT_LENGTH: Key<u64> = Key::new("TYPHOON_FAKE_BODY_CONSTANT_LENGTH", 512);
-    pub const FAKE_BODY_RANDOM_PROBABILITY: Key<f64> = Key::new("TYPHOON_FAKE_BODY_RANDOM_PROBABILITY", 3.0);
+    pub const FAKE_BODY_CONSTANT_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MIN", 256);
+    pub const FAKE_BODY_CONSTANT_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MAX", 1400);
     pub const FAKE_HEADER_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_LENGTH_MIN", 4);
     pub const FAKE_HEADER_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_LENGTH_MAX", 32);
     pub const FAKE_HEADER_PROBABILITY: Key<f64> = Key::new("TYPHOON_FAKE_HEADER_PROBABILITY", 0.60);
+
+    // Per-flow probability that a generated decoy packet bypasses the tailor step
+    pub const DECOY_FALLTHROUGH_PACKETS_MIN: Key<f64> = Key::new("TYPHOON_DECOY_FALLTHROUGH_PACKETS_MIN", 0.0);
+    pub const DECOY_FALLTHROUGH_PACKETS_MAX: Key<f64> = Key::new("TYPHOON_DECOY_FALLTHROUGH_PACKETS_MAX", 0.25);
+
+    // Fake body mode selection weights.
+    pub const FAKE_BODY_WEIGHT_EMPTY: Key<u64> = Key::new("TYPHOON_FAKE_BODY_WEIGHT_EMPTY", 1);
+    pub const FAKE_BODY_WEIGHT_RANDOM: Key<u64> = Key::new("TYPHOON_FAKE_BODY_WEIGHT_RANDOM", 5);
+    pub const FAKE_BODY_WEIGHT_CONSTANT: Key<u64> = Key::new("TYPHOON_FAKE_BODY_WEIGHT_CONSTANT", 1);
+    pub const FAKE_BODY_WEIGHT_SERVICE: Key<u64> = Key::new("TYPHOON_FAKE_BODY_WEIGHT_SERVICE", 1);
+
+    // Fake header field type selection weights
+    pub const FAKE_HEADER_FIELD_WEIGHT_RANDOM: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_FIELD_WEIGHT_RANDOM", 1);
+    pub const FAKE_HEADER_FIELD_WEIGHT_CONSTANT: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_FIELD_WEIGHT_CONSTANT", 1);
+    pub const FAKE_HEADER_FIELD_WEIGHT_VOLATILE: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_FIELD_WEIGHT_VOLATILE", 1);
+    pub const FAKE_HEADER_FIELD_WEIGHT_SWITCHING: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_FIELD_WEIGHT_SWITCHING", 1);
+    pub const FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_FIELD_WEIGHT_INCREMENTAL", 1);
+
+    // Volatile field-type change probability range (per-field draw at flow init).
+    pub const FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN: Key<f64> = Key::new("TYPHOON_FAKE_HEADER_VOLATILE_CHANGE_PROB_MIN", 0.01);
+    pub const FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX: Key<f64> = Key::new("TYPHOON_FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX", 0.20);
+    // Switching field-type timeout range in milliseconds (per-field draw at flow init).
+    pub const FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_SWITCHING_TIMEOUT_MIN_MS", 1000);
+    pub const FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_SWITCHING_TIMEOUT_MAX_MS", 30000);
 
     // Decoy general settings
     pub const DECOY_REFERENCE_PACKET_RATE_DEFAULT: Key<f64> = Key::new("TYPHOON_DECOY_REFERENCE_PACKET_RATE_DEFAULT", 200.0);
@@ -40,12 +69,12 @@ pub mod keys {
     pub const DECOY_BYTE_RATE_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_BYTE_RATE_FACTOR", 3.0);
     pub const DECOY_CURRENT_ALPHA: Key<f64> = Key::new("TYPHOON_DECOY_CURRENT_ALPHA", 0.05);
     pub const DECOY_REFERENCE_ALPHA: Key<f64> = Key::new("TYPHOON_DECOY_REFERENCE_ALPHA", 0.001);
-    pub const DECOY_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_LENGTH_MAX", 512);
-    pub const DECOY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_LENGTH_MIN", 16);
+    pub const DECOY_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_LENGTH_MAX", 1400);
+    pub const DECOY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_LENGTH_MIN", 64);
     pub const DECOY_BASE_RATE_RND: Key<f64> = Key::new("TYPHOON_DECOY_BASE_RATE_RND", 0.25);
 
     // Decoy heavy settings
-    pub const DECOY_HEAVY_BASE_RATE: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_BASE_RATE", 0.05);
+    pub const DECOY_HEAVY_BASE_RATE: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_BASE_RATE", 0.1);
     pub const DECOY_HEAVY_QUIETNESS_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_QUIETNESS_FACTOR", 3.0);
     pub const DECOY_HEAVY_DELAY_MIN: Key<u64> = Key::new("TYPHOON_DECOY_HEAVY_DELAY_MIN", 5000);
     pub const DECOY_HEAVY_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_HEAVY_DELAY_MAX", 300_000);
@@ -53,13 +82,15 @@ pub mod keys {
     pub const DECOY_HEAVY_BASE_LENGTH: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_BASE_LENGTH", 0.7);
     pub const DECOY_HEAVY_QUIETNESS_LENGTH: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_QUIETNESS_LENGTH", 0.3);
     pub const DECOY_HEAVY_DECOY_LENGTH_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_HEAVY_DECOY_LENGTH_FACTOR", 0.8);
+    pub const DECOY_HEAVY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_HEAVY_LENGTH_MIN", 560);
 
     // Decoy noisy settings
-    pub const DECOY_NOISY_BASE_RATE: Key<f64> = Key::new("TYPHOON_DECOY_NOISY_BASE_RATE", 3.0);
-    pub const DECOY_NOISY_DELAY_MIN: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_DELAY_MIN", 10);
+    pub const DECOY_NOISY_BASE_RATE: Key<f64> = Key::new("TYPHOON_DECOY_NOISY_BASE_RATE", 5.0);
+    pub const DECOY_NOISY_DELAY_MIN: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_DELAY_MIN", 30);
     pub const DECOY_NOISY_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_DELAY_MAX", 2000);
     pub const DECOY_NOISY_DELAY_DEFAULT: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_DELAY_DEFAULT", 500);
-    pub const DECOY_NOISY_DECOY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN", 128);
+    pub const DECOY_NOISY_DECOY_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_DECOY_LENGTH_MIN", 64);
+    pub const DECOY_NOISY_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_NOISY_LENGTH_MAX", 800);
     pub const DECOY_NOISY_DECOY_LENGTH_JITTER: Key<f64> = Key::new("TYPHOON_DECOY_NOISY_DECOY_LENGTH_JITTER", 0.3);
 
     // Decoy sparse settings
@@ -67,13 +98,13 @@ pub mod keys {
     pub const DECOY_SPARSE_RATE_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_SPARSE_RATE_FACTOR", 3.0);
     pub const DECOY_SPARSE_JITTER: Key<f64> = Key::new("TYPHOON_DECOY_SPARSE_JITTER", 0.15);
     pub const DECOY_SPARSE_DELAY_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_SPARSE_DELAY_FACTOR", 3.0);
-    pub const DECOY_SPARSE_DELAY_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SPARSE_DELAY_MIN", 20);
+    pub const DECOY_SPARSE_DELAY_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SPARSE_DELAY_MIN", 30);
     pub const DECOY_SPARSE_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SPARSE_DELAY_MAX", 2000);
     pub const DECOY_SPARSE_DELAY_DEFAULT: Key<u64> = Key::new("TYPHOON_DECOY_SPARSE_DELAY_DEFAULT", 100);
-    pub const DECOY_SPARSE_LENGTH_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_SPARSE_LENGTH_FACTOR", 120.0);
-    pub const DECOY_SPARSE_LENGTH_SIGMA: Key<f64> = Key::new("TYPHOON_DECOY_SPARSE_LENGTH_SIGMA", 20.0);
-    pub const DECOY_SPARSE_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SPARSE_LENGTH_MIN", 75);
-    pub const DECOY_SPARSE_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SPARSE_LENGTH_MAX", 250);
+    pub const DECOY_SPARSE_LENGTH_FACTOR: Key<f64> = Key::new("TYPHOON_DECOY_SPARSE_LENGTH_FACTOR", 700.0);
+    pub const DECOY_SPARSE_LENGTH_SIGMA: Key<f64> = Key::new("TYPHOON_DECOY_SPARSE_LENGTH_SIGMA", 250.0);
+    pub const DECOY_SPARSE_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SPARSE_LENGTH_MIN", 64);
+    pub const DECOY_SPARSE_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SPARSE_LENGTH_MAX", 1400);
 
     // Decoy smooth settings
     pub const DECOY_SMOOTH_BASE_RATE: Key<f64> = Key::new("TYPHOON_DECOY_SMOOTH_BASE_RATE", 0.3);
@@ -85,14 +116,20 @@ pub mod keys {
     pub const DECOY_SMOOTH_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_DELAY_MAX", 300_000);
     pub const DECOY_SMOOTH_DELAY_DEFAULT: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_DELAY_DEFAULT", 5000);
     pub const DECOY_SMOOTH_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_LENGTH_MIN", 48);
-    pub const DECOY_SMOOTH_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_LENGTH_MAX", 512);
+    pub const DECOY_SMOOTH_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SMOOTH_LENGTH_MAX", 1100);
 
     // Decoy maintenance settings
-    pub const DECOY_MAINTENANCE_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_LENGTH_MIN", 8);
-    pub const DECOY_MAINTENANCE_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_LENGTH_MAX", 256);
+    pub const DECOY_MAINTENANCE_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_LENGTH_MIN", 250);
+    pub const DECOY_MAINTENANCE_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_LENGTH_MAX", 250);
     pub const DECOY_MAINTENANCE_DELAY_MIN: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_DELAY_MIN", 3000);
     pub const DECOY_MAINTENANCE_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_DELAY_MAX", 720_000);
-    pub const DECOY_MAINTENANCE_MODE_NONE_PROBABILITY: Key<f64> = Key::new("TYPHOON_DECOY_MAINTENANCE_MODE_NONE_PROBABILITY", 3.0);
+
+    // Decoy maintenance mode selection weights
+    pub const DECOY_MAINTENANCE_WEIGHT_NONE: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_WEIGHT_NONE", 3);
+    pub const DECOY_MAINTENANCE_WEIGHT_RANDOM: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_WEIGHT_RANDOM", 1);
+    pub const DECOY_MAINTENANCE_WEIGHT_TIMED: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_WEIGHT_TIMED", 1);
+    pub const DECOY_MAINTENANCE_WEIGHT_SIZED: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_WEIGHT_SIZED", 1);
+    pub const DECOY_MAINTENANCE_WEIGHT_BOTH: Key<u64> = Key::new("TYPHOON_DECOY_MAINTENANCE_WEIGHT_BOTH", 1);
 
     // Decoy replication settings
     pub const DECOY_REPLICATION_PROBABILITY_MIN: Key<f64> = Key::new("TYPHOON_DECOY_REPLICATION_PROBABILITY_MIN", 0.01);
@@ -100,16 +137,32 @@ pub mod keys {
     pub const DECOY_REPLICATION_PROBABILITY_REDUCE: Key<f64> = Key::new("TYPHOON_DECOY_REPLICATION_PROBABILITY_REDUCE", 3.0);
     pub const DECOY_REPLICATION_DELAY_MIN: Key<u64> = Key::new("TYPHOON_DECOY_REPLICATION_DELAY_MIN", 2500);
     pub const DECOY_REPLICATION_DELAY_MAX: Key<u64> = Key::new("TYPHOON_DECOY_REPLICATION_DELAY_MAX", 10000);
-    pub const DECOY_REPLICATION_MODE_NONE_PROBABILITY: Key<f64> = Key::new("TYPHOON_DECOY_REPLICATION_MODE_NONE_PROBABILITY", 3.0);
+
+    // Decoy replication mode selection weights
+    pub const DECOY_REPLICATION_WEIGHT_NONE: Key<u64> = Key::new("TYPHOON_DECOY_REPLICATION_WEIGHT_NONE", 3);
+    pub const DECOY_REPLICATION_WEIGHT_MAINTENANCE: Key<u64> = Key::new("TYPHOON_DECOY_REPLICATION_WEIGHT_MAINTENANCE", 1);
+    pub const DECOY_REPLICATION_WEIGHT_ALL: Key<u64> = Key::new("TYPHOON_DECOY_REPLICATION_WEIGHT_ALL", 1);
 
     // Decoy subheader settings
     pub const DECOY_SUBHEADER_LENGTH_MIN: Key<u64> = Key::new("TYPHOON_DECOY_SUBHEADER_LENGTH_MIN", 4);
     pub const DECOY_SUBHEADER_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_DECOY_SUBHEADER_LENGTH_MAX", 16);
 
+    // Decoy subheader mode selection weights
+    pub const DECOY_SUBHEADER_WEIGHT_NONE: Key<u64> = Key::new("TYPHOON_DECOY_SUBHEADER_WEIGHT_NONE", 1);
+    pub const DECOY_SUBHEADER_WEIGHT_MAINTENANCE: Key<u64> = Key::new("TYPHOON_DECOY_SUBHEADER_WEIGHT_MAINTENANCE", 1);
+    pub const DECOY_SUBHEADER_WEIGHT_ALL: Key<u64> = Key::new("TYPHOON_DECOY_SUBHEADER_WEIGHT_ALL", 1);
+
+    // Decoy provider (communication mode) selection weights
+    pub const DECOY_PROVIDER_WEIGHT_SIMPLE: Key<u64> = Key::new("TYPHOON_DECOY_PROVIDER_WEIGHT_SIMPLE", 2);
+    pub const DECOY_PROVIDER_WEIGHT_SPARSE: Key<u64> = Key::new("TYPHOON_DECOY_PROVIDER_WEIGHT_SPARSE", 2);
+    pub const DECOY_PROVIDER_WEIGHT_NOISY: Key<u64> = Key::new("TYPHOON_DECOY_PROVIDER_WEIGHT_NOISY", 1);
+    pub const DECOY_PROVIDER_WEIGHT_SMOOTH: Key<u64> = Key::new("TYPHOON_DECOY_PROVIDER_WEIGHT_SMOOTH", 3);
+    pub const DECOY_PROVIDER_WEIGHT_HEAVY: Key<u64> = Key::new("TYPHOON_DECOY_PROVIDER_WEIGHT_HEAVY", 1);
+
     // Channel capacity settings
     /// Capacity of the per-flow drain channel (packets buffered between drain task and route task).
     /// Excess packets are dropped by the drain task to keep the socket buffer empty.
-    pub const DRAIN_CHANNEL_CAPACITY: Key<u64> = Key::new("TYPHOON_DRAIN_CHANNEL_CAPACITY", 512);
+    pub const DRAIN_CHANNEL_CAPACITY: Key<u64> = Key::new("TYPHOON_DRAIN_CHANNEL_CAPACITY", 8192);
 
     // Debug settings
     /// Number of probes sent during the throughput phase.

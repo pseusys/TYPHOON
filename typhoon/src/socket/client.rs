@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 
 use log::{debug, info};
 use rand::Rng;
@@ -15,12 +16,12 @@ use crate::flow::decoy::{DecoyFactory, random_decoy_factory};
 use crate::flow::probe::ProbeFactory;
 use crate::flow::{FlowConfig, FlowControllerError};
 use crate::session::{ClientSessionManager, SessionManager};
-use crate::settings::Settings;
+use crate::settings::{Settings, keys};
 use crate::socket::error::ClientSocketError;
-use crate::tailor::{ClientConnectionHandler, IdentityType};
-use crate::utils::random::{SupportRng, get_rng};
+use crate::tailor::{ClientConnectionHandler, IdentityType, Tailor};
+use crate::utils::random::{SupportRng, get_rng, jittered_chunk_size};
 use crate::utils::socket::Socket;
-use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, create_notify_queue};
+use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, assert_runtime, create_notify_queue};
 
 /// Builder for constructing a `ClientSocket`.
 pub struct ClientSocketBuilder<T: IdentityType + Clone, AE: AsyncExecutor + 'static, CC: ClientConnectionHandler> {
@@ -100,9 +101,11 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
     ///
     /// Returns [`ClientSocketError::FlowError`] wrapping [`FlowControllerError::AssertionFailed`]
     /// if the combined flow configuration leaves zero bytes available for user data
-    /// (e.g. `constant` fake-body mode with a `TYPHOON_FAKE_BODY_CONSTANT_LENGTH` larger than
+    /// (e.g. `constant` fake-body mode with a per-flow constant length sampled from
+    /// `[TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MIN, TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MAX]` larger than
     /// the remaining packet budget after protocol overhead).
     pub async fn build(mut self) -> Result<ClientSocket<T, AE, CC>, ClientSocketError> {
+        assert_runtime().map_err(ClientSocketError::UnsupportedRuntime)?;
         let cert_addrs = self.certificate.addresses();
         if cert_addrs.is_empty() {
             return Err(ClientSocketError::CertificateError(CertificateError::NoAddresses));
@@ -128,8 +131,11 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
         let static_key = get_rng().random_byte_buffer::<KEY_LENGTH>();
         let cipher = SharedValue::new(ClientCryptoTool::new(self.certificate.clone(), identity_bytes, &static_key));
 
-        let tailor_wire_len = T::length() + ClientCryptoTool::<T>::tailor_overhead();
+        let tailor_wire_len = Tailor::<T>::encrypted_len_c2s();
         let mut max_data_payload = usize::MAX;
+
+        // Per-session monotonic packet-number counter, created before the flow managers so it can be shared with every decoy provider, the session manager, and the health-check provider — every emitter on this session advances the same sequence.
+        let counter = Arc::new(AtomicU32::new(0));
 
         let mut flows = Vec::with_capacity(addr_configs.len());
         for (addr, config) in addr_configs {
@@ -139,7 +145,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
 
             let sock = Socket::new(addr, None).await.map_err(ClientSocketError::SocketError)?;
             let cipher_cache = cipher.create_cache();
-            let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock, self.probe_factory.as_ref(), &self.decoy_factory, addr).await.map_err(ClientSocketError::FlowError)?;
+            let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock, self.probe_factory.as_ref(), &self.decoy_factory, Arc::clone(&counter), addr).await.map_err(ClientSocketError::FlowError)?;
             flows.push(flow);
         }
         let max_data_payload = if max_data_payload == usize::MAX {
@@ -154,7 +160,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
         }
         info!("client socket built: max_data_payload={}B (mtu={}B, {} flow(s))", max_data_payload, settings.mtu(), flows.len());
 
-        let session = ClientSessionManager::new(cipher, flows, settings.clone(), self.initial_data_generator).map_err(ClientSocketError::SessionError)?;
+        let session = ClientSessionManager::new(cipher, flows, settings.clone(), counter, self.initial_data_generator).map_err(ClientSocketError::SessionError)?;
 
         let (incoming_tx, incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
 
@@ -200,11 +206,28 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
     }
 
     /// Send a byte slice, splitting into payload-sized chunks so each wire packet fits within MTU.
+    ///
+    /// When fragmentation is unavoidable (`remaining > max_data_payload`), each
+    /// non-final chunk is sized in `[max_data_payload * (1 - jitter), max_data_payload]`
+    /// — `jitter = TYPHOON_SEND_BYTES_JITTER` (default `0.0`, reproducing the
+    /// deterministic equal-chunk split).  The final chunk and any single-packet
+    /// send go through unfragmented to avoid synthesising a small-packet tail
+    /// that a passive observer could latch onto.
     pub async fn send_bytes(&self, data: &[u8]) -> Result<(), ClientSocketError> {
-        for chunk in data.chunks(self.max_data_payload) {
-            let buffer = self.settings.pool().allocate(Some(chunk.len()));
-            buffer.slice_mut().copy_from_slice(chunk);
+        let jitter = self.settings.get(&keys::SEND_BYTES_JITTER);
+        let chunk = self.settings.get(&keys::SEND_BYTES_CHUNK) as usize;
+        let mut offset = 0;
+        while offset < data.len() {
+            let remaining = data.len() - offset;
+            let chunk_size = if remaining <= self.max_data_payload {
+                remaining
+            } else {
+                jittered_chunk_size(self.max_data_payload, chunk, jitter)
+            };
+            let buffer = self.settings.pool().allocate(Some(chunk_size));
+            buffer.slice_mut().copy_from_slice(&data[offset..offset + chunk_size]);
             self.send(buffer).await?;
+            offset += chunk_size;
         }
         Ok(())
     }

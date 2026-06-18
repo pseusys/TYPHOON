@@ -176,13 +176,22 @@ fn test_rebuffer_both() {
     assert_eq!(rebuffered.slice(), &[2, 3, 4]);
 }
 
-// Test: split_buf returns two DynamicByteBuffer views.
+// Test: split_buf_start returns two DynamicByteBuffer views.
 #[test]
-fn test_split_buf() {
+fn test_split_buf_start() {
     let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
-    let (left, right) = buf.split_buf(2);
+    let (left, right) = buf.split_buf_start(2);
     assert_eq!(left.slice(), &[1, 2]);
     assert_eq!(right.slice(), &[3, 4, 5]);
+}
+
+// Test: split_buf_end returns two DynamicByteBuffer views, split from end.
+#[test]
+fn test_split_buf_end() {
+    let buf = pool_buf(&TEST_POOL, &[1u8, 2, 3, 4, 5]);
+    let (left, right) = buf.split_buf_end(2);
+    assert_eq!(left.slice(), &[1, 2, 3]);
+    assert_eq!(right.slice(), &[4, 5]);
 }
 
 // Test: AsRef<[u8]> trait implementation.

@@ -6,8 +6,10 @@ use crate::bytes::{ByteBuffer, ByteBufferMut, StaticByteBuffer};
 use crate::certificate::ServerKeyPair;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::crypto::symmetric::ANONYMOUS_NONCE_LEN;
+#[cfg(all(any(feature = "full_software", feature = "full_hardware"), feature = "client", feature = "server"))]
+use crate::crypto::symmetric::SYMMETRIC_BUILT_IN_AUTH_LEN;
 #[cfg(all(feature = "client", feature = "server"))]
-use crate::crypto::symmetric::{NONCE_LEN, SYMMETRIC_BUILT_IN_AUTH_LEN, Symmetric};
+use crate::crypto::symmetric::{PAYLOAD_CRYPTO_OVERHEAD, Symmetric};
 
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 const X25519_KEY_LENGTH: usize = 32;
@@ -18,7 +20,7 @@ const NONCE_LENGTH: usize = 32;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 const ENCRYPT_OBFUSCATE_HEADER: usize = NONCE_LENGTH + X25519_KEY_LENGTH + 2 * ANONYMOUS_NONCE_LEN;
 
-static TEST_POOL: LazyLock<BytePool> = LazyLock::new(|| BytePool::new(32, 256, 32, 4, 16));
+static TEST_POOL: LazyLock<BytePool> = LazyLock::new(|| BytePool::new(64, 384, 64, 4, 16));
 
 // Test: handshake produces matching shared secrets and session keys, with initial data exchange.
 #[cfg(all(feature = "client", feature = "server"))]
@@ -33,7 +35,7 @@ fn test_handshake_cycle() {
     let (client_data, client_handshake, _client_initial_key) = certificate.encapsulate_handshake_client(&TEST_POOL, client_initial_data);
 
     // Server decapsulates and receives decrypted client initial data.
-    let (server_data, server_initial_key, decrypted_client_initial_data) = server_secret.decapsulate_handshake_server(client_handshake, &TEST_POOL);
+    let (server_data, server_initial_key, decrypted_client_initial_data) = server_secret.decapsulate_handshake_server(client_handshake, &TEST_POOL).expect("well-formed handshake must decapsulate");
 
     assert_eq!(client_data.shared_secret, server_data.shared_secret, "client and server should derive the same shared secret");
     assert_eq!(client_initial_data.as_slice(), decrypted_client_initial_data.slice(), "server should receive the same client initial data");
@@ -48,7 +50,7 @@ fn test_handshake_cycle() {
 
     // Verify session keys match by encrypting/decrypting a test message.
     let session_data_data = b"Secret session data message";
-    let session_data = TEST_POOL.allocate_precise_from_slice_with_capacity(session_data_data, 0, NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN);
+    let session_data = TEST_POOL.allocate_precise_from_slice_with_capacity(session_data_data, 0, PAYLOAD_CRYPTO_OVERHEAD);
 
     let mut server_session_cipher = Symmetric::new(&server_session_key);
     let session_data_encrypted = server_session_cipher.encrypt_auth(session_data, None::<&StaticByteBuffer>).expect("session data encryption failed");
@@ -74,7 +76,7 @@ fn test_handshake_tampered_ciphertext_fails() {
     let original = *client_handshake.get(tampered_byte_idx);
     client_handshake.set(tampered_byte_idx, original ^ 0xFF);
 
-    let (server_data, _server_initial_key, decrypted_client_initial_data) = server_secret.decapsulate_handshake_server(client_handshake, &TEST_POOL);
+    let (server_data, _server_initial_key, decrypted_client_initial_data) = server_secret.decapsulate_handshake_server(client_handshake, &TEST_POOL).expect("tampered-ciphertext handshake should still produce a decapsulated tuple");
 
     // Server should derive a different shared secret from tampered data.
     assert_ne!(client_data.shared_secret, server_data.shared_secret, "tampered handshake should produce different shared secrets");

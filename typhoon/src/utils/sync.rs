@@ -23,6 +23,7 @@ cfg_if! {
         use crossbeam::queue::SegQueue;
         use tokio::sync::Notify;
         use tokio::time::sleep as tokio_sleep;
+        use tokio::runtime::{Handle, RuntimeFlavor};
         pub use tokio::sync::{RwLock, Mutex};
     } else if #[cfg(feature = "async-std")] {
         pub use async_lock::{RwLock, Mutex};
@@ -31,12 +32,31 @@ cfg_if! {
     }
 }
 
+/// Reject runtimes that cannot host the protocol's multi-flow, multi-task design.
+#[cfg(feature = "tokio")]
+pub fn assert_runtime() -> Result<(), &'static str> {
+    let handle = Handle::try_current().map_err(|_| "no tokio runtime in scope")?;
+    if matches!(handle.runtime_flavor(), RuntimeFlavor::MultiThread) {
+        Ok(())
+    } else {
+        Err("TYPHOON requires a multi-threaded tokio runtime (use `#[tokio::main]` or `Builder::new_multi_thread()`)")
+    }
+}
+
+/// Reject runtimes that cannot host the protocol; the async-std backend is always accepted.
+#[cfg(feature = "async-std")]
+pub fn assert_runtime() -> Result<(), &'static str> {
+    Ok(())
+}
+
 /// Runtime-agnostic async task executor trait.
 pub trait AsyncExecutor: Clone + Send + Sync {
     /// Create a new executor instance.
     fn new() -> Self;
     /// Spawn a fire-and-forget future onto the runtime.
     fn spawn<F: Future<Output = ()> + Send + 'static>(&self, future: F);
+    /// Drive a future to completion on the current thread.
+    fn block_on<F: Future<Output = ()>>(&self, future: F);
 }
 
 // ── Watch channel (latest-value-wins, destructive read) ──────────────────────
@@ -198,12 +218,9 @@ pub fn create_watch<T: Send>() -> (WatchSender<T>, WatchReceiver<T>) {
 
 // ── Notifying queues ──────────────────────────────────────────────────────────
 //
-// Design: crossbeam SegQueue/ArrayQueue for O(1) lock-free, allocation-free
-// storage; runtime-native Notify/channel for efficient async wakeup.
-//
-// Compared to the previous design (SegQueue + WatchSender which locked a mutex
-// per notify) and the naive alternative (tokio mpsc which allocates a Box<Node>
-// per push), this hybrid is optimal for both throughput and latency.
+// Crossbeam SegQueue/ArrayQueue for O(1) lock-free, allocation-free storage;
+// runtime-native Notify/channel for async wakeup. The obvious alternative
+// (tokio mpsc) allocates a Box<Node> per push — avoid.
 
 cfg_if! {
     if #[cfg(feature = "tokio")] {

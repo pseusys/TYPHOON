@@ -31,6 +31,9 @@ pub enum ClientSocketError {
 
     #[error("receive channel closed")]
     ChannelClosed,
+
+    #[error("unsupported runtime: {0}")]
+    UnsupportedRuntime(&'static str),
 }
 
 #[cfg(feature = "server")]
@@ -53,4 +56,7 @@ pub enum ServerSocketError {
 
     #[error("listener stopped")]
     ListenerStopped,
+
+    #[error("unsupported runtime: {0}")]
+    UnsupportedRuntime(&'static str),
 }

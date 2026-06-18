@@ -6,7 +6,7 @@ use typhoon::socket::{ClientSocketBuilder, ListenerBuilder};
 use super::common::{default_settings, empty_flow_config, free_addr};
 
 // Test: build() fails when the certificate contains no addresses.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_client_build_fails_with_no_addresses() {
     let settings = default_settings();
     let key_pair = super::common::server_key_pair();
@@ -17,7 +17,7 @@ async fn test_client_build_fails_with_no_addresses() {
 }
 
 // Test: build() fails when with_flow_config() specifies an address not in the certificate.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_client_build_fails_with_address_not_in_cert() {
     let settings = default_settings();
     let addr = free_addr();
@@ -37,7 +37,7 @@ async fn test_client_build_fails_with_address_not_in_cert() {
 }
 
 // Test: listener build() fails when no flows are added.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_server_build_fails_with_no_flows() {
     let settings = default_settings();
     let key_pair = super::common::server_key_pair();

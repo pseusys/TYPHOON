@@ -19,7 +19,6 @@ use crate::session::client_health::ClientHealthProvider;
 use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
 use crate::settings::Settings;
-use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{ClientConnectionHandler, IdentityType, PacketFlags, Tailor};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::{AsyncExecutor, Mutex, create_watch};
@@ -39,7 +38,8 @@ pub struct ClientSessionManager<T: IdentityType + Clone + 'static, AE: AsyncExec
     health_provider: ClientHealthProvider<T, AE, Self, CC>,
     send_internal: Mutex<ClientSessionManagerInternalSend<T>>,
     receive_internal: Mutex<ClientSessionManagerInternalReceive<T>>,
-    incremental_counter: AtomicU32,
+    /// Per-session monotonic packet-number counter; shared with the health-check provider and every flow manager's decoy provider so the PN stream is single-sequence across data, health-check, handshake, decoy, and termination packets.
+    counter: Arc<AtomicU32>,
     flows: Vec<FM>,
     settings: Arc<Settings<AE>>,
     /// Persistent per-flow receive futures and their flow indices, reused across `receive_packet` calls.
@@ -49,7 +49,7 @@ pub struct ClientSessionManager<T: IdentityType + Clone + 'static, AE: AsyncExec
 impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send + Sync, CC: ClientConnectionHandler + 'static> ClientSessionManager<T, AE, FM, CC> {
     /// Create a new client session manager without starting the handshake.
     /// Call `start()` after the background receive loop is running.
-    pub fn new(cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>, initial_data_generator: CC) -> Result<Arc<Self>, SessionControllerError> {
+    pub fn new(cipher: SharedValue<ClientCryptoTool<T>>, flows: Vec<FM>, settings: Arc<Settings<AE>>, counter: Arc<AtomicU32>, initial_data_generator: CC) -> Result<Arc<Self>, SessionControllerError> {
         let send_cipher = cipher.create_sibling();
         let receive_cipher = cipher.create_sibling();
         let health_state_crypto = cipher.create_sibling();
@@ -58,7 +58,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
         let (shadowride_tx, _) = create_watch();
 
         let value = Arc::new_cyclic(|weak| {
-            let health_provider = ClientHealthProvider::new(weak.clone(), settings.clone(), health_state_crypto, response_tx, shadowride_tx, response_rx, initial_data_generator);
+            let health_provider = ClientHealthProvider::new(weak.clone(), settings.clone(), health_state_crypto, Arc::clone(&counter), response_tx, shadowride_tx, response_rx, initial_data_generator);
 
             ClientSessionManager {
                 health_provider,
@@ -68,7 +68,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
                 receive_internal: Mutex::new(ClientSessionManagerInternalReceive {
                     cipher: receive_cipher,
                 }),
-                incremental_counter: AtomicU32::new(0),
+                counter,
                 flows,
                 settings,
                 recv_state: Mutex::new(None),
@@ -82,8 +82,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
     /// Must be called after the background receive loop is running so that
     /// handshake responses can be received and fed back to the health provider.
     pub async fn start(&self) -> Result<(), SessionControllerError> {
-        self.health_provider.perform_handshake().await;
-        Ok(())
+        self.health_provider.perform_handshake().await
     }
 
     /// Select a random flow manager.
@@ -92,7 +91,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
     }
 
     fn next_packet_number(&self) -> u64 {
-        let counter = self.incremental_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let timestamp = (crate::utils::unix_timestamp_ms() / 1000) as u32;
         ((timestamp as u64) << 32) | (counter as u64)
     }
@@ -123,10 +122,10 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
             // Clone is cheap (Arc), and writes are visible through the shared buffer.
             self.health_provider.feed_output(tailor.clone()).await?;
 
-            encrypted_payload.expand_end(TAILOR_LENGTH + T::length())
+            encrypted_payload.expand_end(Tailor::<T>::len())
         };
 
-        self.select_flow().send_packet(full_packet, false).await.map_err(SessionControllerError::FlowError)
+        self.select_flow().send_packet(full_packet, false, false).await.map_err(SessionControllerError::FlowError)
     }
 
     async fn receive_packet(&self) -> Result<DynamicByteBuffer, SessionControllerError> {
@@ -167,8 +166,8 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
                 result.map_err(SessionControllerError::FlowError)?
             };
 
-            // The flow manager returns: encrypted_payload || plaintext_tailor (full TAILOR_LENGTH + T::length() bytes).
-            let (payload_part, tailor_part) = packet.split_buf(packet.len() - T::length() - TAILOR_LENGTH);
+            // The flow manager returns: encrypted_payload || plaintext_tailor (full Tailor::<T>::len() bytes).
+            let (payload_part, tailor_part) = packet.split_buf_end(Tailor::<T>::len());
             let tailor = Tailor::<T>::new(tailor_part);
 
             debug!("client session: received {:?} packet", tailor.flags());
@@ -198,7 +197,19 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
 }
 
 impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send + Sync + 'static, CC: ClientConnectionHandler + 'static> Drop for ClientSessionManager<T, AE, FM, CC> {
+    /// Emit a TERMINATION packet through the regular async flow path before the session is released.
     fn drop(&mut self) {
+        if self.flows.is_empty() {
+            return;
+        }
+        let pn = self.next_packet_number();
+        let executor = self.settings.executor().clone();
+        executor.block_on(async {
+            let (identity, code) = self.health_provider.termination_snapshot().await;
+            let buf = self.settings.pool().allocate(Some(Tailor::<T>::len()));
+            let tailor = Tailor::termination(buf, &identity, code, pn);
+            let _ = self.select_flow().send_packet(tailor.into_buffer(), false, false).await;
+        });
         drop(take(&mut self.flows));
     }
 }

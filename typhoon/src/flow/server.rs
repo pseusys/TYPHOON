@@ -4,22 +4,22 @@ use std::future::Future;
 use std::hash::Hash;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Weak};
 
 use log::{debug, warn};
 use rand::Rng;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
+use crate::cache::DerivedValue;
 use crate::capture::{record_flow_config, record_server_send};
-use crate::crypto::ServerCryptoTool;
+use crate::crypto::{ObfuscationTranscript, ServerCryptoTool};
 use crate::defaults::NoopProbeHandler;
-use crate::flow::common::FlowManager;
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
 use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender};
 use crate::settings::Settings;
-use crate::settings::consts::TAILOR_LENGTH;
 use crate::tailor::{IdentityType, PacketFlags, Tailor};
 use crate::utils::random::get_rng;
 use crate::utils::socket::{Socket, SocketError};
@@ -30,6 +30,21 @@ pub(crate) struct RawReceivedPacket<T: IdentityType> {
     pub(crate) body: DynamicByteBuffer,
     pub(crate) tailor: Tailor<T>,
     pub(crate) source_addr: SocketAddr,
+    pub(crate) handshake_transcript: Option<ObfuscationTranscript>,
+    pub(crate) original_wire_packet: Option<DynamicByteBuffer>,
+}
+
+/// Per-(flow, identity) path-binding state: the current return source address
+/// for this client on this flow, and the latest PN we have seen.
+///
+/// Path-rebinding gate: the stored `addr` is updated only when an authenticated
+/// non-handshake packet arrives with `pn > latest_pn` on this flow.  Out-of-order
+/// data packets are still accepted into session processing — they just don't
+/// move the binding.  Out-of-order decoys are dropped at the usual discardable
+/// exit point.  See PROTOCOL.md §Identification and rebinding.
+struct PathBinding {
+    addr: SocketAddr,
+    latest_pn: u64,
 }
 
 /// Server-side flow manager that handles per-user packet encryption, decoy traffic, and socket I/O.
@@ -39,21 +54,17 @@ pub(crate) struct RawReceivedPacket<T: IdentityType> {
 /// When built with multiple sockets (SO_REUSEPORT on Linux), each socket is polled by its own
 /// drain task in the listener; the kernel distributes incoming datagrams across all sockets.
 pub struct ServerFlowManager<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> {
-    user_addrs: RwLock<HashMap<T, SocketAddr>>,
-    /// Per-user decoy providers behind individual locks so concurrent users don't contend.
-    decoy_providers: RwLock<HashMap<T, Arc<Mutex<Box<dyn DecoyProvider>>>>>,
+    user_bindings: RwLock<HashMap<T, RwLock<PathBinding>>>,
+    decoy_providers: RwLock<HashMap<T, Arc<dyn DecoyProvider>>>,
     decoy_factory: DecoyFactory<T, AE>,
     crypto_send: Mutex<ServerCryptoTool<T>>,
     crypto_recv: Mutex<ServerCryptoTool<T>>,
     fake_body_mode: FakeBodyMode,
     fake_header_mode: Mutex<FakeHeaderConfig>,
-    /// Precomputed worst-case prefix length: fake_header.len() + fake_body.max_len().
-    /// Used to guard expand_start without locking fake_header_mode on every send.
     max_overhead: usize,
     socks: Vec<Arc<Socket>>,
     mtu: usize,
     settings: Arc<Settings<AE>>,
-    /// Handler for unidentified packets. Locked only for rare unexpected arrivals.
     probe_handler: Mutex<Box<dyn ActiveProbeHandler<AE>>>,
 }
 
@@ -75,7 +86,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             };
             let mtu = settings.mtu();
             ServerFlowManager {
-                user_addrs: RwLock::new(HashMap::new()),
+                user_bindings: RwLock::new(HashMap::new()),
                 decoy_providers: RwLock::new(HashMap::new()),
                 decoy_factory,
                 crypto_send: Mutex::new(crypto_send),
@@ -100,41 +111,54 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         &self.socks
     }
 
-    /// Register a user's source address for this flow manager.
-    pub async fn register_user_addr(&self, id: T, addr: SocketAddr) {
-        self.user_addrs.write().await.insert(id, addr);
+    /// Forward a wire packet to this flow's active probe handler.
+    /// Used by the listener to route handshake-flagged packets whose deferred HMAC verification failed.
+    pub(crate) async fn forward_to_probe(&self, packet: DynamicByteBuffer, source_addr: SocketAddr) {
+        self.probe_handler.lock().await.process(packet, Some(source_addr)).await;
+    }
+
+    /// Insert (or replace) the path binding for a user on this flow.
+    pub async fn register_user_binding(&self, id: T, addr: SocketAddr, latest_pn: u64) {
+        self.user_bindings.write().await.insert(
+            id,
+            RwLock::new(PathBinding {
+                addr,
+                latest_pn,
+            }),
+        );
     }
 
     /// Register a per-user decoy provider and start its background timer.
     /// The user's crypto state must already be in the global SharedMap.
-    pub async fn register_user(self: &Arc<Self>, id: T) {
+    pub async fn register_user(self: &Arc<Self>, id: T, counter: Arc<AtomicU32>) {
         let weak: Weak<Self> = Arc::downgrade(self);
         let mgr: Weak<dyn DecoyFlowSender> = weak;
-        let mut dp = (self.decoy_factory)(mgr, self.settings.clone(), id.clone());
+        let dp = (self.decoy_factory)(mgr, self.settings.clone(), DerivedValue::constant(id.clone()), counter);
         dp.start().await;
         let decoy_name = dp.name();
-        self.decoy_providers.write().await.insert(id.clone(), Arc::new(Mutex::new(dp)));
-        if let Some(addr) = self.user_addrs.read().await.get(&id).copied() {
+        self.decoy_providers.write().await.insert(id.clone(), Arc::from(dp));
+        if let Some(binding) = self.user_bindings.read().await.get(&id) {
+            let addr = binding.read().await.addr;
             let header_len = self.max_overhead - self.fake_body_mode.max_len();
             record_flow_config(addr, "s2c", || (self.fake_body_mode.description(), header_len, decoy_name));
         }
     }
 
-    /// Lazily register a user on this flow if not already present.
-    /// Called from the route task when a non-handshake packet from a known session arrives
-    /// on a flow that has not yet seen this user. Registers both the source address and the
-    /// decoy provider atomically so `send_packet` can never fire before the addr is known.
-    pub async fn ensure_user(self: &Arc<Self>, id: T, addr: SocketAddr) {
+    /// Lazily register the per-user decoy provider on this flow if not already
+    /// present.  Called from the route task when a non-handshake packet from a
+    /// known session arrives on a flow that has not yet seen this user; the
+    /// path binding has already been anchored by `receive_raw`'s first-packet
+    /// branch by the time we get here.
+    pub async fn ensure_user(self: &Arc<Self>, id: T, counter: Arc<AtomicU32>) {
         if !self.decoy_providers.read().await.contains_key(&id) {
-            self.register_user_addr(id.clone(), addr).await;
-            self.register_user(id).await;
+            self.register_user(id, counter).await;
         }
     }
 
-    /// Remove a user's decoy provider and source address from this flow manager.
+    /// Remove a user's decoy provider and path binding from this flow manager.
     pub async fn remove_user(&self, id: &T) {
         self.decoy_providers.write().await.remove(id);
-        self.user_addrs.write().await.remove(id);
+        self.user_bindings.write().await.remove(id);
     }
 
     /// Receive a raw packet, deobfuscating the tailor but returning the full body + tailor view.
@@ -142,55 +166,82 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Decoy packets are filtered. Non-handshake packets are verified per-user and fed to decoy providers.
     /// `sock` is the specific socket to read from; the caller (drain task) owns one socket per task.
     pub(crate) async fn receive_raw(&self, packet: DynamicByteBuffer, sock: &Socket) -> Result<RawReceivedPacket<T>, FlowControllerError> {
-        let identity_len = T::length();
-        let tailor_overhead = ServerCryptoTool::<T>::tailor_overhead();
+        let encrypted_tailor_len = Tailor::<T>::encrypted_len_c2s();
 
         loop {
             let (packet, source_addr) = sock.recv_from(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
 
-            let (encrypted_packet, encrypted_tailor) = packet.split_buf(packet.len() - identity_len - tailor_overhead);
+            // Undersized wire packets (shorter than the encrypted tailor) can't be valid Typhoon; forward to the probe handler and keep draining.
+            if packet.len() < encrypted_tailor_len {
+                warn!("server flow: undersized wire packet from {source_addr} ({} < {})", packet.len(), encrypted_tailor_len);
+                self.probe_handler.lock().await.process(packet, Some(source_addr)).await;
+                continue;
+            }
 
-            // Deobfuscate tailor, verify immediately for non-handshake packets (single lock scope).
-            let tailor = {
+            let (encrypted_packet, encrypted_tailor) = packet.split_buf_end(encrypted_tailor_len);
+
+            // Deobfuscate tailor; for non-handshake packets verify immediately, for handshake packets defer the HMAC check until the listener has decapsulated the body and can recompute the initial-data encryption key.
+            let (tailor, handshake_transcript) = {
                 let mut crypto = self.crypto_recv.lock().await;
                 let (tailor_buf, transcript) = match crypto.deobfuscate_tailor(encrypted_tailor, self.settings.pool()) {
                     Ok(result) => result,
                     Err(err) => {
                         warn!("server flow: tailor decryption failed from {source_addr}: {err}");
-                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr)).await;
+                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(encrypted_tailor_len), Some(source_addr)).await;
                         continue;
                     }
                 };
-                let tailor = Tailor::<T>::new(tailor_buf);
-                if !tailor.flags().is_discardable() && !tailor.flags().contains(PacketFlags::HANDSHAKE) {
+                let Some(tailor) = Tailor::<T>::validated(tailor_buf, encrypted_packet.len()) else {
+                    warn!("server flow: malformed tailor from {source_addr} (size, flags or payload_length out of range)");
+                    self.probe_handler.lock().await.process(encrypted_packet.expand_end(encrypted_tailor_len), Some(source_addr)).await;
+                    continue;
+                };
+                if tailor.flags().contains(PacketFlags::HANDSHAKE) {
+                    (tailor, Some(transcript))
+                } else {
                     let identity = tailor.identity();
                     if let Err(err) = crypto.verify_tailor(&identity, transcript).await {
                         debug!("error verifying packet tailor: {err}");
-                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(identity_len + tailor_overhead), Some(source_addr)).await;
+                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(encrypted_tailor_len), Some(source_addr)).await;
                         continue;
                     }
+                    (tailor, None)
                 }
-                tailor
             };
 
             let packet_flags = tailor.flags();
             let identity = tailor.identity();
 
-            // For non-handshake packets, feed decoy provider and update source address if changed.
+            // For non-handshake packets, refresh the path binding for this
+            // identity on this flow and feed the decoy provider if one has
+            // already been instantiated locally.
             if !packet_flags.contains(PacketFlags::HANDSHAKE) {
-                let dp = {
-                    let providers = self.decoy_providers.read().await;
-                    if providers.contains_key(&identity) {
-                        providers.get(&identity).cloned()
-                    } else {
-                        None
+                let pn = tailor.packet_number();
+                let bindings = self.user_bindings.read().await;
+                if let Some(binding_rw) = bindings.get(&identity) {
+                    let latest = binding_rw.read().await.latest_pn;
+                    if pn > latest {
+                        let mut binding = binding_rw.write().await;
+                        if pn > binding.latest_pn {
+                            binding.latest_pn = pn;
+                            if binding.addr != source_addr {
+                                binding.addr = source_addr;
+                            }
+                        }
                     }
-                };
+                } else {
+                    drop(bindings);
+                    self.user_bindings.write().await.entry(identity.clone()).or_insert_with(|| {
+                        RwLock::new(PathBinding {
+                            addr: source_addr,
+                            latest_pn: pn,
+                        })
+                    });
+                }
+
+                let dp = self.decoy_providers.read().await.get(&identity).cloned();
                 if let Some(dp) = dp {
-                    if self.user_addrs.read().await.get(&identity).copied() != Some(source_addr) {
-                        self.user_addrs.write().await.insert(identity.clone(), source_addr);
-                    }
-                    let notified = dp.lock().await.feed_input(packet.clone()).await;
+                    let notified = dp.feed_input(encrypted_packet.clone(), tailor.buffer().clone()).await;
                     if notified.is_none() {
                         continue;
                     }
@@ -201,6 +252,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             if packet_flags.is_discardable() {
                 continue;
             }
+
+            // Preserve a view over the original wire bytes so a failed deferred handshake verification can route the packet to the flow's probe handler.
+            let original_wire_packet = packet_flags.contains(PacketFlags::HANDSHAKE).then(|| encrypted_packet.expand_end(encrypted_tailor_len));
 
             // For handshake packets, strip fake header/body using payload_length so the
             // session layer receives only the raw handshake data.
@@ -216,6 +270,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 body,
                 tailor,
                 source_addr,
+                handshake_transcript,
+                original_wire_packet,
             });
         }
     }
@@ -227,59 +283,64 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> FlowManager for ServerFlowManager<T, AE> {
-    async fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> Result<(), FlowControllerError> {
-        let identity_len = T::length();
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> DecoyFlowSender for ServerFlowManager<T, AE> {
+    fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>> {
+        Box::pin(self.send_packet(packet, fallthrough, is_maintenance))
+    }
+}
 
-        let tailor_buf = packet.rebuffer_start(packet.len() - identity_len - TAILOR_LENGTH);
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> ServerFlowManager<T, AE> {
+    /// Send a packet through this flow.
+    pub(crate) async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Result<(), FlowControllerError> {
+        let tailor_len = Tailor::<T>::len();
+        let (body, tailor_buf) = packet.split_buf_end(tailor_len);
         let identity = ServerCryptoTool::<T>::extract_identity(&tailor_buf);
 
-        // Feed decoy provider for rate tracking (per-user lock).
+        // Feed decoy provider for rate tracking.
         let notified_packet = {
             let dp = self.decoy_providers.read().await.get(&identity).cloned();
             if let Some(dp) = dp {
-                let notified = dp.lock().await.feed_output(packet, generated).await;
+                let notified = dp.feed_output(body, tailor_buf.clone()).await;
                 match notified {
                     None => return Ok(()),
-                    Some(p) => p,
+                    Some(b) => b.expand_end(tailor_len),
                 }
             } else {
-                packet
+                body.expand_end(tailor_len)
             }
         };
 
         let addr = {
-            let addrs = self.user_addrs.read().await;
-            *addrs.get(&identity).ok_or_else(|| FlowControllerError::UserNotFound {
+            let bindings = self.user_bindings.read().await;
+            let binding = bindings.get(&identity).ok_or_else(|| FlowControllerError::UserNotFound {
                 identity: identity.to_string(),
-            })?
+            })?;
+            binding.read().await.addr
         };
 
-        // Ensure before_capacity for expand_start — same guard as prepare_outgoing in client flow.
-        // Decoy packets use allocate_precise with subheader_len before_capacity (can be 0).
-        let notified_packet = if notified_packet.before_capacity() < self.max_overhead {
-            let staged = self.settings.pool().allocate_precise(notified_packet.len(), self.max_overhead, ServerCryptoTool::<T>::tailor_overhead());
-            staged.slice_mut().copy_from_slice(notified_packet.slice());
-            staged
+        // Fallthrough decoys: drop the plaintext tailor, skip encryption, treat the remaining body as opaque random bytes.  Non-fallthrough path is unchanged.
+        let (encrypted_packet, packet_flags, data_len, tailor_overhead) = if fallthrough {
+            let body_only = notified_packet.rebuffer_end(notified_packet.len() - tailor_len);
+            let body_len = body_only.len();
+            (body_only, PacketFlags::DECOY, body_len, 0_usize)
         } else {
-            notified_packet
+            let (packet_data, packet_tailor) = notified_packet.split_buf_end(tailor_len);
+            let flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
+            let data_len = packet_data.len();
+            let encrypted_tailor = {
+                let mut crypto = self.crypto_send.lock().await;
+                crypto.obfuscate_tailor(packet_tailor, self.settings.pool()).await.map_err(FlowControllerError::TailorEncryption)?
+            };
+            let tailor_overhead = crate::crypto::TAILOR_S2C_OVERHEAD;
+            let encrypted = packet_data.expand_end(encrypted_tailor.len());
+            (encrypted, flags, data_len, tailor_overhead)
         };
-
-        let (packet_data, packet_tailor) = notified_packet.split_buf(notified_packet.len() - identity_len - TAILOR_LENGTH);
-        let packet_flags = PacketFlags::from_bits_truncate(*packet_tailor.get(0));
-        let data_len = packet_data.len();
-
-        let encrypted_tailor = {
-            let mut crypto = self.crypto_send.lock().await;
-            crypto.obfuscate_tailor(packet_tailor, self.settings.pool()).await.map_err(FlowControllerError::TailorEncryption)?
-        };
-        let encrypted_packet = packet_data.expand_end(encrypted_tailor.len());
 
         // Add fake header and body (single lock scope: len + fill must be consistent).
         let (full_packet, cap_header, cap_body) = {
             let mut mode = self.fake_header_mode.lock().await;
             let fake_header_len = mode.len();
-            let body_len = self.fake_body_mode.get_length(self.mtu, fake_header_len + encrypted_packet.len(), packet_flags.is_service());
+            let body_len = self.fake_body_mode.get_length(self.mtu, fake_header_len + encrypted_packet.len(), is_maintenance);
             let full_packet_len = fake_header_len + body_len;
             let full_packet = encrypted_packet.expand_start(full_packet_len);
             mode.fill(full_packet.rebuffer_end(fake_header_len));
@@ -287,33 +348,28 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             (full_packet, fake_header_len, body_len)
         };
 
+        if full_packet.len() == 0 {
+            return Ok(());
+        }
         debug!("server flow: sending {packet_flags:?} packet to {addr}");
         self.socks[0].send_to(full_packet, addr).await.map_err(FlowControllerError::SocketError)?;
         record_server_send(addr, || {
-            let kind = if packet_flags.is_discardable() {
+            let kind = if fallthrough {
+                "DecoyFallthrough"
+            } else if is_maintenance {
+                "DecoyMaintenance"
+            } else if packet_flags.is_discardable() {
                 "Decoy"
-            } else if packet_flags.is_service() {
-                "Service"
             } else {
                 "Data"
             };
-            (kind, identity_len + TAILOR_LENGTH, encrypted_tailor.len() - identity_len, cap_header, data_len, cap_body)
+            let tailor_len = if fallthrough {
+                0
+            } else {
+                Tailor::<T>::len()
+            };
+            (kind, tailor_len, tailor_overhead, cap_header, data_len, cap_body)
         });
         Ok(())
-    }
-
-    #[cfg(feature = "client")]
-    async fn receive_packet(&self, packet: DynamicByteBuffer) -> Result<DynamicByteBuffer, FlowControllerError> {
-        let identity_len = T::length();
-        // receive_raw handles decoy filtering, tailor verification, source-address updates,
-        // and decoy-provider feeding. Loop only to skip the unlikely handshake case.
-        loop {
-            let raw = self.receive_raw(packet.clone(), &self.socks[0]).await?;
-            if raw.tailor.flags().contains(PacketFlags::HANDSHAKE) {
-                continue;
-            }
-            let payload_len = raw.tailor.payload_length() as usize;
-            return Ok(raw.body.rebuffer_start(raw.body.len() - payload_len).expand_end(identity_len));
-        }
     }
 }

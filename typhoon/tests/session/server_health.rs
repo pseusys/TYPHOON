@@ -66,7 +66,7 @@ fn parse_response(packet: &DynamicByteBuffer) -> (u64, u32, PacketFlags) {
     let tailor_size = TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH;
     assert!(packet.len() >= tailor_size, "packet too short: {} < {tailor_size}", packet.len());
     let tailor_start = packet.len() - tailor_size;
-    let (_, tailor_buf) = packet.split_buf(tailor_start);
+    let (_, tailor_buf) = packet.split_buf_start(tailor_start);
     let tailor = Tailor::<StaticByteBuffer>::new(tailor_buf);
     (tailor.packet_number(), tailor.time(), tailor.flags())
 }
@@ -137,28 +137,28 @@ async fn test_server_health_response_has_health_check_flag() {
     assert!(flags.contains(PacketFlags::HEALTH_CHECK));
 }
 
-// Test: response is not sent before the client's requested delay elapses.
+/// Test: response is not sent before the client's requested delay elapses.
 #[tokio::test]
 async fn test_server_health_response_delayed() {
     let router = CapturingRouter::new();
-    let settings = fast_settings();
+    let settings: Arc<Settings<DefaultExecutor>> = Arc::new(SettingsBuilder::new().set(&keys::TIMEOUT_MIN, 5u64).set(&keys::TIMEOUT_DEFAULT, 10u64).set(&keys::TIMEOUT_MAX, 20u64).set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 300u64).set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 300u64).set(&keys::MAX_RETRIES, 2u64).build().unwrap());
 
     let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
 
-    // Request a 100 ms delay (clamped to MAX=100ms).
-    provider.feed_health_check(100u32, 0x9999);
+    // Request a 300 ms delay (clamped to MIN=MAX=300 ms).
+    provider.feed_health_check(300u32, 0x9999);
 
-    // After 40 ms the response must NOT have arrived yet.
-    sleep(Duration::from_millis(40)).await;
+    // After 150 ms the response must NOT have arrived yet.
+    sleep(Duration::from_millis(150)).await;
     assert_eq!(router.packets.lock().await.len(), 0, "response must not arrive before client_next_in delay");
 
-    // After another 110 ms (150 ms total) the response has been sent; drop provider
-    // now so the task exits cleanly without entering decay retries.
-    sleep(Duration::from_millis(110)).await;
+    // After another 200 ms (350 ms total) the response has been sent; drop provider
+    // now so the task exits cleanly before the server's own retry timer fires.
+    sleep(Duration::from_millis(200)).await;
     drop(provider);
 
-    // After another 40 ms (190 ms total) the packet must be in the router.
-    sleep(Duration::from_millis(40)).await;
+    // After another 80 ms (430 ms total) the packet must be in the router.
+    sleep(Duration::from_millis(80)).await;
     assert_eq!(router.packets.lock().await.len(), 1, "response must arrive after delay");
 }
 

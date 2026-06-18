@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::hash::Hash;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use log::{debug, info, warn};
@@ -11,18 +12,19 @@ use crate::cache::SharedMap;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 use crate::certificate::ObfuscationBufferContainer;
 use crate::certificate::{ServerKeyPair, ServerSecret};
-use crate::crypto::{PAYLOAD_CRYPTO_OVERHEAD, ServerCryptoTool, UserCryptoState, UserServerState};
+use crate::crypto::{PAYLOAD_CRYPTO_OVERHEAD, ServerCryptoTool, UserCryptoState, UserServerState, verify_transcript_with_key};
 use crate::flow::decoy::{DecoyFactory, random_decoy_factory};
 use crate::flow::probe::ProbeFactory;
 use crate::flow::server::{RawReceivedPacket, ServerFlowManager};
-use crate::flow::{FlowConfig, FlowManager};
+use crate::flow::{FlowConfig, FlowControllerError};
+use crate::session::SessionControllerError;
 use crate::session::server::{IncomingPacket, OutgoingRouter, ServerSessionManager};
-use crate::session::{SessionControllerError, SessionManager};
 use crate::settings::{Settings, keys};
 use crate::socket::error::ServerSocketError;
 use crate::tailor::{IdentityType, PacketFlags, ReturnCode, ServerConnectionHandler, Tailor};
+use crate::utils::random::jittered_chunk_size;
 use crate::utils::socket::Socket;
-use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, NotifyQueueSender, RwLock, create_bounded_notify_queue, create_notify_queue};
+use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, NotifyQueueSender, RwLock, assert_runtime, create_bounded_notify_queue, create_notify_queue};
 use crate::utils::unix_timestamp_ms;
 
 /// Configuration for a single server flow manager.
@@ -168,6 +170,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Build the listener, creating all flow managers.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub async fn build(mut self) -> Result<Listener<T, AE, IG>, ServerSocketError> {
+        assert_runtime().map_err(ServerSocketError::UnsupportedRuntime)?;
         if self.flow_configs.is_empty() {
             return Err(ServerSocketError::NoFlows);
         }
@@ -176,7 +179,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let users: SharedMap<T, UserServerState> = SharedMap::new();
         let mut flows = Vec::with_capacity(self.flow_configs.len());
 
-        let tailor_wire_len = T::length() + ServerCryptoTool::<T>::tailor_overhead();
+        let tailor_wire_len = Tailor::<T>::encrypted_len_s2c();
         let mut max_data_payload = usize::MAX;
 
         let obfs_buffer = self.secret.obfuscation_buffer();
@@ -221,10 +224,14 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         let (accept_tx, accept_rx) = create_notify_queue::<ClientHandle<T, AE>>();
 
-        Ok(Listener {
+        let router = Arc::new(Router {
             flows,
             sessions: RwLock::new(HashMap::new()),
             users: Mutex::new(users),
+        });
+
+        Ok(Listener {
+            router,
             secret: self.secret,
             identity_generator: self.identity_generator,
             accept_tx,
@@ -237,6 +244,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Build the listener, creating all flow managers (full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub async fn build(mut self) -> Result<Listener<T, AE, IG>, ServerSocketError> {
+        assert_runtime().map_err(ServerSocketError::UnsupportedRuntime)?;
         if self.flow_configs.is_empty() {
             return Err(ServerSocketError::NoFlows);
         }
@@ -245,7 +253,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let users: SharedMap<T, UserServerState> = SharedMap::new();
         let mut flows = Vec::with_capacity(self.flow_configs.len());
 
-        let tailor_wire_len = T::length() + ServerCryptoTool::<T>::tailor_overhead();
+        let tailor_wire_len = Tailor::<T>::encrypted_len_s2c();
         let mut max_data_payload = usize::MAX;
 
         let secret_arc = Arc::new(self.secret);
@@ -291,10 +299,14 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         let (accept_tx, accept_rx) = create_notify_queue::<ClientHandle<T, AE>>();
 
-        Ok(Listener {
+        let router = Arc::new(Router {
             flows,
             sessions: RwLock::new(HashMap::new()),
             users: Mutex::new(users),
+        });
+
+        Ok(Listener {
+            router,
             secret: secret_arc,
             identity_generator: self.identity_generator,
             accept_tx,
@@ -305,11 +317,25 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 }
 
-/// Server-side listener that manages flow managers and client sessions.
-pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> {
+/// Routing and session-lifecycle surface, shared by the `Listener` and every `ClientHandle` it produces.
+pub(crate) struct Router<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> {
     flows: Vec<Arc<ServerFlowManager<T, AE>>>,
     sessions: RwLock<HashMap<T, Arc<ServerSessionManager<T, AE>>>>,
     users: Mutex<SharedMap<T, UserServerState>>,
+}
+
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> Router<T, AE> {
+    /// Number of flow managers the router routes through.
+    #[inline]
+    pub(crate) fn flow_count(&self) -> usize {
+        self.flows.len()
+    }
+}
+
+/// Server-side listener that drives the handshake path and produces `ClientHandle`s.
+/// All routing and session lifecycle state lives in the shared [`Router`].
+pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> {
+    router: Arc<Router<T, AE>>,
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     secret: ServerSecret<'static>,
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
@@ -361,10 +387,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     ///   When all N drain tasks exit the `Arc<BoundedNotifyQueueSender>` refcount reaches 0,
     ///   dropping the sender and closing the channel so the route task terminates.
     /// - A **route task** that pulls from the shared channel and calls `route_incoming`.
-    pub async fn start(self: &Arc<Self>) {
+    pub fn start(self: &Arc<Self>) -> impl Future<Output = ()> {
         let drain_capacity = self.settings.get(&keys::DRAIN_CHANNEL_CAPACITY) as usize;
 
-        for (index, flow) in self.flows.iter().enumerate() {
+        for (index, flow) in self.router.flows.iter().enumerate() {
             let (drain_tx, mut drain_rx) = create_bounded_notify_queue(drain_capacity);
             let drain_tx = Arc::new(drain_tx);
 
@@ -395,6 +421,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 }
             });
         }
+
+        async {}
     }
 
     /// Route an incoming packet to the appropriate session or create a new one.
@@ -407,12 +435,12 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         }
 
         let session = {
-            let sessions = self.sessions.read().await;
+            let sessions = self.router.sessions.read().await;
             sessions.get(&identity).cloned()
         };
 
         if let Some(session) = session {
-            self.flows[flow_index].ensure_user(identity.clone(), raw_packet.source_addr).await;
+            self.router.flows[flow_index].ensure_user(identity.clone(), session.counter()).await;
             session.note_active_flow(flow_index);
 
             let incoming = IncomingPacket {
@@ -422,7 +450,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             if let Err(err) = session.process_incoming(incoming).await {
                 debug!("session processing error for {}: {}", identity.to_string(), err);
                 if matches!(err, SessionControllerError::ConnectionTerminated(_)) {
-                    self.remove_session(&identity).await;
+                    self.router.remove_session(&identity).await;
                 }
             }
         } else {
@@ -431,28 +459,52 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 
     /// Handle a handshake from a new client: create session, send response, publish ClientHandle.
-    async fn handle_new_client(self: &Arc<Self>, raw_packet: RawReceivedPacket<T>, flow_index: usize) {
-        let (server_data, initial_key, client_initial_data) = self.secret.decapsulate_handshake_server(raw_packet.body, self.settings.pool());
+    async fn handle_new_client(self: &Arc<Self>, mut raw_packet: RawReceivedPacket<T>, flow_index: usize) {
+        let handshake_transcript = raw_packet.handshake_transcript.take();
+        let original_wire_packet = raw_packet.original_wire_packet.take();
+        let source_addr = raw_packet.source_addr;
+        let Some((server_data, initial_key, client_initial_data)) = self.secret.decapsulate_handshake_server(raw_packet.body, self.settings.pool()) else {
+            if let Some(packet) = original_wire_packet {
+                debug!("handshake decapsulation failed from {source_addr} (body too short for crypto header), forwarding to probe handler");
+                self.router.flows[flow_index].forward_to_probe(packet, source_addr).await;
+            } else {
+                debug!("handshake decapsulation failed from {source_addr} and original wire packet unavailable, dropping");
+            }
+            return;
+        };
+
+        // Verify the handshake tailor with the initial-data encryption key just produced by the KEM decapsulation.
+        let verified = matches!((&handshake_transcript, &original_wire_packet), (Some(transcript), Some(_)) if verify_transcript_with_key(&initial_key, transcript).is_ok());
+        if !verified {
+            if let Some(packet) = original_wire_packet {
+                debug!("handshake tailor verification failed from {source_addr}, forwarding to probe handler");
+                self.router.flows[flow_index].forward_to_probe(packet, source_addr).await;
+            } else {
+                debug!("handshake packet from {source_addr} missing deferred transcript or wire packet, dropping");
+            }
+            return;
+        }
 
         let client_version_identity = raw_packet.tailor.identity();
+        let handshake_pn = raw_packet.tailor.packet_number();
         if !self.identity_generator.verify_version(client_version_identity.to_bytes()) {
             {
-                let mut users = self.users.lock().await;
+                let mut users = self.router.users.lock().await;
                 let crypto_state = self.make_initial_crypto_state(&initial_key);
                 users.insert(client_version_identity.clone(), UserServerState::new(crypto_state)).await;
             }
-            self.flows[flow_index].register_user_addr(client_version_identity.clone(), raw_packet.source_addr).await;
+            self.router.flows[flow_index].register_user_binding(client_version_identity.clone(), raw_packet.source_addr, handshake_pn).await;
             let pn = ((unix_timestamp_ms() / 1000) as u64) << 32;
             let buf = self.settings.pool().allocate(Some(T::length()));
             let tailor = Tailor::termination(buf, &client_version_identity, ReturnCode::VersionMismatch, pn);
-            if let Err(err) = self.flows[flow_index].send_packet(tailor.into_buffer(), true).await {
+            if let Err(err) = self.router.flows[flow_index].send_packet(tailor.into_buffer(), false, false).await {
                 warn!("failed to send version mismatch rejection: {err}");
             }
             {
-                let mut users = self.users.lock().await;
+                let mut users = self.router.users.lock().await;
                 users.remove(&client_version_identity).await;
             }
-            self.flows[flow_index].remove_user(&client_version_identity).await;
+            self.router.flows[flow_index].remove_user(&client_version_identity).await;
             return;
         }
 
@@ -460,19 +512,19 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let server_initial_data = self.identity_generator.initial_data(&identity);
 
         let (incoming_tx, incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
-        let router_weak = Arc::downgrade(self);
+        let router_weak: Weak<dyn OutgoingRouter<T>> = Arc::downgrade(&self.router) as Weak<dyn OutgoingRouter<T>>;
 
         let (response_body, session_key) = self.secret.encapsulate_handshake_server(server_data, self.settings.pool(), server_initial_data.slice(), &initial_key);
 
         let (session, response_packet, replacing) = {
-            let mut users = self.users.lock().await;
+            let mut users = self.router.users.lock().await;
             let replacing = users.contains_key(&identity);
             if replacing {
                 debug!("re-handshake for {}: replacing existing session (last wins)", identity.to_string());
                 users.remove(&identity).await;
             }
             let initial_crypto_state = self.make_initial_crypto_state(&initial_key);
-            let result = ServerSessionManager::assemble_session(initial_crypto_state, response_body, raw_packet.tailor, identity.clone(), &mut users, incoming_tx, router_weak, self.flows.len(), self.settings.clone()).await;
+            let result = ServerSessionManager::assemble_session(initial_crypto_state, response_body, raw_packet.tailor, identity.clone(), &mut users, incoming_tx, router_weak, self.router.flow_count(), self.settings.clone()).await;
             match result {
                 Ok((session, response_packet)) => (session, response_packet, replacing),
                 Err(err) => {
@@ -483,26 +535,26 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         };
 
         if replacing {
-            self.sessions.write().await.remove(&identity);
-            for flow in &self.flows {
+            self.router.sessions.write().await.remove(&identity);
+            for flow in &self.router.flows {
                 flow.remove_user(&identity).await;
             }
         }
 
-        self.flows[flow_index].register_user_addr(identity.clone(), raw_packet.source_addr).await;
-        self.flows[flow_index].register_user(identity.clone()).await;
+        self.router.flows[flow_index].register_user_binding(identity.clone(), raw_packet.source_addr, handshake_pn).await;
+        self.router.flows[flow_index].register_user(identity.clone(), session.counter()).await;
 
-        if let Err(err) = self.flows[flow_index].send_packet(response_packet, false).await {
+        if let Err(err) = self.router.flows[flow_index].send_packet(response_packet, false, false).await {
             warn!("failed to send handshake response: {err}");
-            self.users.lock().await.remove(&identity).await;
-            for flow in &self.flows {
+            self.router.users.lock().await.remove(&identity).await;
+            for flow in &self.router.flows {
                 flow.remove_user(&identity).await;
             }
             return;
         }
 
         {
-            let mut users = self.users.lock().await;
+            let mut users = self.router.users.lock().await;
             users
                 .modify(&identity, |user_state| {
                     self.upgrade_user_crypto(user_state, &session_key);
@@ -513,7 +565,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         session.note_active_flow(flow_index);
 
         {
-            let mut sessions = self.sessions.write().await;
+            let mut sessions = self.router.sessions.write().await;
             if sessions.contains_key(&identity) {
                 debug!("concurrent handshake for {}: last wins, displacing earlier session", identity.to_string());
             }
@@ -522,9 +574,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         let client_handle = ClientHandle {
             session,
+            identity: identity.clone(),
             incoming_rx: Mutex::new(incoming_rx),
             max_data_payload: self.max_data_payload,
             settings: self.settings.clone(),
+            router: Arc::clone(&self.router),
         };
         self.accept_tx.push(client_handle);
 
@@ -539,7 +593,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
 /// OutgoingRouter implementation: selects an active flow via the per-session bitmask and sends the packet.
 #[async_trait]
-impl<T: IdentityType + Clone + Eq + Hash + Send + Sync + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> OutgoingRouter<T> for Listener<T, AE, IG> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + Sync + ToString + 'static, AE: AsyncExecutor + 'static> OutgoingRouter<T> for Router<T, AE> {
     async fn route_packet(&self, packet: DynamicByteBuffer, identity: &T) -> bool {
         let session = {
             let sessions = self.sessions.read().await;
@@ -550,7 +604,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + Sync + ToString + 'static, AE:
         };
         let flow_idx = session.select_active_flow(self.flows.len());
         if flow_idx < self.flows.len() {
-            self.flows[flow_idx].send_packet(packet, false).await.is_ok()
+            self.flows[flow_idx].send_packet(packet, false, false).await.is_ok()
         } else {
             false
         }
@@ -572,24 +626,46 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + Sync + ToString + 'static, AE:
 /// Not cloneable — only one handle per connection.
 pub struct ClientHandle<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> {
     session: Arc<ServerSessionManager<T, AE>>,
+    identity: T,
     incoming_rx: Mutex<NotifyQueueReceiver<DynamicByteBuffer>>,
     /// Maximum user-data bytes per packet so the wire packet fits within MTU.
     max_data_payload: usize,
     settings: Arc<Settings<AE>>,
+    router: Arc<Router<T, AE>>,
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> ClientHandle<T, AE> {
     /// Send a packet using a pre-allocated buffer.
     pub async fn send(&self, packet: DynamicByteBuffer) -> Result<(), ServerSocketError> {
-        self.session.send_packet(packet, false).await.map_err(ServerSocketError::SessionError)
+        let wire = self.session.prepare_outgoing(packet, false).await.map_err(ServerSocketError::SessionError)?;
+        if !self.router.route_packet(wire, &self.identity).await {
+            return Err(ServerSocketError::SessionError(SessionControllerError::FlowError(FlowControllerError::UserNotFound {
+                identity: self.identity.to_string(),
+            })));
+        }
+        Ok(())
     }
 
     /// Send a byte slice, splitting into payload-sized chunks so each wire packet fits within MTU.
+    ///
+    /// See `ClientSocket::send_bytes` — same fragmentation-only-when-needed +
+    /// `TYPHOON_SEND_BYTES_JITTER`-driven per-chunk length sampling applies
+    /// here for s2c traffic.
     pub async fn send_bytes(&self, data: &[u8]) -> Result<(), ServerSocketError> {
-        for chunk in data.chunks(self.max_data_payload) {
-            let buffer = self.settings.pool().allocate(Some(chunk.len()));
-            buffer.slice_mut().copy_from_slice(chunk);
+        let jitter = self.settings.get(&keys::SEND_BYTES_JITTER);
+        let chunk = self.settings.get(&keys::SEND_BYTES_CHUNK) as usize;
+        let mut offset = 0;
+        while offset < data.len() {
+            let remaining = data.len() - offset;
+            let chunk_size = if remaining <= self.max_data_payload {
+                remaining
+            } else {
+                jittered_chunk_size(self.max_data_payload, chunk, jitter)
+            };
+            let buffer = self.settings.pool().allocate(Some(chunk_size));
+            buffer.slice_mut().copy_from_slice(&data[offset..offset + chunk_size]);
             self.send(buffer).await?;
+            offset += chunk_size;
         }
         Ok(())
     }
@@ -613,7 +689,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> C
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> Drop for ClientHandle<T, AE> {
+    /// Emit a TERMINATION packet and remove the session from the shared router before the handle is released.
     fn drop(&mut self) {
-        self.session.spawn_cleanup(self.settings.executor());
+        let executor = self.settings.executor().clone();
+        let pn = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
+        let buf = self.settings.pool().allocate(Some(Tailor::<T>::len()));
+        let termination = Tailor::termination(buf, &self.identity, ReturnCode::Success, pn).into_buffer();
+        executor.block_on(async {
+            self.router.route_packet(termination, &self.identity).await;
+            self.router.remove_session(&self.identity).await;
+        });
     }
 }

@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use crate::bytes::{ByteBufferMut, DynamicByteBuffer, FixedByteBuffer, StaticByteBuffer};
@@ -34,18 +35,22 @@ fn make_crypto(_settings: &Arc<Settings<DefaultExecutor>>) -> SharedValue<Client
 /// Mock flow manager: returns pre-queued packets in order, then blocks forever.
 struct MockFlowManager {
     packets: StdMutex<Vec<DynamicByteBuffer>>,
+    /// Counts `send_packet` invocations so drop-path tests can assert behavior.
+    send_calls: AtomicUsize,
 }
 
 impl MockFlowManager {
     fn new(packets: Vec<DynamicByteBuffer>) -> Arc<Self> {
         Arc::new(Self {
             packets: StdMutex::new(packets),
+            send_calls: AtomicUsize::new(0),
         })
     }
 }
 
 impl FlowManager for MockFlowManager {
-    async fn send_packet(&self, _packet: DynamicByteBuffer, _generated: bool) -> Result<(), FlowControllerError> {
+    async fn send_packet(&self, _packet: DynamicByteBuffer, _fallthrough: bool, _is_maintenance: bool) -> Result<(), FlowControllerError> {
+        self.send_calls.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -77,13 +82,13 @@ fn make_termination_packet(settings: &Arc<Settings<DefaultExecutor>>) -> Dynamic
 /// Build a `ClientSessionManager` with the given mock flows.
 async fn make_session(settings: Arc<Settings<DefaultExecutor>>, flows: Vec<Arc<MockFlowManager>>) -> Arc<ClientSessionManager<StaticByteBuffer, DefaultExecutor, Arc<MockFlowManager>, DefaultClientConnectionHandler>> {
     let cipher = make_crypto(&settings);
-    ClientSessionManager::new(cipher, flows, settings, DefaultClientConnectionHandler).expect("ClientSessionManager::new must succeed")
+    ClientSessionManager::new(cipher, flows, settings, Arc::new(AtomicU32::new(0)), DefaultClientConnectionHandler).expect("ClientSessionManager::new must succeed")
 }
 
 // ── receive_packet tests ───────────────────────────────────────────────────────
 
 // Test: TERMINATION packet causes receive_packet to return ConnectionTerminated.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_receive_packet_termination_returns_error() {
     let settings = fast_settings();
     let termination = make_termination_packet(&settings);
@@ -95,7 +100,7 @@ async fn test_receive_packet_termination_returns_error() {
 }
 
 // Test: with two flows, TERMINATION on one flow still terminates the session.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_receive_packet_termination_on_any_flow_terminates() {
     let settings = fast_settings();
     let termination = make_termination_packet(&settings);
@@ -111,7 +116,7 @@ async fn test_receive_packet_termination_on_any_flow_terminates() {
 // ── send_packet tests ──────────────────────────────────────────────────────────
 
 // Test: send_packet with a zero-length payload does not panic and calls the flow.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_send_packet_empty_payload_succeeds() {
     let settings = fast_settings();
     let flow = MockFlowManager::new(vec![]);
@@ -123,7 +128,7 @@ async fn test_send_packet_empty_payload_succeeds() {
 }
 
 // Test: send_packet with a non-empty payload succeeds.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_send_packet_with_payload_succeeds() {
     let settings = fast_settings();
     let flow = MockFlowManager::new(vec![]);
@@ -133,4 +138,31 @@ async fn test_send_packet_with_payload_succeeds() {
     buf.slice_mut().copy_from_slice(b"hello typhoon!!!");
     let result = session.send_packet(buf, false).await;
     assert!(result.is_ok(), "send_packet with payload must succeed, got: {result:?}");
+}
+
+// ── Drop-path tests ────────────────────────────────────────────────────────────
+
+// Test: dropping the session drives a TERMINATION send through the single flow.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_drop_invokes_send_packet() {
+    let settings = fast_settings();
+    let flow = MockFlowManager::new(vec![]);
+    let flow_for_assert = Arc::clone(&flow);
+    let session = make_session(Arc::clone(&settings), vec![flow]).await;
+    drop(session);
+    assert_eq!(flow_for_assert.send_calls.load(Ordering::Relaxed), 1, "drop must invoke send_packet exactly once on the selected flow");
+}
+
+// Test: dropping a session with multiple flows still produces exactly one TERMINATION send.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_drop_sends_termination_on_single_flow_only() {
+    let settings = fast_settings();
+    let flow0 = MockFlowManager::new(vec![]);
+    let flow1 = MockFlowManager::new(vec![]);
+    let flow0_assert = Arc::clone(&flow0);
+    let flow1_assert = Arc::clone(&flow1);
+    let session = make_session(Arc::clone(&settings), vec![flow0, flow1]).await;
+    drop(session);
+    let total = flow0_assert.send_calls.load(Ordering::Relaxed) + flow1_assert.send_calls.load(Ordering::Relaxed);
+    assert_eq!(total, 1, "drop must send TERMINATION on exactly one flow, observed {total}");
 }
