@@ -136,15 +136,21 @@ The tailor structure consists of the following fields (total: `16 + TYPHOON_ID_L
 
 ```mermaid
 packet
-+8: "FG (flags)"
++1: "FHS"
++1: "FHC"
++1: "FDA"
++1: "FDE"
++1: "FTE"
++3: "(unassigned)"
 +8: "CD (code)"
 +32: "TM (next in)"
 +64: "PN (packet number)"
 +16: "PL (payload length)"
-+256: "ID (user identifier)"
++128: "ID (user identifier)"
 ```
 
-In the diagram above `ID` is 16 bytes long (the relatively big and safe default value).
+In the diagram above "flags" field (`FG`) is split into individual flag values.
+The "identity" `ID` field is 16 bytes long (the relatively big and safe default value).
 
 | Field code | Field name | Byte length | Production meaning | Debug meaning |
 | --- | --- | --- | --- | --- |
@@ -159,13 +165,14 @@ In the diagram above `ID` is 16 bytes long (the relatively big and safe default 
 > See [implementation advices](#sockets-and-listeners) for more information on client attribution.
 
 See [debug mode description](#debug-mode) for more information on protocol debugging and how the header is interpreted differently in debug mode.
+
 Packet flags can have the following values:
 
-- `128`: handshake packet.
-- `64`: health check packet.
-- `32`: data packet.
-- `16`: decoy packet.
-- `8`: termination packet.
+- `FHS` (128): handshake packet.
+- `FHC` (64): health check packet.
+- `FDA` (32): data packet.
+- `FDE` (16): decoy packet.
+- `FTE` (8): termination packet.
 
 > Normally only one of these values should be set, but there is an exception: a health check packet (that normally has an empty body) can be embedded into a data packet, that situation hereinafter is called "shadowride".
 
