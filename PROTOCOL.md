@@ -105,14 +105,14 @@ While it is technically possible for client flow managers to operate using diffe
 
 ## Packet structure
 
-```text
- ◄──────────────── wire packet (left = start) ───────────────────►
-
- ┌───────────────┬───────────────┬───────────────────┬─────────────┐
- │  Fake Header  │   Fake Body   │ Encrypted Payload │  Encrypted  │
- │   see below   │   see below   │ (data/hs packets) │   Tailor    │
- │  (optional)   │  (optional)   │    variable len   │  fixed len  │
- └───────────────┴───────────────┴───────────────────┴─────────────┘
+```mermaid
+flowchart LR
+    subgraph "Wire packet layout (left = start)"
+        FH["Fake Header: see below (optional)"]
+        FB["Fake Body: see below (optional)"]
+        EP["Encrypted Payload: data/hs packets (variable length)"]
+        ET["Encrypted Tailor: packet meta-information (fixed length)"]
+    end
 ```
 
 There are two types of packets in the TYPHOON protocol: real packets and decoy packets.
@@ -134,13 +134,17 @@ Fake header and fake body structures are selected either randomly upon flow mana
 The tailor should always be positioned _at the very end_ of a TYPHOON packet.
 The tailor structure consists of the following fields (total: `16 + TYPHOON_ID_LENGTH` bytes):
 
-```text
- Byte offset →   0    1    2         5    6              13   14   15   16 …
-                 ┌────┬────┬────────────┬────────────────┬────────┬──────────┐
-                 │ FG │ CD │  TM (4 B)  │   PN (8 B)     │ PL(2B) │ ID (N B) │
-                 │flag│code│  next_in   │packet number   │pay.len │identity  │
-                 └────┴────┴────────────┴────────────────┴────────┴──────────┘
+```mermaid
+packet
+0: "FG (flags)"
+1: "CD (code)"
+2-5: "TM (next in)"
+6-13: "PN (packet number)"
+14-15: "PL (payload length)"
+16-32: "ID (user identifier)"
 ```
+
+In the diagram above `ID` is 16 bytes long (the relatively big and safe default value).
 
 | Field code | Field name | Byte length | Production meaning | Debug meaning |
 | --- | --- | --- | --- | --- |
