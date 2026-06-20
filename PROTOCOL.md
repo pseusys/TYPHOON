@@ -136,12 +136,12 @@ The tailor structure consists of the following fields (total: `16 + TYPHOON_ID_L
 
 ```mermaid
 packet
-0: "FG (flags)"
-1: "CD (code)"
-2-5: "TM (next in)"
-6-13: "PN (packet number)"
-14-15: "PL (payload length)"
-16-32: "ID (user identifier)"
++8: "FG (flags)"
++8: "CD (code)"
++32: "TM (next in)"
++64: "PN (packet number)"
++16: "PL (payload length)"
++256: "ID (user identifier)"
 ```
 
 In the diagram above `ID` is 16 bytes long (the relatively big and safe default value).
