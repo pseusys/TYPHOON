@@ -105,14 +105,14 @@ While it is technically possible for client flow managers to operate using diffe
 
 ## Packet structure
 
-```text
- ◄──────────────── wire packet (left = start) ───────────────────►
-
- ┌───────────────┬───────────────┬───────────────────┬─────────────┐
- │  Fake Header  │   Fake Body   │ Encrypted Payload │  Encrypted  │
- │   see below   │   see below   │ (data/hs packets) │   Tailor    │
- │  (optional)   │  (optional)   │    variable len   │  fixed len  │
- └───────────────┴───────────────┴───────────────────┴─────────────┘
+```mermaid
+flowchart LR
+    subgraph "Wire packet layout (left = start)"
+        FH["Fake Header: see below (optional)"]
+        FB["Fake Body: see below (optional)"]
+        EP["Encrypted Payload: data/hs packets (variable length)"]
+        ET["Encrypted Tailor: packet meta-information (fixed length)"]
+    end
 ```
 
 There are two types of packets in the TYPHOON protocol: real packets and decoy packets.
@@ -134,17 +134,27 @@ Fake header and fake body structures are selected either randomly upon flow mana
 The tailor should always be positioned _at the very end_ of a TYPHOON packet.
 The tailor structure consists of the following fields (total: `16 + TYPHOON_ID_LENGTH` bytes):
 
-```text
- Byte offset →   0    1    2         5    6              13   14   15   16 …
-                 ┌────┬────┬────────────┬────────────────┬────────┬──────────┐
-                 │ FG │ CD │  TM (4 B)  │   PN (8 B)     │ PL(2B) │ ID (N B) │
-                 │flag│code│  next_in   │packet number   │pay.len │identity  │
-                 └────┴────┴────────────┴────────────────┴────────┴──────────┘
+```mermaid
+packet
++1: "FHS"
++1: "FHC"
++1: "FDA"
++1: "FDE"
++1: "FTE"
++3: "(unassigned)"
++8: "CD (code)"
++32: "TM (next in)"
++64: "PN (packet number)"
++16: "PL (payload length)"
++128: "ID (user identifier)"
 ```
+
+In the diagram above "flags" field (`FG`) is split into individual flag values.
+The "identity" `ID` field is 16 bytes long (the relatively big and safe default value).
 
 | Field code | Field name | Byte length | Production meaning | Debug meaning |
 | --- | --- | --- | --- | --- |
-| **FG** | flags | `1` | Flags defining packet contents | - |
+| **FG** | flags | `1` | Flags defining packet contents (see bit values below) | - |
 | **CD** | code | `1` | Client type in client handshake, handshake result in server handshake | Packet unique reference number |
 | **TM** | time | `4` | Delay before the next health check packet (milliseconds), unused for other packets | Packet sending timestamp |
 | **PN** | packet number | `8` | Combined packet number | - |
@@ -155,13 +165,14 @@ The tailor structure consists of the following fields (total: `16 + TYPHOON_ID_L
 > See [implementation advices](#sockets-and-listeners) for more information on client attribution.
 
 See [debug mode description](#debug-mode) for more information on protocol debugging and how the header is interpreted differently in debug mode.
+
 Packet flags can have the following values:
 
-- `128`: handshake packet.
-- `64`: health check packet.
-- `32`: data packet.
-- `16`: decoy packet.
-- `8`: termination packet.
+- `FHS` (128): handshake packet.
+- `FHC` (64): health check packet.
+- `FDA` (32): data packet.
+- `FDE` (16): decoy packet.
+- `FTE` (8): termination packet.
 
 > Normally only one of these values should be set, but there is an exception: a health check packet (that normally has an empty body) can be embedded into a data packet, that situation hereinafter is called "shadowride".
 
@@ -326,8 +337,8 @@ sequenceDiagram
         C->>S: HealthCheck(PN = unix_ts ∥ counter, TM = next_in)
         Note over S: Remember PN, wait next_in ms
         Note over S: (attempt shadowride on outgoing data packet)
-        S-->>C: HealthCheck(PN = remembered, TM = next_in')
-        Note over C: Verify PN matches, wait next_in' ms
+        S-->>C: HealthCheck(PN = remembered, TM = next_in)
+        Note over C: Verify PN matches, wait next_in ms
         Note over C: (attempt shadowride on outgoing data packet)
     end
     Note over C,S: No response after TYPHOON_MAX_RETRIES → connection decays
