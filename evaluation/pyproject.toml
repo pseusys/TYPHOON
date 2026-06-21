@@ -2,8 +2,10 @@
 name = "typhoon-eval"
 version = "0.1.0"
 description = "TYPHOON protocol evaluation harness — traffic capture, analysis, and classification"
-authors = ["pseusys"]
 packages = [{ include = "typhoon_eval", from = "src" }]
+authors =  [
+    "Alexander Sergeev <aleksandr.sergeev.dm@gmail.com>"
+]
 
 [tool.poetry.dependencies]
 python             = "^3.11"
