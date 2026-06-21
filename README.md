@@ -224,6 +224,7 @@ On a server using Linux's default UDP socket buffer (`net.core.rmem_default = ne
 **Bump the host-level UDP buffer sysctls on any production server**, the same way the WireGuard / OpenVPN / strongSwan deployment guides recommend:
 
 | `sysctl` name | required value |
+| --- | --- |
 | `net.core.rmem_max` | 16777216 |
 | `net.core.rmem_default` | 4194304 |
 | `net.core.wmem_max` | 16777216 |
