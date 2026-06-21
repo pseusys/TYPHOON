@@ -1,11 +1,17 @@
 [package]
-name = "typhoon"
+name = "typhoon-protocol"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-only"
 description = "A sample implementation of TYPHOON protocol"
+repository = "https://github.com/pseusys/TYPHOON"
+readme = "README.md"
 authors = [
     "Alexander Sergeev <aleksandr.sergeev.dm@gmail.com>"
 ]
+
+[lib]
+name = "typhoon"
 
 
 [features]
