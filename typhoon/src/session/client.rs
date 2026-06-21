@@ -19,7 +19,7 @@ use crate::session::client_health::ClientHealthProvider;
 use crate::session::common::SessionManager;
 use crate::session::error::SessionControllerError;
 use crate::settings::Settings;
-use crate::tailor::{ClientConnectionHandler, IdentityType, PacketFlags, Tailor};
+use crate::tailer::{ClientConnectionHandler, IdentityType, PacketFlags, Tailer};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::{AsyncExecutor, Mutex, create_watch};
 
@@ -115,14 +115,14 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
             let packet_number = self.next_packet_number();
 
             let encrypted_payload_len = encrypted_payload.len();
-            let tailor_buf = encrypted_payload.expand_end(T::length()).rebuffer_start(encrypted_payload_len);
-            let tailor = Tailor::data(tailor_buf, &identity, payload_length, packet_number);
+            let tailer_buf = encrypted_payload.expand_end(T::length()).rebuffer_start(encrypted_payload_len);
+            let tailer = Tailer::data(tailer_buf, &identity, payload_length, packet_number);
 
             // Let health provider potentially attach a shadowride.
             // Clone is cheap (Arc), and writes are visible through the shared buffer.
-            self.health_provider.feed_output(tailor.clone()).await?;
+            self.health_provider.feed_output(tailer.clone()).await?;
 
-            encrypted_payload.expand_end(Tailor::<T>::len())
+            encrypted_payload.expand_end(Tailer::<T>::len())
         };
 
         self.select_flow().send_packet(full_packet, false, false).await.map_err(SessionControllerError::FlowError)
@@ -166,26 +166,26 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
                 result.map_err(SessionControllerError::FlowError)?
             };
 
-            // The flow manager returns: encrypted_payload || plaintext_tailor (full Tailor::<T>::len() bytes).
-            let (payload_part, tailor_part) = packet.split_buf_end(Tailor::<T>::len());
-            let tailor = Tailor::<T>::new(tailor_part);
+            // The flow manager returns: encrypted_payload || plaintext_tailer (full Tailer::<T>::len() bytes).
+            let (payload_part, tailer_part) = packet.split_buf_end(Tailer::<T>::len());
+            let tailer = Tailer::<T>::new(tailer_part);
 
-            debug!("client session: received {:?} packet", tailor.flags());
+            debug!("client session: received {:?} packet", tailer.flags());
 
-            if tailor.flags().is_termination() {
-                debug!("client session: connection terminated by server (code={})", tailor.code());
-                return Err(SessionControllerError::ConnectionTerminated(tailor.code()));
+            if tailer.flags().is_termination() {
+                debug!("client session: connection terminated by server (code={})", tailer.code());
+                return Err(SessionControllerError::ConnectionTerminated(tailer.code()));
             }
 
-            if tailor.flags().contains(PacketFlags::HANDSHAKE) {
-                self.health_provider.feed_handshake_input(tailor.clone(), payload_part.clone()).await?;
+            if tailer.flags().contains(PacketFlags::HANDSHAKE) {
+                self.health_provider.feed_handshake_input(tailer.clone(), payload_part.clone()).await?;
             }
 
-            if tailor.flags().contains(PacketFlags::HEALTH_CHECK) {
-                self.health_provider.feed_input(tailor.clone()).await?;
+            if tailer.flags().contains(PacketFlags::HEALTH_CHECK) {
+                self.health_provider.feed_input(tailer.clone()).await?;
             }
 
-            if tailor.flags().has_payload() {
+            if tailer.flags().has_payload() {
                 let mut recv_lock = self.receive_internal.lock().await;
                 match recv_lock.cipher.get_mut().decrypt_payload(payload_part, None) {
                     Ok(decrypted) => return Ok(decrypted),
@@ -206,9 +206,9 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
         let executor = self.settings.executor().clone();
         executor.block_on(async {
             let (identity, code) = self.health_provider.termination_snapshot().await;
-            let buf = self.settings.pool().allocate(Some(Tailor::<T>::len()));
-            let tailor = Tailor::termination(buf, &identity, code, pn);
-            let _ = self.select_flow().send_packet(tailor.into_buffer(), false, false).await;
+            let buf = self.settings.pool().allocate(Some(Tailer::<T>::len()));
+            let tailer = Tailer::termination(buf, &identity, code, pn);
+            let _ = self.select_flow().send_packet(tailer.into_buffer(), false, false).await;
         });
         drop(take(&mut self.flows));
     }

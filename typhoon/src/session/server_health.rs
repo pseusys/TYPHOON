@@ -14,7 +14,7 @@ use rand::Rng;
 use crate::session::server::OutgoingRouter;
 use crate::settings::Settings;
 use crate::settings::keys::*;
-use crate::tailor::{IdentityType, ReturnCode, Tailor};
+use crate::tailer::{IdentityType, ReturnCode, Tailer};
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, WatchReceiver, WatchSender, create_watch, sleep};
 use crate::utils::unix_timestamp_ms;
@@ -102,7 +102,7 @@ impl ServerHealthProvider {
                     let server_next_in = get_rng().gen_range(settings.get(&HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&HEALTH_CHECK_NEXT_IN_MAX)) as u32;
 
                     let buf = settings.pool().allocate(Some(T::length()));
-                    let response = Tailor::health_check(buf, &identity, server_next_in, response_pn).into_buffer();
+                    let response = Tailer::health_check(buf, &identity, server_next_in, response_pn).into_buffer();
 
                     let Some(r) = router.upgrade() else {
                         debug!("ServerHealthProvider: router dropped, stopping");
@@ -124,7 +124,7 @@ impl ServerHealthProvider {
                     if let Some(r) = router.upgrade() {
                         let pn = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
                         let buf = settings.pool().allocate(Some(T::length()));
-                        let termination = Tailor::termination(buf, &identity, ReturnCode::ConnectionDecayed, pn).into_buffer();
+                        let termination = Tailer::termination(buf, &identity, ReturnCode::ConnectionDecayed, pn).into_buffer();
                         r.route_packet(termination, &identity).await;
                         r.remove_session(&identity).await;
                     }

@@ -11,7 +11,7 @@
 ///
 /// This shows two things at once:
 ///   1. The `feed_output` → `None` + `send_decoy_packet` chain is the
-///      sanctioned way to defer real traffic.  The plaintext tailor is
+///      sanctioned way to defer real traffic.  The plaintext tailer is
 ///      preserved across the round-trip, so the re-injected packet's DATA
 ///      flag survives and the receiver processes it as data, not as a decoy.
 ///   2. The flat-IAT pattern is *visible* in the per-flow plot: the
@@ -47,7 +47,7 @@ use tokio::time::sleep;
 use typhoon::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
-use typhoon::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DerivedValue, IdentityType, PacketFlags, SparseDecoyProvider, Tailor, decoy_factory};
+use typhoon::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DerivedValue, IdentityType, PacketFlags, SparseDecoyProvider, Tailer, decoy_factory};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::consts::{FG_OFFSET, PN_OFFSET};
 use typhoon::settings::{Settings, SettingsBuilder};
@@ -87,11 +87,11 @@ struct FlatIatDecoyProvider<T: IdentityType + Clone, AE: AsyncExecutor> {
 }
 
 struct FlatIatState {
-    /// FIFO of (PN, body || plaintext-tailor) entries held back from immediate
-    /// send.  Re-injection preserves the original tailor (including the DATA
+    /// FIFO of (PN, body || plaintext-tailer) entries held back from immediate
+    /// send.  Re-injection preserves the original tailer (including the DATA
     /// flag), so the receiver still processes each entry as a real data
     /// packet.  The PN is stashed alongside the buffer so the timer task can
-    /// mark it in `reinjected` without re-parsing the tailor.
+    /// mark it in `reinjected` without re-parsing the tailer.
     queue: VecDeque<(u64, DynamicByteBuffer)>,
     /// PNs of real packets currently being re-injected via `send_decoy_packet`.
     /// `feed_output` consults this set to distinguish a re-injection (pass
@@ -143,10 +143,10 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlatIatDeco
                     (real_packet, false)
                 } else {
                     let body_len = RANDOM_DECOY_BODY_LEN;
-                    let total = body_len + Tailor::<T>::len();
+                    let total = body_len + Tailer::<T>::len();
                     let buf = settings.pool().allocate(Some(total));
                     rand::thread_rng().fill(buf.slice_end_mut(body_len));
-                    Tailor::decoy(buf.rebuffer_start(body_len), &identity.get(), guard.next_packet_number());
+                    Tailer::decoy(buf.rebuffer_start(body_len), &identity.get(), guard.next_packet_number());
                     let fallthrough = guard.should_fallthrough();
                     (buf, fallthrough)
                 }
@@ -174,23 +174,23 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         executor.spawn(Self::timer_task(manager, settings, identity, state));
     }
 
-    async fn feed_input(&self, packet: DynamicByteBuffer, _tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_input(&self, packet: DynamicByteBuffer, _tailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         Some(packet)
     }
 
-    async fn feed_output(&self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
-        let flags = PacketFlags::from_bits_truncate(*tailor_buf.get(FG_OFFSET));
+    async fn feed_output(&self, body: DynamicByteBuffer, tailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+        let flags = PacketFlags::from_bits_truncate(*tailer_buf.get(FG_OFFSET));
         // Pass everything except real DATA through unchanged: decoys, terminations,
         // handshake responses, and pure health checks all need immediate delivery.
         // Terminations especially must not queue: the session-cleanup task sends
         // termination then removes the user, so a queued termination would be
         // stranded when the next timer tick fires. Handshake responses are even more
         // fragile — queueing one risks it being drained as a fallthrough decoy, which
-        // discards the plaintext tailor the client needs to complete the handshake.
+        // discards the plaintext tailer the client needs to complete the handshake.
         if !flags.has_payload() {
             return Some(body);
         }
-        let pn_bytes: [u8; 8] = tailor_buf.slice()[PN_OFFSET..PN_OFFSET + 8].try_into().expect("8-byte PN");
+        let pn_bytes: [u8; 8] = tailer_buf.slice()[PN_OFFSET..PN_OFFSET + 8].try_into().expect("8-byte PN");
         let pn = u64::from_be_bytes(pn_bytes);
         let mut state = self.state.lock().expect("FlatIatDecoyProvider mutex poisoned");
         // Re-injection from the timer task — the PN was marked just before
@@ -199,12 +199,12 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         if state.reinjected.remove(&pn) {
             return Some(body);
         }
-        // Fresh app-level send: stash (body || plaintext-tailor) for the timer.
-        // `body` and `tailor_buf` are two adjacent views into the same backing
+        // Fresh app-level send: stash (body || plaintext-tailer) for the timer.
+        // `body` and `tailer_buf` are two adjacent views into the same backing
         // allocation (split by `prepare_outgoing`).  Stretching body's end by
-        // `tailor_buf.len()` re-covers the tailor in place — no copy, no
+        // `tailer_buf.len()` re-covers the tailer in place — no copy, no
         // self-overlap UB that `append_buf` would trigger.
-        let combined = body.expand_end(tailor_buf.len());
+        let combined = body.expand_end(tailer_buf.len());
         state.queue.push_back((pn, combined));
         None
     }

@@ -19,8 +19,8 @@ pub enum FlowControllerError {
     #[error("error accessing cached cipher: {}", .0.to_string())]
     MissingCache(#[source] CacheError),
 
-    #[error("error encrypting packet tailor: {}", .0.to_string())]
-    TailorEncryption(#[source] CryptoError),
+    #[error("error encrypting packet tailer: {}", .0.to_string())]
+    TailerEncryption(#[source] CryptoError),
 
     #[error("flow config assertion failed: {message}")]
     AssertionFailed {

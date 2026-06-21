@@ -20,8 +20,8 @@ pub use crate::flow::decoy::{DecoyFactory, decoy_factory, random_decoy_factory};
 pub use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender, probe_factory};
 use crate::settings::Settings;
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
-pub use crate::tailor::{ClientConnectionHandler, ServerConnectionHandler};
-use crate::tailor::{IdentityType, Tailor};
+pub use crate::tailer::{ClientConnectionHandler, ServerConnectionHandler};
+use crate::tailer::{IdentityType, Tailer};
 use crate::utils::random::{SupportRng, get_rng};
 pub use crate::utils::sync::AsyncExecutor;
 
@@ -130,7 +130,7 @@ cfg_if! {
 
 pub type DefaultSettings = Settings<DefaultExecutor>;
 
-pub type DefaultTailor = Tailor<StaticByteBuffer>;
+pub type DefaultTailer = Tailer<StaticByteBuffer>;
 
 /// Server connection handler that produces a fresh random identity for each handshake,
 /// returns no server initial data, and checks the client version against `CARGO_PKG_VERSION`.
@@ -175,7 +175,7 @@ impl<AE: AsyncExecutor + 'static> ActiveProbeHandler<AE> for NoopProbeHandler {
 }
 
 /// Client connection handler with no custom initial data that encodes `CARGO_PKG_VERSION`
-/// into the handshake tailor ID field.
+/// into the handshake tailer ID field.
 pub struct DefaultClientConnectionHandler;
 
 impl ClientConnectionHandler for DefaultClientConnectionHandler {

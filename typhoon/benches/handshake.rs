@@ -7,7 +7,7 @@
 ///   "ed25519/sign"      — Ed25519 transcript signature (server per-handshake cost).
 ///   "handshake/end_to_end" — full client `build()` over UDP loopback against a live server,
 ///                            covering McEliece encap+decap, two-way X25519, Ed25519 sign+verify,
-///                            tailor obfuscation, and the socket round trip.
+///                            tailer obfuscation, and the socket round trip.
 ///
 /// The X25519 numbers anchor a "what if TYPHOON used a lattice/ECDH KEM instead" comparison;
 /// the end-to-end measurement captures the realised cost the user observes per connection.
