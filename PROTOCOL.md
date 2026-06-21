@@ -154,7 +154,7 @@ The "identity" `ID` field is 16 bytes long (the relatively big and safe default 
 
 | Field code | Field name | Byte length | Production meaning | Debug meaning |
 | --- | --- | --- | --- | --- |
-| **FG** | flags | `1` | Flags defining packet contents | - |
+| **FG** | flags | `1` | Flags defining packet contents (see bit values below) | - |
 | **CD** | code | `1` | Client type in client handshake, handshake result in server handshake | Packet unique reference number |
 | **TM** | time | `4` | Delay before the next health check packet (milliseconds), unused for other packets | Packet sending timestamp |
 | **PN** | packet number | `8` | Combined packet number | - |
@@ -337,8 +337,8 @@ sequenceDiagram
         C->>S: HealthCheck(PN = unix_ts ∥ counter, TM = next_in)
         Note over S: Remember PN, wait next_in ms
         Note over S: (attempt shadowride on outgoing data packet)
-        S-->>C: HealthCheck(PN = remembered, TM = next_in')
-        Note over C: Verify PN matches, wait next_in' ms
+        S-->>C: HealthCheck(PN = remembered, TM = next_in)
+        Note over C: Verify PN matches, wait next_in ms
         Note over C: (attempt shadowride on outgoing data packet)
     end
     Note over C,S: No response after TYPHOON_MAX_RETRIES → connection decays
