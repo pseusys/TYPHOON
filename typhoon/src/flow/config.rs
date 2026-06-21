@@ -371,17 +371,17 @@ impl FlowConfig {
         self.fake_header_mode.len() + self.fake_body_mode.max_len()
     }
 
-    /// Maximum user-data bytes per packet given MTU and the per-packet crypto/tailor overhead.
+    /// Maximum user-data bytes per packet given MTU and the per-packet crypto/tailer overhead.
     /// For Constant mode the wire size is fixed to `packet_length`, so the data budget is
-    /// `min(packet_length, mtu) - (fake_header + crypto + tailor)`.
-    /// For other modes it is `mtu - (fake_header + fake_body_max + crypto + tailor)`.
-    pub fn max_user_payload(&self, mtu: usize, crypto_overhead: usize, tailor_len: usize) -> usize {
-        let fixed = self.fake_header_mode.len() + crypto_overhead + tailor_len;
+    /// `min(packet_length, mtu) - (fake_header + crypto + tailer)`.
+    /// For other modes it is `mtu - (fake_header + fake_body_max + crypto + tailer)`.
+    pub fn max_user_payload(&self, mtu: usize, crypto_overhead: usize, tailer_len: usize) -> usize {
+        let fixed = self.fake_header_mode.len() + crypto_overhead + tailer_len;
         match &self.fake_body_mode {
             FakeBodyMode::Constant {
                 packet_length,
             } => packet_length.min(&mtu).saturating_sub(fixed),
-            _ => mtu.saturating_sub(self.max_overhead() + crypto_overhead + tailor_len),
+            _ => mtu.saturating_sub(self.max_overhead() + crypto_overhead + tailer_len),
         }
     }
 

@@ -118,8 +118,8 @@ flowchart LR
 There are two types of packets in the TYPHOON protocol: real packets and decoy packets.
 Real packets contain a payload and a header; they are either processed or generated (in the case of health check packets) by the session manager.
 The payload is encrypted with [marshalling encryption](#marshalling-encryption) using a session key.
-The header is appended _after_ the payload, so hereinafter it will be called the "tailor" instead.
-Its structure will be explained [below](#tailor-structure), and it is encrypted with [tailor encryption](#tailor-encryption).
+The header is appended _after_ the payload, so hereinafter it will be called the "tailer" instead.
+Its structure will be explained [below](#tailer-structure), and it is encrypted with [tailer encryption](#tailer-encryption).
 The decoy packets, in turn, are just random bytes.
 
 After a real packet body is constructed, it is passed to the flow manager.
@@ -129,10 +129,10 @@ See more about this in [proposed implementation](#insertion-and-processing) chap
 
 Fake header and fake body structures are selected either randomly upon flow manager initialization (default) or manually.
 
-### Tailor structure
+### Tailer structure
 
-The tailor should always be positioned _at the very end_ of a TYPHOON packet.
-The tailor structure consists of the following fields (total: `16 + TYPHOON_ID_LENGTH` bytes):
+The tailer should always be positioned _at the very end_ of a TYPHOON packet.
+The tailer structure consists of the following fields (total: `16 + TYPHOON_ID_LENGTH` bytes):
 
 ```mermaid
 packet
@@ -176,11 +176,11 @@ Packet flags can have the following values:
 
 > Normally only one of these values should be set, but there is an exception: a health check packet (that normally has an empty body) can be embedded into a data packet, that situation hereinafter is called "shadowride".
 
-The tailor is the only part of the message that should be decrypted by the flow manager.
-It always starts at `packet_length - tailor_length - tailor_encryption_overhead` and ends at the end of the packet.
-If the data flag is set, the payload should be read starting from `packet_length - tailor_length - tailor_encryption_overhead - payload_length` and until the start of the tailor.
+The tailer is the only part of the message that should be decrypted by the flow manager.
+It always starts at `packet_length - tailer_length - tailer_encryption_overhead` and ends at the end of the packet.
+If the data flag is set, the payload should be read starting from `packet_length - tailer_length - tailer_encryption_overhead - payload_length` and until the start of the tailer.
 If the decoy flag is set, the packet should be discarded right away by the flow manager.
-If tailor decryption or authentication fails, the raw (still-encrypted) packet is forwarded to the flow manager's [active probe handler](#active-probing-protection) instead of being silently dropped.
+If tailer decryption or authentication fails, the raw (still-encrypted) packet is forwarded to the flow manager's [active probe handler](#active-probing-protection) instead of being silently dropped.
 
 ### Fake body
 
@@ -227,7 +227,7 @@ On the client side, the flow manager selection is uniform random: when a packet 
 Future revisions may extend this with weighted selection driven by per-path health scores — see [Path degrading](#path-degrading).
 
 On the server side, everything is a little more complex.
-The server keeps a set of clients mapped to their unique identifiers (**ID** tailor field), but it is never notified about client proxy selection.
+The server keeps a set of clients mapped to their unique identifiers (**ID** tailer field), but it is never notified about client proxy selection.
 Each server flow manager independently tracks the last known source address per client, alongside the latest packet number seen on this flow for that client: when it receives a correctly-authenticated non-handshake packet whose PN is strictly greater than the latest seen, it [updates the stored source address for that client](#identification-and-rebinding) (the new PN becomes the latest).
 When a flow manager wants to send a packet back, it uses the last known source address it has for that client.
 
@@ -245,19 +245,19 @@ sequenceDiagram
 
     App->>SM: send(payload)
     SM->>SM: Encrypt payload (session key)
-    SM->>SM: Build tailor (flags=DATA, PN, ID)
-    SM->>FM: deliver(body ∥ tailor)
+    SM->>SM: Build tailer (flags=DATA, PN, ID)
+    SM->>FM: deliver(body ∥ tailer)
     FM->>FM: Prepend FakeHeader + FakeBody
     FM-->>FM: UDP datagram sent
 
     FM-->>FM: receive UDP datagram
     FM->>FM: Strip FakeHeader + FakeBody
-    alt tailor decryption / authentication ok
-        FM->>FM: Decrypt tailor → verify identity + PN
+    alt tailer decryption / authentication ok
+        FM->>FM: Decrypt tailer → verify identity + PN
         FM-->>SM: deliver(body)
         SM->>SM: Decrypt body (session key)
         SM-->>App: recv() → plaintext payload
-    else tailor decryption / authentication fail
+    else tailer decryption / authentication fail
         FM->>FM: ActiveProbeHandler::process(raw packet)
     end
 ```
@@ -266,7 +266,7 @@ The simplest pattern affects data packets: they are sent directly and completely
 
 > NB! This behavior _might_ be changed using custom [decoy communication mode](#communication-mode): some [decoy providers](#insertion-and-processing) are allowed to intercept and "hold" data packets for some time, but that is highly discouraged in performance-critical scenarios.
 
-Just like it has already been described in [packet structure](#packet-structure) section, every data packet is encrypted, prefixed with a [fake header](#fake-header) and postfixed with an [encrypted tailor](#tailor-structure).
+Just like it has already been described in [packet structure](#packet-structure) section, every data packet is encrypted, prefixed with a [fake header](#fake-header) and postfixed with an [encrypted tailer](#tailer-structure).
 
 ### Handshake packets
 
@@ -312,7 +312,7 @@ Still, data packets can only go after the client receives the second handshake m
 
 > NB! Even though the client is allowed to start sending decoy packets whenever it likes, the server should not respond to any decoy packets before the handshake is complete.
 
-The handshake packets carry implementation-dependent encrypted initial data and also are prefixed with a [fake header](#fake-header) and postfixed with an [encrypted tailor](#tailor-structure).
+The handshake packets carry implementation-dependent encrypted initial data and also are prefixed with a [fake header](#fake-header) and postfixed with an [encrypted tailer](#tailer-structure).
 In terms of behavior, the packets are treated just like the [health check packets](#health-check-packets), meaning that the server handshake response does not arrive immediately, but instead with a [next in delay](#next-in-computation) (this delay however is multiplied by `TYPHOON_HANDSHAKE_NEXT_IN_FACTOR` constant).
 Also, just like the health check packets, handshake packets are retransmitted.
 
@@ -345,7 +345,7 @@ sequenceDiagram
 ```
 
 Health checking cycle is also hereinafter called "decay" cycle.
-The decay behavior is mostly defined by [**TM** and **PN** fields of the tailor](#tailor-structure).
+The decay behavior is mostly defined by [**TM** and **PN** fields of the tailer](#tailer-structure).
 The _current incremental packet number_ is a single per-session counter shared by every emitter on the session — data, health-check, handshake, decoy, and termination packets all advance the same monotonic sequence.
 The counter starts from 0 at session establishment.
 
@@ -527,25 +527,25 @@ Subheader mode is chosen randomly using weights `TYPHOON_DECOY_SUBHEADER_WEIGHT_
 
 #### Fallthrough decoys
 
-A fraction of decoy packets — controlled per-flow — may be emitted as **fallthrough** decoys: the wire packet is built without the [tailor](#tailor-structure) section.  Such a packet carries no flags, no payload-length field, no packet number, and no identity; it is just `[fake_header? | fake_body | random_body]`, where each piece is generated by the normal flow-manager pipeline (the fake header / fake body may be empty exactly as for a regular packet whose dice did not roll for them).
+A fraction of decoy packets — controlled per-flow — may be emitted as **fallthrough** decoys: the wire packet is built without the [tailer](#tailer-structure) section.  Such a packet carries no flags, no payload-length field, no packet number, and no identity; it is just `[fake_header? | fake_body | random_body]`, where each piece is generated by the normal flow-manager pipeline (the fake header / fake body may be empty exactly as for a regular packet whose dice did not roll for them).
 
-Fallthrough decoys broaden TYPHOON's wire-size distribution into the band that the tailor + identity + AEAD-tag overhead otherwise puts a hard floor on, letting the protocol blend with the long tail of arbitrary UDP traffic (NAT mishaps, ICMP-shaped echoes, malformed gaming heartbeats, niche control-plane protocols).
+Fallthrough decoys broaden TYPHOON's wire-size distribution into the band that the tailer + identity + AEAD-tag overhead otherwise puts a hard floor on, letting the protocol blend with the long tail of arbitrary UDP traffic (NAT mishaps, ICMP-shaped echoes, malformed gaming heartbeats, niche control-plane protocols).
 
-Each flow draws a single probability at initialization from `[TYPHOON_DECOY_FALLTHROUGH_PACKETS_MIN, TYPHOON_DECOY_FALLTHROUGH_PACKETS_MAX]` (asserted floats in `[0, 1]`, default range `[0.0, 0.25]`) and holds it constant; every subsequent decoy emission rolls a coin against that probability to decide whether to emit a fallthrough decoy or a regular tailored one.  A custom decoy factory may override the per-flow range to bias a specific provider toward more (or fewer) fallthrough decoys without changing global settings.
+Each flow draws a single probability at initialization from `[TYPHOON_DECOY_FALLTHROUGH_PACKETS_MIN, TYPHOON_DECOY_FALLTHROUGH_PACKETS_MAX]` (asserted floats in `[0, 1]`, default range `[0.0, 0.25]`) and holds it constant; every subsequent decoy emission rolls a coin against that probability to decide whether to emit a fallthrough decoy or a regular tailered one.  A custom decoy factory may override the per-flow range to bias a specific provider toward more (or fewer) fallthrough decoys without changing global settings.
 
-> NB! Valid fallthrough decoys arriving at the peer fail tailor authentication and therefore land in the [active probe handler](#active-probing-protection) bucket alongside genuine probes.
-> The handler must tolerate the rate `MAX × baseline_decoy_rate` of failed tailor decryptions per peer without escalating heuristics.
+> NB! Valid fallthrough decoys arriving at the peer fail tailer authentication and therefore land in the [active probe handler](#active-probing-protection) bucket alongside genuine probes.
+> The handler must tolerate the rate `MAX × baseline_decoy_rate` of failed tailer decryptions per peer without escalating heuristics.
 
 ### Active probing protection
 
 Active probing is a technique used by censors and network auditors to probe a suspected TYPHOON endpoint directly: they send crafted packets and observe whether the server responds in a way that reveals the protocol.
-To resist this, the flow manager must handle packets that fail tailor authentication gracefully rather than closing the socket or producing a distinctive error response.
+To resist this, the flow manager must handle packets that fail tailer authentication gracefully rather than closing the socket or producing a distinctive error response.
 
 Every flow manager has a single **active probe handler** (one per flow, not per user) that receives every packet the flow manager could not identify. Exactly three conditions route a packet to the handler:
 
-- **Undersized wire packet (no tailor header)**: any datagram shorter than `identity_len + tailor_overhead` cannot carry a valid encrypted tailor and is forwarded as a probable probe.
-- **Tailor decryption failure**: the tailor cannot be deciphered with the flow's receive key.
-- **Tailor verification failure**: the tailor decrypts but its BLAKE3/AEAD authentication tag does not verify against the identity's per-user obfuscation key. On the server this also catches non-handshake packets whose identity is absent from the global registered-users map — `verify_tailor` performs the global lookup as part of the same step.
+- **Undersized wire packet (no tailer header)**: any datagram shorter than `identity_len + tailer_overhead` cannot carry a valid encrypted tailer and is forwarded as a probable probe.
+- **Tailer decryption failure**: the tailer cannot be deciphered with the flow's receive key.
+- **Tailer verification failure**: the tailer decrypts but its BLAKE3/AEAD authentication tag does not verify against the identity's per-user obfuscation key. On the server this also catches non-handshake packets whose identity is absent from the global registered-users map — `verify_tailer` performs the global lookup as part of the same step.
 
 Packets whose identity is globally registered but **not yet locally registered on this flow** (multi-flow case — the client's per-packet flow selection picked a flow that did not receive the handshake) are **not** forwarded to the probe handler: their path binding is anchored on this flow and they continue to normal processing. Out-of-order packets — those whose PN is not strictly greater than the latest PN seen for this identity on this flow — are **not** forwarded either: data packets are still accepted into session processing without rebinding, and decoys are dropped at the usual discardable exit point (the same as in-order decoys).
 
@@ -636,13 +636,13 @@ Since it is used for the majority of all data transferred, the requirements for 
 flowchart TD
     A([User data bytes]) --> B[encrypt_payload\nAEAD — XChaCha20-Poly1305 or AES-GCM-256\nwith session key + random nonce]
     B --> C[ciphertext ‖ auth-tag]
-    C --> D[Write DATA Tailor\nflags · code · time · PN · payload_length · identity]
+    C --> D[Write DATA Tailer\nflags · code · time · PN · payload_length · identity]
 
     D --> FM{Feature mode}
-    FM -- fast_software / fast_hardware --> E1[Stream-cipher obfuscate tailor\nXChaCha20 or AES-256-CTR\nusing OBFS key]
-    E1 --> E2[Append BLAKE3 MAC\nover obfuscated tailor]
+    FM -- fast_software / fast_hardware --> E1[Stream-cipher obfuscate tailer\nXChaCha20 or AES-256-CTR\nusing OBFS key]
+    E1 --> E2[Append BLAKE3 MAC\nover obfuscated tailer]
     FM -- full_software / full_hardware --> F1[Ephemeral X25519 key-exchange\nwith server long-term OPK]
-    F1 --> F2[Anonymous-encrypt tailor\nAEAD with derived key]
+    F1 --> F2[Anonymous-encrypt tailer\nAEAD with derived key]
 
     E2 --> G[Flow layer: prepend FakeHeader ‖ FakeBody]
     F2 --> G
@@ -655,16 +655,16 @@ flowchart TD
 flowchart TD
     A([UDP socket · recv]) --> B[Flow layer: strip FakeHeader ‖ FakeBody]
     B --> TM{Feature mode}
-    TM -- fast_software / fast_hardware --> C1[BLAKE3 verify MAC\nover obfuscated tailor]
+    TM -- fast_software / fast_hardware --> C1[BLAKE3 verify MAC\nover obfuscated tailer]
     C1 -- fail --> X([ActiveProbeHandler::process\nunidentified packet])
-    C1 -- ok --> C2[Stream-cipher deobfuscate tailor\nXChaCha20 or AES-256-CTR\nusing OBFS key]
+    C1 -- ok --> C2[Stream-cipher deobfuscate tailer\nXChaCha20 or AES-256-CTR\nusing OBFS key]
     TM -- full_software / full_hardware --> D1[Ephemeral X25519 key-exchange\nwith server static OSK]
-    D1 --> D2[Anonymous-decrypt tailor\nAEAD with derived key]
+    D1 --> D2[Anonymous-decrypt tailer\nAEAD with derived key]
     D2 -- fail --> X
 
-    C2 --> E[Parse Tailor fields\nflags · identity · payload_length · PN]
+    C2 --> E[Parse Tailer fields\nflags · identity · payload_length · PN]
     D2 -- ok --> E
-    E --> V{Verify tailor\nauthentication}
+    E --> V{Verify tailer\nauthentication}
     V -- fail --> X
     V -- ok --> F{flags}
     F -- DATA or SHADOWRIDE --> G[Slice ciphertext via payload_length\ndecrypt_payload with session AEAD key]
@@ -692,8 +692,8 @@ Client handshake packet encryption consists of the following steps:
 3. Client performs KEM encapsulation using `EPK`, retrieving a ciphertext (`Ciph`) and a shared secret (`CliShrSec`).
 4. Client obfuscates `CliEphPubKey` and `Ciph` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OBFS`/`OPK` and `CliNnc`), producing `CliEphPubKeyObf` and `CiphObf`.
 5. Client encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm with key derived by `BLAKE3` from concatenation of `CliShrSec`, `CliEphPubKeyObf` and `CliNnc`.
-6. Client encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm (NB! Here initial data encryption key is used for additional data instead of session key).
-7. Client constructs the handshake packet by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and encrypted initial data as the body. The handshake tailor is appended to the body and encrypted by the flow manager, as with all other packets.
+6. Client encrypts the handshake tailer with [tailer encryption](#tailer-encryption) algorithm (NB! Here initial data encryption key is used for additional data instead of session key).
+7. Client constructs the handshake packet by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and encrypted initial data as the body. The handshake tailer is appended to the body and encrypted by the flow manager, as with all other packets.
 8. The payload is sent to the server inside of a handshake packet.
 
 After the client receives the encrypted handshake message from the server, it decrypts it using the following steps:
@@ -704,7 +704,7 @@ After the client receives the encrypted handshake message from the server, it de
 3. Client builds a transcript by applying `BLAKE3` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
 4. Client verifies server identity using `Ed25519` with `VPK`, applying it to `Trans` and `TransAuth`.
 5. Client computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
-6. Client extracts the server-generated identity from the server handshake tailor, adopting it for all subsequent communication.
+6. Client extracts the server-generated identity from the server handshake tailer, adopting it for all subsequent communication.
 7. Client decrypts the server initial data using the initial data encryption key (derived by `BLAKE3` from `CliShrSec`, `CliEphPubKeyObf` and `CliNnc`).
 
 > In case of an authentication or initial data decryption failure, client should terminate connection silently.
@@ -730,57 +730,57 @@ After the server initiates the internal state for the user and waits for an appr
 5. Server builds a transcript by applying `BLAKE3` hashing on `CliShrSec`, `SrvShrSec`, `CliNnc` and `SrvNnc`, producing `Trans`.
 6. Server authenticates `Trans` using `Ed25519` with `VSK`, producing `TransAuth`.
 7. Server computes the session key `Sess` using `BLAKE3` on concatenation of `CliShrSec`, `SrvShrSec` and `Trans`.
-8. Server encrypts the handshake tailor with [tailor encryption](#tailor-encryption) algorithm (NB! Here initial data encryption key is used for additional data instead of session key, same as in the client handshake step 6). Server upgrades to the session key after sending the response.
+8. Server encrypts the handshake tailer with [tailer encryption](#tailer-encryption) algorithm (NB! Here initial data encryption key is used for additional data instead of session key, same as in the client handshake step 6). Server upgrades to the session key after sending the response.
 9. Server encrypts initial data with [marshalling encryption](#marshalling-encryption) algorithm using the same initial data encryption key (derived by `BLAKE3` from `CliShrSec`, `CliEphPubKeyObf` and `CliNnc`).
-10. Server constructs the handshake response by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and encrypted initial data as the body. The handshake tailor is appended to the body and encrypted by the flow manager, as with all other packets.
-11. The payload is sent to the client inside of a handshake packet. The server tailor contains the server-generated identity for the client to use in subsequent communication.
+10. Server constructs the handshake response by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and encrypted initial data as the body. The handshake tailer is appended to the body and encrypted by the flow manager, as with all other packets.
+11. The payload is sent to the client inside of a handshake packet. The server tailer contains the server-generated identity for the client to use in subsequent communication.
 
-### Tailor encryption
+### Tailer encryption
 
-Tailor encryption differs significantly depending on cryptographic mode chosen.
-Since the tailor is appended to every single TYPHOON packet, the encryption performance requirements here are high.
+Tailer encryption differs significantly depending on cryptographic mode chosen.
+Since the tailer is appended to every single TYPHOON packet, the encryption performance requirements here are high.
 
-The requirements for tailor encryption on client and server are fundamentally different.
-Since the server expects packets from multiple clients, it has to decrypt all the tailors with a single algorithm.
+The requirements for tailer encryption on client and server are fundamentally different.
+Since the server expects packets from multiple clients, it has to decrypt all the tailers with a single algorithm.
 At the same time, the client expects packets from one server only and can use private session secrets for decryption.
 
-#### Tailor encryption in `fast` mode
+#### Tailer encryption in `fast` mode
 
-In case of the `fast` mode (which should be used if large amounts of data are expected to be transferred), tailor is encrypted using [marshalling encryption](#marshalling-encryption) algorithm with `OBFS` used for key.
-Additionally, after encryption, the ciphertext is also authenticated with `BLAKE3` using the session key; that helps to make sure that tailor was not modified, even if it was decrypted.
+In case of the `fast` mode (which should be used if large amounts of data are expected to be transferred), tailer is encrypted using [marshalling encryption](#marshalling-encryption) algorithm with `OBFS` used for key.
+Additionally, after encryption, the ciphertext is also authenticated with `BLAKE3` using the session key; that helps to make sure that tailer was not modified, even if it was decrypted.
 Again, please note that `OBFS` is a shared symmetric key, which means that obfuscation stops making sense immediately after a single certificate leaks (but not authentication).
 
 > Please note, that this approach is not only faster, but also more extensible.
 > The packets going in both direction have uniform structure in this case and can be decrypted (but not authenticated) by any protocol-aware middleware.
 > That could allow extending protocol with [multi-hop or remote proxy](#multi-hop-proxies-benevolent-mitm) capabilities.
 
-#### Tailor encryption in `full` mode
+#### Tailer encryption in `full` mode
 
-In case of the `full` mode (which should be used if obfuscation should be able to resist certificate leaking), tailor encryption differs depending on the packet flow direction.
+In case of the `full` mode (which should be used if obfuscation should be able to resist certificate leaking), tailer encryption differs depending on the packet flow direction.
 
-For the packets going from server to client, tailors are simply encrypted with [marshalling encryption](#marshalling-encryption) algorithm, that provides maximal privacy and efficiency.
-That does not allow anyone without client session key to decrypt the tailor contents, which is fine in case no one else is intended to read it anyway.
+For the packets going from server to client, tailers are simply encrypted with [marshalling encryption](#marshalling-encryption) algorithm, that provides maximal privacy and efficiency.
+That does not allow anyone without client session key to decrypt the tailer contents, which is fine in case no one else is intended to read it anyway.
 
-For the packets going from client to server, tailors are encrypted using the following steps:
+For the packets going from client to server, tailers are encrypted using the following steps:
 
-0. Client comes up with the raw tailor `Tailor`.
+0. Client comes up with the raw tailer `Tailer`.
 1. Client generates a random 32-byte nonce `Nnc` (it's required for replay protection).
 2. Client generates ephemeral `X25519` keypair, retrieving a public key (`EphPubKey`) and a secret key (`EphSecKey`).
 3. Client performs X25519 key exchange using `EphSecKey` and `OPK`, deriving a shared secret (`ShrSec`).
 4. Client obfuscates the `EphPubKey` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OPK` and `Nnc`), producing `EphPubKeyObf`.
-5. Client encrypts the `Tailor` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `TailorEnc`.
-6. Client constructs the encrypted tail by concatenating `TailorEnc`, `EphPubKeyObf` and `Nnc`.
+5. Client encrypts the `Tailer` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `TailerEnc`.
+6. Client constructs the encrypted tail by concatenating `TailerEnc`, `EphPubKeyObf` and `Nnc`.
 
-The tailors are decrypted using the following steps:
+The tailers are decrypted using the following steps:
 
-0. Server extracts `TailorEnc`, `EphPubKeyObf` and `Nnc` from the client message.
+0. Server extracts `TailerEnc`, `EphPubKeyObf` and `Nnc` from the client message.
 1. Server deobfuscates the `EphPubKeyObf` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OPK` and `Nnc`), producing `EphPubKey`.
 2. Server performs X25519 key exchange using `EphPubKey` and `OSK`, deriving a shared secret (`ShrSec`).
-3. Server decrypts the `TailorEnc` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `Tailor`.
+3. Server decrypts the `TailerEnc` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `Tailer`.
 
-That approach allows safe encryption guarantees for all tailors.
-For the packets going from client to server, the transmitted tailor structure can still be deobfuscated if the certificate leaks; this unfortunately cannot be avoided.
-Still, even if it is deobfuscated, the tailor contents remain encrypted and will not leak.
+That approach allows safe encryption guarantees for all tailers.
+For the packets going from client to server, the transmitted tailer structure can still be deobfuscated if the certificate leaks; this unfortunately cannot be avoided.
+Still, even if it is deobfuscated, the tailer contents remain encrypted and will not leak.
 
 ### Marshalling encryption
 
@@ -812,9 +812,9 @@ It must never be distributed and should be stored securely on the server host.
 | --- | --- | --- |
 | `ESK` | [Classic McEliece](#handshake-encryption) secret key | Decapsulates the KEM ciphertext in the client handshake |
 | `VSK` | [Ed25519](#handshake-encryption) signing key | Signs the handshake transcript to authenticate the server |
-| `OBFS` _(fast mode)_ | 32-byte symmetric key | Pre-shared key used for [tailor obfuscation](#tailor-encryption) |
+| `OBFS` _(fast mode)_ | 32-byte symmetric key | Pre-shared key used for [tailer obfuscation](#tailer-encryption) |
 | `OPK` _(full mode)_ | [X25519](#marshalling-encryption) public key | Long-term public key corresponding to `OSK` (also included in the certificate) |
-| `OSK` _(full mode)_ | [X25519](#marshalling-encryption) static secret | Decrypts client-to-server tailors via ephemeral X25519 exchange |
+| `OSK` _(full mode)_ | [X25519](#marshalling-encryption) static secret | Decrypts client-to-server tailers via ephemeral X25519 exchange |
 
 A **client certificate** bundles the corresponding public material together with the server's network addresses.
 It is derived from the server key pair, distributed to clients out-of-band, and must be reissued whenever the server keys or flow manager addresses change.
@@ -823,8 +823,8 @@ It is derived from the server key pair, distributed to clients out-of-band, and 
 | --- | --- | --- |
 | `EPK` | [Classic McEliece](#handshake-encryption) public key | Encapsulates the client's KEM shared secret to the server |
 | `VPK` | [Ed25519](#handshake-encryption) verifying key | Verifies the server's handshake signature |
-| `OBFS` _(fast mode)_ | 32-byte symmetric key | Pre-shared [tailor obfuscation](#tailor-encryption) key (same value as in the server key pair) |
-| `OPK` _(full mode)_ | [X25519](#marshalling-encryption) public key | Server's long-term public key for encrypting client-to-server tailors |
+| `OBFS` _(fast mode)_ | 32-byte symmetric key | Pre-shared [tailer obfuscation](#tailer-encryption) key (same value as in the server key pair) |
+| `OPK` _(full mode)_ | [X25519](#marshalling-encryption) public key | Server's long-term public key for encrypting client-to-server tailers |
 | Addresses | list of `host:port` pairs | Network addresses of the server flow managers the client connects to |
 
 The certificate is a complete, self-contained connection descriptor: a client needs nothing beyond it to establish a session.
@@ -842,7 +842,7 @@ However, some safe and reasonable defaults (that can be used at least for refere
 ### Sockets and listeners
 
 As mentioned in the [architecture](#architecture) chapter, it is suggested that both TYPHOON clients and servers consist of two parts: a session manager and one or more flow managers.
-The session manager keeps track of session health, encryption, and data transfer, while flow managers send decoy packets, obfuscate traffic, and can only decrypt packet tailors.
+The session manager keeps track of session health, encryption, and data transfer, while flow managers send decoy packets, obfuscate traffic, and can only decrypt packet tailers.
 It is suggested that a flow manager would hold a UDP port, while the session manager would be purely virtual.
 
 On the client side, there is only one session manager that is tightly coupled with all the flow managers (normally they only have different ports but similar IP addresses).
@@ -890,23 +890,23 @@ In short, these are the main TYPHOON implementation parts:
 - Health check provider (one per session): attached to session controller, keeps internal protocol state, manages handshake message timers and injects handshake messages themselves if necessary.
 - Flow controller (one per flow): accepts data, prepends a mock header to it and sends it to the flow partner using a UDP socket.
 - Decoy provider (one per flow): attached to flow controller, observes (and probably mutates) flow packet stream and injects decoy packets whenever necessary.
-- Active probe handler (one per flow): attached to flow controller, receives every packet that could not be identified — undersized wire packet, tailor decryption failure, or tailor verification failure (which on the server also catches non-handshake packets from globally-unregistered identities) — and may send a raw response via the flow socket to mimic another protocol.
+- Active probe handler (one per flow): attached to flow controller, receives every packet that could not be identified — undersized wire packet, tailer decryption failure, or tailer verification failure (which on the server also catches non-handshake packets from globally-unregistered identities) — and may send a raw response via the flow socket to mimic another protocol.
 
 #### Identification and rebinding
 
-As is evident from the [tailor structure](#tailor-structure), the tailor carries a constant number of bytes for client authentication.
-These bytes are used for packet demultiplexing: all TYPHOON packets arrive at the same UDP socket of a flow manager but are delivered to different logical session managers based on the **ID** tailor field.
+As is evident from the [tailer structure](#tailer-structure), the tailer carries a constant number of bytes for client authentication.
+These bytes are used for packet demultiplexing: all TYPHOON packets arrive at the same UDP socket of a flow manager but are delivered to different logical session managers based on the **ID** tailer field.
 Another important challenge is client address binding, since client addresses can change randomly mid-session according to the [UDP specification](https://datatracker.ietf.org/doc/html/rfc768).
 
 In general, the client-to-identification mapping should be safe (considering client identification is unique) thanks to:
 
-- Session key authentication that is used for [tailor encryption](#tailor-encryption).
-- Incremental packet number [in tailor](#tailor-structure), stored in lower `4` bytes of **PN** field. A single monotonic counter is maintained per session and shared by every emitter — data, health-check, handshake, decoy, and termination packets all advance the same sequence. This makes the PN stream usable as a tie-breaker for source-address rebinding without having to disambiguate between sub-sequences.
+- Session key authentication that is used for [tailer encryption](#tailer-encryption).
+- Incremental packet number [in tailer](#tailer-structure), stored in lower `4` bytes of **PN** field. A single monotonic counter is maintained per session and shared by every emitter — data, health-check, handshake, decoy, and termination packets all advance the same sequence. This makes the PN stream usable as a tie-breaker for source-address rebinding without having to disambiguate between sub-sequences.
 
 By default, the **ID** field is `16` bytes ([UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier)) long, which should be sufficient for random user **ID** assignment.
 
 Alternatively, if there exists another way of identifying users (e.g. each of them gets unique access to a resource, like a server process or socket), the required **ID** field length can be different (it may be changed using the `TYPHOON_ID_LENGTH` constant).
-A scenario when an attacker impersonates a user, forging a fake packet on their behalf, should not be a concern, since [tailor structure is authenticated with user session key anyway](#tailor-encryption).
+A scenario when an attacker impersonates a user, forging a fake packet on their behalf, should not be a concern, since [tailer structure is authenticated with user session key anyway](#tailer-encryption).
 
 The UDP source address rebinding is performed independently by each server flow manager.
 A flow manager updates its [stored address for a client](#global-user-structures) only when a correctly-authenticated non-handshake packet arrives with **PN strictly greater than the latest PN seen on this flow** — out-of-order non-handshake packets are still accepted into session processing (decoys are dropped at the usual discardable point), they just do not move the binding.
@@ -919,7 +919,7 @@ In order to maintain all the user sessions and decoy flows, it is proposed to ma
 In addition to that, every flow manager keeps a table of all the connected user **ID**s mapped to the connected source address.
 
 [Rebinding](#identification-and-rebinding) happens on the flow manager only, without the session manager or any other listener parts being involved.
-The only requirement for this is packet validation, which is [performed using the user session key](#tailor-encryption) — this key is pulled from the global user table.
+The only requirement for this is packet validation, which is [performed using the user session key](#tailer-encryption) — this key is pulled from the global user table.
 
 #### Initial data handling
 
@@ -950,7 +950,7 @@ WARNING: this design comes with a significant limitation - since the client does
 
 #### Version checking
 
-The client embeds its application version into the **ID** field of the handshake tailor.
+The client embeds its application version into the **ID** field of the handshake tailer.
 The version string follows the format `major[.minor[.patch[-tag]]]`, stored as left-aligned ASCII and zero-padded to the **ID** field length.
 Only the first `TYPHOON_ID_LENGTH` bytes of the version string are used; longer strings are truncated.
 
@@ -1072,7 +1072,7 @@ Each constant referenced by name elsewhere in this document (`TYPHOON_*`) corres
 
 Some non-obvious universal values to keep in mind when tuning:
 
-- The **ID** tailor field length (as [mentioned earlier](#identification-and-rebinding)) should be chosen based on the implementation's identification requirements.
+- The **ID** tailer field length (as [mentioned earlier](#identification-and-rebinding)) should be chosen based on the implementation's identification requirements.
 - A typical `MTU` is around `1500` bytes; keeping datagram length below that avoids IP-level fragmentation.
 - Many applications keep timeouts at around half a minute, so a default in that range tends to align with user expectations.
 - Packet retransmission attempts hover around `10` in most reliable protocols; that order of magnitude is a safe baseline.
@@ -1085,10 +1085,10 @@ With the reference implementation's defaults this is:
 | Component | Default | Notes |
 | --- | --- | --- |
 | Identity (`DEFAULT_TYPHOON_ID_LENGTH`) | 16 B | configurable; trades collision resistance against per-packet cost |
-| Tailor encryption (nonce + auth tags) | 72 B | sum of `NONCE_LEN` + `SYMMETRIC_BUILT_IN_AUTH_LEN` + `SYMMETRIC_ADDITIONAL_AUTH_LEN` |
+| Tailer encryption (nonce + auth tags) | 72 B | sum of `NONCE_LEN` + `SYMMETRIC_BUILT_IN_AUTH_LEN` + `SYMMETRIC_ADDITIONAL_AUTH_LEN` |
 | Payload AEAD (nonce + tag) | 56 B | `ANONYMOUS_NONCE_LEN` + `SYMMETRIC_ADDITIONAL_AUTH_LEN` for software profile; only present on payload-bearing packets |
 | **Floor for data-bearing packets** | **144 B** | sum of the three above; minimum on-wire packet size before any user data or fake-body padding |
-| **Floor for decoy / health-check packets** | **88 B** | identity + tailor only; no payload AEAD |
+| **Floor for decoy / health-check packets** | **88 B** | identity + tailer only; no payload AEAD |
 
 This per-packet floor is a structural constant of the protocol and bounds what TYPHOON can mimic at the small-packet end of the size distribution.
 Natural UDP traffic classes that produce packets below this floor — gaming server-to-client ticks (~40 B), DNS queries (~60 B), NTP (~76 B), STUN (~60 B), WireGuard keepalives (~60 B) — fall outside TYPHOON's reachable size range as long as the default identity length is in use.
@@ -1101,7 +1101,7 @@ As a final attempt, an implementation should read these constants from the envir
 ### Debug mode
 
 Debug mode is a diagnostic facility for TYPHOON connection testing: it verifies flow reachability, measures round-trip time, and benchmarks throughput.
-It reinterprets three [tailor fields](#tailor-structure) to carry diagnostic metadata instead of their production meanings:
+It reinterprets three [tailer fields](#tailer-structure) to carry diagnostic metadata instead of their production meanings:
 
 | Field | Production meaning | Debug meaning |
 | --- | --- | --- |
@@ -1137,7 +1137,7 @@ The following helper functions are used in the specification:
 
 Every payload that travels through the protocol lives in a `DynamicByteBuffer` — a view into a backing allocation managed by `BytePool`.
 `DynamicByteBuffer` carries three regions: a `before_cap` prefix, the live data window, and an `after_cap` suffix.
-Flow managers use `before_cap` to prepend fake headers and fake bodies without copying the payload, and `after_cap` to append the encrypted tailor.
+Flow managers use `before_cap` to prepend fake headers and fake bodies without copying the payload, and `after_cap` to append the encrypted tailer.
 
 `BytePool` allocates from a fixed-size LIFO free-list (`PoolStorage`), falling back to a fresh heap allocation when the list is empty.
 Buffers are returned to the pool automatically via `Drop` on the inner `BufferHolder`.
@@ -1163,8 +1163,8 @@ The `crypto` module implements all cryptographic primitives described in the [Cr
 
 **Symmetric layer** (`symmetric.rs`) provides:
 
-- `Symmetric` — wraps the feature-selected AEAD cipher (XChaCha20-Poly1305 or AES-GCM-256). `encrypt_auth` / `decrypt_auth` for authenticated payload encryption; `decrypt_no_verify` + `verify_decrypted` for the two-step fast-mode tailor path.
-- `encrypt_anonymously` / `decrypt_anonymously` — unauthenticated stream cipher (XChaCha20 or AES-256-CTR) used to obfuscate public keys in the handshake and in full-mode tailor encryption.
+- `Symmetric` — wraps the feature-selected AEAD cipher (XChaCha20-Poly1305 or AES-GCM-256). `encrypt_auth` / `decrypt_auth` for authenticated payload encryption; `decrypt_no_verify` + `verify_decrypted` for the two-step fast-mode tailer path.
+- `encrypt_anonymously` / `decrypt_anonymously` — unauthenticated stream cipher (XChaCha20 or AES-256-CTR) used to obfuscate public keys in the handshake and in full-mode tailer encryption.
 
 **Asymmetric layer** (`asymmetric.rs`) provides handshake encapsulation/decapsulation:
 
@@ -1173,15 +1173,15 @@ The `crypto` module implements all cryptographic primitives described in the [Cr
 
 **Tool layer**:
 
-- `ClientCryptoTool<T>` — client-side per-flow handle. Holds the session cipher via a `CachedValue` so the key upgrade after handshake is visible to all flows with no locking. Obfuscates client-to-server tailors and decrypts server-to-client tailors.
-- `ServerCryptoTool<T>` — server-side per-flow handle. Holds two `CachedMapEntryTemplate` snapshots (send and receive directions) over the shared user table. Deobfuscates client-to-server tailors, verifies incremental packet numbers, and encrypts server-to-client tailors.
+- `ClientCryptoTool<T>` — client-side per-flow handle. Holds the session cipher via a `CachedValue` so the key upgrade after handshake is visible to all flows with no locking. Obfuscates client-to-server tailers and decrypts server-to-client tailers.
+- `ServerCryptoTool<T>` — server-side per-flow handle. Holds two `CachedMapEntryTemplate` snapshots (send and receive directions) over the shared user table. Deobfuscates client-to-server tailers, verifies incremental packet numbers, and encrypts server-to-client tailers.
 - `UserCryptoState` / `UserServerState` — per-session key material. Created at handshake time with the initial key and upgraded in-place to the session key by calling `upgrade_crypto` after the handshake response is sent.
 
-### Tailor module
+### Tailer module
 
-The `tailor` module provides the `Tailor<T>` struct — a strongly-typed view over the fixed-size plaintext bytes at the end of every wire packet — and the `IdentityType`, `ServerConnectionHandler`, `ClientConnectionHandler` extension traits.
+The `tailer` module provides the `Tailer<T>` struct — a strongly-typed view over the fixed-size plaintext bytes at the end of every wire packet — and the `IdentityType`, `ServerConnectionHandler`, `ClientConnectionHandler` extension traits.
 
-`Tailor` constructors (`data`, `health_check`, `shadowride`, `handshake`, `decoy`, `termination`, `debug_probe`) write the appropriate flag byte, code, time, packet number, payload length, and identity into a pre-allocated `DynamicByteBuffer` in one pass with no copies.
+`Tailer` constructors (`data`, `health_check`, `shadowride`, `handshake`, `decoy`, `termination`, `debug_probe`) write the appropriate flag byte, code, time, packet number, payload length, and identity into a pre-allocated `DynamicByteBuffer` in one pass with no copies.
 Getters (`flags`, `code`, `time`, `packet_number`, `payload_length`, `identity`) read directly from the buffer view.
 
 `PacketFlags` is a `bitflags!` struct; the composite `is_shadowride()` predicate detects the `HEALTH_CHECK | DATA` combination.
@@ -1192,13 +1192,13 @@ Getters (`flags`, `code`, `time`, `packet_number`, `payload_length`, `identity`)
 The `flow` module owns the UDP send/receive paths and decoy injection.
 
 `ClientFlowManager<T, AE>` holds one UDP socket (connected to a server address) and one `Box<dyn DecoyProvider>`.
-Its send path prepends fake header + fake body and appends the encrypted tailor before writing to the socket.
+Its send path prepends fake header + fake body and appends the encrypted tailer before writing to the socket.
 Its receive path strips those same regions after reading from the socket.
 
 `ServerFlowManager<T, AE>` manages a pool of `SO_REUSEPORT` sockets and a per-client address table (`Arc<RwLock<HashMap<T, SocketAddr>>>`).
 The address table is updated lock-free on authenticated packets (read-first, write only on change) to avoid stalling the receive path.
 
-Both managers delegate tailor encryption/decryption to a `FlowCryptoProvider` implementation (`ClientCryptoTool` or `ServerCryptoTool`), keeping the flow layer agnostic to the crypto mode.
+Both managers delegate tailer encryption/decryption to a `FlowCryptoProvider` implementation (`ClientCryptoTool` or `ServerCryptoTool`), keeping the flow layer agnostic to the crypto mode.
 
 Decoy providers implement `DecoyProvider` (the runtime trait, made object-safe via `async-trait`) and are constructed through a `DecoyFactory<T, AE>` — a type-erased closure `Arc<dyn Fn(Weak<dyn DecoyFlowSender>, Arc<Settings<AE>>, T) -> Box<dyn DecoyProvider>>`.
 This design allows each flow manager (or each per-user slot within a server flow manager) to use a different concrete decoy strategy without baking the choice into generic type parameters.
@@ -1249,7 +1249,7 @@ The payload immediately follows the header. Field sizes use these stable constan
 | 10 | 261120 | EPK | Classic McEliece 348864 public key |
 | 261130 | 6492 | ESK | Classic McEliece 348864 secret key |
 | 267622 | 32 | VSK | Ed25519 signing key seed |
-| 267654 | 32 | OBFS | Symmetric tailor obfuscation key |
+| 267654 | 32 | OBFS | Symmetric tailer obfuscation key |
 | **267686** | — | EOF | |
 
 **Server key pair — full mode (`SU1`):**
@@ -1269,7 +1269,7 @@ The payload immediately follows the header. Field sizes use these stable constan
 | --- | --- | --- | --- |
 | 10 | 261120 | EPK | Classic McEliece 348864 public key |
 | 261130 | 32 | VPK | Ed25519 verifying key |
-| 261162 | 32 | OBFS | Symmetric tailor obfuscation key |
+| 261162 | 32 | OBFS | Symmetric tailer obfuscation key |
 | 261194 | 2 | ADDR_COUNT | Number of addresses (big-endian u16) |
 | 261196 | varies | ADDRS | Address list (see below) |
 
@@ -1319,13 +1319,13 @@ Here are a few protocol extensions outlined that are not yet part of the standar
 An app can be configured as a lightweight multi-hop proxy (benevolent man-in-the-middle) by simply chaining a TYPHOON server and TYPHOON client together.
 The idea is simple: all packets received by the server part are directly forwarded to the next server through the client part.
 
-The packet payload never gets decrypted—only the tailor is parsed.
+The packet payload never gets decrypted—only the tailer is parsed.
 Thus, the packet payloads are preserved, while decoy packets are dropped and regenerated.
 This allows fast and anonymous data transfer with different obfuscation patterns on both sides of the proxy, enabling the creation of multi-hop [TOR](https://www.torproject.org/)-like networks.
 
 **The challenge**:
-Configuration of this type of proxy would require changing how tailor encryption works, allowing packet data encryption and tailor obfuscation to use different keys (i.e., packet data is encrypted using the original end-to-end session key, while the packet tailor is authenticated using the session key of the last-hop proxy).
-In addition to that, extended delays of the packets going through the complex path would require a way of notifying the client that their original packet is not lost, but still haven't reached its destination: a special "wait more" tailor flag is suggested for adding, that would reset the client decay cycle, but not advance any counters or change any values.
+Configuration of this type of proxy would require changing how tailer encryption works, allowing packet data encryption and tailer obfuscation to use different keys (i.e., packet data is encrypted using the original end-to-end session key, while the packet tailer is authenticated using the session key of the last-hop proxy).
+In addition to that, extended delays of the packets going through the complex path would require a way of notifying the client that their original packet is not lost, but still haven't reached its destination: a special "wait more" tailer flag is suggested for adding, that would reset the client decay cycle, but not advance any counters or change any values.
 
 ### Time-bounded address tracking
 
@@ -1380,7 +1380,7 @@ The synchronization protocol, failure detection timeout, and certificate invalid
 In the current design, the fake header field layout and fake body mode for each flow are fixed at construction time (encoded in `FlowConfig`) and never change for the lifetime of the flow.
 A long-lived session therefore produces traffic with a statistically consistent structure — the distribution of packet lengths and of fake header field widths remains constant — which may allow a patient observer to fingerprint TYPHOON flows over time even without breaking the cryptography.
 
-Because fake headers and fake bodies are purely decorative and do not affect how the receiving side locates or parses the tailor (the tailor position is always derived from known length constants, not from the fake header contents), neither side needs to know or agree on the other side's current configuration.
+Because fake headers and fake bodies are purely decorative and do not affect how the receiving side locates or parses the tailer (the tailer position is always derived from known length constants, not from the fake header contents), neither side needs to know or agree on the other side's current configuration.
 Each flow manager can therefore rotate its own `FlowConfig` independently and at its own pace — switching to a freshly sampled layout after a random interval — without any protocol signaling or cross-side coordination.
 
 This is analogous to the _protocol polymorphism_ mechanism in [OBFS4](https://gitlab.com/yawning/obfs4/-/blob/master/doc/obfs4-spec.txt), where the server periodically shifts its observable traffic characteristics to frustrate long-term statistical classifiers.

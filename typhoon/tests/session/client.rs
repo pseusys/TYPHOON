@@ -12,7 +12,7 @@ use crate::session::client::ClientSessionManager;
 use crate::session::common::SessionManager;
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 use crate::settings::{Settings, SettingsBuilder, keys};
-use crate::tailor::{ReturnCode, Tailor};
+use crate::tailer::{ReturnCode, Tailer};
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
 
@@ -71,12 +71,12 @@ impl FlowManager for MockFlowManager {
     }
 }
 
-/// Assemble a raw packet as the flow layer would deliver it (payload || plaintext tailor).
-/// For TERMINATION / health check (no payload), the buffer is just the tailor itself.
+/// Assemble a raw packet as the flow layer would deliver it (payload || plaintext tailer).
+/// For TERMINATION / health check (no payload), the buffer is just the tailer itself.
 fn make_termination_packet(settings: &Arc<Settings<DefaultExecutor>>) -> DynamicByteBuffer {
     let identity = test_identity();
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
-    Tailor::termination(buf, &identity, ReturnCode::Success, 0x1234_0000_0000_0001u64).into_buffer()
+    Tailer::termination(buf, &identity, ReturnCode::Success, 0x1234_0000_0000_0001u64).into_buffer()
 }
 
 /// Build a `ClientSessionManager` with the given mock flows.

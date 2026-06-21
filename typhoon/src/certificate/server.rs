@@ -185,7 +185,7 @@ impl ServerKeyPair {
     /// | 10           | 261120 (`EPK_BYTES`) | EPK    | Classic McEliece 348864 public key |
     /// | 261130       | 6492 (`ESK_BYTES`)   | ESK    | Classic McEliece 348864 secret key |
     /// | 267622       | 32 (`ED25519_BYTES`) | VSK    | Ed25519 signing key (seed) |
-    /// | 267654       | 32 (`ED25519_BYTES`) | OBFS   | Symmetric tailor obfuscation key |
+    /// | 267654       | 32 (`ED25519_BYTES`) | OBFS   | Symmetric tailer obfuscation key |
     /// | **267686**   | —                    | EOF    | |
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), CertificateError> {

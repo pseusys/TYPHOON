@@ -1,13 +1,13 @@
 #[cfg(test)]
-#[path = "../../tests/tailor/structure.rs"]
+#[path = "../../tests/tailer/structure.rs"]
 mod tests;
 
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::marker::PhantomData;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
-use crate::settings::consts::{CD_OFFSET, FG_OFFSET, ID_OFFSET, PL_OFFSET, PN_OFFSET, TAILOR_LENGTH, TM_OFFSET};
-use crate::tailor::flags::{PacketFlags, ReturnCode};
+use crate::settings::consts::{CD_OFFSET, FG_OFFSET, ID_OFFSET, PL_OFFSET, PN_OFFSET, TAILER_LENGTH, TM_OFFSET};
+use crate::tailer::flags::{PacketFlags, ReturnCode};
 use crate::utils::unix_timestamp_ms;
 
 const TM_LENGTH: usize = 4;
@@ -30,7 +30,7 @@ pub trait ServerConnectionHandler<T: IdentityType>: Send + Sync {
     /// Produce initial data to include in the server handshake response for the given identity.
     fn initial_data(&self, identity: &T) -> StaticByteBuffer;
 
-    /// Check whether the client version (from the handshake tailor ID field) is compatible.
+    /// Check whether the client version (from the handshake tailer ID field) is compatible.
     /// Returns `true` if the handshake should proceed, `false` if it should be rejected.
     /// Implementations are responsible for any logging before returning.
     fn verify_version(&self, version_bytes: &[u8]) -> bool;
@@ -41,12 +41,12 @@ pub trait ClientConnectionHandler: Send + Sync {
     /// Produce initial data to include in the client handshake.
     fn initial_data(&self) -> StaticByteBuffer;
 
-    /// Produce the version bytes to place in the handshake tailor ID field, clamped to `length` bytes.
+    /// Produce the version bytes to place in the handshake tailer ID field, clamped to `length` bytes.
     fn version(&self, length: usize) -> StaticByteBuffer;
 }
 
-/// Tailor view (16 + TYPHOON_ID_LENGTH bytes total).
-/// Zero-copy view into a `DynamicByteBuffer` containing tailor metadata.
+/// Tailer view (16 + TYPHOON_ID_LENGTH bytes total).
+/// Zero-copy view into a `DynamicByteBuffer` containing tailer metadata.
 /// All field access reads directly from the underlying buffer.
 ///
 /// Layout:
@@ -56,13 +56,13 @@ pub trait ClientConnectionHandler: Send + Sync {
 /// - PN (packet number): 8 bytes - timestamp (4) + incremental (4)
 /// - PL (payload length): 2 bytes - length of encrypted payload
 /// - ID (identity): TYPHOON_ID_LENGTH bytes - client UUID
-pub struct Tailor<T: IdentityType> {
+pub struct Tailer<T: IdentityType> {
     buffer: DynamicByteBuffer,
     _phantom: PhantomData<T>,
 }
 
-impl<T: IdentityType> Tailor<T> {
-    /// Wrap an existing buffer as a tailor view. No data is copied.
+impl<T: IdentityType> Tailer<T> {
+    /// Wrap an existing buffer as a tailer view. No data is copied.
     /// The buffer must contain at least `Self::len()` bytes.
     pub fn new(buffer: DynamicByteBuffer) -> Self {
         let buffer = buffer.ensure_size(Self::len());
@@ -72,8 +72,8 @@ impl<T: IdentityType> Tailor<T> {
         }
     }
 
-    /// Construct a tailor view from a received buffer and validate it against the
-    /// accompanying body length. Unlike [`Tailor::new`], this constructor never
+    /// Construct a tailer view from a received buffer and validate it against the
+    /// accompanying body length. Unlike [`Tailer::new`], this constructor never
     /// expands the buffer via the pool — receive paths must supply a slice whose
     /// length is already at least `Self::len()`.
     pub fn validated(buffer: DynamicByteBuffer, body_len: usize) -> Option<Self> {
@@ -97,7 +97,7 @@ impl<T: IdentityType> Tailor<T> {
         Some(view)
     }
 
-    /// Write a data packet tailor into the buffer.
+    /// Write a data packet tailer into the buffer.
     pub fn data(buffer: DynamicByteBuffer, identity: &T, payload_length: u16, packet_number: u64) -> Self {
         let view = Self::new(buffer);
         view.set_flags(PacketFlags::DATA);
@@ -109,7 +109,7 @@ impl<T: IdentityType> Tailor<T> {
         view
     }
 
-    /// Write a health check packet tailor into the buffer.
+    /// Write a health check packet tailer into the buffer.
     pub fn health_check(buffer: DynamicByteBuffer, identity: &T, next_in: u32, packet_number: u64) -> Self {
         let view = Self::new(buffer);
         view.set_flags(PacketFlags::HEALTH_CHECK);
@@ -121,7 +121,7 @@ impl<T: IdentityType> Tailor<T> {
         view
     }
 
-    /// Write a shadowride packet tailor (data + health check) into the buffer.
+    /// Write a shadowride packet tailer (data + health check) into the buffer.
     pub fn shadowride(buffer: DynamicByteBuffer, identity: &T, payload_length: u16, next_in: u32, packet_number: u64) -> Self {
         let view = Self::new(buffer);
         view.set_flags(PacketFlags::DATA | PacketFlags::HEALTH_CHECK);
@@ -133,8 +133,8 @@ impl<T: IdentityType> Tailor<T> {
         view
     }
 
-    /// Write a handshake packet tailor into the buffer.
-    /// `body_len` is the length of the handshake body (excluding tailor), allowing receivers
+    /// Write a handshake packet tailer into the buffer.
+    /// `body_len` is the length of the handshake body (excluding tailer), allowing receivers
     /// to strip any fake header/body prefix before parsing the handshake data.
     pub fn handshake(buffer: DynamicByteBuffer, identity: &T, code: u8, next_in: u32, packet_number: u64, body_len: u16) -> Self {
         let view = Self::new(buffer);
@@ -147,7 +147,7 @@ impl<T: IdentityType> Tailor<T> {
         view
     }
 
-    /// Write a decoy packet tailor into the buffer.
+    /// Write a decoy packet tailer into the buffer.
     pub fn decoy(buffer: DynamicByteBuffer, identity: &T, packet_number: u64) -> Self {
         let view = Self::new(buffer);
         view.set_flags(PacketFlags::DECOY);
@@ -159,7 +159,7 @@ impl<T: IdentityType> Tailor<T> {
         view
     }
 
-    /// Write a debug probe tailor into the buffer.
+    /// Write a debug probe tailer into the buffer.
     ///
     /// Field semantics in debug mode:
     /// - **FG**: `DATA` flag (same as data packets so probes blend in).
@@ -178,7 +178,7 @@ impl<T: IdentityType> Tailor<T> {
         view
     }
 
-    /// Write a termination packet tailor into the buffer.
+    /// Write a termination packet tailer into the buffer.
     pub fn termination(buffer: DynamicByteBuffer, identity: &T, code: ReturnCode, packet_number: u64) -> Self {
         let view = Self::new(buffer);
         view.set_flags(PacketFlags::TERMINATION);
@@ -273,7 +273,7 @@ impl<T: IdentityType> Tailor<T> {
         &self.buffer
     }
 
-    /// Consume the tailor view and return the underlying buffer.
+    /// Consume the tailer view and return the underlying buffer.
     #[inline]
     pub fn into_buffer(self) -> DynamicByteBuffer {
         self.buffer
@@ -328,11 +328,11 @@ impl<T: IdentityType> Tailor<T> {
 
     #[inline]
     pub fn get_payload_length(buffer: &DynamicByteBuffer) -> u16 {
-        let correct_buffer = buffer.ensure_size(TAILOR_LENGTH);
+        let correct_buffer = buffer.ensure_size(TAILER_LENGTH);
         u16::from_be_bytes(correct_buffer.slice_both(PL_OFFSET, PL_OFFSET + PL_LENGTH).try_into().unwrap())
     }
 
-    /// Extract identity from a raw tailor buffer.
+    /// Extract identity from a raw tailer buffer.
     #[inline]
     pub fn get_identity(buffer: &DynamicByteBuffer) -> T {
         let correct_buffer = buffer.ensure_size(Self::len());
@@ -341,23 +341,23 @@ impl<T: IdentityType> Tailor<T> {
 
     #[inline]
     pub fn len() -> usize {
-        T::length() + TAILOR_LENGTH
+        T::length() + TAILER_LENGTH
     }
 
-    /// Wire length of the obfuscated client→server tailor (plaintext tailor + c2s obfuscation overhead).
+    /// Wire length of the obfuscated client→server tailer (plaintext tailer + c2s obfuscation overhead).
     #[inline]
     pub(crate) fn encrypted_len_c2s() -> usize {
-        Self::len() + crate::crypto::TAILOR_C2S_OVERHEAD
+        Self::len() + crate::crypto::TAILER_C2S_OVERHEAD
     }
 
-    /// Wire length of the obfuscated server→client tailor (plaintext tailor + s2c obfuscation overhead).
+    /// Wire length of the obfuscated server→client tailer (plaintext tailer + s2c obfuscation overhead).
     #[inline]
     pub(crate) fn encrypted_len_s2c() -> usize {
-        Self::len() + crate::crypto::TAILOR_S2C_OVERHEAD
+        Self::len() + crate::crypto::TAILER_S2C_OVERHEAD
     }
 }
 
-impl<T: IdentityType> Clone for Tailor<T> {
+impl<T: IdentityType> Clone for Tailer<T> {
     fn clone(&self) -> Self {
         Self {
             buffer: self.buffer.clone(),
@@ -366,14 +366,14 @@ impl<T: IdentityType> Clone for Tailor<T> {
     }
 }
 
-impl<T: IdentityType + PartialEq> PartialEq for Tailor<T> {
+impl<T: IdentityType + PartialEq> PartialEq for Tailer<T> {
     fn eq(&self, other: &Self) -> bool {
         self.buffer.slice() == other.buffer.slice()
     }
 }
 
-impl<T: IdentityType> Debug for Tailor<T> {
+impl<T: IdentityType> Debug for Tailer<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        f.debug_struct("Tailor").field("flags", &self.flags()).field("code", &self.code()).field("time", &self.time()).field("packet_number", &self.packet_number()).field("payload_length", &self.payload_length()).finish()
+        f.debug_struct("Tailer").field("flags", &self.flags()).field("code", &self.code()).field("time", &self.time()).field("packet_number", &self.packet_number()).field("payload_length", &self.payload_length()).finish()
     }
 }

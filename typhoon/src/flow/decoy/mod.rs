@@ -29,7 +29,7 @@ pub use sparse::SparseDecoyProvider;
 pub use crate::cache::DerivedValue;
 use crate::settings::Settings;
 use crate::settings::keys::{DECOY_PROVIDER_WEIGHT_HEAVY, DECOY_PROVIDER_WEIGHT_NOISY, DECOY_PROVIDER_WEIGHT_SIMPLE, DECOY_PROVIDER_WEIGHT_SMOOTH, DECOY_PROVIDER_WEIGHT_SPARSE};
-pub use crate::tailor::{IdentityType, PacketFlags, Tailor};
+pub use crate::tailer::{IdentityType, PacketFlags, Tailer};
 use crate::utils::sync::AsyncExecutor;
 use crate::weighted_random;
 

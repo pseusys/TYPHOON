@@ -1,11 +1,11 @@
 #[cfg(test)]
-#[path = "../../tests/tailor/flags.rs"]
+#[path = "../../tests/tailer/flags.rs"]
 mod tests;
 
 use bitflags::bitflags;
 
 bitflags! {
-    /// Packet type flags for the tailor FG field.
+    /// Packet type flags for the tailer FG field.
     /// Normally only one flag should be set, but a health check packet can be embedded into a data packet (shadowride).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct PacketFlags: u8 {

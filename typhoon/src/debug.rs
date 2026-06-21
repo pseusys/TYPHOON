@@ -29,14 +29,14 @@ use crate::defaults::{DefaultExecutor, DefaultSettings};
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use crate::settings::keys;
 use crate::socket::{ClientSocket, ClientSocketBuilder};
-use crate::tailor::ClientConnectionHandler;
+use crate::tailer::ClientConnectionHandler;
 use crate::utils::sync::sleep;
 use crate::utils::unix_timestamp_ms;
 cfg_if! {
     if #[cfg(feature = "server")] {
         use crate::bytes::ByteBuffer;
         use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
-        use crate::tailor::ServerConnectionHandler;
+        use crate::tailer::ServerConnectionHandler;
         use crate::utils::random::{SupportRng, get_rng};
     }
 }

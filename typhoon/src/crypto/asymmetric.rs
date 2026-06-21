@@ -40,9 +40,9 @@ use crate::crypto::ClientData;
 const X25519_KEY_LENGTH: usize = 32;
 const NONCE_LENGTH: usize = 32;
 
-/// Bytes added to the client→server plaintext tailor by full-mode obfuscation.
+/// Bytes added to the client→server plaintext tailer by full-mode obfuscation.
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-pub(crate) const TAILOR_C2S_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN + X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN + NONCE_LENGTH;
+pub(crate) const TAILER_C2S_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN + X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN + NONCE_LENGTH;
 
 const CLIENT_HANDSHAKE_HEADER_SIZE: usize = X25519_KEY_LENGTH + CRYPTO_CIPHERTEXTBYTES + 2 * ANONYMOUS_NONCE_LEN + NONCE_LENGTH;
 const SERVER_HANDSHAKE_HEADER_SIZE: usize = X25519_KEY_LENGTH + Signature::BYTE_SIZE + ANONYMOUS_NONCE_LEN + NONCE_LENGTH;

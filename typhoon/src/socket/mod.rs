@@ -22,7 +22,7 @@ cfg_if! {
         pub use client::{ClientSocket, ClientSocketBuilder};
         pub use error::ClientSocketError;
         pub use crate::certificate::ClientCertificate;
-        pub use crate::tailor::ClientConnectionHandler;
+        pub use crate::tailer::ClientConnectionHandler;
     }
 }
 cfg_if! {
@@ -30,6 +30,6 @@ cfg_if! {
         pub use error::ServerSocketError;
         pub use server::{ClientHandle, Listener, ListenerBuilder, ServerFlowConfiguration};
         pub use crate::certificate::ServerKeyPair;
-        pub use crate::tailor::ServerConnectionHandler;
+        pub use crate::tailer::ServerConnectionHandler;
     }
 }

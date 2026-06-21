@@ -16,7 +16,7 @@ use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
 use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender};
 use crate::settings::Settings;
-use crate::tailor::{IdentityType, Tailor};
+use crate::tailer::{IdentityType, Tailer};
 use crate::utils::socket::{Socket, SocketError};
 use crate::utils::sync::{AsyncExecutor, Mutex};
 
@@ -86,15 +86,15 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyFlowSe
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager for ClientFlowManager<T, AE> {
     async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Result<(), FlowControllerError> {
-        let tailor_len = Tailor::<T>::len();
-        let (body, tailor_buf) = packet.split_buf_end(tailor_len);
+        let tailer_len = Tailer::<T>::len();
+        let (body, tailer_buf) = packet.split_buf_end(tailer_len);
 
-        let Some(notified_body) = self.decoy_provider.feed_output(body, tailor_buf.clone()).await else {
+        let Some(notified_body) = self.decoy_provider.feed_output(body, tailer_buf.clone()).await else {
             return Ok(());
         };
 
         let mut lock = self.send_internal.lock().await;
-        let full_packet = lock.prepare_outgoing(notified_body.expand_end(tailor_buf.len()), self.mtu, self.settings.pool(), fallthrough, is_maintenance)?;
+        let full_packet = lock.prepare_outgoing(notified_body.expand_end(tailer_buf.len()), self.mtu, self.settings.pool(), fallthrough, is_maintenance)?;
         if full_packet.len() > 0 {
             self.sock.send(full_packet).await.map_err(FlowControllerError::SocketError)?;
         }
@@ -105,7 +105,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager
         loop {
             let wire_packet = self.sock.recv(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
 
-            let (body, tailor_buf) = {
+            let (body, tailer_buf) = {
                 let mut lock = self.receive_internal.lock().await;
                 match lock.deobfuscate_incoming(wire_packet.clone(), self.settings.pool())? {
                     None => {
@@ -116,13 +116,13 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager
                 }
             };
 
-            let Some(notified_body) = self.decoy_provider.feed_input(body.clone(), tailor_buf.clone()).await else {
+            let Some(notified_body) = self.decoy_provider.feed_input(body.clone(), tailer_buf.clone()).await else {
                 continue;
             };
 
             let incoming_packet = {
                 let lock = self.receive_internal.lock().await;
-                lock.process_with_tailor(notified_body, tailor_buf)
+                lock.process_with_tailer(notified_body, tailer_buf)
             };
             match incoming_packet {
                 ProcessIncomingResult::Decoy => {}

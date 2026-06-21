@@ -17,7 +17,7 @@ use crate::session::SessionControllerError;
 use crate::session::common::SessionManager;
 use crate::settings::Settings;
 use crate::settings::keys::*;
-use crate::tailor::{ClientConnectionHandler, IdentityType, PacketFlags, ReturnCode, Tailor};
+use crate::tailer::{ClientConnectionHandler, IdentityType, PacketFlags, ReturnCode, Tailer};
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, FuturePool, Mutex, WatchReceiver, WatchSender, sleep};
 use crate::utils::unix_timestamp_ms;
@@ -167,19 +167,19 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
         }
     }
 
-    /// Build identity value for tailor construction.
+    /// Build identity value for tailer construction.
     fn identity_value(&mut self) -> T {
         self.crypto_tool.get().identity()
     }
 
-    /// Create a health check packet (empty body + tailor).
+    /// Create a health check packet (empty body + tailer).
     fn create_health_check_packet(&mut self, pn: u64, next_in: u32) -> DynamicByteBuffer {
         let identity = self.identity_value();
         let buf = self.settings.pool().allocate(Some(T::length()));
-        Tailor::health_check(buf, &identity, next_in, pn).into_buffer()
+        Tailer::health_check(buf, &identity, next_in, pn).into_buffer()
     }
 
-    /// Create a handshake packet with encryption: handshake_secret || tailor.
+    /// Create a handshake packet with encryption: handshake_secret || tailer.
     /// Also advances the crypto tool to the initial key so callers need not do it separately.
     fn create_handshake_packet(&mut self, pn: u64, next_in: u32) -> DynamicByteBuffer {
         let settings = self.settings.clone();
@@ -195,9 +195,9 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
         self.client_data = Some(client_data);
         self.crypto_tool.set(updated_tool);
 
-        let tailor_buffer = settings.pool().allocate(Some(Tailor::<T>::len()));
-        let tailor = Tailor::handshake(tailor_buffer, &identity, 0, next_in, pn, handshake_secret.len() as u16);
-        handshake_secret.append(tailor.buffer().slice())
+        let tailer_buffer = settings.pool().allocate(Some(Tailer::<T>::len()));
+        let tailer = Tailer::handshake(tailer_buffer, &identity, 0, next_in, pn, handshake_secret.len() as u16);
+        handshake_secret.append(tailer.buffer().slice())
     }
 
     /// Process the server handshake response and derive the session key.
@@ -286,9 +286,9 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     }
 
     /// Called when a packet with HEALTH_CHECK flag is received.
-    pub async fn feed_input(&self, tailor: Tailor<T>) -> Result<(), SessionControllerError> {
-        let pn = tailor.packet_number();
-        let time = tailor.time();
+    pub async fn feed_input(&self, tailer: Tailer<T>) -> Result<(), SessionControllerError> {
+        let pn = tailer.packet_number();
+        let time = tailer.time();
 
         let state = self.state.lock().await;
 
@@ -309,9 +309,9 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
     }
 
     /// Called when a packet with HANDSHAKE flag is received, carrying the server handshake body.
-    pub async fn feed_handshake_input(&self, tailor: Tailor<T>, body: DynamicByteBuffer) -> Result<(), SessionControllerError> {
-        let pn = tailor.packet_number();
-        let time = tailor.time();
+    pub async fn feed_handshake_input(&self, tailer: Tailer<T>, body: DynamicByteBuffer) -> Result<(), SessionControllerError> {
+        let pn = tailer.packet_number();
+        let time = tailer.time();
 
         let state = self.state.lock().await;
 
@@ -323,7 +323,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         let receive_time = unix_timestamp_ms();
         let server_next_in = time.clamp(state.settings.get(&HEALTH_CHECK_NEXT_IN_MIN) as u32, state.settings.get(&HEALTH_CHECK_NEXT_IN_MAX) as u32);
 
-        let server_identity = Some(tailor.identity());
+        let server_identity = Some(tailer.identity());
         drop(state);
         if self.response_tx.send((server_next_in, receive_time, Some(body), server_identity)) {
             Ok(())
@@ -332,18 +332,18 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         }
     }
 
-    /// Called before a data packet is sent. May modify the tailor for shadowriding.
-    pub async fn feed_output(&self, tailor: Tailor<T>) -> Result<(), SessionControllerError> {
-        if tailor.flags().contains(PacketFlags::HEALTH_CHECK) {
+    /// Called before a data packet is sent. May modify the tailer for shadowriding.
+    pub async fn feed_output(&self, tailer: Tailer<T>) -> Result<(), SessionControllerError> {
+        if tailer.flags().contains(PacketFlags::HEALTH_CHECK) {
             return Ok(());
         }
 
         let shadowridden = {
             let mut state = self.state.lock().await;
             if let Some((pn, next_in)) = state.shadowride_pending.take() {
-                tailor.set_flags(tailor.flags() | PacketFlags::HEALTH_CHECK);
-                tailor.set_time(next_in);
-                tailor.set_packet_number_raw(pn);
+                tailer.set_flags(tailer.flags() | PacketFlags::HEALTH_CHECK);
+                tailer.set_time(next_in);
+                tailer.set_packet_number_raw(pn);
                 state.last_sent_time = unix_timestamp_ms();
                 debug!("health provider: health check shadowridden onto data packet (PN={pn:#018x})");
                 true

@@ -6,7 +6,7 @@ use crate::certificate::ClientCertificate;
 use crate::certificate::ObfuscationBufferContainer;
 use crate::crypto::error::{CryptoError, HandshakeError};
 use crate::crypto::symmetric::{ObfuscationTranscript, Symmetric};
-use crate::tailor::IdentityType;
+use crate::tailer::IdentityType;
 
 /// Ephemeral client handshake state: X25519 secret, McEliece shared secret, nonce, initial key.
 pub(crate) struct ClientData {
@@ -78,39 +78,39 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
         self.key.decrypt_auth(ciphertext, additional_data)
     }
 
-    /// Obfuscate (encrypt) tailor bytes for sending.
+    /// Obfuscate (encrypt) tailer bytes for sending.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, _: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
+    pub fn obfuscate_tailer(&mut self, plaintext: DynamicByteBuffer, _: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
         self.obfuscation_key.encrypt_auth(plaintext, None::<&DynamicByteBuffer>)
     }
 
-    /// Obfuscate (encrypt) tailor bytes for sending.
+    /// Obfuscate (encrypt) tailer bytes for sending.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn obfuscate_tailor(&mut self, plaintext: DynamicByteBuffer, pool: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
+    pub fn obfuscate_tailer(&mut self, plaintext: DynamicByteBuffer, pool: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
         self.cert.encrypt_obfuscate(plaintext, pool).map_err(|e| CryptoError::authentication_error(&e.to_string()))
     }
 
-    /// Deobfuscate (decrypt) received tailor bytes.
+    /// Deobfuscate (decrypt) received tailer bytes.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer, pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+    pub fn deobfuscate_tailer(&mut self, ciphertext: DynamicByteBuffer, pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
         self.obfuscation_key.decrypt_no_verify(ciphertext, pool)
     }
 
-    /// Deobfuscate (decrypt) received tailor bytes.
+    /// Deobfuscate (decrypt) received tailer bytes.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn deobfuscate_tailor(&mut self, ciphertext: DynamicByteBuffer, _pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+    pub fn deobfuscate_tailer(&mut self, ciphertext: DynamicByteBuffer, _pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
         self.key.decrypt_auth(ciphertext, None::<&DynamicByteBuffer>).map(|r| (r, ObfuscationTranscript {}))
     }
 
     /// Verify the authentication (fast mode).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub fn verify_tailor(&mut self, transcript: ObfuscationTranscript) -> Result<(), CryptoError> {
+    pub fn verify_tailer(&mut self, transcript: ObfuscationTranscript) -> Result<(), CryptoError> {
         self.obfuscation_key.verify_decrypted(transcript, None::<&DynamicByteBuffer>)
     }
 
-    /// Verify tailor (no-op in full mode).
+    /// Verify tailer (no-op in full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub fn verify_tailor(&mut self, _: ObfuscationTranscript) -> Result<(), CryptoError> {
+    pub fn verify_tailer(&mut self, _: ObfuscationTranscript) -> Result<(), CryptoError> {
         Ok(())
     }
 

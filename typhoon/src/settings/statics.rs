@@ -37,7 +37,7 @@ pub mod keys {
     pub const FAKE_HEADER_LENGTH_MAX: Key<u64> = Key::new("TYPHOON_FAKE_HEADER_LENGTH_MAX", 32);
     pub const FAKE_HEADER_PROBABILITY: Key<f64> = Key::new("TYPHOON_FAKE_HEADER_PROBABILITY", 0.60);
 
-    // Per-flow probability that a generated decoy packet bypasses the tailor step
+    // Per-flow probability that a generated decoy packet bypasses the tailer step
     pub const DECOY_FALLTHROUGH_PACKETS_MIN: Key<f64> = Key::new("TYPHOON_DECOY_FALLTHROUGH_PACKETS_MIN", 0.0);
     pub const DECOY_FALLTHROUGH_PACKETS_MAX: Key<f64> = Key::new("TYPHOON_DECOY_FALLTHROUGH_PACKETS_MAX", 0.25);
 
@@ -178,7 +178,7 @@ pub mod consts {
     pub const DEFAULT_POOL_CAPACITY: usize = 2 << 15;
     pub const DEFAULT_TYPHOON_MTU_LENGTH: usize = 1500;
     pub const DEFAULT_TYPHOON_ID_LENGTH: usize = 16;
-    pub const TAILOR_LENGTH: usize = 16;
+    pub const TAILER_LENGTH: usize = 16;
     pub const FG_OFFSET: usize = 0;
     pub const CD_OFFSET: usize = 1;
     pub const TM_OFFSET: usize = 2;

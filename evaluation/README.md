@@ -143,7 +143,7 @@ Computed separately per direction (`c2s`, `s2c`, `all`). Packet sizes are **tran
 - `self_compare/default_self_compare.png` — overlaid size + IAT CDFs across N runs of identical config. Look for tight bands.
 - `traffic_compare/default_traffic_compare.png` — same CDFs per scenario. Look for clearly separated bands.
 - `use_case_compare/use_case_compare.png` — per-PROTOCOL.md-use-case profiles side by side.
-- `flow_plots/<example>.png` — stacked-bar of every wire packet showing fake-header / tailor / body composition. Useful to verify per-flow knobs.
+- `flow_plots/<example>.png` — stacked-bar of every wire packet showing fake-header / tailer / body composition. Useful to verify per-flow knobs.
 
 ### Part 2 plots
 
