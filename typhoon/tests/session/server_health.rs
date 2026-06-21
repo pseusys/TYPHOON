@@ -8,9 +8,9 @@ use super::ServerHealthProvider;
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
 use crate::defaults::DefaultExecutor;
 use crate::session::server::OutgoingRouter;
-use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILOR_LENGTH};
+use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILER_LENGTH};
 use crate::settings::{Settings, SettingsBuilder, keys};
-use crate::tailor::{PacketFlags, Tailor};
+use crate::tailer::{PacketFlags, Tailer};
 use crate::utils::sync::{Mutex, sleep};
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
@@ -61,14 +61,14 @@ fn fast_settings() -> Arc<Settings<DefaultExecutor>> {
 }
 
 /// Parse PN, TM and flags from the raw buffer emitted by ServerHealthProvider.
-/// A health-check response has no body, so the whole buffer is the tailor.
+/// A health-check response has no body, so the whole buffer is the tailer.
 fn parse_response(packet: &DynamicByteBuffer) -> (u64, u32, PacketFlags) {
-    let tailor_size = TAILOR_LENGTH + DEFAULT_TYPHOON_ID_LENGTH;
-    assert!(packet.len() >= tailor_size, "packet too short: {} < {tailor_size}", packet.len());
-    let tailor_start = packet.len() - tailor_size;
-    let (_, tailor_buf) = packet.split_buf_start(tailor_start);
-    let tailor = Tailor::<StaticByteBuffer>::new(tailor_buf);
-    (tailor.packet_number(), tailor.time(), tailor.flags())
+    let tailer_size = TAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH;
+    assert!(packet.len() >= tailer_size, "packet too short: {} < {tailer_size}", packet.len());
+    let tailer_start = packet.len() - tailer_size;
+    let (_, tailer_buf) = packet.split_buf_start(tailer_start);
+    let tailer = Tailer::<StaticByteBuffer>::new(tailer_buf);
+    (tailer.packet_number(), tailer.time(), tailer.flags())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 //!
 //! An obfuscated UDP transport protocol designed to be statistically indistinguishable from
 //! generic network traffic. Each wire packet consists of an optional fake body, an optional fake
-//! header, an encrypted payload, and an encrypted tailor. Decoy packets (pure random bytes) are
+//! header, an encrypted payload, and an encrypted tailer. Decoy packets (pure random bytes) are
 //! injected by the flow layer to obscure timing and volume patterns.
 //!
 //! # Entry points
@@ -58,5 +58,5 @@ pub mod flow;
 mod session;
 pub mod settings;
 pub mod socket;
-mod tailor;
+mod tailer;
 mod utils;

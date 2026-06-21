@@ -9,7 +9,7 @@
 //!
 //! Each line is a self-contained JSON object with fields:
 //! `t` (unix ms), `dir` (`c2s`/`s2c`), `flow` (addr), `kind`
-//! (`Data`/`Service`/`Decoy`/`Config`), `tailor`, `crypto`, `header`, `payload`, `body`.
+//! (`Data`/`Service`/`Decoy`/`Config`), `tailer`, `crypto`, `header`, `payload`, `body`.
 //!
 //! All capture functions accept a lazy closure so that argument computation —
 //! string formatting, allocations, etc. — is entirely skipped at zero cost
@@ -65,10 +65,10 @@ impl CaptureContext {
     where
         F: FnOnce() -> (&'static str, usize, usize, usize, usize, usize),
     {
-        let (kind, tailor, crypto, header, payload, body) = f();
+        let (kind, tailer, crypto, header, payload, body) = f();
         trace!(
             target: "typhoon::capture",
-            "{{\"t\":{},\"dir\":\"c2s\",\"flow\":\"{}\",\"kind\":\"{kind}\",\"tailor\":{tailor},\"crypto\":{crypto},\"header\":{header},\"payload\":{payload},\"body\":{body}}}",
+            "{{\"t\":{},\"dir\":\"c2s\",\"flow\":\"{}\",\"kind\":\"{kind}\",\"tailer\":{tailer},\"crypto\":{crypto},\"header\":{header},\"payload\":{payload},\"body\":{body}}}",
             unix_timestamp_ms(),
             self.flow_addr,
         );
@@ -117,10 +117,10 @@ pub(crate) fn record_server_send<F>(addr: SocketAddr, f: F)
 where
     F: FnOnce() -> (&'static str, usize, usize, usize, usize, usize),
 {
-    let (kind, tailor, crypto, header, payload, body) = f();
+    let (kind, tailer, crypto, header, payload, body) = f();
     trace!(
         target: "typhoon::capture",
-        "{{\"t\":{},\"dir\":\"s2c\",\"flow\":\"{addr}\",\"kind\":\"{kind}\",\"tailor\":{tailor},\"crypto\":{crypto},\"header\":{header},\"payload\":{payload},\"body\":{body}}}",
+        "{{\"t\":{},\"dir\":\"s2c\",\"flow\":\"{addr}\",\"kind\":\"{kind}\",\"tailer\":{tailer},\"crypto\":{crypto},\"header\":{header},\"payload\":{payload},\"body\":{body}}}",
         unix_timestamp_ms(),
     );
 }

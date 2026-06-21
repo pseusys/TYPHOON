@@ -15,7 +15,7 @@ use crate::session::SessionControllerError;
 use crate::session::server::{IncomingPacket, OutgoingRouter, ServerSessionManager};
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 use crate::settings::{Settings, SettingsBuilder, keys};
-use crate::tailor::{ReturnCode, Tailor};
+use crate::tailer::{ReturnCode, Tailer};
 use crate::utils::sync::create_notify_queue;
 
 /// Shared server secret — generated once so that concurrent tests don't each pay the
@@ -70,9 +70,9 @@ async fn make_session(settings: Arc<Settings<DefaultExecutor>>, router: Arc<Capt
     // Build a minimal response body buffer (empty).
     let response_body = settings.pool().allocate(Some(0));
 
-    // Build a synthetic handshake tailor (just need a valid tailor, PN = 1).
-    let tailor_buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
-    let handshake_tailor = Tailor::handshake(tailor_buf, &identity, 0, 1000, 1u64, 0u16);
+    // Build a synthetic handshake tailer (just need a valid tailer, PN = 1).
+    let tailer_buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
+    let handshake_tailer = Tailer::handshake(tailer_buf, &identity, 0, 1000, 1u64, 0u16);
 
     let mut users: SharedMap<StaticByteBuffer, UserServerState> = SharedMap::new();
     let (incoming_tx, _incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
@@ -83,13 +83,13 @@ async fn make_session(settings: Arc<Settings<DefaultExecutor>>, router: Arc<Capt
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     let (session, _response) = {
         let crypto_state = UserCryptoState::new(&initial_key, TEST_SERVER_SECRET.obfuscation_buffer());
-        ServerSessionManager::assemble_session(crypto_state, response_body, handshake_tailor, identity, &mut users, incoming_tx, router_weak, num_flows, settings).await.expect("assemble_session must succeed")
+        ServerSessionManager::assemble_session(crypto_state, response_body, handshake_tailer, identity, &mut users, incoming_tx, router_weak, num_flows, settings).await.expect("assemble_session must succeed")
     };
 
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     let (session, _response) = {
         let crypto_state = UserCryptoState::new(&initial_key);
-        ServerSessionManager::assemble_session(crypto_state, response_body, handshake_tailor, identity, &mut users, incoming_tx, router_weak, num_flows, settings).await.expect("assemble_session must succeed")
+        ServerSessionManager::assemble_session(crypto_state, response_body, handshake_tailer, identity, &mut users, incoming_tx, router_weak, num_flows, settings).await.expect("assemble_session must succeed")
     };
 
     session
@@ -153,12 +153,12 @@ async fn test_process_incoming_termination_returns_error() {
     let pn: u64 = 0xDEAD_BEEF_0000_0001;
     let identity = test_identity();
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
-    let tailor = Tailor::termination(buf, &identity, ReturnCode::Success, pn);
+    let tailer = Tailer::termination(buf, &identity, ReturnCode::Success, pn);
     let body = settings.pool().allocate(Some(0));
 
     let incoming = IncomingPacket {
         body,
-        tailor,
+        tailer,
     };
     let result = session.process_incoming(incoming).await;
 
@@ -175,13 +175,13 @@ async fn test_process_incoming_health_check_no_payload() {
     let pn: u64 = 0x1111_0000_0000_0002;
     let identity = test_identity();
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
-    // health_check produces a tailor with HEALTH_CHECK flag and no payload bit.
-    let tailor = Tailor::health_check(buf, &identity, 1000u32, pn);
+    // health_check produces a tailer with HEALTH_CHECK flag and no payload bit.
+    let tailer = Tailer::health_check(buf, &identity, 1000u32, pn);
     let body = settings.pool().allocate(Some(0));
 
     let incoming = IncomingPacket {
         body,
-        tailor,
+        tailer,
     };
     let result = session.process_incoming(incoming).await;
     assert!(result.is_ok(), "health-check-only packet must return Ok, got: {result:?}");

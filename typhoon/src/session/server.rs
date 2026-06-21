@@ -18,7 +18,7 @@ use crate::crypto::{UserCryptoState, UserServerState};
 use crate::session::error::SessionControllerError;
 use crate::session::server_health::ServerHealthProvider;
 use crate::settings::{Settings, keys};
-use crate::tailor::{IdentityType, PacketFlags, ReturnCode, Tailor};
+use crate::tailer::{IdentityType, PacketFlags, ReturnCode, Tailer};
 use crate::utils::bitset::AtomicBitSet;
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, NotifyQueueSender};
@@ -33,10 +33,10 @@ pub trait OutgoingRouter<T: Send + Sync>: Send + Sync {
     async fn remove_session(&self, identity: &T);
 }
 
-/// Incoming packet for the server session manager: body + tailor view.
+/// Incoming packet for the server session manager: body + tailer view.
 pub struct IncomingPacket<T: IdentityType> {
     pub body: DynamicByteBuffer,
-    pub tailor: Tailor<T>,
+    pub tailer: Tailer<T>,
 }
 
 /// Server-side session manager for a single client connection.
@@ -68,7 +68,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     ///
     /// Returns `(Arc<Self>, response_packet)`. The caller holds `session_key` from the
     /// encapsulation step and upgrades the user's crypto state after sending the response.
-    pub(crate) async fn assemble_session(crypto_state: UserCryptoState, response_body: DynamicByteBuffer, handshake_tailor: Tailor<T>, identity: T, users: &mut SharedMap<T, UserServerState>, incoming_tx: NotifyQueueSender<DynamicByteBuffer>, router: StdWeak<dyn OutgoingRouter<T>>, num_flows: usize, settings: Arc<Settings<AE>>) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
+    pub(crate) async fn assemble_session(crypto_state: UserCryptoState, response_body: DynamicByteBuffer, handshake_tailer: Tailer<T>, identity: T, users: &mut SharedMap<T, UserServerState>, incoming_tx: NotifyQueueSender<DynamicByteBuffer>, router: StdWeak<dyn OutgoingRouter<T>>, num_flows: usize, settings: Arc<Settings<AE>>) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
         let user_state = UserServerState::new(crypto_state);
 
         users.insert(identity.clone(), user_state).await;
@@ -79,9 +79,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         let server_next_in = get_rng().gen_range(settings.get(&keys::HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&keys::HEALTH_CHECK_NEXT_IN_MAX)) as u32;
 
         let response_body_len = response_body.len();
-        let tailor_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
-        let _response_tailor = Tailor::handshake(tailor_buf, &identity, ReturnCode::Success.into(), server_next_in, handshake_tailor.packet_number(), response_body_len as u16);
-        let response_packet = response_body.expand_end(Tailor::<T>::len());
+        let tailer_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
+        let _response_tailer = Tailer::handshake(tailer_buf, &identity, ReturnCode::Success.into(), server_next_in, handshake_tailer.packet_number(), response_body_len as u16);
+        let response_packet = response_body.expand_end(Tailer::<T>::len());
 
         let health_provider = ServerHealthProvider::new(router, identity.clone(), settings, server_next_in);
 
@@ -115,7 +115,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         self.active_flows.random_set_index(num_flows)
     }
 
-    /// Build the next outgoing wire packet for this session: encrypts the payload, appends the data tailor, and returns the assembled buffer.
+    /// Build the next outgoing wire packet for this session: encrypts the payload, appends the data tailer, and returns the assembled buffer.
     pub async fn prepare_outgoing(&self, packet: DynamicByteBuffer, generated: bool) -> Result<DynamicByteBuffer, SessionControllerError> {
         if generated {
             return Ok(packet);
@@ -129,9 +129,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         let packet_number = self.next_packet_number();
 
         let encrypted_payload_len = encrypted_payload.len();
-        let tailor_buf = encrypted_payload.expand_end(T::length()).rebuffer_start(encrypted_payload_len);
-        let _tailor = Tailor::data(tailor_buf, &self.identity, payload_length, packet_number);
-        let assembled = encrypted_payload.expand_end(Tailor::<T>::len());
+        let tailer_buf = encrypted_payload.expand_end(T::length()).rebuffer_start(encrypted_payload_len);
+        let _tailer = Tailer::data(tailer_buf, &self.identity, payload_length, packet_number);
+        let assembled = encrypted_payload.expand_end(Tailer::<T>::len());
         debug!("server session [{}]: sending data packet", self.identity.to_string());
         Ok(assembled)
     }
@@ -148,21 +148,21 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     pub async fn process_incoming(&self, incoming: IncomingPacket<T>) -> Result<(), SessionControllerError> {
         let IncomingPacket {
             body,
-            tailor,
+            tailer,
         } = incoming;
-        debug!("server session [{}]: received {:?} packet", self.identity.to_string(), tailor.flags());
+        debug!("server session [{}]: received {:?} packet", self.identity.to_string(), tailer.flags());
 
-        if tailor.flags().is_termination() {
-            debug!("server session [{}]: connection terminated by client (code={})", self.identity.to_string(), tailor.code());
-            return Err(SessionControllerError::ConnectionTerminated(tailor.code()));
+        if tailer.flags().is_termination() {
+            debug!("server session [{}]: connection terminated by client (code={})", self.identity.to_string(), tailer.code());
+            return Err(SessionControllerError::ConnectionTerminated(tailer.code()));
         }
 
-        if tailor.flags().contains(PacketFlags::HEALTH_CHECK) && !tailor.flags().has_payload() {
-            self.health_provider.feed_health_check(tailor.time(), tailor.packet_number());
+        if tailer.flags().contains(PacketFlags::HEALTH_CHECK) && !tailer.flags().has_payload() {
+            self.health_provider.feed_health_check(tailer.time(), tailer.packet_number());
         }
 
-        if tailor.flags().has_payload() {
-            let payload_len = tailor.payload_length() as usize;
+        if tailer.flags().has_payload() {
+            let payload_len = tailer.payload_length() as usize;
             let encrypted_payload = body.rebuffer_start(body.len() - payload_len);
 
             let decrypt_result = {
@@ -173,8 +173,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
 
             match decrypt_result {
                 Ok(decrypted) => {
-                    if tailor.flags().contains(PacketFlags::HEALTH_CHECK) {
-                        self.health_provider.feed_health_check(tailor.time(), tailor.packet_number());
+                    if tailer.flags().contains(PacketFlags::HEALTH_CHECK) {
+                        self.health_provider.feed_health_check(tailer.time(), tailer.packet_number());
                     }
                     self.incoming_tx.push(decrypted);
                 }

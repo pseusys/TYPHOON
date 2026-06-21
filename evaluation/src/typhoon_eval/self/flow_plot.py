@@ -28,12 +28,12 @@ from matplotlib.axes import Axes
 _DEFAULT_TYPHOON_DIR = Path(__file__).parent.parent.parent.parent.parent / "typhoon"
 
 # Wire-packet component order (bottom → top in each bar).
-_COMPONENTS = ["tailor", "crypto", "header", "payload", "body"]
+_COMPONENTS = ["tailer", "crypto", "header", "payload", "body"]
 # Minimum records to autoscale a histogram bucket — below this we fall back to 10 ms.
 MIN_RECORDS_FOR_AUTO_BUCKET = 2
 
 _COLORS = {
-    "tailor":  "#555555",
+    "tailer":  "#555555",
     "crypto":  "#9b59b6",
     "header":  "#e67e22",
     "payload": "#2980b9",

@@ -69,17 +69,17 @@ pub(crate) const PAYLOAD_CRYPTO_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRI
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 pub(crate) const PAYLOAD_CRYPTO_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN;
 
-// Tailor obfuscation overhead, split by direction because full mode is asymmetric:
+// Tailer obfuscation overhead, split by direction because full mode is asymmetric:
 //   * s2c (server→client) is always a symmetric AEAD — the shared OBFS key in fast mode,
 //     the session key in full mode — so its size matches `PAYLOAD_CRYPTO_OVERHEAD`.
 //   * c2s (client→server) is symmetric in fast mode but asymmetric (X25519 per packet) in
-//     full mode; the full-mode c2s value lives in `asymmetric::TAILOR_C2S_OVERHEAD`..
+//     full mode; the full-mode c2s value lives in `asymmetric::TAILER_C2S_OVERHEAD`..
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-pub(crate) const TAILOR_C2S_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN;
+pub(crate) const TAILER_C2S_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-pub(crate) const TAILOR_S2C_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN;
+pub(crate) const TAILER_S2C_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN;
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-pub(crate) const TAILOR_S2C_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN;
+pub(crate) const TAILER_S2C_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN;
 
 // NONCE_LEN is the built-in AEAD nonce — full mode only; its length depends on the cipher.
 #[cfg(feature = "full_software")]
@@ -99,7 +99,7 @@ const VERIFICATION_KEY_DERIVATION: &str = "obfuscation key derivation key";
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 const ENCRYPTION_KEY_DERIVATION: &str = "encryption key derivation key";
 
-/// Transcript for delayed tailor verification (fast mode only).
+/// Transcript for delayed tailer verification (fast mode only).
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 pub(crate) struct ObfuscationTranscript {
     /// Pool-backed copy of the ciphertext for deferred BLAKE3 MAC verification.

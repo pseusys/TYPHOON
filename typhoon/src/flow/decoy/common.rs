@@ -21,7 +21,7 @@ use crate::flow::config::{FakeHeaderConfig, FieldType, FieldTypeHolder};
 use crate::flow::error::FlowControllerError;
 use crate::settings::Settings;
 use crate::settings::keys::*;
-use crate::tailor::{IdentityType, Tailor};
+use crate::tailer::{IdentityType, Tailer};
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
 use crate::utils::unix_timestamp_ms;
@@ -210,7 +210,7 @@ where
 /// Object-safe interface used by decoy providers to dispatch generated packets.
 /// Implemented explicitly by each flow manager — `ClientFlowManager` forwards to its `FlowManager::send_packet`, `ServerFlowManager` forwards to its inherent `send_packet`.
 pub trait DecoyFlowSender: Send + Sync {
-    /// Send a generated decoy packet through the flow manager. `fallthrough` skips the tailor step (see `FlowManager::send_packet`).
+    /// Send a generated decoy packet through the flow manager. `fallthrough` skips the tailer step (see `FlowManager::send_packet`).
     fn send_decoy_packet<'a>(&'a self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Pin<Box<dyn Future<Output = Result<(), FlowControllerError>> + Send + 'a>>;
 }
 
@@ -227,12 +227,12 @@ pub trait DecoyProvider: Send + Sync {
     async fn start(&self);
 
     /// Process an incoming packet, updating internal rate tracking.
-    /// `tailor_buf` is the deobfuscated tailor for the packet (flags, packet number, etc.).
-    async fn feed_input(&self, packet: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer>;
+    /// `tailer_buf` is the deobfuscated tailer for the packet (flags, packet number, etc.).
+    async fn feed_input(&self, packet: DynamicByteBuffer, tailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer>;
 
-    /// Process an outgoing packet body and its plaintext tailor, updating internal rate tracking.
+    /// Process an outgoing packet body and its plaintext tailer, updating internal rate tracking.
     /// Returns the (possibly modified) body, or `None` to suppress the packet entirely.
-    async fn feed_output(&self, body: DynamicByteBuffer, tailor_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer>;
+    async fn feed_output(&self, body: DynamicByteBuffer, tailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer>;
 }
 
 /// Construction contract for decoy providers. Extends `DecoyProvider` so that any
@@ -273,7 +273,7 @@ pub(crate) struct DecoyState<T: IdentityType + Clone, AE: AsyncExecutor> {
     /// Per-session monotonic packet-number counter, shared with the session manager and the
     /// health-check provider. Every emitted decoy advances it.
     counter: Arc<AtomicU32>,
-    /// Live source of the current session identity for decoy tailors; re-read on every emitted
+    /// Live source of the current session identity for decoy tailers; re-read on every emitted
     /// decoy so the identity follows session-identity rotation rather than freezing at construction.
     identity: DerivedValue<T>,
     /// Next scheduled decoy time (milliseconds since epoch).
@@ -286,7 +286,7 @@ pub(crate) struct DecoyState<T: IdentityType + Clone, AE: AsyncExecutor> {
     pub(super) next_maintenance_time: u128,
     /// Pre-computed length for next maintenance packet.
     pub(super) pending_maintenance_length: usize,
-    /// Per-flow probability that a generated decoy packet bypasses the tailor step.
+    /// Per-flow probability that a generated decoy packet bypasses the tailer step.
     fallthrough_probability: f64,
 }
 
@@ -341,7 +341,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
         }
     }
 
-    /// Roll a coin against `fallthrough_probability`; `true` ⇒ next decoy bypasses the tailor.
+    /// Roll a coin against `fallthrough_probability`; `true` ⇒ next decoy bypasses the tailer.
     #[inline]
     pub(super) fn should_fallthrough(&self) -> bool {
         if self.fallthrough_probability <= 0.0 {
@@ -399,13 +399,13 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
     /// If `is_maintenance` is true and the subheader mode applies, a subheader is prepended.
     pub(super) fn create_decoy_packet(&mut self, body_length: usize, is_maintenance: bool) -> DynamicByteBuffer {
         let subheader_len = self.subheader_length(is_maintenance);
-        let total_length = body_length + Tailor::<T>::len();
+        let total_length = body_length + Tailer::<T>::len();
         let packet = self.settings.pool().allocate(Some(total_length));
 
         get_rng().fill(packet.slice_end_mut(body_length));
 
         let pn = self.next_packet_number();
-        Tailor::decoy(packet.rebuffer_start(body_length), &self.identity.get(), pn);
+        Tailer::decoy(packet.rebuffer_start(body_length), &self.identity.get(), pn);
 
         if subheader_len > 0 {
             let expanded = packet.expand_start(subheader_len);
@@ -418,17 +418,17 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
         packet
     }
 
-    /// Create a replica of the given decoy body (same body bytes, new tailor).
+    /// Create a replica of the given decoy body (same body bytes, new tailer).
     pub(super) fn create_replica_packet(&mut self, original_body: &[u8], is_maintenance: bool) -> DynamicByteBuffer {
         let subheader_len = self.subheader_length(is_maintenance);
         let body_length = original_body.len();
-        let total_length = body_length + Tailor::<T>::len();
+        let total_length = body_length + Tailer::<T>::len();
         let packet = self.settings.pool().allocate(Some(total_length));
 
         packet.slice_end_mut(body_length).copy_from_slice(original_body);
 
         let pn = self.next_packet_number();
-        Tailor::decoy(packet.rebuffer_start(body_length), &self.identity.get(), pn);
+        Tailer::decoy(packet.rebuffer_start(body_length), &self.identity.get(), pn);
 
         if subheader_len > 0 {
             let expanded = packet.expand_start(subheader_len);
