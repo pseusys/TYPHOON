@@ -494,7 +494,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 users.insert(client_version_identity.clone(), UserServerState::new(crypto_state)).await;
             }
             self.router.flows[flow_index].register_user_binding(client_version_identity.clone(), raw_packet.source_addr, handshake_pn).await;
-            let pn = ((unix_timestamp_ms() / 1000) as u64) << 32;
+            let pn = (unix_timestamp_ms() / 1000) as u64;
             let buf = self.settings.pool().allocate(Some(T::length()));
             let tailer = Tailer::termination(buf, &client_version_identity, ReturnCode::VersionMismatch, pn);
             if let Err(err) = self.router.flows[flow_index].send_packet(tailer.into_buffer(), false, false).await {
@@ -716,7 +716,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     fn drop(&mut self) {
         let executor = self.settings.executor().clone();
         let handshake_pn = self.session.handshake_pn();
-        let pn = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
+        let pn = (unix_timestamp_ms() / 1000) as u64;
         let buf = self.settings.pool().allocate(Some(Tailer::<T>::len()));
         let termination = Tailer::termination(buf, &self.identity, ReturnCode::Success, pn).into_buffer();
         executor.block_on(async {

@@ -337,7 +337,7 @@ sequenceDiagram
     participant S as Server
 
     loop Decay cycle
-        C->>S: HealthCheck(PN = unix_ts ∥ counter, TM = next_in)
+        C->>S: HealthCheck(PN = counter ∥ unix_ts, TM = next_in)
         Note over S: Remember PN, wait next_in ms
         Note over S: (attempt shadowride on outgoing data packet)
         S-->>C: HealthCheck(PN = remembered, TM = next_in)
@@ -352,7 +352,7 @@ The decay behavior is mostly defined by [**TM** and **PN** fields of the tailer]
 The _current incremental packet number_ is a single per-session counter shared by every emitter on the session — data, health-check, handshake, decoy, and termination packets all advance the same monotonic sequence.
 The counter starts from 0 at session establishment.
 
-Client initiates the exchange (the first health check exchange is embedded into handshake), setting higher `4` bytes of **PN** field to the current unix timestamp (in seconds), [lower `4` bytes](#sockets-and-listeners) of **PN** to _current incremental packet number_ and **TM** to a [random next in delay](#next-in-computation).
+Client initiates the exchange (the first health check exchange is embedded into handshake), setting [higher `4` bytes](#sockets-and-listeners) of **PN** field to _current incremental packet number_, lower `4` bytes of **PN** to the current unix timestamp (in seconds), and **TM** to a [random next in delay](#next-in-computation).
 The **PN** field value is remembered and used as the _current health check packet number_.
 After that, the client waits for a server response for **TM** milliseconds plus the [timeout value](#timeout-computation).
 If it receives a health check message from the server with unexpected packet number (either during waiting or sleeping), it will be silently discarded.
@@ -904,7 +904,7 @@ Another important challenge is client address binding, since client addresses ca
 In general, the client-to-identification mapping should be safe (considering client identification is unique) thanks to:
 
 - Session key authentication that is used for [tailer encryption](#tailer-encryption).
-- Incremental packet number [in tailer](#tailer-structure), stored in lower `4` bytes of **PN** field. A single monotonic counter is maintained per session and shared by every emitter — data, health-check, handshake, decoy, and termination packets all advance the same sequence. This makes the PN stream usable as a tie-breaker for source-address rebinding without having to disambiguate between sub-sequences.
+- Incremental packet number [in tailer](#tailer-structure), stored in the higher `4` bytes of **PN** field so it alone determines packet ordering. A single monotonic counter is maintained per session and shared by every emitter — data, health-check, handshake, decoy, and termination packets all advance the same sequence. Keeping the counter (rather than the timestamp) in the dominant half means PN ordering for source-address rebinding cannot be disturbed by clock adjustments — only the counter, which never goes backward, decides it.
 
 By default, the **ID** field is `16` bytes ([UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier)) long, which should be sufficient for random user **ID** assignment.
 
@@ -1110,7 +1110,7 @@ It reinterprets three [tailer fields](#tailer-structure) to carry diagnostic met
 | --- | --- | --- |
 | **CD** | Client type / return code | Packet unique reference number (0–255, rolling) |
 | **TM** | Next-in delay (milliseconds) | Packet send timestamp (lower 32 bits of Unix time in milliseconds) |
-| **PN** | `unix_ts_s (32 bits) \|\| incremental (32 bits)` | `global_sequence (32 bits) \|\| phase_id (32 bits)` |
+| **PN** | `incremental (32 bits) \|\| unix_ts_s (32 bits)` | `global_sequence (32 bits) \|\| phase_id (32 bits)` |
 
 `phase_id` encodes the active debug phase: `0` = reachability, `1` = return time, `2` = throughput.
 `global_sequence` is a monotonically increasing counter across all probes in the run, enabling the receiver to detect packet loss and reordering.

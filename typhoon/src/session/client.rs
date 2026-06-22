@@ -90,10 +90,12 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
         get_rng().random_item(&self.flows).expect("at least one flow manager required")
     }
 
+    /// Compute the next packet number: `(incremental << 32) | unix_timestamp_seconds`.
+    /// The counter is kept in the dominant half so raw `PN` ordering is immune to clock adjustments.
     fn next_packet_number(&self) -> u64 {
         let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let timestamp = (crate::utils::unix_timestamp_ms() / 1000) as u32;
-        ((timestamp as u64) << 32) | (counter as u64)
+        ((counter as u64) << 32) | (timestamp as u64)
     }
 }
 

@@ -148,11 +148,12 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         Ok(assembled)
     }
 
-    /// Get the next packet number: (unix_timestamp_seconds << 32) | incremental.
+    /// Get the next packet number: `(incremental << 32) | unix_timestamp_seconds`.
+    /// The counter is kept in the dominant half so raw `PN` ordering is immune to clock adjustments.
     fn next_packet_number(&self) -> u64 {
         let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let timestamp = (unix_timestamp_ms() / 1000) as u32;
-        ((timestamp as u64) << 32) | (counter as u64)
+        ((counter as u64) << 32) | (timestamp as u64)
     }
 
     /// Process an incoming packet from the Listener.

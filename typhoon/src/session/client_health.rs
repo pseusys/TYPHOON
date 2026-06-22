@@ -108,12 +108,13 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
         self.smooth_rtt.unwrap_or(self.settings.get(&RTT_DEFAULT) as f64)
     }
 
-    /// Compute the next packet number: (unix_timestamp_seconds << 32) | incremental.
+    /// Compute the next packet number: `(incremental << 32) | unix_timestamp_seconds`.
     /// Uses the per-session shared counter, so every emitter on this session advances the same monotonic sequence.
+    /// The counter is kept in the dominant half so raw `PN` ordering is immune to clock adjustments.
     fn next_packet_number(&self) -> u64 {
         let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let timestamp = (unix_timestamp_ms() / 1000) as u32;
-        ((timestamp as u64) << 32) | (counter as u64)
+        ((counter as u64) << 32) | (timestamp as u64)
     }
 
     /// Compute a random next_in delay, clamped to configured bounds.

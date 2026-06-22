@@ -386,13 +386,14 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor> DecoyState<T, AE> {
     }
 
     /// Bump the per-session counter and return the next packet number
-    /// (`timestamp_seconds << 32 | counter`). Decoy emissions share this counter with the
+    /// (`counter << 32 | timestamp_seconds`). Decoy emissions share this counter with the
     /// session manager and the health-check provider, so the resulting PN stream is monotonic
-    /// across every packet type the session produces.
+    /// across every packet type the session produces. The counter is kept in the dominant half
+    /// so raw `PN` ordering is immune to clock adjustments.
     fn next_packet_number(&self) -> u64 {
         let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let timestamp = (unix_timestamp_ms() / 1000) as u32;
-        ((timestamp as u64) << 32) | counter as u64
+        ((counter as u64) << 32) | timestamp as u64
     }
 
     /// Create a decoy packet with the given body length.

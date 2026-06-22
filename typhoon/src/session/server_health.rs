@@ -123,7 +123,7 @@ impl ServerHealthProvider {
                     debug!("ServerHealthProvider: connection decayed after {retry_count} retries");
                     if let Some(r) = router.upgrade() {
                         if r.is_current_session(&identity, handshake_pn).await {
-                            let pn = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
+                            let pn = (unix_timestamp_ms() / 1000) as u64;
                             let buf = settings.pool().allocate(Some(T::length()));
                             let termination = Tailer::termination(buf, &identity, ReturnCode::ConnectionDecayed, pn).into_buffer();
                             r.route_packet(termination, &identity).await;

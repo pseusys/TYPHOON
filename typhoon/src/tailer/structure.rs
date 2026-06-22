@@ -53,7 +53,7 @@ pub trait ClientConnectionHandler: Send + Sync {
 /// - FG (flags): 1 byte - packet type flags
 /// - CD (code): 1 byte - client type or return code
 /// - TM (time): 4 bytes - next_in delay in milliseconds
-/// - PN (packet number): 8 bytes - timestamp (4) + incremental (4)
+/// - PN (packet number): 8 bytes - incremental (4) + timestamp (4)
 /// - PL (payload length): 2 bytes - length of encrypted payload
 /// - ID (identity): TYPHOON_ID_LENGTH bytes - client UUID
 pub struct Tailer<T: IdentityType> {
@@ -222,16 +222,17 @@ impl<T: IdentityType> Tailer<T> {
         T::from_bytes(self.buffer.slice_both(ID_OFFSET, ID_OFFSET + T::length()))
     }
 
-    /// Extract timestamp from packet number (upper 32 bits).
+    /// Extract timestamp from packet number (lower 32 bits).
     #[inline]
     pub fn timestamp(&self) -> u32 {
-        (self.packet_number() >> 32) as u32
+        self.packet_number() as u32
     }
 
-    /// Extract incremental number from packet number (lower 32 bits).
+    /// Extract incremental number from packet number (upper 32 bits).
+    /// Kept in the dominant half so raw `PN` comparisons order strictly by the monotonic counter and are immune to clock adjustments.
     #[inline]
     pub fn incremental(&self) -> u32 {
-        self.packet_number() as u32
+        (self.packet_number() >> 32) as u32
     }
 
     /// Get return code from code field.
@@ -302,9 +303,10 @@ impl<T: IdentityType> Tailer<T> {
     }
 
     /// Set packet number from timestamp and incremental counter.
+    /// The counter occupies the upper (dominant) 32 bits so that raw `PN` comparisons order strictly by it, independent of clock adjustments.
     #[inline]
     pub fn set_packet_number(&self, timestamp: u32, incremental: u32) {
-        let pn = ((timestamp as u64) << 32) | (incremental as u64);
+        let pn = ((incremental as u64) << 32) | (timestamp as u64);
         self.set_packet_number_raw(pn);
     }
 
