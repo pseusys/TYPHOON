@@ -21,3 +21,12 @@ pub trait SessionManager {
     #[cfg(feature = "client")]
     fn receive_packet(&self) -> impl Future<Output = Result<DynamicByteBuffer, SessionControllerError>> + Send;
 }
+
+/// Outcome of waiting for a pending shadowride to be consumed by an outgoing data packet,
+/// shared by the client- and server-side health check providers.
+#[cfg(any(feature = "client", feature = "server"))]
+pub(super) enum ShadowrideEvent {
+    Timeout,
+    Terminated,
+    Shadowridden,
+}

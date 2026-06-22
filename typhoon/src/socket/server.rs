@@ -512,7 +512,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         // Reject stale or replayed handshakes before doing any further crypto work.
         let existing_handshake_pn = self.router.sessions.read().await.get(&identity).map(|s| s.handshake_pn());
-        if let Some(existing_pn) = existing_handshake_pn && handshake_pn <= existing_pn {
+        if let Some(existing_pn) = existing_handshake_pn
+            && handshake_pn <= existing_pn
+        {
             debug!("stale or replayed handshake for {} rejected: pn {handshake_pn:#018x} <= current {existing_pn:#018x}", identity.to_string());
             if let Some(packet) = original_wire_packet {
                 self.router.flows[flow_index].forward_to_probe(packet, source_addr).await;

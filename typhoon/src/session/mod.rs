@@ -8,6 +8,8 @@
 mod client_health;
 mod common;
 mod error;
+#[cfg(any(feature = "client", feature = "server"))]
+mod rtt;
 
 #[cfg(feature = "client")]
 mod client;

@@ -14,7 +14,8 @@ use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, FixedByteBuffer
 use crate::cache::SharedValue;
 use crate::crypto::{ClientCryptoTool, ClientData};
 use crate::session::SessionControllerError;
-use crate::session::common::SessionManager;
+use crate::session::common::{SessionManager, ShadowrideEvent};
+use crate::session::rtt::RttEstimator;
 use crate::settings::Settings;
 use crate::settings::keys::*;
 use crate::tailer::{ClientConnectionHandler, IdentityType, PacketFlags, ReturnCode, Tailer};
@@ -37,13 +38,6 @@ enum DecaySleepEvent<T: IdentityType> {
     },
 }
 
-/// Events produced during the shadowride window.
-enum DecayShadowrideEvent {
-    Timeout,
-    Terminated,
-    Shadowridden,
-}
-
 /// Outcome of attempting to send a packet.
 enum SendOutcome {
     Sent,
@@ -54,10 +48,8 @@ enum SendOutcome {
 /// Internal state shared between the timer task and feed methods.
 pub(super) struct HealthState<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> {
     settings: Arc<Settings<AE>>,
-    /// EWMA smoothed RTT in milliseconds.
-    smooth_rtt: Option<f64>,
-    /// RTT variance in milliseconds.
-    rtt_variance: Option<f64>,
+    /// Round-trip-time estimate, used for the health-check timeout and the shadowride window.
+    rtt: RttEstimator,
     /// Per-session monotonic packet-number counter; shared with the session manager and the per-flow decoy providers so every emitter advances the same sequence.
     counter: Arc<AtomicU32>,
     /// Current retry count.
@@ -87,8 +79,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
     fn new(settings: Arc<Settings<AE>>, crypto_tool: SharedValue<ClientCryptoTool<T>>, counter: Arc<AtomicU32>, initial_data_generator: CC, response_rx: WatchReceiver<HealthResponse<T>>) -> Self {
         Self {
             settings,
-            smooth_rtt: None,
-            rtt_variance: None,
+            rtt: RttEstimator::new(),
             counter,
             retry_count: 0,
             last_sent_time: 0,
@@ -105,7 +96,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
 
     /// Get smooth RTT or default value.
     fn smooth_rtt_or_default(&self) -> f64 {
-        self.smooth_rtt.unwrap_or(self.settings.get(&RTT_DEFAULT) as f64)
+        self.rtt.smooth_or_default(&self.settings)
     }
 
     /// Compute the next packet number: `(incremental << 32) | unix_timestamp_seconds`.
@@ -126,17 +117,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
 
     /// Compute timeout from RTT or use default, clamped to bounds.
     fn compute_timeout(&self) -> u64 {
-        let timeout_min = self.settings.get(&TIMEOUT_MIN);
-        let timeout_max = self.settings.get(&TIMEOUT_MAX);
-
-        match (self.smooth_rtt, self.rtt_variance) {
-            (Some(srtt), Some(rttvar)) => {
-                let factor = self.settings.get(&TIMEOUT_RTT_FACTOR);
-                ((srtt + rttvar) * factor) as u64
-            }
-            _ => self.settings.get(&TIMEOUT_DEFAULT),
-        }
-        .clamp(timeout_min, timeout_max)
+        self.rtt.compute_timeout(&self.settings)
     }
 
     /// Increment retry count and return whether we are still under the limit.
@@ -147,25 +128,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
 
     /// Update RTT using EWMA algorithm.
     fn update_rtt(&mut self, receive_time: u128) {
-        let packet_rtt = (receive_time as f64) - (self.last_sent_time as f64) - (self.last_sent_next_in as f64);
-        let rtt_min = self.settings.get(&RTT_MIN) as f64;
-        let rtt_max = self.settings.get(&RTT_MAX) as f64;
-        let packet_rtt = packet_rtt.clamp(rtt_min, rtt_max);
-
-        match self.smooth_rtt {
-            None => {
-                self.smooth_rtt = Some(packet_rtt);
-                self.rtt_variance = Some(packet_rtt / 2.0);
-            }
-            Some(srtt) => {
-                let alpha = self.settings.get(&RTT_ALPHA);
-                let beta = self.settings.get(&RTT_BETA);
-                let new_srtt = (1.0 - alpha) * srtt + alpha * packet_rtt;
-                let new_rttvar = (1.0 - beta) * self.rtt_variance.unwrap() + beta * (new_srtt - packet_rtt).abs();
-                self.smooth_rtt = Some(new_srtt.clamp(rtt_min, rtt_max));
-                self.rtt_variance = Some(new_rttvar);
-            }
-        }
+        self.rtt.update(&self.settings, receive_time, self.last_sent_time, self.last_sent_next_in);
     }
 
     /// Build identity value for tailer construction.
@@ -476,19 +439,19 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                 let mut pool = FuturePool::new();
                 pool.add(async {
                     sleep(Duration::from_millis(shadowride_window)).await;
-                    DecayShadowrideEvent::Timeout
+                    ShadowrideEvent::Timeout
                 });
                 pool.add(async {
                     match shadowride_rx.recv().await {
-                        Some(()) => DecayShadowrideEvent::Shadowridden,
-                        None => DecayShadowrideEvent::Terminated,
+                        Some(()) => ShadowrideEvent::Shadowridden,
+                        None => ShadowrideEvent::Terminated,
                     }
                 });
-                pool.next().await.unwrap_or(DecayShadowrideEvent::Terminated)
+                pool.next().await.unwrap_or(ShadowrideEvent::Terminated)
             };
 
             match shadowridden {
-                DecayShadowrideEvent::Timeout => {
+                ShadowrideEvent::Timeout => {
                     let mut st = state.lock().await;
                     st.shadowride_pending = None;
                     st.last_sent_time = unix_timestamp_ms();
@@ -496,11 +459,11 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
                     drop(st);
                     Self::try_send_static(manager, packet, state).await
                 }
-                DecayShadowrideEvent::Terminated => {
+                ShadowrideEvent::Terminated => {
                     warn!("health provider: shadowride channel closed unexpectedly");
                     SendOutcome::Stop
                 }
-                DecayShadowrideEvent::Shadowridden => SendOutcome::Sent,
+                ShadowrideEvent::Shadowridden => SendOutcome::Sent,
             }
         } else {
             let packet = {

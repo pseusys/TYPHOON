@@ -142,7 +142,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
 
         let encrypted_payload_len = encrypted_payload.len();
         let tailer_buf = encrypted_payload.expand_end(T::length()).rebuffer_start(encrypted_payload_len);
-        let _tailer = Tailer::data(tailer_buf, &self.identity, payload_length, packet_number);
+        let tailer = Tailer::data(tailer_buf, &self.identity, payload_length, packet_number);
+
+        // Let the health provider potentially attach a shadowride.
+        self.health_provider.feed_output(tailer.clone()).await?;
+
         let assembled = encrypted_payload.expand_end(Tailer::<T>::len());
         debug!("server session [{}]: sending data packet", self.identity.to_string());
         Ok(assembled)

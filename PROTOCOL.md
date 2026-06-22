@@ -1184,7 +1184,7 @@ The `crypto` module implements all cryptographic primitives described in the [Cr
 
 The `tailer` module provides the `Tailer<T>` struct — a strongly-typed view over the fixed-size plaintext bytes at the end of every wire packet — and the `IdentityType`, `ServerConnectionHandler`, `ClientConnectionHandler` extension traits.
 
-`Tailer` constructors (`data`, `health_check`, `shadowride`, `handshake`, `decoy`, `termination`, `debug_probe`) write the appropriate flag byte, code, time, packet number, payload length, and identity into a pre-allocated `DynamicByteBuffer` in one pass with no copies.
+`Tailer` constructors (`data`, `health_check`, `handshake`, `decoy`, `termination`, `debug_probe`) write the appropriate flag byte, code, time, packet number, payload length, and identity into a pre-allocated `DynamicByteBuffer` in one pass with no copies. There is no dedicated `shadowride` constructor — a shadowridden packet is built by mutating an existing `data` tailer's flags/time/PN in place once a pending health check is ready to attach (see `feed_output` on both the client- and server-side health providers).
 Getters (`flags`, `code`, `time`, `packet_number`, `payload_length`, `identity`) read directly from the buffer view.
 
 `PacketFlags` is a `bitflags!` struct; the composite `is_shadowride()` predicate detects the `HEALTH_CHECK | DATA` combination.

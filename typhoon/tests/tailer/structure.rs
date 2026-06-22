@@ -65,18 +65,6 @@ fn test_health_check_tailer() {
 }
 
 #[test]
-fn test_shadowride_tailer() {
-    let identity = StaticByteBuffer::from_slice(&[3; DEFAULT_TYPHOON_ID_LENGTH]);
-    let buffer = pool_empty(&TEST_POOL, TAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
-    let tailer = Tailer::<StaticByteBuffer>::shadowride(buffer, &identity, 256, 128_000, 12345);
-
-    assert!(tailer.flags().is_shadowride());
-    assert!(tailer.flags().has_payload());
-    assert_eq!(tailer.payload_length(), 256);
-    assert_eq!(tailer.time(), 128_000);
-}
-
-#[test]
 fn test_handshake_tailer() {
     let identity = StaticByteBuffer::from_slice(&[6; DEFAULT_TYPHOON_ID_LENGTH]);
     let buffer = pool_empty(&TEST_POOL, TAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);

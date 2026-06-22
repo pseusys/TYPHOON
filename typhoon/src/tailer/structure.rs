@@ -121,18 +121,6 @@ impl<T: IdentityType> Tailer<T> {
         view
     }
 
-    /// Write a shadowride packet tailer (data + health check) into the buffer.
-    pub fn shadowride(buffer: DynamicByteBuffer, identity: &T, payload_length: u16, next_in: u32, packet_number: u64) -> Self {
-        let view = Self::new(buffer);
-        view.set_flags(PacketFlags::DATA | PacketFlags::HEALTH_CHECK);
-        view.set_code(0);
-        view.set_time(next_in);
-        view.set_packet_number_raw(packet_number);
-        view.set_payload_length(payload_length);
-        view.set_identity(identity);
-        view
-    }
-
     /// Write a handshake packet tailer into the buffer.
     /// `body_len` is the length of the handshake body (excluding tailer), allowing receivers
     /// to strip any fake header/body prefix before parsing the handshake data.
