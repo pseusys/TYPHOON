@@ -303,6 +303,9 @@ sequenceDiagram
 The TYPHOON protocol relies on a two-way handshake that closely resembles those of the OBFS4 and NTORv3 protocols.
 There is no reason to wait for a third packet from the client (TCP-style), as it is not possible to overload the server with partially-initialized sessions if [initial handshake data is used correctly](#initial-data-handling).
 Moreover, that means that if the client sends a handshake packet on an existing connection, its internal state gets silently reset (see [health check packet description](#health-check-packets) for more information on connection internal state).
+This reset is gated, not unconditional: a new handshake for an identity that already has a session is only honored if its **PN** is strictly greater than the **PN** of the handshake that established the current session — every legitimate handshake attempt (including retries) mints a fresh, higher **PN**, so this never rejects a real reconnect.
+A handshake that fails this check (i.e. a stale or replayed copy of an already-superseded handshake) is treated like any other unauthenticated packet and routed to [active probing](#active-probing-protection) instead of resetting anything.
+This closes an otherwise-open replay hole: without it, a captured copy of any past handshake packet could be replayed at any later time to silently kill whichever session is currently active for that identity, since handshake decapsulation is deterministic and (depending on the [initial data](#initial-data-handling) mode in use) identity derivation can be too.
 See [handshake encryption specification](#handshake-encryption) for cryptographic details of the handshake.
 
 An important requirement for the handshake is that it is indistinguishable from any other subsequent packet flow.

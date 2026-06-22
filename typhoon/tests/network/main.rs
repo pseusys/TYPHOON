@@ -7,5 +7,6 @@ mod common;
 mod decoy;
 mod echo;
 mod errors;
+mod handshake_replay;
 mod multi_client;
 mod multi_flow;

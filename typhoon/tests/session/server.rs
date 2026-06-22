@@ -55,8 +55,13 @@ impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
         true
     }
 
-    async fn remove_session(&self, _identity: &StaticByteBuffer) {
+    async fn is_current_session(&self, _identity: &StaticByteBuffer, _handshake_pn: u64) -> bool {
+        true
+    }
+
+    async fn remove_session(&self, _identity: &StaticByteBuffer, _handshake_pn: u64) -> bool {
         self.remove_count.fetch_add(1, Ordering::Relaxed);
+        true
     }
 }
 

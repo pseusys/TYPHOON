@@ -29,8 +29,11 @@ use crate::utils::unix_timestamp_ms;
 #[async_trait]
 pub trait OutgoingRouter<T: Send + Sync>: Send + Sync {
     async fn route_packet(&self, packet: DynamicByteBuffer, identity: &T) -> bool;
-    /// Remove all state associated with the given identity (session map, user crypto, decoy providers).
-    async fn remove_session(&self, identity: &T);
+    /// True if `identity`'s currently-registered session is still the one established by the handshake with packet number `handshake_pn`.
+    async fn is_current_session(&self, identity: &T, handshake_pn: u64) -> bool;
+    /// Remove all state associated with the given identity (session map, user crypto, decoy providers) — but only if the currently-registered session is still the one established by `handshake_pn`.
+    /// Returns whether removal happened.
+    async fn remove_session(&self, identity: &T, handshake_pn: u64) -> bool;
 }
 
 /// Incoming packet for the server session manager: body + tailer view.
@@ -47,6 +50,8 @@ pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToS
     /// Sync template — used per-call to create a local cache entry; no Mutex needed.
     crypto_recv: CachedMapEntryTemplate<T, UserServerState>,
     identity: T,
+    /// Packet number of the handshake that established this session.
+    handshake_pn: u64,
     /// Lock-free bitmask of flow indices from which this client has been seen.
     active_flows: AtomicBitSet,
     /// Per-session monotonic packet-number counter; shared with the health-check provider and every flow manager's decoy provider for this user so the PN stream is single-sequence across data, health-check, decoy, and termination packets.
@@ -77,18 +82,20 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         let crypto_recv = users.create_cache_for(identity.clone());
 
         let server_next_in = get_rng().gen_range(settings.get(&keys::HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&keys::HEALTH_CHECK_NEXT_IN_MAX)) as u32;
+        let handshake_pn = handshake_tailer.packet_number();
 
         let response_body_len = response_body.len();
         let tailer_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
-        let _response_tailer = Tailer::handshake(tailer_buf, &identity, ReturnCode::Success.into(), server_next_in, handshake_tailer.packet_number(), response_body_len as u16);
+        let _response_tailer = Tailer::handshake(tailer_buf, &identity, ReturnCode::Success.into(), server_next_in, handshake_pn, response_body_len as u16);
         let response_packet = response_body.expand_end(Tailer::<T>::len());
 
-        let health_provider = ServerHealthProvider::new(router, identity.clone(), settings, server_next_in);
+        let health_provider = ServerHealthProvider::new(router, identity.clone(), settings, server_next_in, handshake_pn);
 
         let session = Arc::new(Self {
             crypto_send,
             crypto_recv,
             identity,
+            handshake_pn,
             active_flows: AtomicBitSet::new(num_flows),
             counter: Arc::new(AtomicU32::new(0)),
             incoming_tx,
@@ -97,6 +104,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         });
 
         Ok((session, response_packet))
+    }
+
+    /// Packet number of the handshake that established this session.
+    pub fn handshake_pn(&self) -> u64 {
+        self.handshake_pn
     }
 
     /// Per-session monotonic packet-number counter, shared with the health-check provider and per-flow decoy providers.

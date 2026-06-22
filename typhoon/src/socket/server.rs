@@ -450,7 +450,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             if let Err(err) = session.process_incoming(incoming).await {
                 debug!("session processing error for {}: {}", identity.to_string(), err);
                 if matches!(err, SessionControllerError::ConnectionTerminated(_)) {
-                    self.router.remove_session(&identity).await;
+                    self.router.remove_session(&identity, session.handshake_pn()).await;
                 }
             }
         } else {
@@ -509,6 +509,17 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         }
 
         let identity = self.identity_generator.generate(client_initial_data.slice());
+
+        // Reject stale or replayed handshakes before doing any further crypto work.
+        let existing_handshake_pn = self.router.sessions.read().await.get(&identity).map(|s| s.handshake_pn());
+        if let Some(existing_pn) = existing_handshake_pn && handshake_pn <= existing_pn {
+            debug!("stale or replayed handshake for {} rejected: pn {handshake_pn:#018x} <= current {existing_pn:#018x}", identity.to_string());
+            if let Some(packet) = original_wire_packet {
+                self.router.flows[flow_index].forward_to_probe(packet, source_addr).await;
+            }
+            return;
+        }
+
         let server_initial_data = self.identity_generator.initial_data(&identity);
 
         let (incoming_tx, incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
@@ -610,15 +621,26 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + Sync + ToString + 'static, AE:
         }
     }
 
-    async fn remove_session(&self, identity: &T) {
-        if self.sessions.write().await.remove(identity).is_none() {
-            return;
+    async fn is_current_session(&self, identity: &T, handshake_pn: u64) -> bool {
+        self.sessions.read().await.get(identity).is_some_and(|s| s.handshake_pn() == handshake_pn)
+    }
+
+    async fn remove_session(&self, identity: &T, handshake_pn: u64) -> bool {
+        {
+            let mut sessions = self.sessions.write().await;
+            match sessions.get(identity) {
+                Some(s) if s.handshake_pn() == handshake_pn => {
+                    sessions.remove(identity);
+                }
+                _ => return false,
+            }
         }
         self.users.lock().await.remove(identity).await;
         for flow in &self.flows {
             flow.remove_user(identity).await;
         }
         info!("client session removed: {}", identity.to_string());
+        true
     }
 }
 
@@ -690,14 +712,18 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> C
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> Drop for ClientHandle<T, AE> {
     /// Emit a TERMINATION packet and remove the session from the shared router before the handle is released.
+    /// If a re-handshake has already replaced this session, do nothing — the replacement session must not be torn down by the stale handle.
     fn drop(&mut self) {
         let executor = self.settings.executor().clone();
+        let handshake_pn = self.session.handshake_pn();
         let pn = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
         let buf = self.settings.pool().allocate(Some(Tailer::<T>::len()));
         let termination = Tailer::termination(buf, &self.identity, ReturnCode::Success, pn).into_buffer();
         executor.block_on(async {
-            self.router.route_packet(termination, &self.identity).await;
-            self.router.remove_session(&self.identity).await;
+            if self.router.is_current_session(&self.identity, handshake_pn).await {
+                self.router.route_packet(termination, &self.identity).await;
+                self.router.remove_session(&self.identity, handshake_pn).await;
+            }
         });
     }
 }

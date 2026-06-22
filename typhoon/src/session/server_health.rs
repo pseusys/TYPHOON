@@ -49,10 +49,10 @@ pub(super) struct ServerHealthProvider {
 }
 
 impl ServerHealthProvider {
-    pub(super) fn new<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static>(router: Weak<dyn OutgoingRouter<T>>, identity: T, settings: Arc<Settings<AE>>, initial_server_next_in: u32) -> Self {
+    pub(super) fn new<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static>(router: Weak<dyn OutgoingRouter<T>>, identity: T, settings: Arc<Settings<AE>>, initial_server_next_in: u32, handshake_pn: u64) -> Self {
         let (trigger_tx, trigger_rx) = create_watch();
         let executor = settings.executor().clone();
-        executor.spawn(Self::timer_task(router, identity, settings, trigger_rx, initial_server_next_in));
+        executor.spawn(Self::timer_task(router, identity, settings, trigger_rx, initial_server_next_in, handshake_pn));
         Self {
             trigger_tx,
         }
@@ -65,7 +65,7 @@ impl ServerHealthProvider {
         self.trigger_tx.send((client_next_in, client_pn));
     }
 
-    async fn timer_task<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static>(router: Weak<dyn OutgoingRouter<T>>, identity: T, settings: Arc<Settings<AE>>, mut trigger_rx: WatchReceiver<(u32, u64)>, initial_server_next_in: u32) {
+    async fn timer_task<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static>(router: Weak<dyn OutgoingRouter<T>>, identity: T, settings: Arc<Settings<AE>>, mut trigger_rx: WatchReceiver<(u32, u64)>, initial_server_next_in: u32, handshake_pn: u64) {
         let timeout = settings.get(&TIMEOUT_DEFAULT).clamp(settings.get(&TIMEOUT_MIN), settings.get(&TIMEOUT_MAX));
         // Initial wait: how long before the client should send its first health check after
         // receiving our handshake response (initial_server_next_in) plus decay tolerance.
@@ -122,11 +122,15 @@ impl ServerHealthProvider {
                     }
                     debug!("ServerHealthProvider: connection decayed after {retry_count} retries");
                     if let Some(r) = router.upgrade() {
-                        let pn = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
-                        let buf = settings.pool().allocate(Some(T::length()));
-                        let termination = Tailer::termination(buf, &identity, ReturnCode::ConnectionDecayed, pn).into_buffer();
-                        r.route_packet(termination, &identity).await;
-                        r.remove_session(&identity).await;
+                        if r.is_current_session(&identity, handshake_pn).await {
+                            let pn = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
+                            let buf = settings.pool().allocate(Some(T::length()));
+                            let termination = Tailer::termination(buf, &identity, ReturnCode::ConnectionDecayed, pn).into_buffer();
+                            r.route_packet(termination, &identity).await;
+                            r.remove_session(&identity, handshake_pn).await;
+                        } else {
+                            debug!("ServerHealthProvider: session already replaced, skipping decay cleanup");
+                        }
                     }
                     break 'outer;
                 }

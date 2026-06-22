@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -18,6 +18,7 @@ use crate::utils::sync::{Mutex, sleep};
 struct CapturingRouter {
     packets: Mutex<Vec<DynamicByteBuffer>>,
     remove_count: AtomicUsize,
+    current_pn: AtomicU64,
 }
 
 impl CapturingRouter {
@@ -25,6 +26,7 @@ impl CapturingRouter {
         Arc::new(Self {
             packets: Mutex::new(Vec::new()),
             remove_count: AtomicUsize::new(0),
+            current_pn: AtomicU64::new(1),
         })
     }
 }
@@ -36,8 +38,16 @@ impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
         true
     }
 
-    async fn remove_session(&self, _identity: &StaticByteBuffer) {
+    async fn is_current_session(&self, _identity: &StaticByteBuffer, handshake_pn: u64) -> bool {
+        self.current_pn.load(Ordering::Relaxed) == handshake_pn
+    }
+
+    async fn remove_session(&self, identity: &StaticByteBuffer, handshake_pn: u64) -> bool {
+        if !self.is_current_session(identity, handshake_pn).await {
+            return false;
+        }
         self.remove_count.fetch_add(1, Ordering::Relaxed);
+        true
     }
 }
 
@@ -80,7 +90,7 @@ async fn test_server_health_response_echoes_client_pn() {
     let settings = fast_settings();
 
     // Very long initial_server_next_in → timer will not time out during the test.
-    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
 
     let client_pn: u64 = 0xDEAD_BEEF_0000_0001;
     provider.feed_health_check(10u32, client_pn);
@@ -103,7 +113,7 @@ async fn test_server_health_response_own_tm_in_range() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
 
     provider.feed_health_check(10u32, 0x1234_5678_0000_0001);
     sleep(Duration::from_millis(50)).await;
@@ -125,7 +135,7 @@ async fn test_server_health_response_has_health_check_flag() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
     provider.feed_health_check(10u32, 0xABCD);
     sleep(Duration::from_millis(50)).await;
     drop(provider);
@@ -143,7 +153,7 @@ async fn test_server_health_response_delayed() {
     let router = CapturingRouter::new();
     let settings: Arc<Settings<DefaultExecutor>> = Arc::new(SettingsBuilder::new().set(&keys::TIMEOUT_MIN, 5u64).set(&keys::TIMEOUT_DEFAULT, 10u64).set(&keys::TIMEOUT_MAX, 20u64).set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 300u64).set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 300u64).set(&keys::MAX_RETRIES, 2u64).build().unwrap());
 
-    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
 
     // Request a 300 ms delay (clamped to MIN=MAX=300 ms).
     provider.feed_health_check(300u32, 0x9999);
@@ -169,7 +179,7 @@ async fn test_server_health_timer_removes_session_after_max_retries() {
     let settings = fast_settings(); // MAX_RETRIES=2, TIMEOUT_DEFAULT=10ms
 
     // initial_server_next_in = 1 ms → first timeout = 1 + 10 = 11 ms.
-    let _provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 1u32);
+    let _provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 1u32, 1u64);
 
     // Never call feed_health_check — let the timer expire MAX_RETRIES times.
     sleep(Duration::from_millis(500)).await;
@@ -183,12 +193,30 @@ async fn test_server_health_sends_termination_before_remove() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let _provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 1u32);
+    let _provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 1u32, 1u64);
 
     sleep(Duration::from_millis(500)).await;
 
     assert!(!router.packets.lock().await.is_empty(), "termination packet must be sent before remove_session");
     assert!(router.remove_count.load(Ordering::Relaxed) > 0, "remove_session must be called after termination");
+}
+
+// Test: if the session has been replaced (router reports a different current handshake_pn) by
+// the time the decay timer fires, the stale provider sends no termination and removes nothing.
+#[tokio::test]
+async fn test_server_health_skips_decay_cleanup_when_session_replaced() {
+    let router = CapturingRouter::new();
+    let settings = fast_settings();
+
+    let _provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 1u32, 1u64);
+
+    // Simulate a re-handshake replacing this session before decay can fire.
+    router.current_pn.store(2, Ordering::Relaxed);
+
+    sleep(Duration::from_millis(500)).await;
+
+    assert!(router.packets.lock().await.is_empty(), "no termination packet must be sent for a superseded session");
+    assert_eq!(router.remove_count.load(Ordering::Relaxed), 0, "remove_session must not be called for a superseded session");
 }
 
 // Test: dropping the router Arc causes the timer task to stop cleanly.
@@ -197,7 +225,7 @@ async fn test_server_health_stops_when_router_dropped() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
 
     drop(router);
 
