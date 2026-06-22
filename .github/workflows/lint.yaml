@@ -67,13 +67,11 @@ jobs:
         with:
           tool: cargo-udeps,cargo-machete
 
-      - name: Check for unused dependencies (cargo-udeps) 🧹
+      - name: Check for unused dependencies 🧹
         working-directory: typhoon
-        run: cargo udeps --all-targets
-
-      - name: Check for unused dependencies (cargo-machete) 🔪
-        working-directory: typhoon
-        run: cargo machete
+        run: |
+          cargo udeps --all-targets
+          cargo machete
 
       - name: Setup Python 🐍
         uses: actions/setup-python@v6.2.0

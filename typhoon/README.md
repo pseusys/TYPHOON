@@ -54,10 +54,10 @@ Numbers below are from the protocol paper's evaluation chapters (criterion bench
 
 | Flag | Description |
 | --- | --- |
-| `fast_software` | X25519 + XChaCha20-Poly1305 (default) |
-| `fast_hardware` | X25519 + AES-GCM-256 |
-| `full_software` | Classic McEliece + XChaCha20-Poly1305 |
-| `full_hardware` | Classic McEliece + AES-GCM-256 |
+| `fast_software` | XChaCha20-Poly1305 for everything (default) |
+| `fast_hardware` | AES-GCM-256 for everything |
+| `full_software` | X25519 for tailer + XChaCha20-Poly1305 for session |
+| `full_hardware` | X25519 for tailer + AES-GCM-256 for session |
 | `server` | Server-side listener and session management |
 | `client` | Client-side socket and session management |
 | `debug` | Debug probe tools (`DebugMode`, `run_debug`, `DebugServerConnectionHandler`); requires `client` + `server` |
