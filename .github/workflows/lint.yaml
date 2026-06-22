@@ -62,6 +62,19 @@ jobs:
         working-directory: typhoon
         run: cargo clippy
 
+      - name: Install cargo-udeps and cargo-machete 📦
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-udeps,cargo-machete
+
+      - name: Check for unused dependencies (cargo-udeps) 🧹
+        working-directory: typhoon
+        run: cargo udeps --all-targets
+
+      - name: Check for unused dependencies (cargo-machete) 🔪
+        working-directory: typhoon
+        run: cargo machete
+
       - name: Setup Python 🐍
         uses: actions/setup-python@v6.2.0
         with:
