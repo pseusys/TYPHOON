@@ -699,6 +699,18 @@ Client handshake packet encryption consists of the following steps:
 7. Client constructs the handshake packet by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and encrypted initial data as the body. The handshake tailer is appended to the body and encrypted by the flow manager, as with all other packets.
 8. The payload is sent to the server inside of a handshake packet.
 
+```mermaid
+flowchart LR
+    subgraph "Client handshake body (left = start)"
+        CEPK["CliEphPubKeyObf: obfuscated X25519 ephemeral pubkey (56 B software / 48 B hardware)"]
+        CIPH["CiphObf: obfuscated McEliece KEM ciphertext (120 B software / 112 B hardware)"]
+        NNC["CliNnc: replay-protection nonce (32 B)"]
+        INIT["EncInitData: encrypted initial data (variable)"]
+    end
+```
+
+The [handshake tailer](#handshake-packets) is appended after this body and encrypted separately by the flow manager, exactly as with every other packet.
+
 After the client receives the encrypted handshake message from the server, it decrypts it using the following steps:
 
 0. Client extracts `SrvEphPubKeyObf`, `TransAuth` and `SrvNnc` from the server handshake message.
@@ -738,6 +750,18 @@ After the server initiates the internal state for the user and waits for an appr
 10. Server constructs the handshake response by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and encrypted initial data as the body. The handshake tailer is appended to the body and encrypted by the flow manager, as with all other packets.
 11. The payload is sent to the client inside of a handshake packet. The server tailer contains the server-generated identity for the client to use in subsequent communication.
 
+```mermaid
+flowchart LR
+    subgraph "Server handshake body (left = start)"
+        SEPK["SrvEphPubKeyObf: obfuscated X25519 ephemeral pubkey (56 B software / 48 B hardware)"]
+        TAUTH["TransAuth: Ed25519 transcript signature (64 B)"]
+        NNC["SrvNnc: replay-protection nonce (32 B)"]
+        INIT["EncInitData: encrypted initial data (variable)"]
+    end
+```
+
+The [handshake tailer](#handshake-packets) is appended after this body and encrypted separately by the flow manager, exactly as with every other packet.
+
 ### Tailer encryption
 
 Tailer encryption differs significantly depending on cryptographic mode chosen.
@@ -753,6 +777,16 @@ In case of the `fast` mode (which should be used if large amounts of data are ex
 Additionally, after encryption, the ciphertext is also authenticated with `BLAKE3` using the session key; that helps to make sure that tailer was not modified, even if it was decrypted.
 Again, please note that `OBFS` is a shared symmetric key, which means that obfuscation stops making sense immediately after a single certificate leaks (but not authentication).
 
+This process is identical in both directions, since both client and server hold `OBFS` and the session key:
+
+```mermaid
+flowchart LR
+    subgraph "Fast-mode encrypted tailer — both directions (left = start)"
+        CN["Ciphertext ∥ Nonce: tailer encrypted with OBFS (56 B software / 48 B hardware)"]
+        MAC["MAC: BLAKE3 keyed hash with session key (32 B)"]
+    end
+```
+
 > Please note, that this approach is not only faster, but also more extensible.
 > The packets going in both direction have uniform structure in this case and can be decrypted (but not authenticated) by any protocol-aware middleware.
 > That could allow extending protocol with [multi-hop or remote proxy](#multi-hop-proxies-benevolent-mitm) capabilities.
@@ -764,6 +798,13 @@ In case of the `full` mode (which should be used if obfuscation should be able t
 For the packets going from server to client, tailers are simply encrypted with [marshalling encryption](#marshalling-encryption) algorithm, that provides maximal privacy and efficiency.
 That does not allow anyone without client session key to decrypt the tailer contents, which is fine in case no one else is intended to read it anyway.
 
+```mermaid
+flowchart LR
+    subgraph "Full-mode encrypted tailer — server → client (left = start)"
+        CNT["Ciphertext ∥ Nonce ∥ Tag: tailer encrypted with session key (72 B software / 60 B hardware)"]
+    end
+```
+
 For the packets going from client to server, tailers are encrypted using the following steps:
 
 0. Client comes up with the raw tailer `Tailer`.
@@ -773,6 +814,15 @@ For the packets going from client to server, tailers are encrypted using the fol
 4. Client obfuscates the `EphPubKey` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OPK` and `Nnc`), producing `EphPubKeyObf`.
 5. Client encrypts the `Tailer` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `TailerEnc`.
 6. Client constructs the encrypted tail by concatenating `TailerEnc`, `EphPubKeyObf` and `Nnc`.
+
+```mermaid
+flowchart LR
+    subgraph "Full-mode encrypted tail — client → server (left = start)"
+        TE["TailerEnc: tailer encrypted with BLAKE3(ShrSec) — ciphertext ∥ nonce ∥ tag (72 B software / 60 B hardware)"]
+        EPO["EphPubKeyObf: EphPubKey obfuscated with BLAKE3(OPK ∥ Nnc) (56 B software / 48 B hardware)"]
+        NNC["Nnc: replay-protection nonce (32 B)"]
+    end
+```
 
 The tailers are decrypted using the following steps:
 

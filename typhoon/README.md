@@ -38,7 +38,7 @@ Numbers below are from the protocol paper's evaluation chapters (criterion bench
   | Data-bearing | 144 B | identity (16 B) + tailer encryption (72 B) + payload AEAD (56 B) |
   | Decoy / health-check | 88 B | identity (16 B) + tailer encryption (72 B) |
 
-- **Comparative overhead**: in a 10 MiB client→server transfer measured alongside 15 other UDP/TCP encrypted transports, TYPHOON's overhead ratio (extra bytes over payload) was 12.1% — above plain WireGuard/OpenVPN (~5%) but below other traffic-shaping protocols measured in the same harness (obfs4 32.5%, WireGuard+DAITA 29.5%, Tor 37.9%), reflecting the cost of its randomized padding and decoy traffic.
+- **Comparative overhead**: in a 10 MiB client → server transfer measured alongside 15 other UDP/TCP encrypted transports, TYPHOON's overhead ratio (extra bytes over payload) was 12.1% — above plain WireGuard/OpenVPN (~5%) but below other traffic-shaping protocols measured in the same harness (obfs4 32.5%, WireGuard+DAITA 29.5%, Tor 37.9%), reflecting the cost of its randomized padding and decoy traffic.
   Mean packet size was 1313±31 B at maximum payload entropy (8.00 bits/byte).
 - **Passive classification**: in open-set tests against a mixed corpus of natural UDP traffic (DNS, RTP, gaming, QUIC, control-plane, etc.), a classifier tuned to flag 95% of TYPHOON flows also misclassified about 1 in 8 unrelated background flows in the test corpus. See [Blocking TYPHOON](#blocking-typhoon) below for what that does and doesn't imply.
 

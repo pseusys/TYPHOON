@@ -2,11 +2,11 @@
 Per-pcap statistics for TYPHOON protocol evaluation.
 
 Parses a pcap captured by the observer (tcpdump -i any) and computes stats
-in three directions: client→server (c2s), server→client (s2c), and combined.
+in three directions: client → server (c2s), server → client (s2c), and combined.
 
 Direction filtering uses original IP addresses only:
-  C→S: src=172.20.0.10  (pre-SNAT; avoids counting the masqueraded copy on eth1)
-  S→C: src=172.21.0.10  (un-NATed copy forwarded to client)
+  C → S: src=172.20.0.10  (pre-SNAT; avoids counting the masqueraded copy on eth1)
+  S → C: src=172.21.0.10  (un-NATed copy forwarded to client)
 
 This gives exactly one copy of each packet regardless of which interface it
 was captured on, so no deduplication is needed.

@@ -334,13 +334,13 @@ impl<T: IdentityType> Tailer<T> {
         T::length() + TAILER_LENGTH
     }
 
-    /// Wire length of the obfuscated client→server tailer (plaintext tailer + c2s obfuscation overhead).
+    /// Wire length of the obfuscated client → server tailer (plaintext tailer + c2s obfuscation overhead).
     #[inline]
     pub(crate) fn encrypted_len_c2s() -> usize {
         Self::len() + crate::crypto::TAILER_C2S_OVERHEAD
     }
 
-    /// Wire length of the obfuscated server→client tailer (plaintext tailer + s2c obfuscation overhead).
+    /// Wire length of the obfuscated server → client tailer (plaintext tailer + s2c obfuscation overhead).
     #[inline]
     pub(crate) fn encrypted_len_s2c() -> usize {
         Self::len() + crate::crypto::TAILER_S2C_OVERHEAD

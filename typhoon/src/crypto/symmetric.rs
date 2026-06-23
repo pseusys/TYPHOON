@@ -70,9 +70,9 @@ pub(crate) const PAYLOAD_CRYPTO_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRI
 pub(crate) const PAYLOAD_CRYPTO_OVERHEAD: usize = NONCE_LEN + SYMMETRIC_BUILT_IN_AUTH_LEN;
 
 // Tailer obfuscation overhead, split by direction because full mode is asymmetric:
-//   * s2c (server→client) is always a symmetric AEAD — the shared OBFS key in fast mode,
+//   * s2c (server → client) is always a symmetric AEAD — the shared OBFS key in fast mode,
 //     the session key in full mode — so its size matches `PAYLOAD_CRYPTO_OVERHEAD`.
-//   * c2s (client→server) is symmetric in fast mode but asymmetric (X25519 per packet) in
+//   * c2s (client → server) is symmetric in fast mode but asymmetric (X25519 per packet) in
 //     full mode; the full-mode c2s value lives in `asymmetric::TAILER_C2S_OVERHEAD`..
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 pub(crate) const TAILER_C2S_OVERHEAD: usize = ANONYMOUS_NONCE_LEN + SYMMETRIC_ADDITIONAL_AUTH_LEN;
