@@ -96,7 +96,7 @@ async fn test_receive_packet_termination_returns_error() {
     let session = make_session(Arc::clone(&settings), vec![flow]).await;
 
     let result = session.receive_packet().await;
-    assert!(matches!(result, Err(SessionControllerError::ConnectionTerminated(_))), "TERMINATION must yield ConnectionTerminated, got: {:?}", result);
+    assert!(matches!(result, Err(SessionControllerError::ConnectionTerminated(_))), "TERMINATION must yield ConnectionTerminated, got: {result:?}");
 }
 
 // Test: with two flows, TERMINATION on one flow still terminates the session.
@@ -110,7 +110,7 @@ async fn test_receive_packet_termination_on_any_flow_terminates() {
     let session = make_session(Arc::clone(&settings), vec![flow0, flow1]).await;
 
     let result = session.receive_packet().await;
-    assert!(matches!(result, Err(SessionControllerError::ConnectionTerminated(_))), "TERMINATION on any flow must terminate session, got: {:?}", result);
+    assert!(matches!(result, Err(SessionControllerError::ConnectionTerminated(_))), "TERMINATION on any flow must terminate session, got: {result:?}");
 }
 
 // ── send_packet tests ──────────────────────────────────────────────────────────

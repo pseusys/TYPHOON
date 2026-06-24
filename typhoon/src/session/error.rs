@@ -1,4 +1,5 @@
-/// Errors that can occur during session management.
+//! Errors that can occur during session management.
+
 use thiserror::Error;
 
 use crate::cache::CacheError;
@@ -8,10 +9,10 @@ use crate::flow::FlowControllerError;
 #[derive(Error, Debug)]
 pub enum SessionControllerError {
     #[error("flow controller error: {}", .0.to_string())]
-    FlowError(#[source] FlowControllerError),
+    Flow(#[source] FlowControllerError),
 
     #[error("payload encryption error: {}", .0.to_string())]
-    CryptoError(#[source] CryptoError),
+    Crypto(#[source] CryptoError),
 
     #[error("error accessing cached cipher: {}", .0.to_string())]
     MissingCache(#[source] CacheError),

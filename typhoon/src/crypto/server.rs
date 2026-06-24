@@ -1,4 +1,5 @@
-/// Server-side cryptographic tool for TYPHOON protocol.
+//! Server-side cryptographic tool for TYPHOON protocol.
+
 use std::hash::Hash;
 
 use cfg_if::cfg_if;
@@ -14,7 +15,7 @@ cfg_if! {
     }
 }
 
-/// Ephemeral server handshake state: client X25519 public key, McEliece shared secret, nonce.
+/// Ephemeral server handshake state: client X25519 public key, `McEliece` shared secret, nonce.
 pub(crate) struct ServerData {
     pub(crate) ephemeral_key: X25519PublicKey,
     pub(crate) shared_secret: FixedByteBuffer<32>,
@@ -64,8 +65,8 @@ impl UserCryptoState {
 }
 
 /// Combined per-user server state: crypto keys only.
-/// Stored in the global SharedMap, accessed via CachedMap by crypto tool and flow managers.
-/// Per-flow source addresses are tracked locally by each ServerFlowManager.
+/// Stored in the global `SharedMap`, accessed via `CachedMap` by crypto tool and flow managers.
+/// Per-flow source addresses are tracked locally by each `ServerFlowManager`.
 /// Active flow tracking is done lock-free in the session manager via `AtomicBitSet`.
 #[derive(Clone)]
 pub(crate) struct UserServerState {

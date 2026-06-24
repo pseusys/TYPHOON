@@ -44,7 +44,7 @@ impl DynamicByteBuffer {
         self.holder.data
     }
 
-    /// Convert to an immutable StaticByteBuffer (deep copy, capacity trimmed).
+    /// Convert to an immutable `StaticByteBuffer` (deep copy, capacity trimmed).
     #[inline]
     pub fn copy(&self) -> Self {
         DynamicByteBuffer {
@@ -56,7 +56,7 @@ impl DynamicByteBuffer {
         }
     }
 
-    /// Convert to an immutable StaticByteBuffer (deep copy, capacity trimmed).
+    /// Convert to an immutable `StaticByteBuffer` (deep copy, capacity trimmed).
     #[inline]
     pub fn to_owned(&self) -> StaticByteBuffer {
         StaticByteBuffer::from_slice(self.slice())

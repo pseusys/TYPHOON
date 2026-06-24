@@ -61,9 +61,9 @@ const MARSHALLING_ENCRYPTION_KEY: &str = "marshalling encryption key";
 
 #[cfg(feature = "client")]
 impl ClientCertificate {
-    /// Client handshake: generate ephemeral keys, encapsulate with McEliece, obfuscate.
+    /// Client handshake: generate ephemeral keys, encapsulate with `McEliece`, obfuscate.
     /// If `initial_data` is non-empty, encrypts it with the initial key and appends to the handshake.
-    /// Args: buffer pool, initial data bytes. Returns: (ClientData, handshake_secret, initial_encryption_key).
+    /// Args: buffer pool, initial data bytes. Returns: (`ClientData`, `handshake_secret`, `initial_encryption_key`).
     pub(crate) fn encapsulate_handshake_client(&self, pool: &BytePool, initial_data: &[u8]) -> (ClientData, DynamicByteBuffer, FixedByteBuffer<32>) {
         let nonce = get_rng().random_byte_buffer::<NONCE_LENGTH>();
 
@@ -107,7 +107,7 @@ impl ClientCertificate {
 
     /// Process server handshake response: deobfuscate, verify signature, derive session key.
     /// If the response contains encrypted initial data beyond the crypto header, decrypts it with the initial key.
-    /// Args: client ephemeral data, server handshake, pool. Returns: (session_key, server_initial_data).
+    /// Args: client ephemeral data, server handshake, pool. Returns: (`session_key`, `server_initial_data`).
     pub(crate) fn decapsulate_handshake_client(&self, data: ClientData, handshake_secret: DynamicByteBuffer, pool: &BytePool) -> Result<(FixedByteBuffer<32>, DynamicByteBuffer), HandshakeError> {
         if handshake_secret.len() < SERVER_HANDSHAKE_HEADER_SIZE {
             return Err(HandshakeError::handshake_authentication_error(&format!("server handshake response too short: {} < {SERVER_HANDSHAKE_HEADER_SIZE}", handshake_secret.len())));
@@ -150,7 +150,11 @@ impl ClientCertificate {
     }
 
     /// Full mode: encrypt and obfuscate plaintext with X25519 ephemeral exchange.
-    /// Args: plaintext. Returns: ciphertext || obfuscated_key || nonce.
+    /// Args: plaintext. Returns: ciphertext || `obfuscated_key` || nonce.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HandshakeError::Crypto` if the underlying AEAD encryption fails.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn encrypt_obfuscate(&self, plaintext: DynamicByteBuffer, pool: &BytePool) -> Result<DynamicByteBuffer, HandshakeError> {
         let nonce = get_rng().random_byte_buffer::<NONCE_LENGTH>();
@@ -173,9 +177,9 @@ impl ClientCertificate {
 
 #[cfg(feature = "server")]
 impl ServerSecret<'_> {
-    /// Server decapsulate client handshake: deobfuscate, decapsulate McEliece, derive key.
+    /// Server decapsulate client handshake: deobfuscate, decapsulate `McEliece`, derive key.
     /// If the handshake contains encrypted initial data beyond the crypto header, decrypts it with the initial key.
-    /// Args: client handshake_secret, pool. Returns: `Some((ServerData, initial_encryption_key, client_initial_data))`
+    /// Args: client `handshake_secret`, pool. Returns: `Some((ServerData, initial_encryption_key, client_initial_data))`
     /// on success, or `None` when the handshake body is shorter than the crypto header — every subsequent
     /// split would otherwise panic on a too-small buffer.
     pub fn decapsulate_handshake_server(&self, handshake_secret: DynamicByteBuffer, pool: &BytePool) -> Option<(ServerData, FixedByteBuffer<32>, DynamicByteBuffer)> {
@@ -227,7 +231,7 @@ impl ServerSecret<'_> {
 
     /// Server handshake response: generate ephemeral X25519, sign transcript, derive session key.
     /// If `initial_data` is non-empty, encrypts it with the initial key and appends to the response.
-    /// Args: server data, buffer pool, initial data bytes, initial key. Returns: (handshake_secret, session_key).
+    /// Args: server data, buffer pool, initial data bytes, initial key. Returns: (`handshake_secret`, `session_key`).
     pub fn encapsulate_handshake_server(&self, data: ServerData, pool: &BytePool, initial_data: &[u8], initial_key: &impl ByteBuffer) -> (DynamicByteBuffer, FixedByteBuffer<32>) {
         let nonce = get_rng().random_byte_buffer::<NONCE_LENGTH>();
 
@@ -260,7 +264,7 @@ impl ServerSecret<'_> {
     }
 
     /// Full mode: deobfuscate and decrypt ciphertext using server's X25519 secret.
-    /// Args: ciphertext || obfuscated_key || nonce. Returns: plaintext.
+    /// Args: ciphertext || `obfuscated_key` || nonce. Returns: plaintext.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn decrypt_deobfuscate(&self, ciphertext: DynamicByteBuffer) -> Result<DynamicByteBuffer, HandshakeError> {
         let (ciphertext, rest) = ciphertext.split_buf_end(X25519_KEY_LENGTH + ANONYMOUS_NONCE_LEN + NONCE_LENGTH);

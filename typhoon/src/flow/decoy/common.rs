@@ -139,7 +139,7 @@ impl DecoyFeatureConfig {
     }
 }
 
-/// Generate a random `FakeHeaderConfig` with total byte length in [min_len, max_len].
+/// Generate a random `FakeHeaderConfig` with total byte length in [`min_len`, `max_len`].
 fn generate_random_fake_header<AE: AsyncExecutor>(settings: &Settings<AE>, min_len: usize, max_len: usize) -> FakeHeaderConfig {
     let mut rng = get_rng();
     let target_len = rng.gen_range(min_len..=max_len);
@@ -173,7 +173,7 @@ fn generate_random_fake_header<AE: AsyncExecutor>(settings: &Settings<AE>, min_l
     FakeHeaderConfig::new(fields)
 }
 
-/// Generate a random FieldType variant weighted by the `FAKE_HEADER_FIELD_WEIGHT_*` settings.
+/// Generate a random `FieldType` variant weighted by the `FAKE_HEADER_FIELD_WEIGHT_*` settings.
 fn random_field_type<AE: AsyncExecutor, L: Copy + From<u8>>(settings: &Settings<AE>, rng: &mut impl Rng) -> FieldType<L>
 where
     rand::distributions::Standard: Distribution<L>,
@@ -220,7 +220,7 @@ pub trait DecoyFlowSender: Send + Sync {
 /// does). All async methods are boxed automatically by `async_trait`.
 #[async_trait]
 pub trait DecoyProvider: Send + Sync {
-    /// Short display name of this provider (e.g. "SparseDecoyProvider").
+    /// Short display name of this provider (e.g. "`SparseDecoyProvider`").
     fn name(&self) -> &'static str;
 
     /// Start the background decoy generation timer.

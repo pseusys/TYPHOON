@@ -60,7 +60,18 @@ jobs:
 
       - name: Run clippy 📎
         working-directory: typhoon
-        run: cargo clippy
+        run: |
+          cargo clippy --lib --bins --examples --benches --features debug,capture,clap
+          cargo clippy --lib --bins --examples --benches --no-default-features --features full_hardware,server,client,async-std,debug,capture,clap
+
+      - name: Check documentation 📚
+        working-directory: typhoon
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: |
+          cargo doc --no-deps --examples --features debug,capture,clap
+          cargo doc --no-deps --examples --no-default-features --features full_hardware,server,client,async-std,debug,capture,clap
+          cargo test --doc --features debug,capture,clap
 
       - name: Install cargo-udeps and cargo-machete 📦
         uses: taiki-e/install-action@v2

@@ -1,4 +1,4 @@
-/// Use-case example: demonstrates five TYPHOON traffic profiles via TYPHOON_USE_CASE env var.
+/// Use-case example: demonstrates five TYPHOON traffic profiles via `TYPHOON_USE_CASE` env var.
 ///
 /// throughput  — Empty body, Simple decoy:    minimal overhead, maximum throughput
 /// interactive — Small random body, Sparse decoy: light padding for interactive traffic
@@ -7,10 +7,10 @@
 /// default     — Random config drawn from the distribution (mirrors normal TYPHOON behaviour)
 ///
 /// Traffic shape is controlled by two independent env flags:
-///   TYPHOON_RANDOM_PAYLOAD — randomise each message size between PAYLOAD_MIN and PAYLOAD_MAX
-///   TYPHOON_RANDOM_WAIT    — randomise the inter-cluster pause (otherwise fixed INTER_CLUSTER_MS)
+///   `TYPHOON_RANDOM_PAYLOAD` — randomise each message size between `PAYLOAD_MIN` and `PAYLOAD_MAX`
+///   `TYPHOON_RANDOM_WAIT`    — randomise the inter-cluster pause (otherwise fixed `INTER_CLUSTER_MS`)
 ///
-/// Messages are sent in clusters of CLUSTER_SIZE with INTRA_CLUSTER_MS delay between messages
+/// Messages are sent in clusters of `CLUSTER_SIZE` with `INTRA_CLUSTER_MS` delay between messages
 /// inside a cluster and a longer inter-cluster pause, forming realistic burst-and-pause traffic.
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,20 +40,20 @@ const SERVER_ADDR: &str = "127.0.0.1:19991";
 const MSG_COUNT: usize = 100;
 /// Number of messages sent in one burst before the inter-cluster pause.
 const CLUSTER_SIZE: usize = 10;
-/// Fixed delay between consecutive messages inside a cluster when TYPHOON_RANDOM_WAIT is not set (ms).
+/// Fixed delay between consecutive messages inside a cluster when `TYPHOON_RANDOM_WAIT` is not set (ms).
 const INTRA_CLUSTER_MS: u64 = 5;
-/// Minimum per-packet delay inside a cluster used when TYPHOON_RANDOM_WAIT is set (ms).
+/// Minimum per-packet delay inside a cluster used when `TYPHOON_RANDOM_WAIT` is set (ms).
 const INTRA_CLUSTER_MIN_MS: u64 = 5;
-/// Maximum per-packet delay inside a cluster used when TYPHOON_RANDOM_WAIT is set (ms).
+/// Maximum per-packet delay inside a cluster used when `TYPHOON_RANDOM_WAIT` is set (ms).
 const INTRA_CLUSTER_MAX_MS: u64 = 50;
-/// Fixed inter-cluster pause used when TYPHOON_RANDOM_WAIT is not set (ms).
+/// Fixed inter-cluster pause used when `TYPHOON_RANDOM_WAIT` is not set (ms).
 const INTER_CLUSTER_MS: u64 = 200;
 
-/// Fixed payload size when TYPHOON_RANDOM_PAYLOAD is not set.
+/// Fixed payload size when `TYPHOON_RANDOM_PAYLOAD` is not set.
 const PAYLOAD_FIXED: usize = 1024;
 /// Minimum random payload size.
 const PAYLOAD_MIN: usize = 64;
-/// Maximum random payload size (capped further by socket.max_data_payload()).
+/// Maximum random payload size (capped further by `socket.max_data_payload()`).
 const PAYLOAD_MAX: usize = 2048;
 
 type Ident = StaticByteBuffer;
@@ -109,7 +109,7 @@ async fn run() {
                 },
                 FakeHeaderConfig::new(vec![
                     FieldTypeHolder::U32(FieldType::Constant {
-                        value: 0x48545450u32,
+                        value: 0x4854_5450_u32,
                     }),
                     FieldTypeHolder::U32(FieldType::Incremental {
                         value: 0u32,

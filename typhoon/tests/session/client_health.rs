@@ -77,7 +77,7 @@ impl SessionManager for MockSessionManager {
 
 type TestHealthResponse = (u32, u128, Option<DynamicByteBuffer>, Option<StaticByteBuffer>);
 
-/// Build a ClientHealthProvider and return it together with the shadowride receiver.
+/// Build a `ClientHealthProvider` and return it together with the shadowride receiver.
 /// Tests that need to observe the response channel call `provider.response_tx.subscribe()`.
 fn make_provider(mgr: Arc<MockSessionManager>, settings: Arc<Settings<DefaultExecutor>>) -> (ClientHealthProvider<StaticByteBuffer, DefaultExecutor, MockSessionManager, DefaultClientConnectionHandler>, WatchReceiver<()>) {
     let crypto = make_test_crypto_tool();

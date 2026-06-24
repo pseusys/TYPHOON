@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 /// public API.
 ///
 /// To generate the flow plot:
-///   poe plot --example mirror_decoy
+///   poe plot --example `mirror_decoy`
 use std::sync::{Arc, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -100,10 +100,10 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
             let buf = self.settings.pool().allocate(Some(total));
             rand::thread_rng().fill(buf.slice_end_mut(len));
             Tailer::decoy(buf.rebuffer_start(len), &self.identity.get(), self.next_packet_number());
-            if let Some(mgr) = self.manager.upgrade() {
-                if let Err(err) = mgr.send_decoy_packet(buf, self.should_fallthrough(), false).await {
-                    warn!("MirrorDecoyProvider: send failed: {err:?}");
-                }
+            if let Some(mgr) = self.manager.upgrade()
+                && let Err(err) = mgr.send_decoy_packet(buf, self.should_fallthrough(), false).await
+            {
+                warn!("MirrorDecoyProvider: send failed: {err:?}");
             }
         }
         Some(packet)

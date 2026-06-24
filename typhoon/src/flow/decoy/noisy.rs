@@ -1,4 +1,5 @@
-/// Noisy mode: sends smaller decoy packets in bursts often, resembling web or socket traffic.
+//! Noisy mode: sends smaller decoy packets in bursts often, resembling web or socket traffic.
+
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Weak};
 use std::time::Duration;

@@ -14,11 +14,15 @@ const TM_LENGTH: usize = 4;
 const PN_LENGTH: usize = 8;
 const PL_LENGTH: usize = 2;
 
+/// A client identity that can be read from and written into the tailer's fixed-size `ID` field.
 pub trait IdentityType: Send + Sync {
+    /// Construct an identity from the raw `ID` field bytes.
     fn from_bytes(bytes: &[u8]) -> Self;
 
+    /// Get the raw bytes to write into the `ID` field.
     fn to_bytes(&self) -> &[u8];
 
+    /// Length (bytes) of the `ID` field this identity type occupies.
     fn length() -> usize;
 }
 
@@ -56,17 +60,17 @@ pub trait ClientConnectionHandler: Send + Sync {
     fn version(&self, length: usize) -> StaticByteBuffer;
 }
 
-/// Tailer view (16 + TYPHOON_ID_LENGTH bytes total).
+/// Tailer view (16 + `TYPHOON_ID_LENGTH` bytes total).
 /// Zero-copy view into a `DynamicByteBuffer` containing tailer metadata.
 /// All field access reads directly from the underlying buffer.
 ///
 /// Layout:
 /// - FG (flags): 1 byte - packet type flags
 /// - CD (code): 1 byte - client type or return code
-/// - TM (time): 4 bytes - next_in delay in milliseconds
+/// - TM (time): 4 bytes - `next_in` delay in milliseconds
 /// - PN (packet number): 8 bytes - incremental (4) + timestamp (4)
 /// - PL (payload length): 2 bytes - length of encrypted payload
-/// - ID (identity): TYPHOON_ID_LENGTH bytes - client UUID
+/// - ID (identity): `TYPHOON_ID_LENGTH` bytes - client UUID
 pub struct Tailer<T: IdentityType> {
     buffer: DynamicByteBuffer,
     _phantom: PhantomData<T>,
@@ -191,31 +195,52 @@ impl<T: IdentityType> Tailer<T> {
 
     // --- Getters ---
 
+    /// Read the `FG` (flags) field.
     #[inline]
     pub fn flags(&self) -> PacketFlags {
         PacketFlags::from_bits_truncate(*self.buffer.get(FG_OFFSET))
     }
 
+    /// Read the `CD` (code) field.
     #[inline]
     pub fn code(&self) -> u8 {
         *self.buffer.get(CD_OFFSET)
     }
 
+    /// Read the `TM` (time) field: the next-in delay in milliseconds.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: both `Tailer` constructors guarantee the backing buffer is at least
+    /// `Self::len()` bytes.
     #[inline]
     pub fn time(&self) -> u32 {
         u32::from_be_bytes(self.buffer.slice_both(TM_OFFSET, TM_OFFSET + TM_LENGTH).try_into().unwrap())
     }
 
+    /// Read the raw 64-bit `PN` (packet number) field.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: both `Tailer` constructors guarantee the backing buffer is at least
+    /// `Self::len()` bytes.
     #[inline]
     pub fn packet_number(&self) -> u64 {
         u64::from_be_bytes(self.buffer.slice_both(PN_OFFSET, PN_OFFSET + PN_LENGTH).try_into().unwrap())
     }
 
+    /// Read the `PL` (payload length) field.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: both `Tailer` constructors guarantee the backing buffer is at least
+    /// `Self::len()` bytes.
     #[inline]
     pub fn payload_length(&self) -> u16 {
         u16::from_be_bytes(self.buffer.slice_both(PL_OFFSET, PL_OFFSET + PL_LENGTH).try_into().unwrap())
     }
 
+    /// Read the `ID` (identity) field.
     #[inline]
     pub fn identity(&self) -> T {
         T::from_bytes(self.buffer.slice_both(ID_OFFSET, ID_OFFSET + T::length()))
@@ -281,21 +306,25 @@ impl<T: IdentityType> Tailer<T> {
 
     // --- Setters (write through to the buffer) ---
 
+    /// Write the `FG` (flags) field.
     #[inline]
     pub fn set_flags(&self, flags: PacketFlags) {
         self.buffer.set(FG_OFFSET, flags.bits());
     }
 
+    /// Write the `CD` (code) field.
     #[inline]
     pub fn set_code(&self, code: u8) {
         self.buffer.set(CD_OFFSET, code);
     }
 
+    /// Write the `TM` (time) field.
     #[inline]
     pub fn set_time(&self, time: u32) {
         self.buffer.slice_both_mut(TM_OFFSET, TM_OFFSET + TM_LENGTH).copy_from_slice(&time.to_be_bytes());
     }
 
+    /// Write the raw 64-bit `PN` (packet number) field directly.
     #[inline]
     pub fn set_packet_number_raw(&self, pn: u64) {
         self.buffer.slice_both_mut(PN_OFFSET, PN_OFFSET + PN_LENGTH).copy_from_slice(&pn.to_be_bytes());
@@ -315,11 +344,13 @@ impl<T: IdentityType> Tailer<T> {
         self.set_packet_number(timestamp, incremental);
     }
 
+    /// Write the `PL` (payload length) field.
     #[inline]
     pub fn set_payload_length(&self, len: u16) {
         self.buffer.slice_both_mut(PL_OFFSET, PL_OFFSET + PL_LENGTH).copy_from_slice(&len.to_be_bytes());
     }
 
+    /// Write the `ID` (identity) field.
     #[inline]
     pub fn set_identity(&self, identity: &T) {
         self.buffer.slice_both_mut(ID_OFFSET, ID_OFFSET + T::length()).copy_from_slice(identity.to_bytes());
@@ -327,6 +358,11 @@ impl<T: IdentityType> Tailer<T> {
 
     // --- Static helpers that read from a raw buffer ---
 
+    /// Read the `PL` (payload length) field directly from a raw tailer buffer, without constructing a `Tailer` view.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the buffer is expanded to at least `TAILER_LENGTH` bytes before reading.
     #[inline]
     pub fn get_payload_length(buffer: &DynamicByteBuffer) -> u16 {
         let correct_buffer = buffer.ensure_size(TAILER_LENGTH);
@@ -340,6 +376,7 @@ impl<T: IdentityType> Tailer<T> {
         T::from_bytes(correct_buffer.slice_both(ID_OFFSET, ID_OFFSET + T::length()))
     }
 
+    /// Total tailer length (bytes): the fixed-size part plus `T`'s `ID` field length.
     #[inline]
     pub fn len() -> usize {
         T::length() + TAILER_LENGTH

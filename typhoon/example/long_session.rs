@@ -75,14 +75,14 @@ async fn run() {
 
     // --- Build the client ---
     let socket = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DefaultClientConnectionHandler>::new(certificate, DefaultClientConnectionHandler).with_settings(settings.clone()).build().await.expect("client socket should build");
-    println!("Client: connected, running {} round trips", ROUND_TRIPS);
+    println!("Client: connected, running {ROUND_TRIPS} round trips");
 
     for i in 0..ROUND_TRIPS {
         let sent = format!("round-{i:04}");
         socket.send_bytes(sent.as_bytes()).await.expect("send should succeed");
 
         let received = socket.receive_bytes().await.expect("receive should succeed");
-        assert_eq!(received.as_slice(), sent.as_bytes(), "payload mismatch on round trip {}", i);
+        assert_eq!(received.as_slice(), sent.as_bytes(), "payload mismatch on round trip {i}");
 
         if (i + 1) % 50 == 0 {
             println!("Client: completed {}/{} round trips", i + 1, ROUND_TRIPS);

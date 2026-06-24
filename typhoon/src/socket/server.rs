@@ -35,7 +35,7 @@ pub struct ServerFlowConfiguration<T: IdentityType + Clone, AE: AsyncExecutor> {
     socket: Option<Socket>,
     address: Option<SocketAddr>,
     config: FlowConfig,
-    /// Number of SO_REUSEPORT reader sockets to create (Linux only; default 1).
+    /// Number of `SO_REUSEPORT` reader sockets to create (Linux only; default 1).
     /// Values > 1 are silently clamped to 1 on non-Linux platforms.
     reader_count: usize,
     /// Optional per-flow decoy factory. Falls back to the listener's default when `None`.
@@ -69,7 +69,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ServerFlowC
         }
     }
 
-    /// Set the number of SO_REUSEPORT reader sockets (Linux only).
+    /// Set the number of `SO_REUSEPORT` reader sockets (Linux only).
     /// The kernel distributes incoming datagrams across all sockets by 4-tuple hash,
     /// enabling N concurrent `recv_from` drain tasks with no per-packet locking.
     /// Has no effect (silently clamped to 1) on non-Linux platforms.
@@ -171,6 +171,18 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 
     /// Build the listener, creating all flow managers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerSocketError::NoFlows`] if no flow configuration was added,
+    /// [`ServerSocketError::UnsupportedRuntime`] if the active async runtime feature doesn't
+    /// match the executor in use, [`ServerSocketError::Flow`] if a flow configuration is
+    /// inconsistent with the MTU, or [`ServerSocketError::Socket`] if a socket fails to bind.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: every [`ServerFlowConfiguration`] is constructed with either a socket
+    /// or an address set, so the internal `expect` can't fire.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub async fn build_listener(mut self) -> Result<Listener<T, AE, IG>, ServerSocketError> {
         assert_runtime().map_err(ServerSocketError::UnsupportedRuntime)?;
@@ -188,7 +200,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let obfs_buffer = self.secret.obfuscation_buffer();
 
         for flow_config in self.flow_configs.drain(..) {
-            flow_config.config.assert(settings.mtu()).map_err(ServerSocketError::FlowError)?;
+            flow_config.config.assert(settings.mtu()).map_err(ServerSocketError::Flow)?;
 
             max_data_payload = max_data_payload.min(flow_config.config.max_user_payload(settings.mtu(), PAYLOAD_CRYPTO_OVERHEAD, tailer_wire_len));
 
@@ -200,13 +212,13 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                     if #[cfg(target_os = "linux")] {
                         if flow_config.reader_count > 1 {
                             Socket::bind_reuse_port(address, flow_config.reader_count)
-                                .map_err(ServerSocketError::SocketError)?
+                                .map_err(ServerSocketError::Socket)?
                                 .into_iter().map(Arc::new).collect()
                         } else {
-                            vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
+                            vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::Socket)?)]
                         }
                     } else {
-                        vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
+                        vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::Socket)?)]
                     }
                 }
             };
@@ -245,6 +257,18 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 
     /// Build the listener, creating all flow managers (full mode).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerSocketError::NoFlows`] if no flow configuration was added,
+    /// [`ServerSocketError::UnsupportedRuntime`] if the active async runtime feature doesn't
+    /// match the executor in use, [`ServerSocketError::Flow`] if a flow configuration is
+    /// inconsistent with the MTU, or [`ServerSocketError::Socket`] if a socket fails to bind.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: every [`ServerFlowConfiguration`] is constructed with either a socket
+    /// or an address set, so the internal `expect` can't fire.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub async fn build_listener(mut self) -> Result<Listener<T, AE, IG>, ServerSocketError> {
         assert_runtime().map_err(ServerSocketError::UnsupportedRuntime)?;
@@ -262,26 +286,25 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let secret_arc = Arc::new(self.secret);
 
         for flow_config in self.flow_configs.drain(..) {
-            flow_config.config.assert(settings.mtu()).map_err(ServerSocketError::FlowError)?;
+            flow_config.config.assert(settings.mtu()).map_err(ServerSocketError::Flow)?;
 
             max_data_payload = max_data_payload.min(flow_config.config.max_user_payload(settings.mtu(), PAYLOAD_CRYPTO_OVERHEAD, tailer_wire_len));
 
-            let socks: Vec<Arc<Socket>> = match flow_config.socket {
-                Some(socket) => vec![Arc::new(socket)],
-                None => {
-                    let address = flow_config.address.expect("ServerFlowConfiguration must have either socket or address");
-                    cfg_if::cfg_if! {
-                        if #[cfg(target_os = "linux")] {
-                            if flow_config.reader_count > 1 {
-                                Socket::bind_reuse_port(address, flow_config.reader_count)
-                                    .map_err(ServerSocketError::SocketError)?
-                                    .into_iter().map(Arc::new).collect()
-                            } else {
-                                vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
-                            }
+            let socks: Vec<Arc<Socket>> = if let Some(socket) = flow_config.socket {
+                vec![Arc::new(socket)]
+            } else {
+                let address = flow_config.address.expect("ServerFlowConfiguration must have either socket or address");
+                cfg_if::cfg_if! {
+                    if #[cfg(target_os = "linux")] {
+                        if flow_config.reader_count > 1 {
+                            Socket::bind_reuse_port(address, flow_config.reader_count)
+                                .map_err(ServerSocketError::Socket)?
+                                .into_iter().map(Arc::new).collect()
                         } else {
-                            vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::SocketError)?)]
+                            vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::Socket)?)]
                         }
+                    } else {
+                        vec![Arc::new(Socket::bind(address).await.map_err(ServerSocketError::Socket)?)]
                     }
                 }
             };
@@ -320,6 +343,10 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 
     /// Build a `ClientPool`, the multiplexed server entrypoint: same flow construction as `build_listener`, wrapped so all `ClientHandle`s are owned and dispatched by identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::build_listener`].
     pub async fn build_pool(self) -> Result<ClientPool<T, AE, IG>, ServerSocketError> {
         Ok(ClientPool::new(self.build_listener().await?))
     }
@@ -343,7 +370,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 }
 
 /// Server-side listener that drives the handshake path and produces `ClientHandle`s.
-/// All routing and session lifecycle state lives in the shared [`Router`].
+/// All routing and session lifecycle state lives in the shared `Router`.
 pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> {
     router: Arc<Router<T, AE, IG>>,
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
@@ -374,6 +401,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Create initial user crypto state from a handshake key (full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     #[inline]
+    #[allow(clippy::unused_self)] // keeps the same call-site shape as the fast-mode variant
     fn make_initial_crypto_state(&self, initial_key: &impl ByteBuffer) -> UserCryptoState {
         UserCryptoState::new(initial_key)
     }
@@ -388,14 +416,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Upgrade a user's crypto state from initial key to session key (full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     #[inline]
+    #[allow(clippy::unused_self)] // keeps the same call-site shape as the fast-mode variant
     fn upgrade_user_crypto(&self, user_state: &mut UserServerState, session_key: &impl ByteBuffer) {
         user_state.upgrade_crypto(session_key);
     }
 
     /// Start the listener's background receive loops.
-    /// Must be called after build() to begin processing incoming packets.
+    /// Must be called after `build()` to begin processing incoming packets.
     ///
-    /// Each flow gets N+1 tasks (where N = number of SO_REUSEPORT sockets, normally 1):
+    /// Each flow gets N+1 tasks (where N = number of `SO_REUSEPORT` sockets, normally 1):
     /// - N **drain tasks**, one per socket, each calling `receive_raw` and immediately pushing
     ///   raw packets into a shared bounded channel. If the route task is slow and the channel is
     ///   full the packet is dropped, keeping the OS socket buffer empty at all times.
@@ -494,7 +523,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         self.router.flows[flow_index].remove_user(transient_identity).await;
     }
 
-    /// Handle a handshake from a new client: create session, send response, publish ClientHandle.
+    /// Handle a handshake from a new client: create session, send response, publish `ClientHandle`.
     async fn handle_new_client(self: &Arc<Self>, mut raw_packet: RawReceivedPacket<T>, flow_index: usize) {
         let handshake_transcript = raw_packet.handshake_transcript.take();
         let original_wire_packet = raw_packet.original_wire_packet.take();
@@ -629,12 +658,16 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 
     /// Wait for the next client connection and return a handle to it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerSocketError::ListenerStopped`] if the listener has been stopped.
     pub async fn accept(&self) -> Result<ClientHandle<T, AE>, ServerSocketError> {
         self.accept_rx.lock().await.recv().await.ok_or(ServerSocketError::ListenerStopped)
     }
 }
 
-/// OutgoingRouter implementation: selects an active flow via the per-session bitmask and sends the packet.
+/// `OutgoingRouter` implementation: selects an active flow via the per-session bitmask and sends the packet.
 #[async_trait]
 impl<T: IdentityType + Clone + Eq + Hash + Send + Sync + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> OutgoingRouter<T> for Router<T, AE, IG> {
     async fn route_packet(&self, packet: DynamicByteBuffer, identity: &T) -> bool {
@@ -700,10 +733,15 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> C
     }
 
     /// Send a packet using a pre-allocated buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerSocketError::Session`] if encryption fails or no flow could deliver
+    /// the packet.
     pub async fn send(&self, packet: DynamicByteBuffer) -> Result<(), ServerSocketError> {
-        let wire = self.session.prepare_outgoing(packet, false).await.map_err(ServerSocketError::SessionError)?;
+        let wire = self.session.prepare_outgoing(packet, false).await.map_err(ServerSocketError::Session)?;
         if !self.router.route_packet(wire, &self.identity).await {
-            return Err(ServerSocketError::SessionError(SessionControllerError::FlowError(FlowControllerError::UserNotFound {
+            return Err(ServerSocketError::Session(SessionControllerError::Flow(FlowControllerError::UserNotFound {
                 identity: self.identity.to_string(),
             })));
         }
@@ -715,6 +753,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> C
     /// See `ClientSocket::send_bytes` — same fragmentation-only-when-needed +
     /// `TYPHOON_SEND_BYTES_JITTER`-driven per-chunk length sampling applies
     /// here for s2c traffic.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerSocketError::Session`] if encryption fails or no flow could deliver
+    /// the packet.
     pub async fn send_bytes(&self, data: &[u8]) -> Result<(), ServerSocketError> {
         let jitter = self.settings.get(&keys::SEND_BYTES_JITTER);
         let chunk = self.settings.get(&keys::SEND_BYTES_CHUNK) as usize;
@@ -740,7 +783,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> C
     }
 
     /// Receive a packet, returning the decrypted payload as a buffer.
-    /// Returns `Err(ChannelClosed)` once the session has ended for any reason, including being displaced by a re-handshake.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerSocketError::ChannelClosed`] once the session has ended for any reason,
+    /// including being displaced by a re-handshake.
     pub async fn receive(&self) -> Result<DynamicByteBuffer, ServerSocketError> {
         let mut incoming = self.incoming_rx.lock().await;
         let mut ended = self.end_rx.lock().await;
@@ -754,6 +801,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> C
     }
 
     /// Receive a packet, returning the decrypted payload as a byte vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerSocketError::ChannelClosed`] once the session has ended for any reason,
+    /// including being displaced by a re-handshake.
     pub async fn receive_bytes(&self) -> Result<Vec<u8>, ServerSocketError> {
         let buffer = self.receive().await?;
         Ok(buffer.slice().to_vec())

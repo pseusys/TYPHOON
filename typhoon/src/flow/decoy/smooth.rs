@@ -1,4 +1,5 @@
-/// Smooth mode: sends few average decoy packets during quiet periods, filling gaps between data packets.
+//! Smooth mode: sends few average decoy packets during quiet periods, filling gaps between data packets.
+
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Weak};
 use std::time::Duration;

@@ -11,20 +11,37 @@
 //! - **Server**: [`socket::ServerBuilder`] → [`socket::Listener`] → [`socket::ClientHandle`], or
 //!   [`socket::ServerBuilder`] → [`socket::ClientPool`] for the multiplexed entrypoint
 //!
+//! # Examples
+//!
+//! Runnable, CI-tested examples live in the
+//! [`example/`](https://github.com/pseusys/TYPHOON/tree/main/typhoon/example) directory:
+//!
+//! - [`hello_world.rs`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/example/hello_world.rs) —
+//!   minimal client/server round trip; start here.
+//! - [`multi_flow.rs`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/example/multi_flow.rs) —
+//!   a session spread across several server flow managers.
+//! - [`client_pool.rs`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/example/client_pool.rs) —
+//!   the multiplexed [`socket::ClientPool`] server entrypoint.
+//!
+//! Run any of them with `cargo run --example hello_world` from the `typhoon/` directory.
+//!
 //! # Feature flags
 //!
 //! | Flag | Description |
 //! |---|---|
-//! | `fast_software` | X25519 + XChaCha20-Poly1305 (default) |
-//! | `fast_hardware` | X25519 + AES-GCM-256 |
-//! | `full_software` | Classic McEliece + XChaCha20-Poly1305 |
-//! | `full_hardware` | Classic McEliece + AES-GCM-256 |
+//! | `fast_software` | XChaCha20-Poly1305 for everything (default) |
+//! | `fast_hardware` | AES-GCM-256 for everything |
+//! | `full_software` | X25519 for tailer + XChaCha20-Poly1305 for session |
+//! | `full_hardware` | X25519 for tailer + AES-GCM-256 for session |
 //! | `server` | Server-side listener and session management |
 //! | `client` | Client-side socket and session management |
 //! | `debug` | Debug probe tools (requires `client` + `server`) |
 //! | `capture` | Per-packet trace logging to `typhoon::capture` at `TRACE` level |
 //! | `tokio` | Tokio async runtime |
 //! | `async-std` | async-std runtime |
+
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![warn(missing_docs)]
 
 #[cfg(all(feature = "tokio", feature = "async-std"))]
 compile_error!("feature 'tokio' and feature 'async-std' cannot be enabled at the same time");
@@ -53,6 +70,7 @@ pub(crate) mod capture;
 pub mod certificate;
 pub(crate) mod crypto;
 #[cfg(feature = "debug")]
+#[cfg_attr(docsrs, doc(cfg(feature = "debug")))]
 pub mod debug;
 pub mod defaults;
 pub mod flow;

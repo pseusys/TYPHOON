@@ -1,4 +1,5 @@
-/// Sparse mode: sends average decoy packets sparsely distributed in time, resembling VoIP or downloading.
+//! Sparse mode: sends average decoy packets sparsely distributed in time, resembling `VoIP` or downloading.
+
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Weak};
 use std::time::Duration;

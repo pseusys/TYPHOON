@@ -25,7 +25,7 @@
 /// outgoing IAT distribution without protocol-level coordination.
 ///
 /// To generate the flow plot:
-///   poe plot --example flat_iat_decoy
+///   poe plot --example `flat_iat_decoy`
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -78,7 +78,7 @@ type Exec = DefaultExecutor;
 /// independent task contexts.  `DynamicByteBuffer` is `Send + !Sync`, so
 /// `Mutex<VecDeque<DynamicByteBuffer>>` is the right primitive: the mutex
 /// enforces single-thread access while letting the contained buffers move
-/// between the producer (feed_output) and consumer (timer task).
+/// between the producer (`feed_output`) and consumer (timer task).
 struct FlatIatDecoyProvider<T: IdentityType + Clone, AE: AsyncExecutor> {
     manager: Weak<dyn DecoyFlowSender>,
     settings: Arc<Settings<AE>>,

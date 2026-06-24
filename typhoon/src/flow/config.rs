@@ -1,3 +1,6 @@
+//! Fake body and fake header generation: per-flow length/content modes and the runtime
+//! distributions used to randomize them.
+
 #[cfg(test)]
 #[path = "../../tests/flow/config.rs"]
 mod tests;
@@ -20,19 +23,22 @@ use crate::weighted_random;
 /// Fake body generation mode.
 ///
 /// Each mode defines how fake body content is generated to pad packets.
-/// Uses Vec<u8> internally for Sync compatibility.
 #[derive(Debug, Clone)]
 pub enum FakeBodyMode {
     /// Empty: no fake body added.
     Empty,
     /// Random: random bytes of random length.
     Random {
+        /// Lower clamp (bytes) for the sampled body length.
         min_length: usize,
+        /// Upper clamp (bytes) for the sampled body length.
         max_length: usize,
+        /// If `true`, only padded when the packet is a maintenance-substream decoy.
         service: bool,
     },
     /// Constant: fixed content across all packets.
     Constant {
+        /// Total wire packet length (bytes) this mode pads every packet up to.
         packet_length: usize,
     },
 }
@@ -68,6 +74,9 @@ impl FakeBodyMode {
         }
     }
 
+    /// Compute the fake body length for one packet, given the room left after the real
+    /// payload/tailer (`max_packet_size - taken_packet_size`) and whether this packet is a
+    /// maintenance-substream decoy (`is_service`).
     pub fn get_length(&self, max_packet_size: usize, taken_packet_size: usize, is_service: bool) -> usize {
         match self {
             FakeBodyMode::Empty => 0,
@@ -98,28 +107,34 @@ impl FakeBodyMode {
 /// Field type for fake header generation.
 ///
 /// Each field type defines how a portion of the header is generated.
-/// Uses Vec<u8> internally for Sync compatibility.
 #[derive(Debug, Clone)]
 pub enum FieldType<L> {
     /// Random bytes on each packet.
     Random,
     /// Constant bytes across all packets.
     Constant {
+        /// The fixed value written into every packet.
         value: L,
     },
     /// Volatile: changes value randomly at random intervals.
     Volatile {
+        /// The current value, held until the next change.
         value: L,
+        /// Per-packet probability of resampling `value`.
         change_probability: f64,
     },
     /// Switching: toggles between two values.
     Switching {
+        /// The current value, held until `next_switch`.
         value: L,
+        /// Unix timestamp (milliseconds) at which `value` will next be resampled.
         next_switch: u128,
+        /// Interval (milliseconds) between switches, re-applied each time `next_switch` elapses.
         switch_timeout: u64,
     },
     /// Incremental: counter that increases by 1 each packet.
     Incremental {
+        /// The current counter value.
         value: L,
     },
 }
@@ -138,6 +153,7 @@ impl_wrapping_increment!(u8 u16 u32 u64);
 
 #[allow(private_bounds)]
 impl<L: Copy + WrappingIncrement> FieldType<L> {
+    /// Advance this field by one packet and return the value to write into the wire header.
     pub fn apply(&mut self) -> L
     where
         Standard: Distribution<L>,
@@ -177,24 +193,29 @@ impl<L: Copy + WrappingIncrement> FieldType<L> {
     }
 }
 
+/// A [`FieldType`] erased over its primitive integer width, so a [`FakeHeaderConfig`] can mix
+/// fields of different sizes in one pattern.
 #[derive(Debug, Clone)]
 pub enum FieldTypeHolder {
+    /// A 1-byte field.
     U8(FieldType<u8>),
+    /// A 2-byte field.
     U16(FieldType<u16>),
+    /// A 4-byte field.
     U32(FieldType<u32>),
+    /// An 8-byte field.
     U64(FieldType<u64>),
 }
 
-/// Fake body generation mode.
-///
-/// Each mode defines how fake body content is generated to pad packets.
-/// Uses Vec<u8> internally for Sync compatibility.
+/// Fake header field layout for one flow: an ordered sequence of fields, each independently
+/// evolving per [`FieldType`].
 #[derive(Debug, Clone)]
 pub struct FakeHeaderConfig {
     pattern: Vec<FieldTypeHolder>,
 }
 
 impl FakeHeaderConfig {
+    /// Build a fake header config from an explicit field pattern.
     pub fn new(pattern: Vec<FieldTypeHolder>) -> Self {
         Self {
             pattern,
@@ -253,6 +274,7 @@ impl FakeHeaderConfig {
         }
     }
 
+    /// Total wire length (bytes) of this header pattern.
     pub fn len(&self) -> usize {
         self.pattern.iter().fold(0, |a, f| {
             a + match f {
@@ -264,10 +286,12 @@ impl FakeHeaderConfig {
         })
     }
 
+    /// `true` if this pattern has no fields (no fake header is emitted for this flow).
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Advance every field by one packet and write the resulting bytes into `buffer`.
     pub fn fill(&mut self, buffer: DynamicByteBuffer) {
         self.pattern.iter_mut().fold(0, |a, f| {
             a + match f {
@@ -301,13 +325,14 @@ impl FakeHeaderConfig {
 /// Configuration for a flow.
 #[derive(Debug, Clone)]
 pub struct FlowConfig {
-    /// Whether to use fake bodies.
+    /// Fake body generation mode for this flow.
     pub(super) fake_body_mode: FakeBodyMode,
-    /// Whether to use fake headers.
+    /// Fake header field layout for this flow.
     pub(super) fake_header_mode: FakeHeaderConfig,
 }
 
 impl FlowConfig {
+    /// Build a flow configuration from explicit fake-body and fake-header settings.
     pub fn new(fake_body_mode: FakeBodyMode, fake_header_mode: FakeHeaderConfig) -> Self {
         Self {
             fake_body_mode,
@@ -366,7 +391,7 @@ impl FlowConfig {
     }
 
     /// Maximum bytes this flow config can prepend to a packet (fake header + worst-case fake body).
-    /// Used to reserve before_capacity in packet buffers. Conservative for Constant mode.
+    /// Used to reserve `before_capacity` in packet buffers. Conservative for Constant mode.
     pub fn max_overhead(&self) -> usize {
         self.fake_header_mode.len() + self.fake_body_mode.max_len()
     }
@@ -386,6 +411,11 @@ impl FlowConfig {
     }
 
     /// Validate that the flow configuration is consistent with the given max packet size.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FlowControllerError::AssertionFailed`] if the fake body or fake header
+    /// configuration is internally inconsistent or exceeds `max_packet_size`.
     pub fn assert(&self, max_packet_size: usize) -> Result<(), FlowControllerError> {
         match &self.fake_body_mode {
             FakeBodyMode::Constant {

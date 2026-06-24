@@ -99,16 +99,23 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
 
     /// Build the client socket, validating all flow configs and creating underlying managers.
     ///
-    /// Returns [`ClientSocketError::FlowError`] wrapping [`FlowControllerError::AssertionFailed`]
-    /// if the combined flow configuration leaves zero bytes available for user data
-    /// (e.g. `constant` fake-body mode with a per-flow constant length sampled from
-    /// `[TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MIN, TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MAX]` larger than
-    /// the remaining packet budget after protocol overhead).
+    /// # Errors
+    ///
+    /// Returns [`ClientSocketError::Certificate`] if the certificate has no embedded
+    /// addresses, [`ClientSocketError::AddressNotInCertificate`] if a `with_flow_config`
+    /// override targets an address absent from the certificate,
+    /// [`ClientSocketError::UnsupportedRuntime`] if the active async runtime feature doesn't
+    /// match the executor in use, or [`ClientSocketError::Flow`] wrapping
+    /// [`FlowControllerError::AssertionFailed`] if the combined flow configuration leaves zero
+    /// bytes available for user data (e.g. `constant` fake-body mode with a per-flow constant
+    /// length sampled from `[TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MIN,
+    /// TYPHOON_FAKE_BODY_CONSTANT_LENGTH_MAX]` larger than the remaining packet budget after
+    /// protocol overhead).
     pub async fn build(mut self) -> Result<ClientSocket<T, AE, CC>, ClientSocketError> {
         assert_runtime().map_err(ClientSocketError::UnsupportedRuntime)?;
         let cert_addrs = self.certificate.addresses();
         if cert_addrs.is_empty() {
-            return Err(ClientSocketError::CertificateError(CertificateError::NoAddresses));
+            return Err(ClientSocketError::Certificate(CertificateError::NoAddresses));
         }
 
         let settings = self.settings.take().unwrap_or_else(|| Arc::new(Settings::default()));
@@ -139,13 +146,13 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
 
         let mut flows = Vec::with_capacity(addr_configs.len());
         for (addr, config) in addr_configs {
-            config.assert(settings.mtu()).map_err(ClientSocketError::FlowError)?;
+            config.assert(settings.mtu()).map_err(ClientSocketError::Flow)?;
 
             max_data_payload = max_data_payload.min(config.max_user_payload(settings.mtu(), PAYLOAD_CRYPTO_OVERHEAD, tailer_wire_len));
 
-            let sock = Socket::new(addr, None).await.map_err(ClientSocketError::SocketError)?;
+            let sock = Socket::new(addr, None).await.map_err(ClientSocketError::Socket)?;
             let cipher_cache = cipher.create_cache();
-            let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock, self.probe_factory.as_ref(), &self.decoy_factory, Arc::clone(&counter), addr).await.map_err(ClientSocketError::FlowError)?;
+            let flow = ClientFlowManager::new(config, cipher_cache, settings.clone(), sock, self.probe_factory.as_ref(), &self.decoy_factory, Arc::clone(&counter), addr).await.map_err(ClientSocketError::Flow)?;
             flows.push(flow);
         }
         let max_data_payload = if max_data_payload == usize::MAX {
@@ -154,13 +161,13 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
             max_data_payload
         };
         if max_data_payload == 0 {
-            return Err(ClientSocketError::FlowError(FlowControllerError::AssertionFailed {
+            return Err(ClientSocketError::Flow(FlowControllerError::AssertionFailed {
                 message: "flow configuration leaves no room for user data (max_data_payload = 0); reduce fake-body constant length or increase MTU".to_string(),
             }));
         }
         info!("client socket built: max_data_payload={}B (mtu={}B, {} flow(s))", max_data_payload, settings.mtu(), flows.len());
 
-        let session = ClientSessionManager::new(cipher, flows, settings.clone(), counter, self.initial_data_generator).map_err(ClientSocketError::SessionError)?;
+        let session = ClientSessionManager::new(cipher, flows, settings.clone(), counter, self.initial_data_generator).map_err(ClientSocketError::Session)?;
 
         let (incoming_tx, incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
 
@@ -179,7 +186,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
             }
         });
 
-        session.start().await.map_err(ClientSocketError::SessionError)?;
+        session.start().await.map_err(ClientSocketError::Session)?;
 
         Ok(ClientSocket {
             session,
@@ -201,8 +208,12 @@ pub struct ClientSocket<T: IdentityType + Clone + 'static, AE: AsyncExecutor + '
 
 impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientConnectionHandler + 'static> ClientSocket<T, AE, CC> {
     /// Send a packet using a pre-allocated buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientSocketError::Session`] if encryption or delivery to a flow manager fails.
     pub async fn send(&self, packet: DynamicByteBuffer) -> Result<(), ClientSocketError> {
-        self.session.send_packet(packet, false).await.map_err(ClientSocketError::SessionError)
+        self.session.send_packet(packet, false).await.map_err(ClientSocketError::Session)
     }
 
     /// Send a byte slice, splitting into payload-sized chunks so each wire packet fits within MTU.
@@ -213,6 +224,10 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
     /// deterministic equal-chunk split).  The final chunk and any single-packet
     /// send go through unfragmented to avoid synthesising a small-packet tail
     /// that a passive observer could latch onto.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientSocketError::Session`] if encryption or delivery to a flow manager fails.
     pub async fn send_bytes(&self, data: &[u8]) -> Result<(), ClientSocketError> {
         let jitter = self.settings.get(&keys::SEND_BYTES_JITTER);
         let chunk = self.settings.get(&keys::SEND_BYTES_CHUNK) as usize;
@@ -238,12 +253,20 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
     }
 
     /// Receive a packet, returning the decrypted payload as a buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientSocketError::ChannelClosed`] if the background receive task has stopped.
     pub async fn receive(&self) -> Result<DynamicByteBuffer, ClientSocketError> {
         let buf = self.incoming_rx.lock().await.recv().await.ok_or(ClientSocketError::ChannelClosed)?;
         Ok(buf)
     }
 
     /// Receive a packet, returning the decrypted payload as a byte vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientSocketError::ChannelClosed`] if the background receive task has stopped.
     pub async fn receive_bytes(&self) -> Result<Vec<u8>, ClientSocketError> {
         let buffer = self.receive().await?;
         Ok(buffer.slice().to_vec())

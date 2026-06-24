@@ -1,3 +1,6 @@
+//! Internal runtime utilities: lock-free bitsets, RNG helpers, the socket wrapper, and the
+//! runtime-agnostic async primitives in `sync`.
+
 #[cfg(feature = "server")]
 pub mod bitset;
 pub mod random;

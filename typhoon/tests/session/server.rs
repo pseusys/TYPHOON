@@ -19,7 +19,7 @@ use crate::tailer::{ReturnCode, Tailer};
 use crate::utils::sync::{create_notify_queue, create_watch};
 
 /// Shared server secret — generated once so that concurrent tests don't each pay the
-/// expensive McEliece key-generation cost.
+/// expensive `McEliece` key-generation cost.
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 static TEST_SERVER_SECRET: LazyLock<crate::certificate::ServerSecret<'static>> = LazyLock::new(|| ServerKeyPair::for_tests().into_server_secret());
 
@@ -33,7 +33,7 @@ fn fast_settings() -> Arc<Settings<DefaultExecutor>> {
     Arc::new(SettingsBuilder::new().set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 60_000u64).set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 120_000u64).build().unwrap())
 }
 
-/// Minimal outgoing router that records packets and remove_session calls.
+/// Minimal outgoing router that records packets and `remove_session` calls.
 struct CapturingRouter {
     packets: crate::utils::sync::Mutex<Vec<DynamicByteBuffer>>,
     remove_count: AtomicUsize,
@@ -66,7 +66,7 @@ impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
 }
 
 /// Build a session using `from_handshake`.
-/// Uses a shared static server secret to avoid paying McEliece key-generation cost per test.
+/// Uses a shared static server secret to avoid paying `McEliece` key-generation cost per test.
 async fn make_session(settings: Arc<Settings<DefaultExecutor>>, router: Arc<CapturingRouter>, num_flows: usize) -> Arc<ServerSessionManager<StaticByteBuffer, DefaultExecutor>> {
     let identity = test_identity();
 
@@ -168,7 +168,7 @@ async fn test_process_incoming_termination_returns_error() {
     };
     let result = session.process_incoming(incoming).await;
 
-    assert!(matches!(result, Err(SessionControllerError::ConnectionTerminated(_))), "TERMINATION packet must yield ConnectionTerminated, got: {:?}", result);
+    assert!(matches!(result, Err(SessionControllerError::ConnectionTerminated(_))), "TERMINATION packet must yield ConnectionTerminated, got: {result:?}");
 }
 
 // Test: health-check-only packet (no payload) is accepted without error.

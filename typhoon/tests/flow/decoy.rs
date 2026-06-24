@@ -587,8 +587,8 @@ fn test_noisy_length_stays_below_mtu() {
     let samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT).map(|_| NoisyDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_quiet)).collect();
 
     for &s in &samples {
-        assert!(s >= noisy_min, "Noisy length {} should be >= NOISY_MIN {}", s, noisy_min);
-        assert!(s <= noisy_max, "Noisy length {} should be <= NOISY_MAX {}", s, noisy_max);
+        assert!(s >= noisy_min, "Noisy length {s} should be >= NOISY_MIN {noisy_min}");
+        assert!(s <= noisy_max, "Noisy length {s} should be <= NOISY_MAX {noisy_max}");
     }
 }
 
@@ -604,7 +604,7 @@ fn test_noisy_length_adaptive_to_quietness() {
 
     let busy_mean = mean(&busy_samples);
     let quiet_mean = mean(&quiet_samples);
-    assert!(quiet_mean > busy_mean, "Noisy should grow with quietness: busy mean = {:.1}, quiet mean = {:.1}", busy_mean, quiet_mean);
+    assert!(quiet_mean > busy_mean, "Noisy should grow with quietness: busy mean = {busy_mean:.1}, quiet mean = {quiet_mean:.1}");
 }
 
 // Heavy: bulk-class mode — must respect HEAVY_LENGTH_MIN as floor.
@@ -618,8 +618,8 @@ fn test_heavy_length_respects_floor() {
     let samples: Vec<usize> = (0..LENGTH_SAMPLE_COUNT).map(|_| HeavyDecoyProvider::<StaticByteBuffer, DefaultExecutor>::calculate_length(&state_quiet)).collect();
 
     for &s in &samples {
-        assert!(s >= heavy_min, "Heavy length {} should be >= HEAVY_MIN {}", s, heavy_min);
-        assert!(s <= length_cap, "Heavy length {} should be <= length_cap {}", s, length_cap);
+        assert!(s >= heavy_min, "Heavy length {s} should be >= HEAVY_MIN {heavy_min}");
+        assert!(s <= length_cap, "Heavy length {s} should be <= length_cap {length_cap}");
     }
 }
 
@@ -638,8 +638,8 @@ fn test_heavy_length_min_enforced_under_low_base() {
     // With base=0.3·cap=420, decoy_length naturally falls in [0.8·420, 420] = [336, 420];
     // the floor at 500 must clamp every sample up to ≥ 500.
     for &s in &samples {
-        assert!(s >= 500, "Heavy length {} should respect HEAVY_LENGTH_MIN=500", s);
-        assert!(s <= length_cap, "Heavy length {} should be <= length_cap {}", s, length_cap);
+        assert!(s >= 500, "Heavy length {s} should respect HEAVY_LENGTH_MIN=500");
+        assert!(s <= length_cap, "Heavy length {s} should be <= length_cap {length_cap}");
     }
 }
 
@@ -661,12 +661,12 @@ fn test_smooth_length_adaptive_and_bounded() {
 
     // All samples respect [MIN, MAX].
     for &s in busy_samples.iter().chain(quiet_samples.iter()) {
-        assert!(s >= smooth_min, "Smooth length {} should be >= SMOOTH_MIN {}", s, smooth_min);
-        assert!(s <= smooth_max, "Smooth length {} should be <= SMOOTH_MAX {}", s, smooth_max);
+        assert!(s >= smooth_min, "Smooth length {s} should be >= SMOOTH_MIN {smooth_min}");
+        assert!(s <= smooth_max, "Smooth length {s} should be <= SMOOTH_MAX {smooth_max}");
     }
 
     // Max sampled length grows with quietness (uniform draw ceiling tracks quietness).
     let busy_max = *busy_samples.iter().max().unwrap_or(&0);
     let quiet_max = *quiet_samples.iter().max().unwrap_or(&0);
-    assert!(quiet_max > busy_max, "Smooth max should grow with quietness: busy max = {}, quiet max = {}", busy_max, quiet_max);
+    assert!(quiet_max > busy_max, "Smooth max should grow with quietness: busy max = {busy_max}, quiet max = {quiet_max}");
 }

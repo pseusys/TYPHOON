@@ -8,7 +8,7 @@ use crate::crypto::error::{CryptoError, HandshakeError};
 use crate::crypto::symmetric::{ObfuscationTranscript, Symmetric};
 use crate::tailer::IdentityType;
 
-/// Ephemeral client handshake state: X25519 secret, McEliece shared secret, nonce, initial key.
+/// Ephemeral client handshake state: X25519 secret, `McEliece` shared secret, nonce, initial key.
 pub(crate) struct ClientData {
     pub ephemeral_key: EphemeralSecret,
     pub shared_secret: FixedByteBuffer<32>,
@@ -27,7 +27,7 @@ pub struct ClientCryptoTool<T: IdentityType + Clone> {
 }
 
 impl<T: IdentityType + Clone> ClientCryptoTool<T> {
-    /// Create a new ClientCryptoTool with the given certificate and identity.
+    /// Create a new `ClientCryptoTool` with the given certificate and identity.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub(crate) fn new(cert: ClientCertificate, identity: T, initial_key: &impl ByteBuffer) -> Self {
         let obfs_buffer = cert.obfuscation_buffer();
@@ -39,7 +39,7 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
         }
     }
 
-    /// Create a new ClientCryptoTool with the given certificate and identity.
+    /// Create a new `ClientCryptoTool` with the given certificate and identity.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub(crate) fn new(cert: ClientCertificate, identity: T, initial_key: &impl ByteBuffer) -> Self {
         Self {
@@ -55,15 +55,15 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
         self.identity.clone()
     }
 
-    /// Client handshake step 1: generate ephemeral keys, encapsulate with McEliece, obfuscate.
+    /// Client handshake step 1: generate ephemeral keys, encapsulate with `McEliece`, obfuscate.
     /// If `initial_data` is non-empty, encrypts it with the initial key and appends to the handshake.
-    /// Returns (ClientData, handshake_secret, initial_encryption_key).
+    /// Returns (`ClientData`, `handshake_secret`, `initial_encryption_key`).
     pub(crate) fn create_handshake(&self, pool: &BytePool, initial_data: &[u8]) -> (ClientData, DynamicByteBuffer, FixedByteBuffer<32>) {
         self.cert.encapsulate_handshake_client(pool, initial_data)
     }
 
     /// Client handshake step 2: process server response, verify signature, derive session key.
-    /// Returns (session_key, server_initial_data).
+    /// Returns (`session_key`, `server_initial_data`).
     pub(crate) fn process_handshake_response(&self, data: ClientData, handshake_secret: DynamicByteBuffer, pool: &BytePool) -> Result<(FixedByteBuffer<32>, DynamicByteBuffer), HandshakeError> {
         self.cert.decapsulate_handshake_client(data, handshake_secret, pool)
     }
@@ -110,6 +110,7 @@ impl<T: IdentityType + Clone> ClientCryptoTool<T> {
 
     /// Verify tailer (no-op in full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
+    #[allow(clippy::unused_self)] // keeps the same call-site shape as the fast-mode variant
     pub fn verify_tailer(&mut self, _: ObfuscationTranscript) -> Result<(), CryptoError> {
         Ok(())
     }

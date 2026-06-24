@@ -13,6 +13,10 @@ authors = [
 [lib]
 name = "typhoon"
 
+[package.metadata.docs.rs]
+features = ["debug", "capture"]
+rustdoc-args = ["--cfg", "docsrs"]
+
 
 [features]
 default = ["fast_software", "server", "client", "tokio"]
@@ -72,9 +76,6 @@ cast_possible_truncation   = "allow"
 cast_sign_loss             = "allow"
 cast_precision_loss        = "allow"
 cast_lossless              = "allow"
-missing_errors_doc         = "allow"
-missing_panics_doc         = "allow"
-doc_markdown               = "allow"
 must_use_candidate         = "allow"
 similar_names              = "allow"
 too_many_lines             = "allow"
@@ -88,7 +89,6 @@ needless_pass_by_value     = "allow"
 mut_from_ref               = "allow"
 large_stack_arrays         = "allow"
 float_cmp                  = "allow"
-same_length_and_capacity   = "allow"
 module_inception           = "allow"
 missing_fields_in_debug    = "allow"
 unnecessary_wraps          = "allow"
