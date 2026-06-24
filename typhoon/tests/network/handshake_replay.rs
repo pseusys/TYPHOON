@@ -1,8 +1,7 @@
 /// Handshake replay tests: a captured handshake packet must not be able to kill an active
 /// connection by being replayed against the server later.
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
