@@ -22,10 +22,11 @@ pub trait IdentityType: Send + Sync {
     fn length() -> usize;
 }
 
-/// Server-side connection handler: generates identities, produces server initial data, and checks client version.
+/// Server-side connection handler: generates identities, produces server initial data, checks client version, and is notified of connection and disconnection.
 pub trait ServerConnectionHandler<T: IdentityType>: Send + Sync {
-    /// Derive a client session identity from the client's decrypted initial data bytes.
-    fn generate(&self, initial_data: &[u8]) -> T;
+    /// Derive a client session identity from the client's decrypted initial data bytes, or `None` to reject the handshake (replied to with a TERMINATION carrying `ReturnCode::IdentityRejected`).
+    /// Called on every attempt, including ones that fail validation — keep this pure; use [`on_connect`](Self::on_connect) to learn whether it succeeded and whether the identity was new.
+    fn generate(&self, initial_data: &[u8]) -> Option<T>;
 
     /// Produce initial data to include in the server handshake response for the given identity.
     fn initial_data(&self, identity: &T) -> StaticByteBuffer;
@@ -34,6 +35,16 @@ pub trait ServerConnectionHandler<T: IdentityType>: Send + Sync {
     /// Returns `true` if the handshake should proceed, `false` if it should be rejected.
     /// Implementations are responsible for any logging before returning.
     fn verify_version(&self, version_bytes: &[u8]) -> bool;
+
+    /// Called once a handshake succeeds.
+    /// `existing` is `true` if `identity` already had a live connection — a re-handshake collision that displaces it silently, without `on_disconnect` — or `false` if it's brand new: the reliable signal for allocating (`false`) or carrying over (`true`) per-identity resources.
+    /// Default: no-op.
+    fn on_connect(&self, _identity: &T, _existing: bool) {}
+
+    /// Called once a client's connection has ended for any reason (remote termination, health-check decay, or explicit eviction), right before its handle is released.
+    /// Not invoked when a re-handshake displaces `identity` to a new connection — see `on_connect`.
+    /// Default: no-op.
+    fn on_disconnect(&self, _identity: &T) {}
 }
 
 /// Client-side connection handler: produces client initial data and the version bytes for the handshake.

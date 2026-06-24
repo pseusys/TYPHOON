@@ -68,7 +68,7 @@ impl ObfuscationBufferContainer for ServerSecret<'_> {
 ///
 /// Generated once at server setup, saved to a file, and loaded on each server start.
 /// Use [`to_client_certificate`](Self::to_client_certificate) to produce distributable client
-/// certificates, and pass to [`ListenerBuilder::new`](crate::socket::ListenerBuilder::new) to
+/// certificates, and pass to [`ServerBuilder::new`](crate::socket::ServerBuilder::new) to
 /// start the server.
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 #[derive(Debug)]
@@ -83,7 +83,7 @@ pub struct ServerKeyPair {
 ///
 /// Generated once at server setup, saved to a file, and loaded on each server start.
 /// Use [`to_client_certificate`](Self::to_client_certificate) to produce distributable client
-/// certificates, and pass to [`ListenerBuilder::new`](crate::socket::ListenerBuilder::new) to
+/// certificates, and pass to [`ServerBuilder::new`](crate::socket::ServerBuilder::new) to
 /// start the server.
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 pub struct ServerKeyPair {

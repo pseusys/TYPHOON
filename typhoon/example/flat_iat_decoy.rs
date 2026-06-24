@@ -51,7 +51,7 @@ use typhoon::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvide
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::consts::{FG_OFFSET, PN_OFFSET};
 use typhoon::settings::{Settings, SettingsBuilder};
-use typhoon::socket::{ClientSocketBuilder, ListenerBuilder, ServerFlowConfiguration};
+use typhoon::socket::{ClientSocketBuilder, ServerBuilder, ServerFlowConfiguration};
 
 const SERVER_ADDR: &str = "127.0.0.1:19993";
 
@@ -273,7 +273,7 @@ async fn run() {
 
     let server_flow = ServerFlowConfiguration::<Ident, Exec>::with_address(flow_config.clone(), server_addr).with_decoy_factory(server_decoy);
 
-    let listener: Arc<_> = Arc::new(ListenerBuilder::<Ident, Exec, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(server_flow).with_settings(settings.clone()).build().await.expect("listener"));
+    let listener: Arc<_> = Arc::new(ServerBuilder::<Ident, Exec, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(server_flow).with_settings(settings.clone()).build_listener().await.expect("listener"));
     listener.start().await;
 
     let (done_tx, done_rx) = channel::<usize>();

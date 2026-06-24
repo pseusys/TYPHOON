@@ -150,6 +150,11 @@ path = "example/multi_client.rs"
 required-features = ["client", "server"]
 
 [[example]]
+name = "client_pool"
+path = "example/client_pool.rs"
+required-features = ["client", "server"]
+
+[[example]]
 name = "heavy_traffic"
 path = "example/heavy_traffic.rs"
 required-features = ["client", "server"]

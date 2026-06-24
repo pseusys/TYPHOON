@@ -142,6 +142,9 @@ cargo run --example multi_flow
 # Multiple simultaneous clients
 cargo run --example multi_client
 
+# Multiple simultaneous clients dispatched through a single ClientPool
+cargo run --example client_pool
+
 # Long-running session with repeated health-check cycles
 cargo run --example long_session
 

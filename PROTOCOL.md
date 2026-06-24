@@ -77,7 +77,7 @@ flowchart LR
 
     subgraph Server
         direction TB
-        LB["ListenerBuilder"] -->|build + start| L["Listener"]
+        LB["ServerBuilder"] -->|build + start| L["Listener / ClientPool"]
         L --> SFM1["FlowManager :port 1"]
         L --> SFM2["FlowManager :port 2"]
         SFM1 --> SDP1["DecoyProvider (per user)"]
@@ -939,6 +939,7 @@ It is suggested that every "manager" is divided into two parts:
 In short, these are the main TYPHOON implementation parts:
 
 - Listener (one per server): keeps track of global server variables, all the users, metadata and state, can generate certificates.
+- Client pool (optional, one per server): wraps a listener and owns every accepted client handle in a map keyed by identity, exposing a single identity-tagged accept/send pair instead of one handle per connection.
 - Session controller (one per session): accepts data, encrypts it with the session key, appends an encrypted header, selects an appropriate flow, and delivers data to it.
 - Health check provider (one per session): attached to session controller, keeps internal protocol state, manages handshake message timers and injects handshake messages themselves if necessary.
 - Flow controller (one per flow): accepts data, prepends a mock header to it and sends it to the flow partner using a UDP socket.
@@ -973,6 +974,11 @@ In addition to that, every flow manager keeps a table of all the connected user 
 
 [Rebinding](#identification-and-rebinding) happens on the flow manager only, without the session manager or any other listener parts being involved.
 The only requirement for this is packet validation, which is [performed using the user session key](#tailer-encryption) — this key is pulled from the global user table.
+
+#### Client pool
+
+A server using `Listener` directly gets one `ClientHandle` per connection from `accept()`, owned by the caller for its whole lifetime.
+`ClientPool` wraps the same `Listener` instead: it runs the accept loop and owns every `ClientHandle` in a map keyed by identity, exposing a multiplexed `receive()` (identity + packet), a symmetric `send(identity, packet)`, and `connected_ids()`.
 
 #### Initial data handling
 

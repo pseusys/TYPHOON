@@ -11,7 +11,7 @@ use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor};
 use typhoon::settings::Settings;
 use typhoon::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
-use typhoon::socket::{Listener, ListenerBuilder, ServerConnectionHandler, ServerFlowConfiguration};
+use typhoon::socket::{Listener, ServerBuilder, ServerConnectionHandler, ServerFlowConfiguration};
 
 use super::common::{connect_simple, default_settings, empty_flow_config, free_addr, server_key_pair};
 
@@ -22,8 +22,8 @@ use super::common::{connect_simple, default_settings, empty_flow_config, free_ad
 struct FixedIdentityHandler;
 
 impl ServerConnectionHandler<StaticByteBuffer> for FixedIdentityHandler {
-    fn generate(&self, _initial_data: &[u8]) -> StaticByteBuffer {
-        StaticByteBuffer::from_slice(&[0x42u8; DEFAULT_TYPHOON_ID_LENGTH])
+    fn generate(&self, _initial_data: &[u8]) -> Option<StaticByteBuffer> {
+        Some(StaticByteBuffer::from_slice(&[0x42u8; DEFAULT_TYPHOON_ID_LENGTH]))
     }
 
     fn initial_data(&self, _identity: &StaticByteBuffer) -> StaticByteBuffer {
@@ -38,7 +38,7 @@ impl ServerConnectionHandler<StaticByteBuffer> for FixedIdentityHandler {
 /// Build a `ServerKeyPair`-backed listener using `FixedIdentityHandler` instead of the default
 /// random identity generator.
 async fn listener_with_fixed_identity(addr: SocketAddr, settings: Arc<Settings<DefaultExecutor>>, key_pair: ServerKeyPair) -> Arc<Listener<StaticByteBuffer, DefaultExecutor, FixedIdentityHandler>> {
-    let listener = ListenerBuilder::<StaticByteBuffer, DefaultExecutor, FixedIdentityHandler>::new(key_pair, FixedIdentityHandler).add_flow(ServerFlowConfiguration::with_address(empty_flow_config(), addr)).with_settings(settings).build().await.expect("listener should build");
+    let listener = ServerBuilder::<StaticByteBuffer, DefaultExecutor, FixedIdentityHandler>::new(key_pair, FixedIdentityHandler).add_flow(ServerFlowConfiguration::with_address(empty_flow_config(), addr)).with_settings(settings).build_listener().await.expect("listener should build");
     let listener = Arc::new(listener);
     listener.start().await;
     listener

@@ -47,7 +47,7 @@ use typhoon::settings::keys::{
     FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX, HEALTH_CHECK_NEXT_IN_MAX, HEALTH_CHECK_NEXT_IN_MIN,
     SEND_BYTES_CHUNK, SEND_BYTES_JITTER,
 };
-use typhoon::socket::{ClientHandle, ListenerBuilder, ServerFlowConfiguration};
+use typhoon::socket::{ClientHandle, ServerBuilder, ServerFlowConfiguration};
 
 // Mirrors of eval_client.rs constants. Both sides must apply identical
 // settings; consult eval_client.rs for the override rationale.
@@ -257,7 +257,7 @@ async fn main() {
         .map(|addr| ServerFlowConfiguration::with_address(flow_cfg.clone(), addr))
         .collect();
 
-    let listener_builder = ListenerBuilder::<
+    let listener_builder = ServerBuilder::<
         ShortIdentity,
         DefaultExecutor,
         EvalServerConnectionHandler,
@@ -271,7 +271,7 @@ async fn main() {
     } else {
         listener_builder.with_decoy::<SimpleDecoyProvider>()
     };
-    let listener: Arc<_> = Arc::new(listener_builder.build().await.expect("listener build"));
+    let listener: Arc<_> = Arc::new(listener_builder.build_listener().await.expect("listener build"));
     listener.start().await;
     println!("TYPHOON eval server listening on ports {:?}", PORTS);
 

@@ -8,7 +8,7 @@ use typhoon::defaults::{DefaultExecutor, DefaultServerConnectionHandler};
 use typhoon::flow::decoy::DecoyCommunicationMode;
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::{Settings, SettingsBuilder};
-use typhoon::socket::{ClientConnectionHandler, ClientSocket, ClientSocketBuilder, Listener, ListenerBuilder, ServerFlowConfiguration};
+use typhoon::socket::{ClientConnectionHandler, ClientSocket, ClientSocketBuilder, Listener, ServerBuilder, ServerFlowConfiguration};
 
 /// Allocate a loopback address on an OS-assigned port.
 pub fn free_addr() -> SocketAddr {
@@ -50,13 +50,13 @@ pub fn server_key_pair() -> ServerKeyPair {
 
 /// Build a listener with a caller-supplied key pair (so we can also derive a certificate).
 pub async fn listener_with_key(addrs: Vec<SocketAddr>, settings: Arc<Settings<DefaultExecutor>>, key_pair: ServerKeyPair) -> Arc<Listener<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>> {
-    let mut builder = ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler);
+    let mut builder = ServerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler);
 
     for addr in addrs {
         builder = builder.add_flow(ServerFlowConfiguration::with_address(empty_flow_config(), addr));
     }
 
-    let listener = Arc::new(builder.with_settings(settings).build().await.expect("listener should build"));
+    let listener = Arc::new(builder.with_settings(settings).build_listener().await.expect("listener should build"));
     listener.start().await;
     listener
 }

@@ -22,7 +22,7 @@ typhoon-protocol = { version = "0.1" }
 The library itself is imported as `typhoon`:
 
 ```rust
-use typhoon::socket::{ClientSocketBuilder, ListenerBuilder};
+use typhoon::socket::{ClientSocketBuilder, ServerBuilder};
 ```
 
 ## Performance and overhead
@@ -118,6 +118,7 @@ The full design rationale lives in [PROTOCOL.md § Proposed implementation](http
 **Moving parts.** Each side splits into a session manager (handshake, encryption, data) and one or more flow managers (decoy injection, traffic obfuscation, tailer-only decryption):
 
 - **Listener** (server, one per process): tracks global state, spawns/recycles per-user session managers, issues client certificates.
+- **Client pool** (server, optional, one per process): wraps a `Listener`, owns every `ClientHandle` in a map keyed by identity, and exposes a single identity-tagged `receive`/`send` pair instead of one handle per connection.
 - **Session controller** (one per session): encrypts user data with the session key, appends the encrypted tailer, and hands the packet to a flow.
 - **Health check provider** (one per session): drives handshake/keepalive timers and injects health-check packets.
 - **Flow controller** (one per flow): owns a UDP socket, prepends the fake header/body, and writes the packet to the wire.
@@ -126,7 +127,7 @@ The full design rationale lives in [PROTOCOL.md § Proposed implementation](http
 
 **Exportable submodules** (the public API surface — everything else is internal):
 
-- [`socket`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/src/socket) — entry points: `ClientSocketBuilder` → `ClientSocket`, `ListenerBuilder` → `Listener` → `ClientHandle`.
+- [`socket`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/src/socket) — entry points: `ClientSocketBuilder` → `ClientSocket`; `ServerBuilder` → `Listener` → `ClientHandle`, or `ServerBuilder` → `ClientPool` for the multiplexed entrypoint.
 - [`flow`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/src/flow) — `ClientFlowManager` / `ServerFlowManager`, the `DecoyProvider` / `ActiveProbeHandler` traits and their built-in implementations.
 - [`certificate`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/src/certificate) — server key pair / client certificate generation, persistence, and the binary file format.
 - [`settings`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/src/settings) — `SettingsBuilder`, the `TYPHOON_*` constant keys, and environment-variable override resolution.

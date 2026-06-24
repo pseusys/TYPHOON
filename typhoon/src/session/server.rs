@@ -21,7 +21,7 @@ use crate::settings::{Settings, keys};
 use crate::tailer::{IdentityType, PacketFlags, ReturnCode, Tailer};
 use crate::utils::bitset::AtomicBitSet;
 use crate::utils::random::get_rng;
-use crate::utils::sync::{AsyncExecutor, NotifyQueueSender};
+use crate::utils::sync::{AsyncExecutor, NotifyQueueSender, WatchSender};
 use crate::utils::unix_timestamp_ms;
 
 /// Trait for routing outgoing packets from a session back to the network.
@@ -57,6 +57,8 @@ pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToS
     /// Per-session monotonic packet-number counter; shared with the health-check provider and every flow manager's decoy provider for this user so the PN stream is single-sequence across data, health-check, decoy, and termination packets.
     counter: Arc<AtomicU32>,
     incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
+    /// Fired once this session is removed, so a task blocked on `incoming_tx`'s receiver can stop waiting instead of hanging.
+    end_tx: WatchSender<()>,
     health_provider: ServerHealthProvider,
     _phantom: PhantomData<AE>,
 }
@@ -73,7 +75,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     ///
     /// Returns `(Arc<Self>, response_packet)`. The caller holds `session_key` from the
     /// encapsulation step and upgrades the user's crypto state after sending the response.
-    pub(crate) async fn assemble_session(crypto_state: UserCryptoState, response_body: DynamicByteBuffer, handshake_tailer: Tailer<T>, identity: T, users: &mut SharedMap<T, UserServerState>, incoming_tx: NotifyQueueSender<DynamicByteBuffer>, router: StdWeak<dyn OutgoingRouter<T>>, num_flows: usize, settings: Arc<Settings<AE>>) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
+    pub(crate) async fn assemble_session(crypto_state: UserCryptoState, response_body: DynamicByteBuffer, handshake_tailer: Tailer<T>, identity: T, users: &mut SharedMap<T, UserServerState>, incoming_tx: NotifyQueueSender<DynamicByteBuffer>, end_tx: WatchSender<()>, router: StdWeak<dyn OutgoingRouter<T>>, num_flows: usize, settings: Arc<Settings<AE>>) -> (Arc<Self>, DynamicByteBuffer) {
         let user_state = UserServerState::new(crypto_state);
 
         users.insert(identity.clone(), user_state).await;
@@ -99,16 +101,23 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
             active_flows: AtomicBitSet::new(num_flows),
             counter: Arc::new(AtomicU32::new(0)),
             incoming_tx,
+            end_tx,
             health_provider,
             _phantom: PhantomData,
         });
 
-        Ok((session, response_packet))
+        (session, response_packet)
     }
 
     /// Packet number of the handshake that established this session.
     pub fn handshake_pn(&self) -> u64 {
         self.handshake_pn
+    }
+
+    /// Wake any task waiting on the incoming-data receiver, signaling that the session has ended.
+    #[inline]
+    pub(crate) fn signal_end(&self) {
+        self.end_tx.send(());
     }
 
     /// Per-session monotonic packet-number counter, shared with the health-check provider and per-flow decoy providers.

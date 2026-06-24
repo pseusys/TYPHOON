@@ -8,7 +8,8 @@
 //! # Entry points
 //!
 //! - **Client**: [`socket::ClientSocketBuilder`] → [`socket::ClientSocket`]
-//! - **Server**: [`socket::ListenerBuilder`] → [`socket::Listener`] → [`socket::ClientHandle`]
+//! - **Server**: [`socket::ServerBuilder`] → [`socket::Listener`] → [`socket::ClientHandle`], or
+//!   [`socket::ServerBuilder`] → [`socket::ClientPool`] for the multiplexed entrypoint
 //!
 //! # Feature flags
 //!

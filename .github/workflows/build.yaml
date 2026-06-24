@@ -78,6 +78,12 @@ jobs:
           RUST_LOG: debug
         run: cargo run --example multi_client --features debug
 
+      - name: Run client_pool example 🏊
+        working-directory: typhoon
+        env:
+          RUST_LOG: debug
+        run: cargo run --example client_pool --features debug
+
       - name: Run use_case example 🎭
         working-directory: typhoon
         env:

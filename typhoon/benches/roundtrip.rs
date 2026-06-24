@@ -14,7 +14,7 @@ use typhoon::defaults::{DefaultClientConnectionHandler, DefaultExecutor, Default
 use typhoon::flow::FlowConfig;
 use typhoon::flow::config::{FakeBodyMode, FakeHeaderConfig};
 use typhoon::settings::SettingsBuilder;
-use typhoon::socket::{ClientSocketBuilder, ListenerBuilder, ServerFlowConfiguration};
+use typhoon::socket::{ClientSocketBuilder, ServerBuilder, ServerFlowConfiguration};
 
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 const KEY_ENV_VAR: &str = "TYPHOON_TEST_SERVER_KEY_FAST";
@@ -60,7 +60,7 @@ fn bench_batch(c: &mut Criterion) {
     let key_pair = load_or_generate_key();
     let certificate = key_pair.to_client_certificate(vec![addr]);
 
-    let listener = Arc::new(rt.block_on(async { ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(FlowConfig::random(&settings), addr)).with_settings(settings.clone()).build().await.expect("listener") }));
+    let listener = Arc::new(rt.block_on(async { ServerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(FlowConfig::random(&settings), addr)).with_settings(settings.clone()).build_listener().await.expect("listener") }));
     rt.block_on(async { listener.start().await });
 
     let listener_echo = listener.clone();
@@ -116,7 +116,7 @@ fn bench_single(c: &mut Criterion) {
         FakeHeaderConfig::random(&settings),
     );
 
-    let listener = Arc::new(rt.block_on(async { ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), addr)).with_settings(settings.clone()).build().await.expect("listener") }));
+    let listener = Arc::new(rt.block_on(async { ServerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), addr)).with_settings(settings.clone()).build_listener().await.expect("listener") }));
     rt.block_on(async { listener.start().await });
 
     let listener_echo = listener.clone();

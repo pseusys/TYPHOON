@@ -1,7 +1,7 @@
 /// Error-path tests: verify that invalid configurations are rejected at build time.
 use typhoon::bytes::StaticByteBuffer;
 use typhoon::defaults::{DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
-use typhoon::socket::{ClientSocketBuilder, ListenerBuilder};
+use typhoon::socket::{ClientSocketBuilder, ServerBuilder};
 
 use super::common::{default_settings, empty_flow_config, free_addr};
 
@@ -41,6 +41,6 @@ async fn test_client_build_fails_with_address_not_in_cert() {
 async fn test_server_build_fails_with_no_flows() {
     let settings = default_settings();
     let key_pair = super::common::server_key_pair();
-    let result = ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).with_settings(settings).build().await;
+    let result = ServerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).with_settings(settings).build_listener().await;
     assert!(result.is_err(), "listener build should fail with no flows");
 }

@@ -1,7 +1,8 @@
-/// Multi-client example: several clients connect concurrently to one server.
-/// Each client sends a unique set of messages; the server handles all sessions in parallel.
-/// Tests independent session isolation and concurrent RwLock read access to the sessions map.
+/// ClientPool example: several clients connect concurrently to one server, which dispatches all
+/// of them through a single multiplexed `ClientPool` instead of one `ClientHandle` per connection.
+/// Demonstrates `receive()`/`send()` keyed by client identity.
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use env_logger::init;
 use futures::channel::oneshot::channel;
@@ -34,40 +35,36 @@ async fn run() {
     init();
 
     let settings = Arc::new(SettingsBuilder::<DefaultExecutor>::new().build().expect("default settings should be valid"));
-    let server_addr = "127.0.0.1:19992".parse().expect("valid address");
+    let server_addr = "127.0.0.1:19990".parse().expect("valid address");
 
     let key_pair = ServerKeyPair::generate();
-
-    // Generate all client certificates before consuming key_pair into the listener builder.
     let certificates: Vec<_> = (0..CLIENT_COUNT).map(|_| key_pair.to_client_certificate(vec![server_addr])).collect();
 
     let flow_config = FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![]));
 
-    // --- Build and start the server ---
-    let listener: Arc<_> = Arc::new(ServerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(flow_config, server_addr)).with_settings(settings.clone()).build_listener().await.expect("listener should build"));
-    listener.start().await;
-    println!("Server: listening on {server_addr}");
+    // --- Build and start the server as a ClientPool ---
+    let pool: Arc<_> = Arc::new(ServerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(flow_config, server_addr)).with_settings(settings.clone()).build_pool().await.expect("pool should build"));
+    pool.start().await;
+    println!("Server: listening on {server_addr} via ClientPool");
 
-    // Spawn one echo task per expected client (accepted in order of handshake arrival).
-    let mut server_done_rxs = Vec::with_capacity(CLIENT_COUNT);
-    for client_id in 0..CLIENT_COUNT {
-        let (done_tx, done_rx) = channel::<usize>();
-        server_done_rxs.push(done_rx);
-
-        let listener_handle = listener.clone();
-        settings.executor().spawn(async move {
-            let client = listener_handle.accept().await.expect("accept should succeed");
-            println!("Server: client {client_id} connected");
-            let mut count = 0;
-            while count < MESSAGES_PER_CLIENT {
-                let data = client.receive_bytes().await.expect("receive should succeed");
-                client.send_bytes(&data).await.expect("echo send should succeed");
-                count += 1;
+    // Single server task: pulls (identity, packet) from any client and echoes it back.
+    let echoed = Arc::new(AtomicUsize::new(0));
+    let pool_handle = pool.clone();
+    let echoed_handle = echoed.clone();
+    let (done_tx, done_rx) = channel::<usize>();
+    settings.executor().spawn(async move {
+        let mut done_tx = Some(done_tx);
+        while let Ok((id, data)) = pool_handle.receive().await {
+            if pool_handle.send(&id, data).await.is_ok() {
+                let count = echoed_handle.fetch_add(1, Ordering::Relaxed) + 1;
+                if count == CLIENT_COUNT * MESSAGES_PER_CLIENT
+                    && let Some(done_tx) = done_tx.take()
+                {
+                    let _ = done_tx.send(count);
+                }
             }
-            println!("Server: client {client_id} echoed {count} messages");
-            let _ = done_tx.send(count);
-        });
-    }
+        }
+    });
 
     // --- Connect all clients concurrently ---
     let client_futs: Vec<_> = certificates
@@ -92,22 +89,18 @@ async fn run() {
                     received += 1;
                 }
 
-                println!("Client {client_id}: all {received} messages echoed");
                 received
             }
         })
         .collect();
 
     let client_counts = join_all(client_futs).await;
-
     for (id, count) in client_counts.iter().enumerate() {
         assert_eq!(*count, MESSAGES_PER_CLIENT, "client {id} received wrong count");
     }
 
-    for (id, done_rx) in server_done_rxs.into_iter().enumerate() {
-        let count = done_rx.await.expect("server task should complete");
-        assert_eq!(count, MESSAGES_PER_CLIENT, "server echoed wrong count for client {id}");
-    }
+    let total_echoed = done_rx.await.expect("server task should complete");
+    assert_eq!(total_echoed, CLIENT_COUNT * MESSAGES_PER_CLIENT, "pool echoed wrong count");
 
-    println!("Success! {} clients × {} messages all round-tripped correctly.", CLIENT_COUNT, MESSAGES_PER_CLIENT);
+    println!("Success! {CLIENT_COUNT} clients × {MESSAGES_PER_CLIENT} messages all round-tripped through one ClientPool.");
 }
