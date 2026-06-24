@@ -153,6 +153,9 @@ cargo run --example heavy_traffic
 
 # Debug probe (reachability, RTT, throughput) — requires the debug feature
 cargo run --example debug_probe --features debug
+
+# Custom active probe handler — mimics another protocol's reply to unidentified packets
+cargo run --example mimic_probe
 ```
 
 ### Binaries
