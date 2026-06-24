@@ -271,7 +271,12 @@ async fn main() {
     } else {
         listener_builder.with_decoy::<SimpleDecoyProvider>()
     };
-    let listener: Arc<_> = Arc::new(listener_builder.build_listener().await.expect("listener build"));
+    let listener: Arc<_> = Arc::new(
+        listener_builder
+            .build_listener()
+            .await
+            .expect("listener build"),
+    );
     listener.start().await;
     println!("TYPHOON eval server listening on ports {:?}", PORTS);
 
