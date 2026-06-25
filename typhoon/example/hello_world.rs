@@ -54,7 +54,7 @@ async fn run() {
         let msg = String::from_utf8_lossy(&received).to_string();
         println!("Server: received '{msg}'");
 
-        client.send_bytes(format!("echo: {}", msg).as_bytes()).await.expect("send should succeed");
+        client.send_bytes(format!("echo: {msg}").as_bytes()).await.expect("send should succeed");
         println!("Server: sent echo response");
 
         let _ = done_tx.send(msg);
@@ -63,7 +63,7 @@ async fn run() {
     // --- Build the client and connect ---
     // Flows are auto-created from the addresses embedded in the certificate.
     let socket = ClientSocketBuilder::<StaticByteBuffer, DefaultExecutor, DefaultClientConnectionHandler>::new(certificate, DefaultClientConnectionHandler).with_settings(settings.clone()).build().await.expect("client socket should build");
-    println!("Client: connected to {}", server_addr);
+    println!("Client: connected to {server_addr}");
 
     // Send a message and receive the echo.
     socket.send_bytes(b"hello world").await.expect("send should succeed");

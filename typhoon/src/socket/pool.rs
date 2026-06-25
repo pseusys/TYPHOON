@@ -6,8 +6,9 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use crate::bytes::DynamicByteBuffer;
+use crate::socket::client_handle::ClientHandle;
 use crate::socket::error::ServerSocketError;
-use crate::socket::server::{ClientHandle, Listener};
+use crate::socket::server::Listener;
 use crate::tailer::{IdentityType, ServerConnectionHandler};
 use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, NotifyQueueSender, RwLock, create_notify_queue};
 
@@ -68,11 +69,20 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 
     /// Receive the next packet from any client, tagged with its identity. Call in a loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerSocketError::ChannelClosed`] if the pool has stopped dispatching.
     pub async fn receive(&self) -> Result<(T, DynamicByteBuffer), ServerSocketError> {
         self.incoming_rx.lock().await.recv().await.ok_or(ServerSocketError::ChannelClosed)
     }
 
     /// Send a packet to the client identified by `identity`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerSocketError::UnknownClient`] if no client with that identity is currently
+    /// connected, or whatever error the underlying [`ClientHandle::send`] reports.
     pub async fn send(&self, identity: &T, packet: DynamicByteBuffer) -> Result<(), ServerSocketError> {
         let handle = { self.clients.read().await.get(identity).cloned() };
         match handle {

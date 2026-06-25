@@ -1,3 +1,7 @@
+//! Cryptographic primitives: handshake encapsulation (`asymmetric`), tailer/payload AEAD
+//! (`symmetric`), and the per-side crypto tools (`client`, `server`) that tie them to session
+//! and user state.
+
 mod asymmetric;
 #[cfg(feature = "client")]
 mod client;

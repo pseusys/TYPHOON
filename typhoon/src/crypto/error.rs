@@ -8,37 +8,37 @@ use thiserror::Error;
 pub enum CryptoError {
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     #[error("symmetric cryptography error at {specification}: {}", source.to_string())]
-    EncryptionError {
+    Encryption {
         specification: String,
         source: AeadError,
     },
 
     #[error("error authentication: {}", .0)]
-    AuthenticationError(String),
+    Authentication(String),
 
     #[error("unknown cryptography error")]
-    UnknownError,
+    Unknown,
 }
 
 #[cfg(any(feature = "client", feature = "full_software", feature = "full_hardware"))]
 #[derive(Error, Debug)]
 pub enum HandshakeError {
     #[error("cryptography error during {cause}: {}", source.to_string())]
-    CryptoError {
+    Crypto {
         cause: String,
         source: CryptoError,
     },
 
     #[cfg(feature = "client")]
     #[error("cryptography error during authenticating: {}", .0)]
-    AuthenticationError(String),
+    Authentication(String),
 }
 
 impl CryptoError {
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     #[inline]
     pub fn encryption_error(specification: &str, source: AeadError) -> Self {
-        Self::EncryptionError {
+        Self::Encryption {
             specification: specification.to_string(),
             source,
         }
@@ -46,7 +46,7 @@ impl CryptoError {
 
     #[inline]
     pub fn authentication_error(cause: &str) -> Self {
-        Self::AuthenticationError(cause.to_string())
+        Self::Authentication(cause.to_string())
     }
 }
 
@@ -54,7 +54,7 @@ impl CryptoError {
 impl HandshakeError {
     #[inline]
     pub fn handshake_crypto_error(cause: &str, source: CryptoError) -> Self {
-        Self::CryptoError {
+        Self::Crypto {
             cause: cause.to_string(),
             source,
         }
@@ -63,6 +63,6 @@ impl HandshakeError {
     #[cfg(feature = "client")]
     #[inline]
     pub fn handshake_authentication_error(cause: &str) -> Self {
-        Self::AuthenticationError(cause.to_string())
+        Self::Authentication(cause.to_string())
     }
 }

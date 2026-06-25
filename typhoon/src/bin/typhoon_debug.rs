@@ -1,15 +1,20 @@
-/// typhoon-debug: run TYPHOON debug diagnostics against a server.
-///
-/// Usage:
-///   typhoon-debug <certificate> [mode]
-///
-/// Arguments:
-///   certificate   Path to a client certificate file (.typhoon)
-///   mode          Optional: reachability | rtt | throughput | all  (default: all)
-///
-/// Example:
-///   typhoon-debug server.client.typhoon
-///   typhoon-debug server.client.typhoon rtt
+//! typhoon-debug: run TYPHOON debug diagnostics against a server.
+//!
+//! Usage:
+//! ```text
+//! typhoon-debug <certificate> [mode]
+//! ```
+//!
+//! Arguments:
+//!   certificate   Path to a client certificate file (.typhoon)
+//!   mode          Optional: reachability | rtt | throughput | all  (default: all)
+//!
+//! Example:
+//! ```text
+//! typhoon-debug server.client.typhoon
+//! typhoon-debug server.client.typhoon rtt
+//! ```
+
 use std::process::exit;
 use std::sync::Arc;
 
@@ -53,14 +58,14 @@ async fn run_cli() {
     };
 
     let certificate = ClientCertificate::load(&cert_path).unwrap_or_else(|e| {
-        eprintln!("Failed to load certificate '{}': {}", cert_path, e);
+        eprintln!("Failed to load certificate '{cert_path}': {e}");
         exit(1);
     });
 
     let settings = Arc::new(SettingsBuilder::<DefaultExecutor>::new().build().expect("default settings should be valid"));
 
-    println!("Certificate: {}", cert_path);
-    println!("Mode:        {:?}", mode);
+    println!("Certificate: {cert_path}");
+    println!("Mode:        {mode:?}");
     println!("Addresses:   {:?}", certificate.addresses());
     println!();
 
@@ -68,10 +73,10 @@ async fn run_cli() {
 
     println!("Results:");
     if let Some(r) = result.reachable {
-        println!("  reachable:      {}", r);
+        println!("  reachable:      {r}");
     }
     if let Some(rtt) = result.rtt_ms {
-        println!("  rtt:            {:.2} ms", rtt);
+        println!("  rtt:            {rtt:.2} ms");
     }
     if let Some(bps) = result.throughput_bps {
         println!("  throughput:     {:.0} B/s  ({:.2} Mbit/s)", bps, bps * 8.0 / 1_000_000.0);

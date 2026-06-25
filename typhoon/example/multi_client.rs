@@ -1,6 +1,6 @@
 /// Multi-client example: several clients connect concurrently to one server.
 /// Each client sends a unique set of messages; the server handles all sessions in parallel.
-/// Tests independent session isolation and concurrent RwLock read access to the sessions map.
+/// Tests independent session isolation and concurrent `RwLock` read access to the sessions map.
 use std::sync::Arc;
 
 use env_logger::init;
@@ -109,5 +109,5 @@ async fn run() {
         assert_eq!(count, MESSAGES_PER_CLIENT, "server echoed wrong count for client {id}");
     }
 
-    println!("Success! {} clients × {} messages all round-tripped correctly.", CLIENT_COUNT, MESSAGES_PER_CLIENT);
+    println!("Success! {CLIENT_COUNT} clients × {MESSAGES_PER_CLIENT} messages all round-tripped correctly.");
 }

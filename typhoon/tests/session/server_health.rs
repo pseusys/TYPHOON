@@ -63,16 +63,16 @@ fn test_identity() -> StaticByteBuffer {
 
 /// Settings with very short delays for fast tests.
 /// Constraints satisfied:
-///   TIMEOUT_MIN(5) ≤ TIMEOUT_DEFAULT(10) ≤ TIMEOUT_MAX(20)
-///   HEALTH_CHECK_NEXT_IN_MIN(21) > TIMEOUT_MAX(20)
-///   HEALTH_CHECK_NEXT_IN_MIN(21) ≤ HEALTH_CHECK_NEXT_IN_MAX(100)
-///   RTT_MIN(1) ≤ RTT_DEFAULT(1) ≤ RTT_MAX(5) — kept tiny so the shadowride window
-///   (smooth_rtt * 2) never dominates these tests' short sleep/assertion windows.
+///   `TIMEOUT_MIN(5)` ≤ `TIMEOUT_DEFAULT(10)` ≤ `TIMEOUT_MAX(20)`
+///   `HEALTH_CHECK_NEXT_IN_MIN(21)` > `TIMEOUT_MAX(20)`
+///   `HEALTH_CHECK_NEXT_IN_MIN(21)` ≤ `HEALTH_CHECK_NEXT_IN_MAX(100)`
+///   `RTT_MIN(1)` ≤ `RTT_DEFAULT(1)` ≤ `RTT_MAX(5)` — kept tiny so the shadowride window
+///   (`smooth_rtt` * 2) never dominates these tests' short sleep/assertion windows.
 fn fast_settings() -> Arc<Settings<DefaultExecutor>> {
     Arc::new(SettingsBuilder::new().set(&keys::TIMEOUT_MIN, 5u64).set(&keys::TIMEOUT_DEFAULT, 10u64).set(&keys::TIMEOUT_MAX, 20u64).set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 21u64).set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 100u64).set(&keys::MAX_RETRIES, 2u64).set(&keys::RTT_MIN, 1u64).set(&keys::RTT_DEFAULT, 1u64).set(&keys::RTT_MAX, 5u64).build().unwrap())
 }
 
-/// Parse PN, TM and flags from the raw buffer emitted by ServerHealthProvider.
+/// Parse PN, TM and flags from the raw buffer emitted by `ServerHealthProvider`.
 /// A health-check response has no body, so the whole buffer is the tailer.
 fn parse_response(packet: &DynamicByteBuffer) -> (u64, u32, PacketFlags) {
     let tailer_size = TAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH;

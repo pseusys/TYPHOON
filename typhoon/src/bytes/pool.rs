@@ -34,6 +34,15 @@ impl PoolStorage {
     }
 }
 
+impl Drop for PoolStorage {
+    /// Free buffers still queued (preallocated but never taken, or returned and never reused).
+    fn drop(&mut self) {
+        while let Some(ptr) = self.buffers.pop() {
+            free_ptr(ptr, self.capacity);
+        }
+    }
+}
+
 pub(crate) type PoolReturn = Arc<PoolStorage>;
 
 /// Thread-safe pool of reusable byte buffers.
@@ -63,6 +72,11 @@ impl BytePool {
     /// - `after_cap`: trailer space after main data
     /// - `initial`: pre-allocated buffer count
     /// - `max_pooled`: maximum buffers to keep in pool
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the backing queue is sized to `max_pooled.max(initial)`, so pushing
+    /// `initial` buffers can never exceed its capacity.
     pub fn new(before_cap: usize, size: usize, after_cap: usize, initial: usize, max_pooled: usize) -> Self {
         let capacity = before_cap + size + after_cap;
         let actual_max = max_pooled.max(initial);
@@ -86,7 +100,7 @@ impl BytePool {
     /// Get a buffer from pool or allocate new one.
     /// - `size`: optional size limit (must be <= pool's size), None for full size
     ///
-    /// Returns a DynamicByteBuffer that auto-returns to pool on drop.
+    /// Returns a `DynamicByteBuffer` that auto-returns to pool on drop.
     #[inline]
     pub fn allocate(&self, size: Option<usize>) -> DynamicByteBuffer {
         match size {
@@ -96,14 +110,20 @@ impl BytePool {
     }
 
     /// Allocate a buffer sized for receiving raw packets from the network.
-    /// Uses the maximum available active view (size + after_cap) to accommodate
+    /// Uses the maximum available active view (size + `after_cap`) to accommodate
     /// on-wire packets that are larger than the user-data MTU due to protocol overhead.
-    /// The before_cap headroom is preserved for subsequent send-path expand_start calls.
+    /// The `before_cap` headroom is preserved for subsequent send-path `expand_start` calls.
     #[inline]
     pub fn allocate_for_recv(&self) -> DynamicByteBuffer {
         self.allocate_precise(self.size + self.after_cap, self.before_cap, 0)
     }
 
+    /// Allocate a buffer with an exact `size`, `before_cap`, and `after_cap`, bypassing the
+    /// pool's configured defaults.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `before_cap + size + after_cap` exceeds the pool's capacity.
     #[inline]
     pub fn allocate_precise(&self, size: usize, before_cap: usize, after_cap: usize) -> DynamicByteBuffer {
         let requested_size = before_cap + size + after_cap;
@@ -114,6 +134,7 @@ impl BytePool {
         DynamicByteBuffer::new(data, self.storage.capacity, before_cap, size, actual_after_cap, Arc::clone(&self.storage))
     }
 
+    /// Like [`Self::allocate_precise`], but also copies `data` into the buffer's main view.
     #[inline]
     pub fn allocate_precise_from_slice_with_capacity(&self, data: &[u8], before_cap: usize, after_cap: usize) -> DynamicByteBuffer {
         let buff = self.allocate_precise(data.len(), before_cap, after_cap);
@@ -123,6 +144,7 @@ impl BytePool {
         buff
     }
 
+    /// Like [`Self::allocate_precise_from_slice_with_capacity`], for a fixed-size array.
     #[inline]
     pub fn allocate_precise_from_array_with_capacity<const N: usize>(&self, arr: &[u8; N], before_cap: usize, after_cap: usize) -> DynamicByteBuffer {
         self.allocate_precise_from_slice_with_capacity(arr.as_slice(), before_cap, after_cap)

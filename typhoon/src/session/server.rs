@@ -69,7 +69,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     /// `crypto_state` must be constructed with the initial handshake key **before** calling
     /// this function (the caller uses its `Listener::make_initial_crypto_state` helper).
     /// `response_body` must also be pre-computed outside the `users` lock so that
-    /// CPU-intensive McEliece work is not serialized through the shared-map mutex.
+    /// CPU-intensive `McEliece` work is not serialized through the shared-map mutex.
     /// `router` is forwarded to the health provider only — the session itself
     /// no longer holds a router reference.
     ///
@@ -143,7 +143,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         }
         let mut entry = self.crypto_send.create_entry();
         let user_state = entry.get_mut().await.map_err(SessionControllerError::MissingCache)?;
-        let encrypted_payload = user_state.crypto_mut().encrypt_payload(packet, None).map_err(SessionControllerError::CryptoError)?;
+        let encrypted_payload = user_state.crypto_mut().encrypt_payload(packet, None).map_err(SessionControllerError::Crypto)?;
 
         let payload_length = encrypted_payload.len() as u16;
         drop(entry);
@@ -170,7 +170,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     }
 
     /// Process an incoming packet from the Listener.
-    /// Decrypted data is sent to the ClientHandle via user_data_tx.
+    /// Decrypted data is sent to the `ClientHandle` via `user_data_tx`.
     pub async fn process_incoming(&self, incoming: IncomingPacket<T>) -> Result<(), SessionControllerError> {
         let IncomingPacket {
             body,

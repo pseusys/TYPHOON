@@ -128,8 +128,10 @@ cfg_if! {
     }
 }
 
+/// [`Settings`] parameterized over the default executor for the active runtime feature flag.
 pub type DefaultSettings = Settings<DefaultExecutor>;
 
+/// [`Tailer`] parameterized over the default [`StaticByteBuffer`]-backed identity type.
 pub type DefaultTailer = Tailer<StaticByteBuffer>;
 
 /// Server connection handler that produces a fresh random identity for each handshake,
@@ -163,8 +165,8 @@ impl ServerConnectionHandler<StaticByteBuffer> for DefaultServerConnectionHandle
     }
 }
 
-/// No-op active probe handler. Both [`start`] and [`process`] do nothing;
-/// unidentified packets are dropped silently.
+/// No-op active probe handler. Both [`ActiveProbeHandler::start`] and [`ActiveProbeHandler::process`]
+/// do nothing; unidentified packets are dropped silently.
 #[derive(Default)]
 pub struct NoopProbeHandler;
 

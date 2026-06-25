@@ -1,4 +1,5 @@
-/// Simple mode: no-op decoy provider that passes packets through without generating any decoy traffic.
+//! Simple mode: no-op decoy provider that passes packets through without generating any decoy traffic.
+
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Weak};
 

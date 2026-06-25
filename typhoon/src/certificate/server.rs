@@ -31,7 +31,7 @@ use crate::utils::random::get_rng;
 
 // ── ServerSecret ──────────────────────────────────────────────────────────────
 
-/// Server secret: McEliece secret key + Ed25519 signing key + X25519 obfuscation keys (full mode).
+/// Server secret: `McEliece` secret key + Ed25519 signing key + X25519 obfuscation keys (full mode).
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 pub(crate) struct ServerSecret<'a> {
     pub esk: SecretKey<'a>,
@@ -40,7 +40,7 @@ pub(crate) struct ServerSecret<'a> {
     pub osk: StaticSecret,
 }
 
-/// Server secret: McEliece secret key + Ed25519 signing key + obfuscation key (fast mode).
+/// Server secret: `McEliece` secret key + Ed25519 signing key + obfuscation key (fast mode).
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 pub(crate) struct ServerSecret<'a> {
     pub esk: SecretKey<'a>,
@@ -64,7 +64,7 @@ impl ObfuscationBufferContainer for ServerSecret<'_> {
 
 // ── ServerKeyPair ─────────────────────────────────────────────────────────────
 
-/// Full server key material: McEliece + Ed25519 + symmetric obfuscation key (fast mode).
+/// Full server key material: `McEliece` + Ed25519 + symmetric obfuscation key (fast mode).
 ///
 /// Generated once at server setup, saved to a file, and loaded on each server start.
 /// Use [`to_client_certificate`](Self::to_client_certificate) to produce distributable client
@@ -79,7 +79,7 @@ pub struct ServerKeyPair {
     obfs: FixedByteBuffer<ED25519_BYTES>,
 }
 
-/// Full server key material: McEliece + Ed25519 + X25519 obfuscation keys (full mode).
+/// Full server key material: `McEliece` + Ed25519 + X25519 obfuscation keys (full mode).
 ///
 /// Generated once at server setup, saved to a file, and loaded on each server start.
 /// Use [`to_client_certificate`](Self::to_client_certificate) to produce distributable client
@@ -182,11 +182,15 @@ impl ServerKeyPair {
     /// | Offset       | Size                 | Field  | Description |
     /// |--------------|----------------------|--------|-------------|
     /// | 0            | 10                   | Header | Magic `TYPHOON`, type `S`, mode `F`, version `1` |
-    /// | 10           | 261120 (`EPK_BYTES`) | EPK    | Classic McEliece 348864 public key |
-    /// | 261130       | 6492 (`ESK_BYTES`)   | ESK    | Classic McEliece 348864 secret key |
+    /// | 10           | 261120 (`EPK_BYTES`) | EPK    | Classic `McEliece` 348864 public key |
+    /// | 261130       | 6492 (`ESK_BYTES`)   | ESK    | Classic `McEliece` 348864 secret key |
     /// | 267622       | 32 (`ED25519_BYTES`) | VSK    | Ed25519 signing key (seed) |
     /// | 267654       | 32 (`ED25519_BYTES`) | OBFS   | Symmetric tailer obfuscation key |
     /// | **267686**   | —                    | EOF    | |
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CertificateError::Io`] if the file cannot be created or written to.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), CertificateError> {
         let mut f = File::create(path)?;
@@ -205,12 +209,16 @@ impl ServerKeyPair {
     /// | Offset       | Size                 | Field  | Description |
     /// |--------------|----------------------|--------|-------------|
     /// | 0            | 10                   | Header | Magic `TYPHOON`, type `S`, mode `U`, version `1` |
-    /// | 10           | 261120 (`EPK_BYTES`) | EPK    | Classic McEliece 348864 public key |
-    /// | 261130       | 6492 (`ESK_BYTES`)   | ESK    | Classic McEliece 348864 secret key |
+    /// | 10           | 261120 (`EPK_BYTES`) | EPK    | Classic `McEliece` 348864 public key |
+    /// | 261130       | 6492 (`ESK_BYTES`)   | ESK    | Classic `McEliece` 348864 secret key |
     /// | 267622       | 32 (`ED25519_BYTES`) | VSK    | Ed25519 signing key (seed) |
     /// | 267654       | 32 (`X25519_BYTES`)  | OPK    | X25519 long-term public key |
     /// | 267686       | 32 (`X25519_BYTES`)  | OSK    | X25519 static secret key |
     /// | **267718**   | —                    | EOF    | |
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CertificateError::Io`] if the file cannot be created or written to.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), CertificateError> {
         let mut f = File::create(path)?;
@@ -224,6 +232,13 @@ impl ServerKeyPair {
     }
 
     /// Load a server key pair from a binary file produced by [`save`](Self::save) (fast mode).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CertificateError::Io`] if the file cannot be read, or one of
+    /// [`CertificateError::InvalidMagic`], [`CertificateError::InvalidType`],
+    /// [`CertificateError::ModeMismatch`], or [`CertificateError::UnsupportedVersion`] if the
+    /// file's contents are malformed or were written for a different mode.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     pub fn load(path: impl AsRef<Path>) -> Result<Self, CertificateError> {
         let mut f = File::open(path)?;
@@ -246,6 +261,13 @@ impl ServerKeyPair {
     }
 
     /// Load a server key pair from a binary file produced by [`save`](Self::save) (full mode).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CertificateError::Io`] if the file cannot be read, or one of
+    /// [`CertificateError::InvalidMagic`], [`CertificateError::InvalidType`],
+    /// [`CertificateError::ModeMismatch`], or [`CertificateError::UnsupportedVersion`] if the
+    /// file's contents are malformed or were written for a different mode.
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     pub fn load(path: impl AsRef<Path>) -> Result<Self, CertificateError> {
         let mut f = File::open(path)?;
@@ -273,7 +295,7 @@ impl ServerKeyPair {
 
 // ── Debug impl ────────────────────────────────────────────────────────────────
 
-/// Manual Debug for full-mode ServerKeyPair: StaticSecret does not implement Debug.
+/// Manual Debug for full-mode `ServerKeyPair`: `StaticSecret` does not implement Debug.
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 impl Debug for ServerKeyPair {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {

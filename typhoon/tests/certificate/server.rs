@@ -10,9 +10,9 @@ use crate::certificate::ClientCertificate;
 impl ServerKeyPair {
     /// Load from the mode-appropriate env var path when set; otherwise generate (and save).
     ///
-    /// Set `TYPHOON_TEST_SERVER_KEY_FAST` (fast_software/fast_hardware) or
-    /// `TYPHOON_TEST_SERVER_KEY_FULL` (full_software/full_hardware) to a file path before
-    /// running tests to skip expensive McEliece key generation.
+    /// Set `TYPHOON_TEST_SERVER_KEY_FAST` (`fast_software/fast_hardware`) or
+    /// `TYPHOON_TEST_SERVER_KEY_FULL` (`full_software/full_hardware`) to a file path before
+    /// running tests to skip expensive `McEliece` key generation.
     pub fn for_tests() -> Self {
         let env_var = if cfg!(any(feature = "fast_software", feature = "fast_hardware")) {
             "TYPHOON_TEST_SERVER_KEY_FAST"
@@ -22,10 +22,10 @@ impl ServerKeyPair {
 
         if let Ok(path) = var(env_var) {
             let p = Path::new(&path);
-            if p.exists() {
-                if let Ok(kp) = Self::load(p) {
-                    return kp;
-                }
+            if p.exists()
+                && let Ok(kp) = Self::load(p)
+            {
+                return kp;
             }
             let kp = Self::generate();
             let _ = kp.save(p);
@@ -35,7 +35,7 @@ impl ServerKeyPair {
         }
     }
 
-    /// Create a matched (ClientCertificate, ServerSecret) pair for use in tests.
+    /// Create a matched (`ClientCertificate`, `ServerSecret`) pair for use in tests.
     /// Calls `for_tests()` once so both sides share the same key material.
     #[cfg(all(feature = "client", feature = "server"))]
     pub(crate) fn for_tests_pair() -> (ClientCertificate, ServerSecret<'static>) {

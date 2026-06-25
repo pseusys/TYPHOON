@@ -1,5 +1,5 @@
 /// Immutable byte buffer trait for read-only access to buffer data.
-/// Implemented by both OwnedByteBuffer (immutable, Send+Sync) and ManagedByteBuffer (mutable, Send).
+/// Implemented by both `OwnedByteBuffer` (immutable, Send+Sync) and `ManagedByteBuffer` (mutable, Send).
 pub trait ByteBuffer: AsRef<[u8]> + Clone + Send {
     /// Returns the length of the current view in bytes.
     fn len(&self) -> usize;
@@ -30,7 +30,7 @@ pub trait ByteBuffer: AsRef<[u8]> + Clone + Send {
 }
 
 /// Mutable byte buffer trait for read-write access to buffer data.
-/// Only implemented by ManagedByteBuffer (pool-attached, mutable, Send).
+/// Only implemented by `ManagedByteBuffer` (pool-attached, mutable, Send).
 pub trait ByteBufferMut: ByteBuffer + AsMut<[u8]> {
     /// Set byte at `at` index to `value`. Panics if out of bounds.
     fn set(&self, at: usize, value: u8);
