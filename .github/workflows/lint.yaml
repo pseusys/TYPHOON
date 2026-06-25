@@ -48,7 +48,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
-          components: rustfmt, clippy
+          components: rustfmt, clippy, miri
           rust-src-dir: typhoon
           override: true
 
@@ -68,6 +68,13 @@ jobs:
         run: |
           cargo clippy --lib --bins --examples --benches --features debug,capture,clap
           cargo clippy --lib --bins --examples --benches --no-default-features --features full_hardware,server,client,async-std,debug,capture,clap
+
+      - name: Run miri on unsafe code 🔬
+        working-directory: typhoon
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-many-seeds=0..8
+        run: |
+          cargo miri test --lib bytes::
 
       - name: Check documentation 📚
         working-directory: typhoon

@@ -34,6 +34,15 @@ impl PoolStorage {
     }
 }
 
+impl Drop for PoolStorage {
+    /// Free buffers still queued (preallocated but never taken, or returned and never reused).
+    fn drop(&mut self) {
+        while let Some(ptr) = self.buffers.pop() {
+            free_ptr(ptr, self.capacity);
+        }
+    }
+}
+
 pub(crate) type PoolReturn = Arc<PoolStorage>;
 
 /// Thread-safe pool of reusable byte buffers.
