@@ -23,7 +23,7 @@ use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, FuturePool, Mutex, WatchReceiver, WatchSender, sleep};
 use crate::utils::unix_timestamp_ms;
 
-/// Response type for the health check channel: (server_next_in, receive_time, optional handshake body, optional server identity).
+/// Response type for the health check channel: (`server_next_in`, `receive_time`, optional handshake body, optional server identity).
 type HealthResponse<T> = (u32, u128, Option<DynamicByteBuffer>, Option<T>);
 
 /// Events produced when waiting for a health check response.
@@ -56,11 +56,11 @@ pub(super) struct HealthState<T: IdentityType + Clone, AE: AsyncExecutor, CC: Cl
     retry_count: u64,
     /// Timestamp when the last health check was sent.
     last_sent_time: u128,
-    /// The next_in value of the last sent health check (client's TM).
+    /// The `next_in` value of the last sent health check (client's TM).
     last_sent_next_in: u32,
     /// The PN of the current outstanding health check.
     current_pn: u64,
-    /// Pending shadowride data: (PN, next_in) to attach to next data packet.
+    /// Pending shadowride data: (PN, `next_in`) to attach to next data packet.
     shadowride_pending: Option<(u64, u32)>,
     /// Client crypto tool for encryption and identity.
     crypto_tool: SharedValue<ClientCryptoTool<T>>,
@@ -108,7 +108,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
         ((counter as u64) << 32) | (timestamp as u64)
     }
 
-    /// Compute a random next_in delay, clamped to configured bounds.
+    /// Compute a random `next_in` delay, clamped to configured bounds.
     fn compute_next_in(&self) -> u32 {
         let min = self.settings.get(&HEALTH_CHECK_NEXT_IN_MIN);
         let max = self.settings.get(&HEALTH_CHECK_NEXT_IN_MAX);
@@ -143,7 +143,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
         Tailer::health_check(buf, &identity, next_in, pn).into_buffer()
     }
 
-    /// Create a handshake packet with encryption: handshake_secret || tailer.
+    /// Create a handshake packet with encryption: `handshake_secret` || tailer.
     /// Also advances the crypto tool to the initial key so callers need not do it separately.
     fn create_handshake_packet(&mut self, pn: u64, next_in: u32) -> DynamicByteBuffer {
         let settings = self.settings.clone();
@@ -165,7 +165,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, CC: ClientConnectionHandler> He
     }
 
     /// Process the server handshake response and derive the session key.
-    /// Returns (session_key, server_initial_data).
+    /// Returns (`session_key`, `server_initial_data`).
     fn process_handshake_response(&mut self, handshake_body: DynamicByteBuffer) -> Option<(FixedByteBuffer<32>, DynamicByteBuffer)> {
         let client_data = self.client_data.take()?;
         match self.crypto_tool.get().process_handshake_response(client_data, handshake_body, self.settings.pool()) {
@@ -249,7 +249,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         (identity, code)
     }
 
-    /// Called when a packet with HEALTH_CHECK flag is received.
+    /// Called when a packet with `HEALTH_CHECK` flag is received.
     pub async fn feed_input(&self, tailer: Tailer<T>) -> Result<(), SessionControllerError> {
         let pn = tailer.packet_number();
         let time = tailer.time();
@@ -328,7 +328,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         Self::try_send_static(&self.manager, packet, &self.state).await
     }
 
-    /// Static version of try_send for use in spawned background tasks.
+    /// Static version of `try_send` for use in spawned background tasks.
     async fn try_send_static(manager: &Weak<SM>, packet: DynamicByteBuffer, state: &Arc<Mutex<HealthState<T, AE, CC>>>) -> SendOutcome {
         let Some(mgr) = manager.upgrade() else {
             warn!("health provider: session manager dropped unexpectedly");
@@ -422,7 +422,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, SM: SessionManager + Send + Syn
         }
     }
 
-    /// Attempt to send a health check, with shadowriding if a previous server_next_in is available.
+    /// Attempt to send a health check, with shadowriding if a previous `server_next_in` is available.
     async fn send_or_shadowride(manager: &Weak<SM>, state: &Arc<Mutex<HealthState<T, AE, CC>>>, shadowride_rx: &mut WatchReceiver<()>, server_next_in: Option<u32>, pn: u64, next_in: u32) -> SendOutcome {
         if let Some(srv_ni) = server_next_in {
             let rtt = state.lock().await.smooth_rtt_or_default();

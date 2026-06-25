@@ -1,4 +1,5 @@
-/// Heavy mode: sends large decoy packets at a low cadence (~0.1 pkt/s base, capped at 0.2 pkt/s), resembling background heartbeat / metric-push / software-update-poll traffic.
+//! Heavy mode: sends large decoy packets at a low cadence (~0.1 pkt/s base, capped at 0.2 pkt/s), resembling background heartbeat / metric-push / software-update-poll traffic.
+
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -8,7 +9,8 @@ use log::warn;
 
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::cache::DerivedValue;
-use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DecoyState, exponential_variance, maintenance_timer_task, random_uniform, try_replicate};
+use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DecoyState, exponential_variance, random_uniform};
+use crate::flow::decoy::features::{maintenance_timer_task, try_replicate};
 use crate::settings::Settings;
 use crate::settings::consts::FG_OFFSET;
 use crate::settings::keys::*;

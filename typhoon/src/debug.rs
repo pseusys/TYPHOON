@@ -41,9 +41,11 @@ cfg_if! {
     }
 }
 
-/// Phase identifier constants embedded in the lower 32 bits of the debug PN field.
+/// Phase identifier embedded in the lower 32 bits of the debug PN field: reachability phase.
 pub const PHASE_REACHABILITY: u32 = 0;
+/// Phase identifier embedded in the lower 32 bits of the debug PN field: round-trip-time phase.
 pub const PHASE_RETURN_TIME: u32 = 1;
+/// Phase identifier embedded in the lower 32 bits of the debug PN field: throughput phase.
 pub const PHASE_THROUGHPUT: u32 = 2;
 
 /// Probe payload header size in bytes.
@@ -158,7 +160,7 @@ fn make_probe(phase: u32, sequence: u32, extra: usize) -> Vec<u8> {
 }
 
 /// Refresh the send timestamp in an already-allocated probe buffer and return it.
-fn stamp_probe(buf: &mut Vec<u8>, sequence: u32) {
+fn stamp_probe(buf: &mut [u8], sequence: u32) {
     buf[0..4].copy_from_slice(&sequence.to_be_bytes());
     buf[8..16].copy_from_slice(&(unix_timestamp_ms() as u64).to_be_bytes());
 }
@@ -204,14 +206,11 @@ pub async fn run_debug(certificate: ClientCertificate, mode: DebugMode, settings
     for &addr in certificate.addresses() {
         builder = builder.with_flow_config(addr, FlowConfig::new(FakeBodyMode::Empty, FakeHeaderConfig::new(vec![])));
     }
-    let socket = match builder.build().await {
-        Ok(s) => s,
-        Err(_) => {
-            if mode.run_reachability() {
-                result.reachable = Some(false);
-            }
-            return result;
+    let Ok(socket) = builder.build().await else {
+        if mode.run_reachability() {
+            result.reachable = Some(false);
         }
+        return result;
     };
 
     // ── Reachability ─────────────────────────────────────────────────────────
@@ -246,7 +245,7 @@ pub async fn run_debug(certificate: ClientCertificate, mode: DebugMode, settings
                 if let Some(send_time) = parse_send_time(&response) {
                     let rtt = unix_timestamp_ms().saturating_sub(send_time as u128);
                     result.rtt_ms = Some(rtt as f64);
-                    debug!("debug probe: RTT={:.1}ms", rtt);
+                    debug!("debug probe: RTT={rtt:.1}ms");
                 }
             } else {
                 debug!("debug probe: RTT probe timed out");
@@ -265,7 +264,7 @@ pub async fn run_debug(certificate: ClientCertificate, mode: DebugMode, settings
         let chunks_per_probe = probe_payload_size.div_ceil(max_data_payload);
         let total_echo_packets = probe_count * chunks_per_probe;
 
-        info!("debug probe: throughput phase — {} probe(s) × {}B payload, max_data_payload={}B → {} echo packet(s) expected", probe_count, probe_payload_size, max_data_payload, total_echo_packets);
+        info!("debug probe: throughput phase — {probe_count} probe(s) × {probe_payload_size}B payload, max_data_payload={max_data_payload}B → {total_echo_packets} echo packet(s) expected");
 
         let mut probe_buf = make_probe(PHASE_THROUGHPUT, 0, probe_size);
         let start_ms = unix_timestamp_ms();
@@ -275,9 +274,9 @@ pub async fn run_debug(certificate: ClientCertificate, mode: DebugMode, settings
             // packets_sent counts UDP wire packets (chunks), not logical probes, so it is
             // comparable to packets_received which also counts individual UDP echo packets.
             result.packets_sent += chunks_per_probe;
-            trace!("debug probe: sending throughput probe seq={} ({} UDP packet(s))", seq, chunks_per_probe);
+            trace!("debug probe: sending throughput probe seq={seq} ({chunks_per_probe} UDP packet(s))");
             if socket.send_bytes(&probe_buf).await.is_err() {
-                debug!("debug probe: send error on seq={}, aborting", seq);
+                debug!("debug probe: send error on seq={seq}, aborting");
                 break;
             }
         }

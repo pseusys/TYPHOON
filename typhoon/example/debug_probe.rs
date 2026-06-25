@@ -40,7 +40,7 @@ async fn run() {
     let server_flow = ServerFlowConfiguration::with_address(flow_config, server_addr);
     let listener: Arc<_> = Arc::new(ServerBuilder::<StaticByteBuffer, DefaultExecutor, DebugServerConnectionHandler>::new(key_pair, DebugServerConnectionHandler).add_flow(server_flow).with_settings(settings.clone()).build_listener().await.expect("listener should build"));
     listener.start().await;
-    println!("Debug echo server listening on {}", server_addr);
+    println!("Debug echo server listening on {server_addr}");
 
     // Spawn a per-client echo loop for every connecting debug client.
     let listener_handle = listener.clone();
@@ -57,18 +57,18 @@ async fn run() {
                     let data = match client.receive_bytes().await {
                         Ok(d) => d,
                         Err(e) => {
-                            debug!("echo loop: receive error after {} echo(es): {}", echo_count, e);
+                            debug!("echo loop: receive error after {echo_count} echo(es): {e}");
                             break;
                         }
                     };
                     echo_count += 1;
                     debug!("echo loop: received #{} ({} bytes), forwarding", echo_count, data.len());
                     if let Err(e) = client.send_bytes(&data).await {
-                        debug!("echo loop: send error on echo #{}: {}", echo_count, e);
+                        debug!("echo loop: send error on echo #{echo_count}: {e}");
                         break;
                     }
                 }
-                debug!("echo loop: exited after {} echo(es)", echo_count);
+                debug!("echo loop: exited after {echo_count} echo(es)");
             });
         }
     });

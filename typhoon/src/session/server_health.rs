@@ -57,13 +57,13 @@ async fn wait_for_shadowride(timeout_ms: u64, shadowride_rx: &mut WatchReceiver<
 
 /// Server-side health check provider.
 /// Receives health check triggers from `process_incoming`, waits the client's requested
-/// shadowride window, then sends a response echoing the client PN and a fresh server next_in.
+/// shadowride window, then sends a response echoing the client PN and a fresh server `next_in`.
 /// Tracks whether the next client health check arrives within `server_next_in + timeout`;
-/// retries up to MAX_RETRIES then calls `remove_session` to decay the connection.
+/// retries up to `MAX_RETRIES` then calls `remove_session` to decay the connection.
 pub(super) struct ServerHealthProvider {
     trigger_tx: WatchSender<(u32, u64, u128)>,
     shadowride_tx: WatchSender<()>,
-    /// Pending shadowride data: (PN, next_in) to attach to the next outgoing data packet.
+    /// Pending shadowride data: (PN, `next_in`) to attach to the next outgoing data packet.
     shadowride_pending: Arc<Mutex<Option<(u64, u32)>>>,
 }
 

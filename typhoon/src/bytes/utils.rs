@@ -2,7 +2,7 @@
 #[path = "../../tests/bytes/utils.rs"]
 mod tests;
 
-use std::ptr::copy_nonoverlapping;
+use std::ptr::{copy_nonoverlapping, slice_from_raw_parts_mut};
 
 pub(crate) fn preserve_vector(vector: Vec<u8>) -> *mut u8 {
     vector.leak().as_mut_ptr()
@@ -19,6 +19,5 @@ pub(crate) fn copy_slice(ptr: *mut u8, slice: &[u8]) {
 }
 
 pub(crate) fn free_ptr(ptr: *mut u8, length: usize) {
-    let vector = unsafe { Vec::<u8>::from_raw_parts(ptr, length, length) };
-    drop(vector);
+    drop(unsafe { Box::from_raw(slice_from_raw_parts_mut(ptr, length)) });
 }

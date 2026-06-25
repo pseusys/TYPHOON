@@ -1,4 +1,5 @@
-/// Server-side flow manager implementation.
+//! Server-side flow manager implementation.
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
@@ -13,7 +14,7 @@ use rand::Rng;
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::DerivedValue;
 use crate::capture::{record_flow_config, record_server_send};
-use crate::crypto::{ObfuscationTranscript, ServerCryptoTool};
+use crate::crypto::{ObfuscationTranscript, ServerCryptoTool, TAILER_S2C_OVERHEAD};
 use crate::defaults::NoopProbeHandler;
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
@@ -48,10 +49,10 @@ struct PathBinding {
 }
 
 /// Server-side flow manager that handles per-user packet encryption, decoy traffic, and socket I/O.
-/// Per-user crypto state is in the global SharedMap (accessed via ServerCryptoTool).
+/// Per-user crypto state is in the global `SharedMap` (accessed via `ServerCryptoTool`).
 /// Send and receive crypto are split into independent instances so their locks never contend.
 /// Per-user source addresses and decoy providers are local to each flow manager instance.
-/// When built with multiple sockets (SO_REUSEPORT on Linux), each socket is polled by its own
+/// When built with multiple sockets (`SO_REUSEPORT` on Linux), each socket is polled by its own
 /// drain task in the listener; the kernel distributes incoming datagrams across all sockets.
 pub struct ServerFlowManager<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> {
     user_bindings: RwLock<HashMap<T, RwLock<PathBinding>>>,
@@ -72,7 +73,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     /// Create a new server flow manager.
     /// `crypto_send` and `crypto_recv` must be independent instances (e.g. two `create_cache()` calls
     /// on the same `SharedMap`) so their mutexes never contend between the send and receive paths.
-    /// `socks` must contain at least one socket; on Linux with SO_REUSEPORT multiple sockets may be
+    /// `socks` must contain at least one socket; on Linux with `SO_REUSEPORT` multiple sockets may be
     /// supplied so that the listener can spawn one drain task per socket.
     pub(crate) async fn new(config: FlowConfig, probe_factory: Option<&ProbeFactory<AE>>, crypto_send: ServerCryptoTool<T>, crypto_recv: ServerCryptoTool<T>, settings: Arc<Settings<AE>>, socks: Vec<Arc<Socket>>, decoy_factory: DecoyFactory<T, AE>) -> Arc<Self> {
         let max_overhead = config.max_overhead();
@@ -129,7 +130,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
     }
 
     /// Register a per-user decoy provider and start its background timer.
-    /// The user's crypto state must already be in the global SharedMap.
+    /// The user's crypto state must already be in the global `SharedMap`.
     pub async fn register_user(self: &Arc<Self>, id: T, counter: Arc<AtomicU32>) {
         let weak: Weak<Self> = Arc::downgrade(self);
         let mgr: Weak<dyn DecoyFlowSender> = weak;
@@ -169,7 +170,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let encrypted_tailer_len = Tailer::<T>::encrypted_len_c2s();
 
         loop {
-            let (packet, source_addr) = sock.recv_from(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
+            let (packet, source_addr) = sock.recv_from(packet.clone()).await.map_err(FlowControllerError::Socket)?;
 
             // Undersized wire packets (shorter than the encrypted tailer) can't be valid Typhoon; forward to the probe handler and keep draining.
             if packet.len() < encrypted_tailer_len {
@@ -331,9 +332,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 let mut crypto = self.crypto_send.lock().await;
                 crypto.obfuscate_tailer(packet_tailer, self.settings.pool()).await.map_err(FlowControllerError::TailerEncryption)?
             };
-            let tailer_overhead = crate::crypto::TAILER_S2C_OVERHEAD;
             let encrypted = packet_data.expand_end(encrypted_tailer.len());
-            (encrypted, flags, data_len, tailer_overhead)
+            (encrypted, flags, data_len, TAILER_S2C_OVERHEAD)
         };
 
         // Add fake header and body (single lock scope: len + fill must be consistent).
@@ -352,7 +352,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             return Ok(());
         }
         debug!("server flow: sending {packet_flags:?} packet to {addr}");
-        self.socks[0].send_to(full_packet, addr).await.map_err(FlowControllerError::SocketError)?;
+        self.socks[0].send_to(full_packet, addr).await.map_err(FlowControllerError::Socket)?;
         record_server_send(addr, || {
             let kind = if fallthrough {
                 "DecoyFallthrough"

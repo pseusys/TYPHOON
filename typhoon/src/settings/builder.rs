@@ -65,6 +65,11 @@ impl<AE: AsyncExecutor> SettingsBuilder<AE> {
     }
 
     /// Build the Settings instance, validating all invariants.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SettingsError::AssertionFailed`] if any setting (or combination of settings)
+    /// fails its internal consistency check.
     pub fn build(self) -> Result<Settings<AE>, SettingsError> {
         let settings = Settings::new(
             self.overrides,

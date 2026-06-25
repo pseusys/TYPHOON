@@ -1,12 +1,12 @@
 /// Handshake-cost benchmarks:
-///   "mceliece/keypair"  — Classic McEliece keypair generation (server one-time cost).
-///   "mceliece/encap"    — Classic McEliece encapsulation (client per-handshake cost).
-///   "mceliece/decap"    — Classic McEliece decapsulation (server per-handshake cost).
+///   "mceliece/keypair"  — Classic `McEliece` keypair generation (server one-time cost).
+///   "mceliece/encap"    — Classic `McEliece` encapsulation (client per-handshake cost).
+///   "mceliece/decap"    — Classic `McEliece` decapsulation (server per-handshake cost).
 ///   "x25519/keypair"    — X25519 ephemeral keypair generation (per-handshake baseline).
 ///   "x25519/ecdh"       — X25519 ephemeral Diffie-Hellman shared secret (per-handshake baseline).
 ///   "ed25519/sign"      — Ed25519 transcript signature (server per-handshake cost).
-///   "handshake/end_to_end" — full client `build()` over UDP loopback against a live server,
-///                            covering McEliece encap+decap, two-way X25519, Ed25519 sign+verify,
+///   "`handshake/end_to_end`" — full client `build()` over UDP loopback against a live server,
+///                            covering `McEliece` encap+decap, two-way X25519, Ed25519 sign+verify,
 ///                            tailer obfuscation, and the socket round trip.
 ///
 /// The X25519 numbers anchor a "what if TYPHOON used a lattice/ECDH KEM instead" comparison;
@@ -52,7 +52,7 @@ fn load_or_generate_key() -> ServerKeyPair {
     ServerKeyPair::generate()
 }
 
-/// Generate a McEliece keypair once for the encap/decap sub-benchmarks.
+/// Generate a `McEliece` keypair once for the encap/decap sub-benchmarks.
 /// Cached across iterations because keygen itself is benchmarked separately.
 fn cached_mceliece_keypair() -> (McEliecePublicKey<'static>, McElieceSecretKey<'static>) {
     let mut rng = ChaCha20Rng::from_entropy();
@@ -174,12 +174,8 @@ fn bench_handshake_e2e(c: &mut Criterion) {
     // is what we care about; downstream data exchange is benched in roundtrip.rs.
     let listener_drain = listener.clone();
     rt.spawn(async move {
-        loop {
-            if let Ok(client) = listener_drain.accept().await {
-                drop(client);
-            } else {
-                break;
-            }
+        while let Ok(client) = listener_drain.accept().await {
+            drop(client);
         }
     });
 

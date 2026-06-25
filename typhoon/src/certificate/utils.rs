@@ -9,9 +9,9 @@ use crate::bytes::FixedByteBuffer;
 
 // ── Stable format constants ──────────────────────────────────────────────────
 
-/// Classic McEliece 348864 public key size in bytes.
+/// Classic `McEliece` 348864 public key size in bytes.
 pub const EPK_BYTES: usize = 261_120;
-/// Classic McEliece 348864 secret key size in bytes.
+/// Classic `McEliece` 348864 secret key size in bytes.
 pub const ESK_BYTES: usize = 6_492;
 /// Ed25519 key size in bytes (signing key, verifying key, or obfuscation key).
 pub const ED25519_BYTES: usize = 32;
@@ -40,21 +40,30 @@ pub(crate) const MODE_BYTE: u8 = b'U';
 /// Error type for certificate file operations.
 #[derive(Debug, thiserror::Error)]
 pub enum CertificateError {
+    /// Reading or writing the certificate file failed at the OS level.
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
+    /// The file does not start with the expected `TYPHOON` magic bytes.
     #[error("invalid file: bad magic bytes")]
     InvalidMagic,
+    /// The file's record type byte doesn't match what the caller expected (server key pair vs. client certificate).
     #[error("invalid file type: expected '{expected}', got '{got}'")]
     InvalidType {
+        /// The record type the caller expected (`'S'` or `'C'`).
         expected: char,
+        /// The record type actually found in the file.
         got: char,
     },
+    /// The file was written under a different cipher mode (`fast` vs `full`) than the one currently active.
     #[error("mode mismatch: file was written for a different crypto mode")]
     ModeMismatch,
+    /// The file's format version byte is not supported by this version of the crate.
     #[error("unsupported format version: {0}")]
     UnsupportedVersion(u8),
+    /// The key material in the file is malformed or of unexpected length.
     #[error("invalid key data in file")]
     InvalidKeyData,
+    /// A client certificate was built with an empty address list.
     #[error("certificate contains no server addresses")]
     NoAddresses,
 }

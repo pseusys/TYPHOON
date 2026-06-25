@@ -21,7 +21,7 @@ struct LocalEntry<V> {
     source_version: u64,
 }
 
-/// Change once this is implemented: https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html
+/// Change once this is implemented: <https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html>
 pub(crate) struct SharedMap<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
     state: Arc<SharedState<K, V>>,
     local: HashMap<K, V>,
@@ -96,7 +96,7 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> Default for Shared
     }
 }
 
-/// Change once this is implemented: https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html
+/// Change once this is implemented: <https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html>
 pub(crate) struct CachedMap<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
     source: Weak<SharedState<K, V>>,
     local: HashMap<K, LocalEntry<V>>,
@@ -156,7 +156,7 @@ impl<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> CachedMapEntryTemp
 }
 
 /// Single-entry cache connected to a `SharedMap`, watching one specific key.
-/// Change once this is implemented: https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html
+/// Change once this is implemented: <https://doc.rust-lang.org/beta/unstable-book/language-features/negative-impls.html>
 pub(crate) struct CachedMapEntry<K: Clone + Eq + Hash + Send + ToString, V: Clone + Send> {
     source: Weak<SharedState<K, V>>,
     key: K,

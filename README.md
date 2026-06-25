@@ -2,6 +2,8 @@
 
 > Transfer Your Packets Hidden Over Observed Networks
 
+![Crates.io Version](https://img.shields.io/crates/v/typhoon-protocol)
+
 There are lots of data transferring protocols out there.
 Developers have made significant progress in protecting user data with various cryptographic algorithms, making encryption difficult to break.
 Still, it's possible to try, and some progress is also being made, e.g., in breaking asymmetric ciphers.

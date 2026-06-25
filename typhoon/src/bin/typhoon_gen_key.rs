@@ -1,4 +1,5 @@
-/// typhoon-gen-key: generate a TYPHOON server key pair and optionally a client certificate.
+//! typhoon-gen-key: generate a TYPHOON server key pair and optionally a client certificate.
+
 use std::env::set_var;
 use std::fs::create_dir_all;
 use std::net::SocketAddr;

@@ -1,4 +1,4 @@
-/// ClientPool example: several clients connect concurrently to one server, which dispatches all
+/// `ClientPool` example: several clients connect concurrently to one server, which dispatches all
 /// of them through a single multiplexed `ClientPool` instead of one `ClientHandle` per connection.
 /// Demonstrates `receive()`/`send()` keyed by client identity.
 use std::sync::Arc;

@@ -122,7 +122,7 @@ pub(crate) fn encrypt_anonymously(key: &[u8], plaintext: &mut DynamicByteBuffer)
 }
 
 /// Decrypt ciphertext using unauthenticated stream cipher. Extracts nonce from end.
-/// Args: key (32-byte slice), ciphertext_with_nonce. Returns: plaintext.
+/// Args: key (32-byte slice), `ciphertext_with_nonce`. Returns: plaintext.
 #[inline]
 pub(crate) fn decrypt_anonymously(key: &[u8], ciphertext_with_nonce: &mut DynamicByteBuffer) -> DynamicByteBuffer {
     let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf_end(ANONYMOUS_NONCE_LEN);
@@ -208,8 +208,8 @@ impl Symmetric {
     pub(crate) fn encrypt_auth<A: ByteBuffer>(&mut self, plaintext: DynamicByteBuffer, additional_data: Option<&A>) -> Result<DynamicByteBuffer, CryptoError> {
         let nonce = Cipher::generate_nonce(get_rng());
         let result = match additional_data {
-            Some(res) => self.cipher.encrypt_in_place_detached(&nonce, res.slice(), &mut plaintext.slice_mut()),
-            None => self.cipher.encrypt_in_place_detached(&nonce, &[], &mut plaintext.slice_mut()),
+            Some(res) => self.cipher.encrypt_in_place_detached(&nonce, res.slice(), plaintext.slice_mut()),
+            None => self.cipher.encrypt_in_place_detached(&nonce, &[], plaintext.slice_mut()),
         }
         .map_err(|e| CryptoError::encryption_error("symmetric encryption", e))?;
         Ok(plaintext.append(&nonce).append(&result))
@@ -269,12 +269,12 @@ impl Symmetric {
         let (ciphertext_with_nonce, authentication) = ciphertext_authenticated.split_buf_end(SYMMETRIC_BUILT_IN_AUTH_LEN);
         let (ciphertext, nonce_bytes) = ciphertext_with_nonce.split_buf_end(NONCE_LEN);
         let nonce_slice = nonce_bytes.slice();
-        let nonce = CipherNonce::from_slice(&nonce_slice);
+        let nonce = CipherNonce::from_slice(nonce_slice);
         let tag_slice = authentication.slice();
-        let tag = CipherTag::from_slice(&tag_slice);
+        let tag = CipherTag::from_slice(tag_slice);
         match additional_data {
-            Some(res) => self.cipher.decrypt_in_place_detached(&nonce, res.slice(), &mut ciphertext.slice_mut(), &tag),
-            None => self.cipher.decrypt_in_place_detached(&nonce, &[], &mut ciphertext.slice_mut(), &tag),
+            Some(res) => self.cipher.decrypt_in_place_detached(nonce, res.slice(), ciphertext.slice_mut(), tag),
+            None => self.cipher.decrypt_in_place_detached(nonce, &[], ciphertext.slice_mut(), tag),
         }
         .map_err(|e| CryptoError::encryption_error("symmetric decryption", e))?;
         Ok(ciphertext)
