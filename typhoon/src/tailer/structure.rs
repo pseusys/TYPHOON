@@ -22,10 +22,11 @@ pub trait IdentityType: Send + Sync {
     fn length() -> usize;
 }
 
-/// Server-side connection handler: generates identities, produces server initial data, and checks client version.
+/// Server-side connection handler: generates identities, produces server initial data, checks client version, and is notified of connection and disconnection.
 pub trait ServerConnectionHandler<T: IdentityType>: Send + Sync {
-    /// Derive a client session identity from the client's decrypted initial data bytes.
-    fn generate(&self, initial_data: &[u8]) -> T;
+    /// Derive a client session identity from the client's decrypted initial data bytes, or `None` to reject the handshake (replied to with a TERMINATION carrying `ReturnCode::IdentityRejected`).
+    /// Called on every attempt, including ones that fail validation — keep this pure; use [`on_connect`](Self::on_connect) to learn whether it succeeded and whether the identity was new.
+    fn generate(&self, initial_data: &[u8]) -> Option<T>;
 
     /// Produce initial data to include in the server handshake response for the given identity.
     fn initial_data(&self, identity: &T) -> StaticByteBuffer;
@@ -34,6 +35,16 @@ pub trait ServerConnectionHandler<T: IdentityType>: Send + Sync {
     /// Returns `true` if the handshake should proceed, `false` if it should be rejected.
     /// Implementations are responsible for any logging before returning.
     fn verify_version(&self, version_bytes: &[u8]) -> bool;
+
+    /// Called once a handshake succeeds.
+    /// `existing` is `true` if `identity` already had a live connection — a re-handshake collision that displaces it silently, without `on_disconnect` — or `false` if it's brand new: the reliable signal for allocating (`false`) or carrying over (`true`) per-identity resources.
+    /// Default: no-op.
+    fn on_connect(&self, _identity: &T, _existing: bool) {}
+
+    /// Called once a client's connection has ended for any reason (remote termination, health-check decay, or explicit eviction), right before its handle is released.
+    /// Not invoked when a re-handshake displaces `identity` to a new connection — see `on_connect`.
+    /// Default: no-op.
+    fn on_disconnect(&self, _identity: &T) {}
 }
 
 /// Client-side connection handler: produces client initial data and the version bytes for the handshake.
@@ -53,7 +64,7 @@ pub trait ClientConnectionHandler: Send + Sync {
 /// - FG (flags): 1 byte - packet type flags
 /// - CD (code): 1 byte - client type or return code
 /// - TM (time): 4 bytes - next_in delay in milliseconds
-/// - PN (packet number): 8 bytes - timestamp (4) + incremental (4)
+/// - PN (packet number): 8 bytes - incremental (4) + timestamp (4)
 /// - PL (payload length): 2 bytes - length of encrypted payload
 /// - ID (identity): TYPHOON_ID_LENGTH bytes - client UUID
 pub struct Tailer<T: IdentityType> {
@@ -117,18 +128,6 @@ impl<T: IdentityType> Tailer<T> {
         view.set_time(next_in);
         view.set_packet_number_raw(packet_number);
         view.set_payload_length(0);
-        view.set_identity(identity);
-        view
-    }
-
-    /// Write a shadowride packet tailer (data + health check) into the buffer.
-    pub fn shadowride(buffer: DynamicByteBuffer, identity: &T, payload_length: u16, next_in: u32, packet_number: u64) -> Self {
-        let view = Self::new(buffer);
-        view.set_flags(PacketFlags::DATA | PacketFlags::HEALTH_CHECK);
-        view.set_code(0);
-        view.set_time(next_in);
-        view.set_packet_number_raw(packet_number);
-        view.set_payload_length(payload_length);
         view.set_identity(identity);
         view
     }
@@ -222,16 +221,17 @@ impl<T: IdentityType> Tailer<T> {
         T::from_bytes(self.buffer.slice_both(ID_OFFSET, ID_OFFSET + T::length()))
     }
 
-    /// Extract timestamp from packet number (upper 32 bits).
+    /// Extract timestamp from packet number (lower 32 bits).
     #[inline]
     pub fn timestamp(&self) -> u32 {
-        (self.packet_number() >> 32) as u32
+        self.packet_number() as u32
     }
 
-    /// Extract incremental number from packet number (lower 32 bits).
+    /// Extract incremental number from packet number (upper 32 bits).
+    /// Kept in the dominant half so raw `PN` comparisons order strictly by the monotonic counter and are immune to clock adjustments.
     #[inline]
     pub fn incremental(&self) -> u32 {
-        self.packet_number() as u32
+        (self.packet_number() >> 32) as u32
     }
 
     /// Get return code from code field.
@@ -302,9 +302,10 @@ impl<T: IdentityType> Tailer<T> {
     }
 
     /// Set packet number from timestamp and incremental counter.
+    /// The counter occupies the upper (dominant) 32 bits so that raw `PN` comparisons order strictly by it, independent of clock adjustments.
     #[inline]
     pub fn set_packet_number(&self, timestamp: u32, incremental: u32) {
-        let pn = ((timestamp as u64) << 32) | (incremental as u64);
+        let pn = ((incremental as u64) << 32) | (timestamp as u64);
         self.set_packet_number_raw(pn);
     }
 
@@ -344,13 +345,13 @@ impl<T: IdentityType> Tailer<T> {
         T::length() + TAILER_LENGTH
     }
 
-    /// Wire length of the obfuscated client→server tailer (plaintext tailer + c2s obfuscation overhead).
+    /// Wire length of the obfuscated client → server tailer (plaintext tailer + c2s obfuscation overhead).
     #[inline]
     pub(crate) fn encrypted_len_c2s() -> usize {
         Self::len() + crate::crypto::TAILER_C2S_OVERHEAD
     }
 
-    /// Wire length of the obfuscated server→client tailer (plaintext tailer + s2c obfuscation overhead).
+    /// Wire length of the obfuscated server → client tailer (plaintext tailer + s2c obfuscation overhead).
     #[inline]
     pub(crate) fn encrypted_len_s2c() -> usize {
         Self::len() + crate::crypto::TAILER_S2C_OVERHEAD

@@ -58,6 +58,8 @@ pub enum ReturnCode {
     VersionMismatch = 1,
     /// Connection decayed: health check exchange timed out after all retries.
     ConnectionDecayed = 2,
+    /// `ServerConnectionHandler::generate` rejected the client's initial data.
+    IdentityRejected = 3,
     /// Unknown error.
     UnknownError = 101,
 }
@@ -68,6 +70,7 @@ impl From<u8> for ReturnCode {
             0 => ReturnCode::Success,
             1 => ReturnCode::VersionMismatch,
             2 => ReturnCode::ConnectionDecayed,
+            3 => ReturnCode::IdentityRejected,
             _ => ReturnCode::UnknownError,
         }
     }

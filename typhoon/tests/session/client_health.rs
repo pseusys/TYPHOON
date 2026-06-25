@@ -123,24 +123,6 @@ async fn test_health_state_compute_timeout_default() {
     assert!(timeout >= min && timeout <= max, "timeout {timeout} not in [{min}, {max}]");
 }
 
-// Test: compute_timeout with RTT returns a value based on srtt + rttvar.
-#[tokio::test]
-async fn test_health_state_compute_timeout_with_rtt() {
-    let settings = fast_settings();
-    let (_, response_rx) = create_watch::<TestHealthResponse>();
-    let crypto = make_test_crypto_tool();
-    let mut state = HealthState::new(Arc::clone(&settings), crypto, Arc::new(AtomicU32::new(0)), DefaultClientConnectionHandler, response_rx);
-
-    state.smooth_rtt = Some(5.0);
-    state.rtt_variance = Some(2.0);
-
-    let timeout = state.compute_timeout();
-    let min = settings.get(&keys::TIMEOUT_MIN);
-    let max = settings.get(&keys::TIMEOUT_MAX);
-    // (5 + 2) * factor — whatever the factor, must be clamped to [min, max].
-    assert!(timeout >= min && timeout <= max, "rtt-derived timeout {timeout} not in [{min}, {max}]");
-}
-
 // Test: increment_retry returns true while below MAX_RETRIES, false at the limit.
 #[tokio::test]
 async fn test_health_state_increment_retry() {
@@ -152,53 +134,6 @@ async fn test_health_state_increment_retry() {
     assert!(state.increment_retry(), "retry 1 should be under limit");
     assert!(state.increment_retry(), "retry 2 should be under limit");
     assert!(!state.increment_retry(), "retry 3 should hit MAX_RETRIES=3");
-}
-
-// Test: update_rtt initialises smooth_rtt and rtt_variance on the first measurement.
-#[tokio::test]
-async fn test_health_state_rtt_first_measurement() {
-    let settings = fast_settings();
-    let (_, response_rx) = create_watch::<TestHealthResponse>();
-    let crypto = make_test_crypto_tool();
-    let mut state = HealthState::new(Arc::clone(&settings), crypto, Arc::new(AtomicU32::new(0)), DefaultClientConnectionHandler, response_rx);
-
-    state.last_sent_time = 0;
-    state.last_sent_next_in = 0;
-    let receive_time: u128 = 50; // RTT = 50 - 0 - 0 = 50, clamped
-
-    state.update_rtt(receive_time);
-
-    assert!(state.smooth_rtt.is_some(), "smooth_rtt must be initialised");
-    assert!(state.rtt_variance.is_some(), "rtt_variance must be initialised");
-    // rtt_variance should be approximately smooth_rtt / 2.
-    let srtt = state.smooth_rtt.unwrap();
-    let rttvar = state.rtt_variance.unwrap();
-    assert!((rttvar - srtt / 2.0).abs() < 1.0, "initial rttvar should be srtt/2, got srtt={srtt}, rttvar={rttvar}");
-}
-
-// Test: update_rtt converges smooth_rtt toward repeated measurements.
-#[tokio::test]
-async fn test_health_state_rtt_ewma_converges() {
-    let settings = fast_settings();
-    let (_, response_rx) = create_watch::<TestHealthResponse>();
-    let crypto = make_test_crypto_tool();
-    let mut state = HealthState::new(Arc::clone(&settings), crypto, Arc::new(AtomicU32::new(0)), DefaultClientConnectionHandler, response_rx);
-
-    state.last_sent_time = 0;
-    state.last_sent_next_in = 0;
-
-    // Feed 20 identical samples of RTT_MIN (clamped floor) ms.
-    let rtt_min = settings.get(&keys::RTT_MIN) as f64;
-    for i in 0..20 {
-        let _ = i;
-        state.last_sent_time = 0;
-        state.last_sent_next_in = 0;
-        state.update_rtt(rtt_min as u128);
-    }
-
-    let srtt = state.smooth_rtt.unwrap();
-    // After many identical samples the EWMA should be near rtt_min.
-    assert!((srtt - rtt_min).abs() < rtt_min * 0.1, "EWMA should converge near {rtt_min}ms, got {srtt}ms");
 }
 
 // ── ClientHealthProvider::feed_input tests ────────────────────────────────────

@@ -12,7 +12,7 @@ use typhoon::debug::{DebugClientConnectionHandler, DebugMode, DebugServerConnect
 use typhoon::defaults::{AsyncExecutor, DefaultExecutor};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::SettingsBuilder;
-use typhoon::socket::{ListenerBuilder, ServerFlowConfiguration};
+use typhoon::socket::{ServerBuilder, ServerFlowConfiguration};
 
 #[cfg(feature = "tokio")]
 fn main() {
@@ -38,7 +38,7 @@ async fn run() {
 
     // --- Start echo server ---
     let server_flow = ServerFlowConfiguration::with_address(flow_config, server_addr);
-    let listener: Arc<_> = Arc::new(ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DebugServerConnectionHandler>::new(key_pair, DebugServerConnectionHandler).add_flow(server_flow).with_settings(settings.clone()).build().await.expect("listener should build"));
+    let listener: Arc<_> = Arc::new(ServerBuilder::<StaticByteBuffer, DefaultExecutor, DebugServerConnectionHandler>::new(key_pair, DebugServerConnectionHandler).add_flow(server_flow).with_settings(settings.clone()).build_listener().await.expect("listener should build"));
     listener.start().await;
     println!("Debug echo server listening on {}", server_addr);
 

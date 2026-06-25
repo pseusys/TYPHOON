@@ -108,9 +108,9 @@ impl std::error::Error for ProfileError {}
 pub struct TrafficProfile {
     /// Profile catalogue name (e.g. `bulk_upload`).
     pub name: String,
-    /// Per-packet client→server application payload size (bytes).
+    /// Per-packet client → server application payload size (bytes).
     pub chunk_c2s: usize,
-    /// Per-packet server→client application payload size (bytes).  Zero disables s2c.
+    /// Per-packet server → client application payload size (bytes).  Zero disables s2c.
     pub chunk_s2c: usize,
     /// Lower bound on per-packet c2s chunk size — used only by `raw_default`
     /// for per-packet resampling; tuned profiles ignore this and use `chunk_c2s`.
@@ -118,9 +118,9 @@ pub struct TrafficProfile {
     pub chunk_c2s_max: usize,
     pub chunk_s2c_min: usize,
     pub chunk_s2c_max: usize,
-    /// Inter-arrival time between client→server sends (milliseconds).
+    /// Inter-arrival time between client → server sends (milliseconds).
     pub iat_c2s_ms: f64,
-    /// Inter-arrival time between server→client sends (milliseconds).
+    /// Inter-arrival time between server → client sends (milliseconds).
     pub iat_s2c_ms: f64,
     /// IAT range bounds — same semantics as the chunk_*_min/max bounds.
     pub iat_c2s_ms_min: f64,

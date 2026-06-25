@@ -142,6 +142,9 @@ cargo run --example multi_flow
 # Multiple simultaneous clients
 cargo run --example multi_client
 
+# Multiple simultaneous clients dispatched through a single ClientPool
+cargo run --example client_pool
+
 # Long-running session with repeated health-check cycles
 cargo run --example long_session
 
@@ -150,6 +153,9 @@ cargo run --example heavy_traffic
 
 # Debug probe (reachability, RTT, throughput) — requires the debug feature
 cargo run --example debug_probe --features debug
+
+# Custom active probe handler — mimics another protocol's reply to unidentified packets
+cargo run --example mimic_probe
 ```
 
 ### Binaries

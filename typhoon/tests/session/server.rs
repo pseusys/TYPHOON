@@ -16,7 +16,7 @@ use crate::session::server::{IncomingPacket, OutgoingRouter, ServerSessionManage
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 use crate::settings::{Settings, SettingsBuilder, keys};
 use crate::tailer::{ReturnCode, Tailer};
-use crate::utils::sync::create_notify_queue;
+use crate::utils::sync::{create_notify_queue, create_watch};
 
 /// Shared server secret — generated once so that concurrent tests don't each pay the
 /// expensive McEliece key-generation cost.
@@ -55,8 +55,13 @@ impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
         true
     }
 
-    async fn remove_session(&self, _identity: &StaticByteBuffer) {
+    async fn is_current_session(&self, _identity: &StaticByteBuffer, _handshake_pn: u64) -> bool {
+        true
+    }
+
+    async fn remove_session(&self, _identity: &StaticByteBuffer, _handshake_pn: u64) -> bool {
         self.remove_count.fetch_add(1, Ordering::Relaxed);
+        true
     }
 }
 
@@ -76,6 +81,7 @@ async fn make_session(settings: Arc<Settings<DefaultExecutor>>, router: Arc<Capt
 
     let mut users: SharedMap<StaticByteBuffer, UserServerState> = SharedMap::new();
     let (incoming_tx, _incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
+    let (end_tx, _end_rx) = create_watch::<()>();
     let router_cloned: Arc<CapturingRouter> = Arc::clone(&router);
     let router_dyn: Arc<dyn OutgoingRouter<StaticByteBuffer>> = router_cloned;
     let router_weak = Arc::downgrade(&router_dyn);
@@ -83,13 +89,13 @@ async fn make_session(settings: Arc<Settings<DefaultExecutor>>, router: Arc<Capt
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     let (session, _response) = {
         let crypto_state = UserCryptoState::new(&initial_key, TEST_SERVER_SECRET.obfuscation_buffer());
-        ServerSessionManager::assemble_session(crypto_state, response_body, handshake_tailer, identity, &mut users, incoming_tx, router_weak, num_flows, settings).await.expect("assemble_session must succeed")
+        ServerSessionManager::assemble_session(crypto_state, response_body, handshake_tailer, identity, &mut users, incoming_tx, end_tx, router_weak, num_flows, settings).await
     };
 
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     let (session, _response) = {
         let crypto_state = UserCryptoState::new(&initial_key);
-        ServerSessionManager::assemble_session(crypto_state, response_body, handshake_tailer, identity, &mut users, incoming_tx, router_weak, num_flows, settings).await.expect("assemble_session must succeed")
+        ServerSessionManager::assemble_session(crypto_state, response_body, handshake_tailer, identity, &mut users, incoming_tx, end_tx, router_weak, num_flows, settings).await
     };
 
     session

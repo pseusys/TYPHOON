@@ -131,8 +131,8 @@ pub struct DebugServerConnectionHandler;
 
 #[cfg(feature = "server")]
 impl ServerConnectionHandler<StaticByteBuffer> for DebugServerConnectionHandler {
-    fn generate(&self, _initial_data: &[u8]) -> StaticByteBuffer {
-        StaticByteBuffer::from_slice(get_rng().random_byte_buffer::<DEFAULT_TYPHOON_ID_LENGTH>().slice())
+    fn generate(&self, _initial_data: &[u8]) -> Option<StaticByteBuffer> {
+        Some(StaticByteBuffer::from_slice(get_rng().random_byte_buffer::<DEFAULT_TYPHOON_ID_LENGTH>().slice()))
     }
 
     fn initial_data(&self, _identity: &StaticByteBuffer) -> StaticByteBuffer {

@@ -229,9 +229,11 @@ fn test_update_outgoing_real_depletes_budget() {
     state.update(0, true);
     assert_eq!(state.byte_budget, initial_budget, "first update should not change budget");
 
-    // Second call: time_delta ≈ 0 → refill ≈ 0; with outgoing_real=true the
-    // packet_length is deducted from budget.
-    state.update(1000, true);
+    // Second call: with outgoing_real=true the packet_length is deducted from budget. Use a
+    // packet large enough that the deduction dominates any refill from real elapsed time between
+    // the two calls (refill is bounded by byte_rate_cap=1_000_000 bytes/sec, so even a full
+    // second of scheduling jitter couldn't offset a 10x larger deduction).
+    state.update(10_000_000, true);
     assert!(state.byte_budget < initial_budget, "outgoing real should deplete budget (was {} now {})", initial_budget, state.byte_budget);
 }
 

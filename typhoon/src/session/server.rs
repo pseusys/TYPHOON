@@ -21,7 +21,7 @@ use crate::settings::{Settings, keys};
 use crate::tailer::{IdentityType, PacketFlags, ReturnCode, Tailer};
 use crate::utils::bitset::AtomicBitSet;
 use crate::utils::random::get_rng;
-use crate::utils::sync::{AsyncExecutor, NotifyQueueSender};
+use crate::utils::sync::{AsyncExecutor, NotifyQueueSender, WatchSender};
 use crate::utils::unix_timestamp_ms;
 
 /// Trait for routing outgoing packets from a session back to the network.
@@ -29,8 +29,11 @@ use crate::utils::unix_timestamp_ms;
 #[async_trait]
 pub trait OutgoingRouter<T: Send + Sync>: Send + Sync {
     async fn route_packet(&self, packet: DynamicByteBuffer, identity: &T) -> bool;
-    /// Remove all state associated with the given identity (session map, user crypto, decoy providers).
-    async fn remove_session(&self, identity: &T);
+    /// True if `identity`'s currently-registered session is still the one established by the handshake with packet number `handshake_pn`.
+    async fn is_current_session(&self, identity: &T, handshake_pn: u64) -> bool;
+    /// Remove all state associated with the given identity (session map, user crypto, decoy providers) — but only if the currently-registered session is still the one established by `handshake_pn`.
+    /// Returns whether removal happened.
+    async fn remove_session(&self, identity: &T, handshake_pn: u64) -> bool;
 }
 
 /// Incoming packet for the server session manager: body + tailer view.
@@ -47,11 +50,15 @@ pub struct ServerSessionManager<T: IdentityType + Clone + Eq + Hash + Send + ToS
     /// Sync template — used per-call to create a local cache entry; no Mutex needed.
     crypto_recv: CachedMapEntryTemplate<T, UserServerState>,
     identity: T,
+    /// Packet number of the handshake that established this session.
+    handshake_pn: u64,
     /// Lock-free bitmask of flow indices from which this client has been seen.
     active_flows: AtomicBitSet,
     /// Per-session monotonic packet-number counter; shared with the health-check provider and every flow manager's decoy provider for this user so the PN stream is single-sequence across data, health-check, decoy, and termination packets.
     counter: Arc<AtomicU32>,
     incoming_tx: NotifyQueueSender<DynamicByteBuffer>,
+    /// Fired once this session is removed, so a task blocked on `incoming_tx`'s receiver can stop waiting instead of hanging.
+    end_tx: WatchSender<()>,
     health_provider: ServerHealthProvider,
     _phantom: PhantomData<AE>,
 }
@@ -68,7 +75,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
     ///
     /// Returns `(Arc<Self>, response_packet)`. The caller holds `session_key` from the
     /// encapsulation step and upgrades the user's crypto state after sending the response.
-    pub(crate) async fn assemble_session(crypto_state: UserCryptoState, response_body: DynamicByteBuffer, handshake_tailer: Tailer<T>, identity: T, users: &mut SharedMap<T, UserServerState>, incoming_tx: NotifyQueueSender<DynamicByteBuffer>, router: StdWeak<dyn OutgoingRouter<T>>, num_flows: usize, settings: Arc<Settings<AE>>) -> Result<(Arc<Self>, DynamicByteBuffer), SessionControllerError> {
+    pub(crate) async fn assemble_session(crypto_state: UserCryptoState, response_body: DynamicByteBuffer, handshake_tailer: Tailer<T>, identity: T, users: &mut SharedMap<T, UserServerState>, incoming_tx: NotifyQueueSender<DynamicByteBuffer>, end_tx: WatchSender<()>, router: StdWeak<dyn OutgoingRouter<T>>, num_flows: usize, settings: Arc<Settings<AE>>) -> (Arc<Self>, DynamicByteBuffer) {
         let user_state = UserServerState::new(crypto_state);
 
         users.insert(identity.clone(), user_state).await;
@@ -77,26 +84,40 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
         let crypto_recv = users.create_cache_for(identity.clone());
 
         let server_next_in = get_rng().gen_range(settings.get(&keys::HEALTH_CHECK_NEXT_IN_MIN)..=settings.get(&keys::HEALTH_CHECK_NEXT_IN_MAX)) as u32;
+        let handshake_pn = handshake_tailer.packet_number();
 
         let response_body_len = response_body.len();
         let tailer_buf = response_body.expand_end(T::length()).rebuffer_start(response_body_len);
-        let _response_tailer = Tailer::handshake(tailer_buf, &identity, ReturnCode::Success.into(), server_next_in, handshake_tailer.packet_number(), response_body_len as u16);
+        let _response_tailer = Tailer::handshake(tailer_buf, &identity, ReturnCode::Success.into(), server_next_in, handshake_pn, response_body_len as u16);
         let response_packet = response_body.expand_end(Tailer::<T>::len());
 
-        let health_provider = ServerHealthProvider::new(router, identity.clone(), settings, server_next_in);
+        let health_provider = ServerHealthProvider::new(router, identity.clone(), settings, server_next_in, handshake_pn);
 
         let session = Arc::new(Self {
             crypto_send,
             crypto_recv,
             identity,
+            handshake_pn,
             active_flows: AtomicBitSet::new(num_flows),
             counter: Arc::new(AtomicU32::new(0)),
             incoming_tx,
+            end_tx,
             health_provider,
             _phantom: PhantomData,
         });
 
-        Ok((session, response_packet))
+        (session, response_packet)
+    }
+
+    /// Packet number of the handshake that established this session.
+    pub fn handshake_pn(&self) -> u64 {
+        self.handshake_pn
+    }
+
+    /// Wake any task waiting on the incoming-data receiver, signaling that the session has ended.
+    #[inline]
+    pub(crate) fn signal_end(&self) {
+        self.end_tx.send(());
     }
 
     /// Per-session monotonic packet-number counter, shared with the health-check provider and per-flow decoy providers.
@@ -130,17 +151,22 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> S
 
         let encrypted_payload_len = encrypted_payload.len();
         let tailer_buf = encrypted_payload.expand_end(T::length()).rebuffer_start(encrypted_payload_len);
-        let _tailer = Tailer::data(tailer_buf, &self.identity, payload_length, packet_number);
+        let tailer = Tailer::data(tailer_buf, &self.identity, payload_length, packet_number);
+
+        // Let the health provider potentially attach a shadowride.
+        self.health_provider.feed_output(tailer.clone()).await?;
+
         let assembled = encrypted_payload.expand_end(Tailer::<T>::len());
         debug!("server session [{}]: sending data packet", self.identity.to_string());
         Ok(assembled)
     }
 
-    /// Get the next packet number: (unix_timestamp_seconds << 32) | incremental.
+    /// Get the next packet number: `(incremental << 32) | unix_timestamp_seconds`.
+    /// The counter is kept in the dominant half so raw `PN` ordering is immune to clock adjustments.
     fn next_packet_number(&self) -> u64 {
         let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let timestamp = (unix_timestamp_ms() / 1000) as u32;
-        ((timestamp as u64) << 32) | (counter as u64)
+        ((counter as u64) << 32) | (timestamp as u64)
     }
 
     /// Process an incoming packet from the Listener.

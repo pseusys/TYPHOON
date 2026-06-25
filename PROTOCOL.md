@@ -77,7 +77,7 @@ flowchart LR
 
     subgraph Server
         direction TB
-        LB["ListenerBuilder"] -->|build + start| L["Listener"]
+        LB["ServerBuilder"] -->|build + start| L["Listener / ClientPool"]
         L --> SFM1["FlowManager :port 1"]
         L --> SFM2["FlowManager :port 2"]
         SFM1 --> SDP1["DecoyProvider (per user)"]
@@ -303,6 +303,9 @@ sequenceDiagram
 The TYPHOON protocol relies on a two-way handshake that closely resembles those of the OBFS4 and NTORv3 protocols.
 There is no reason to wait for a third packet from the client (TCP-style), as it is not possible to overload the server with partially-initialized sessions if [initial handshake data is used correctly](#initial-data-handling).
 Moreover, that means that if the client sends a handshake packet on an existing connection, its internal state gets silently reset (see [health check packet description](#health-check-packets) for more information on connection internal state).
+This reset is gated, not unconditional: a new handshake for an identity that already has a session is only honored if its **PN** is strictly greater than the **PN** of the handshake that established the current session — every legitimate handshake attempt (including retries) mints a fresh, higher **PN**, so this never rejects a real reconnect.
+A handshake that fails this check (i.e. a stale or replayed copy of an already-superseded handshake) is treated like any other unauthenticated packet and routed to [active probing](#active-probing-protection) instead of resetting anything.
+This closes an otherwise-open replay hole: without it, a captured copy of any past handshake packet could be replayed at any later time to silently kill whichever session is currently active for that identity, since handshake decapsulation is deterministic and (depending on the [initial data](#initial-data-handling) mode in use) identity derivation can be too.
 See [handshake encryption specification](#handshake-encryption) for cryptographic details of the handshake.
 
 An important requirement for the handshake is that it is indistinguishable from any other subsequent packet flow.
@@ -334,7 +337,7 @@ sequenceDiagram
     participant S as Server
 
     loop Decay cycle
-        C->>S: HealthCheck(PN = unix_ts ∥ counter, TM = next_in)
+        C->>S: HealthCheck(PN = counter ∥ unix_ts, TM = next_in)
         Note over S: Remember PN, wait next_in ms
         Note over S: (attempt shadowride on outgoing data packet)
         S-->>C: HealthCheck(PN = remembered, TM = next_in)
@@ -349,7 +352,7 @@ The decay behavior is mostly defined by [**TM** and **PN** fields of the tailer]
 The _current incremental packet number_ is a single per-session counter shared by every emitter on the session — data, health-check, handshake, decoy, and termination packets all advance the same monotonic sequence.
 The counter starts from 0 at session establishment.
 
-Client initiates the exchange (the first health check exchange is embedded into handshake), setting higher `4` bytes of **PN** field to the current unix timestamp (in seconds), [lower `4` bytes](#sockets-and-listeners) of **PN** to _current incremental packet number_ and **TM** to a [random next in delay](#next-in-computation).
+Client initiates the exchange (the first health check exchange is embedded into handshake), setting [higher `4` bytes](#sockets-and-listeners) of **PN** field to _current incremental packet number_, lower `4` bytes of **PN** to the current unix timestamp (in seconds), and **TM** to a [random next in delay](#next-in-computation).
 The **PN** field value is remembered and used as the _current health check packet number_.
 After that, the client waits for a server response for **TM** milliseconds plus the [timeout value](#timeout-computation).
 If it receives a health check message from the server with unexpected packet number (either during waiting or sleeping), it will be silently discarded.
@@ -696,6 +699,18 @@ Client handshake packet encryption consists of the following steps:
 7. Client constructs the handshake packet by concatenating `CliEphPubKeyObf`, `CiphObf`, `CliNnc` and encrypted initial data as the body. The handshake tailer is appended to the body and encrypted by the flow manager, as with all other packets.
 8. The payload is sent to the server inside of a handshake packet.
 
+```mermaid
+flowchart LR
+    subgraph "Client handshake body (left = start)"
+        CEPK["CliEphPubKeyObf: obfuscated X25519 ephemeral pubkey (56 B software / 48 B hardware)"]
+        CIPH["CiphObf: obfuscated McEliece KEM ciphertext (120 B software / 112 B hardware)"]
+        NNC["CliNnc: replay-protection nonce (32 B)"]
+        INIT["EncInitData: encrypted initial data (variable)"]
+    end
+```
+
+The [handshake tailer](#handshake-packets) is appended after this body and encrypted separately by the flow manager, exactly as with every other packet.
+
 After the client receives the encrypted handshake message from the server, it decrypts it using the following steps:
 
 0. Client extracts `SrvEphPubKeyObf`, `TransAuth` and `SrvNnc` from the server handshake message.
@@ -735,6 +750,18 @@ After the server initiates the internal state for the user and waits for an appr
 10. Server constructs the handshake response by concatenating `SrvEphPubKeyObf`, `TransAuth`, `SrvNnc` and encrypted initial data as the body. The handshake tailer is appended to the body and encrypted by the flow manager, as with all other packets.
 11. The payload is sent to the client inside of a handshake packet. The server tailer contains the server-generated identity for the client to use in subsequent communication.
 
+```mermaid
+flowchart LR
+    subgraph "Server handshake body (left = start)"
+        SEPK["SrvEphPubKeyObf: obfuscated X25519 ephemeral pubkey (56 B software / 48 B hardware)"]
+        TAUTH["TransAuth: Ed25519 transcript signature (64 B)"]
+        NNC["SrvNnc: replay-protection nonce (32 B)"]
+        INIT["EncInitData: encrypted initial data (variable)"]
+    end
+```
+
+The [handshake tailer](#handshake-packets) is appended after this body and encrypted separately by the flow manager, exactly as with every other packet.
+
 ### Tailer encryption
 
 Tailer encryption differs significantly depending on cryptographic mode chosen.
@@ -750,6 +777,16 @@ In case of the `fast` mode (which should be used if large amounts of data are ex
 Additionally, after encryption, the ciphertext is also authenticated with `BLAKE3` using the session key; that helps to make sure that tailer was not modified, even if it was decrypted.
 Again, please note that `OBFS` is a shared symmetric key, which means that obfuscation stops making sense immediately after a single certificate leaks (but not authentication).
 
+This process is identical in both directions, since both client and server hold `OBFS` and the session key:
+
+```mermaid
+flowchart LR
+    subgraph "Fast-mode encrypted tailer — both directions (left = start)"
+        CN["Ciphertext ∥ Nonce: tailer encrypted with OBFS (56 B software / 48 B hardware)"]
+        MAC["MAC: BLAKE3 keyed hash with session key (32 B)"]
+    end
+```
+
 > Please note, that this approach is not only faster, but also more extensible.
 > The packets going in both direction have uniform structure in this case and can be decrypted (but not authenticated) by any protocol-aware middleware.
 > That could allow extending protocol with [multi-hop or remote proxy](#multi-hop-proxies-benevolent-mitm) capabilities.
@@ -761,6 +798,13 @@ In case of the `full` mode (which should be used if obfuscation should be able t
 For the packets going from server to client, tailers are simply encrypted with [marshalling encryption](#marshalling-encryption) algorithm, that provides maximal privacy and efficiency.
 That does not allow anyone without client session key to decrypt the tailer contents, which is fine in case no one else is intended to read it anyway.
 
+```mermaid
+flowchart LR
+    subgraph "Full-mode encrypted tailer — server → client (left = start)"
+        CNT["Ciphertext ∥ Nonce ∥ Tag: tailer encrypted with session key (72 B software / 60 B hardware)"]
+    end
+```
+
 For the packets going from client to server, tailers are encrypted using the following steps:
 
 0. Client comes up with the raw tailer `Tailer`.
@@ -770,6 +814,15 @@ For the packets going from client to server, tailers are encrypted using the fol
 4. Client obfuscates the `EphPubKey` using [`anonymous` encryption](#anonymous-encryption) (the key is derived using `BLAKE3` from concatenation of `OPK` and `Nnc`), producing `EphPubKeyObf`.
 5. Client encrypts the `Tailer` using [marshalling encryption](#marshalling-encryption) using `BLAKE3` on `ShrSec` as key and `Nnc` as additional data, producing `TailerEnc`.
 6. Client constructs the encrypted tail by concatenating `TailerEnc`, `EphPubKeyObf` and `Nnc`.
+
+```mermaid
+flowchart LR
+    subgraph "Full-mode encrypted tail — client → server (left = start)"
+        TE["TailerEnc: tailer encrypted with BLAKE3(ShrSec) — ciphertext ∥ nonce ∥ tag (72 B software / 60 B hardware)"]
+        EPO["EphPubKeyObf: EphPubKey obfuscated with BLAKE3(OPK ∥ Nnc) (56 B software / 48 B hardware)"]
+        NNC["Nnc: replay-protection nonce (32 B)"]
+    end
+```
 
 The tailers are decrypted using the following steps:
 
@@ -886,6 +939,7 @@ It is suggested that every "manager" is divided into two parts:
 In short, these are the main TYPHOON implementation parts:
 
 - Listener (one per server): keeps track of global server variables, all the users, metadata and state, can generate certificates.
+- Client pool (optional, one per server): wraps a listener and owns every accepted client handle in a map keyed by identity, exposing a single identity-tagged accept/send pair instead of one handle per connection.
 - Session controller (one per session): accepts data, encrypts it with the session key, appends an encrypted header, selects an appropriate flow, and delivers data to it.
 - Health check provider (one per session): attached to session controller, keeps internal protocol state, manages handshake message timers and injects handshake messages themselves if necessary.
 - Flow controller (one per flow): accepts data, prepends a mock header to it and sends it to the flow partner using a UDP socket.
@@ -901,7 +955,7 @@ Another important challenge is client address binding, since client addresses ca
 In general, the client-to-identification mapping should be safe (considering client identification is unique) thanks to:
 
 - Session key authentication that is used for [tailer encryption](#tailer-encryption).
-- Incremental packet number [in tailer](#tailer-structure), stored in lower `4` bytes of **PN** field. A single monotonic counter is maintained per session and shared by every emitter — data, health-check, handshake, decoy, and termination packets all advance the same sequence. This makes the PN stream usable as a tie-breaker for source-address rebinding without having to disambiguate between sub-sequences.
+- Incremental packet number [in tailer](#tailer-structure), stored in the higher `4` bytes of **PN** field so it alone determines packet ordering. A single monotonic counter is maintained per session and shared by every emitter — data, health-check, handshake, decoy, and termination packets all advance the same sequence. Keeping the counter (rather than the timestamp) in the dominant half means PN ordering for source-address rebinding cannot be disturbed by clock adjustments — only the counter, which never goes backward, decides it.
 
 By default, the **ID** field is `16` bytes ([UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier)) long, which should be sufficient for random user **ID** assignment.
 
@@ -920,6 +974,11 @@ In addition to that, every flow manager keeps a table of all the connected user 
 
 [Rebinding](#identification-and-rebinding) happens on the flow manager only, without the session manager or any other listener parts being involved.
 The only requirement for this is packet validation, which is [performed using the user session key](#tailer-encryption) — this key is pulled from the global user table.
+
+#### Client pool
+
+A server using `Listener` directly gets one `ClientHandle` per connection from `accept()`, owned by the caller for its whole lifetime.
+`ClientPool` wraps the same `Listener` instead: it runs the accept loop and owns every `ClientHandle` in a map keyed by identity, exposing a multiplexed `receive()` (identity + packet), a symmetric `send(identity, packet)`, and `connected_ids()`.
 
 #### Initial data handling
 
@@ -1107,7 +1166,7 @@ It reinterprets three [tailer fields](#tailer-structure) to carry diagnostic met
 | --- | --- | --- |
 | **CD** | Client type / return code | Packet unique reference number (0–255, rolling) |
 | **TM** | Next-in delay (milliseconds) | Packet send timestamp (lower 32 bits of Unix time in milliseconds) |
-| **PN** | `unix_ts_s (32 bits) \|\| incremental (32 bits)` | `global_sequence (32 bits) \|\| phase_id (32 bits)` |
+| **PN** | `incremental (32 bits) \|\| unix_ts_s (32 bits)` | `global_sequence (32 bits) \|\| phase_id (32 bits)` |
 
 `phase_id` encodes the active debug phase: `0` = reachability, `1` = return time, `2` = throughput.
 `global_sequence` is a monotonically increasing counter across all probes in the run, enabling the receiver to detect packet loss and reordering.
@@ -1181,7 +1240,7 @@ The `crypto` module implements all cryptographic primitives described in the [Cr
 
 The `tailer` module provides the `Tailer<T>` struct — a strongly-typed view over the fixed-size plaintext bytes at the end of every wire packet — and the `IdentityType`, `ServerConnectionHandler`, `ClientConnectionHandler` extension traits.
 
-`Tailer` constructors (`data`, `health_check`, `shadowride`, `handshake`, `decoy`, `termination`, `debug_probe`) write the appropriate flag byte, code, time, packet number, payload length, and identity into a pre-allocated `DynamicByteBuffer` in one pass with no copies.
+`Tailer` constructors (`data`, `health_check`, `handshake`, `decoy`, `termination`, `debug_probe`) write the appropriate flag byte, code, time, packet number, payload length, and identity into a pre-allocated `DynamicByteBuffer` in one pass with no copies. There is no dedicated `shadowride` constructor — a shadowridden packet is built by mutating an existing `data` tailer's flags/time/PN in place once a pending health check is ready to attach (see `feed_output` on both the client- and server-side health providers).
 Getters (`flags`, `code`, `time`, `packet_number`, `payload_length`, `identity`) read directly from the buffer view.
 
 `PacketFlags` is a `bitflags!` struct; the composite `is_shadowride()` predicate detects the `HEALTH_CHECK | DATA` combination.

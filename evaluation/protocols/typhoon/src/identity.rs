@@ -65,8 +65,8 @@ impl Display for ShortIdentity {
 pub struct EvalServerConnectionHandler;
 
 impl ServerConnectionHandler<ShortIdentity> for EvalServerConnectionHandler {
-    fn generate(&self, _initial_data: &[u8]) -> ShortIdentity {
-        ShortIdentity::from_u32(thread_rng().r#gen::<u32>())
+    fn generate(&self, _initial_data: &[u8]) -> Option<ShortIdentity> {
+        Some(ShortIdentity::from_u32(thread_rng().r#gen::<u32>()))
     }
 
     fn initial_data(&self, _identity: &ShortIdentity) -> StaticByteBuffer {

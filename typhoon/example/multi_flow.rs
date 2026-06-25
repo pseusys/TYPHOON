@@ -15,7 +15,7 @@ use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultEx
 use typhoon::flow::decoy::{HeavyDecoyProvider, SparseDecoyProvider};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::SettingsBuilder;
-use typhoon::socket::{ClientSocketBuilder, ListenerBuilder, ServerFlowConfiguration};
+use typhoon::socket::{ClientSocketBuilder, ServerBuilder, ServerFlowConfiguration};
 
 const MESSAGE_COUNT: usize = 30;
 
@@ -46,7 +46,7 @@ async fn run() {
     // --- Build and start the server with two flow managers ---
     // Each flow can use a different decoy provider; here flow1 uses Sparse and flow2 uses Heavy.
     // Omitting `.with_decoy()` on a flow uses the listener-level default (random selection).
-    let listener: Arc<_> = Arc::new(ListenerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow1_addr).with_decoy::<SparseDecoyProvider<StaticByteBuffer, DefaultExecutor>>()).add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow2_addr).with_decoy::<HeavyDecoyProvider<StaticByteBuffer, DefaultExecutor>>()).with_settings(settings.clone()).build().await.expect("listener should build"));
+    let listener: Arc<_> = Arc::new(ServerBuilder::<StaticByteBuffer, DefaultExecutor, DefaultServerConnectionHandler>::new(key_pair, DefaultServerConnectionHandler).add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow1_addr).with_decoy::<SparseDecoyProvider<StaticByteBuffer, DefaultExecutor>>()).add_flow(ServerFlowConfiguration::with_address(flow_config.clone(), flow2_addr).with_decoy::<HeavyDecoyProvider<StaticByteBuffer, DefaultExecutor>>()).with_settings(settings.clone()).build_listener().await.expect("listener should build"));
     listener.start().await;
     println!("Server: listening on {flow1_addr} and {flow2_addr}");
 

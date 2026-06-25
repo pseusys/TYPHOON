@@ -57,6 +57,9 @@ pub enum ServerSocketError {
     #[error("listener stopped")]
     ListenerStopped,
 
+    #[error("unknown client")]
+    UnknownClient,
+
     #[error("unsupported runtime: {0}")]
     UnsupportedRuntime(&'static str),
 }

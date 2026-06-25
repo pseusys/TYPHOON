@@ -5,6 +5,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
+use futures::future::{Either, select};
+use futures::pin_mut;
 use log::{debug, info, warn};
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
@@ -21,10 +23,11 @@ use crate::session::SessionControllerError;
 use crate::session::server::{IncomingPacket, OutgoingRouter, ServerSessionManager};
 use crate::settings::{Settings, keys};
 use crate::socket::error::ServerSocketError;
+use crate::socket::pool::ClientPool;
 use crate::tailer::{IdentityType, PacketFlags, ReturnCode, ServerConnectionHandler, Tailer};
 use crate::utils::random::jittered_chunk_size;
 use crate::utils::socket::Socket;
-use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, NotifyQueueSender, RwLock, assert_runtime, create_bounded_notify_queue, create_notify_queue};
+use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, NotifyQueueSender, RwLock, WatchReceiver, assert_runtime, create_bounded_notify_queue, create_notify_queue, create_watch};
 use crate::utils::unix_timestamp_ms;
 
 /// Configuration for a single server flow manager.
@@ -101,8 +104,8 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> ServerFlowC
     }
 }
 
-/// Builder for constructing a `Listener`.
-pub struct ListenerBuilder<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T>> {
+/// Builder for constructing a server-side entrypoint: either a `Listener` (via `build_listener`) or a `ClientPool` (via `build_pool`).
+pub struct ServerBuilder<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T>> {
     settings: Option<Arc<Settings<AE>>>,
     flow_configs: Vec<ServerFlowConfiguration<T, AE>>,
     secret: ServerSecret<'static>,
@@ -111,7 +114,7 @@ pub struct ListenerBuilder<T: IdentityType + Clone + Eq + Hash + Send + ToString
     default_probe_factory: Option<ProbeFactory<AE>>,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> ListenerBuilder<T, AE, IG> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> ServerBuilder<T, AE, IG> {
     /// Create a new builder with the given server key pair and identity generator.
     /// Decoy providers are randomly selected per-user by default.
     pub fn new(key_pair: ServerKeyPair, identity_generator: IG) -> Self {
@@ -169,7 +172,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
     /// Build the listener, creating all flow managers.
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub async fn build(mut self) -> Result<Listener<T, AE, IG>, ServerSocketError> {
+    pub async fn build_listener(mut self) -> Result<Listener<T, AE, IG>, ServerSocketError> {
         assert_runtime().map_err(ServerSocketError::UnsupportedRuntime)?;
         if self.flow_configs.is_empty() {
             return Err(ServerSocketError::NoFlows);
@@ -228,12 +231,12 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             flows,
             sessions: RwLock::new(HashMap::new()),
             users: Mutex::new(users),
+            connection_handler: self.identity_generator,
         });
 
         Ok(Listener {
             router,
             secret: self.secret,
-            identity_generator: self.identity_generator,
             accept_tx,
             accept_rx: Mutex::new(accept_rx),
             max_data_payload,
@@ -243,7 +246,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
     /// Build the listener, creating all flow managers (full mode).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub async fn build(mut self) -> Result<Listener<T, AE, IG>, ServerSocketError> {
+    pub async fn build_listener(mut self) -> Result<Listener<T, AE, IG>, ServerSocketError> {
         assert_runtime().map_err(ServerSocketError::UnsupportedRuntime)?;
         if self.flow_configs.is_empty() {
             return Err(ServerSocketError::NoFlows);
@@ -303,28 +306,35 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             flows,
             sessions: RwLock::new(HashMap::new()),
             users: Mutex::new(users),
+            connection_handler: self.identity_generator,
         });
 
         Ok(Listener {
             router,
             secret: secret_arc,
-            identity_generator: self.identity_generator,
             accept_tx,
             accept_rx: Mutex::new(accept_rx),
             max_data_payload,
             settings,
         })
     }
+
+    /// Build a `ClientPool`, the multiplexed server entrypoint: same flow construction as `build_listener`, wrapped so all `ClientHandle`s are owned and dispatched by identity.
+    pub async fn build_pool(self) -> Result<ClientPool<T, AE, IG>, ServerSocketError> {
+        Ok(ClientPool::new(self.build_listener().await?))
+    }
 }
 
 /// Routing and session-lifecycle surface, shared by the `Listener` and every `ClientHandle` it produces.
-pub(crate) struct Router<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> {
+/// Owns the `ServerConnectionHandler` plug-in so `remove_session` can notify it from one place, regardless of whether `Listener` or `ClientPool` is the entrypoint in use.
+pub(crate) struct Router<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> {
     flows: Vec<Arc<ServerFlowManager<T, AE>>>,
     sessions: RwLock<HashMap<T, Arc<ServerSessionManager<T, AE>>>>,
     users: Mutex<SharedMap<T, UserServerState>>,
+    connection_handler: IG,
 }
 
-impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> Router<T, AE> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> Router<T, AE, IG> {
     /// Number of flow managers the router routes through.
     #[inline]
     pub(crate) fn flow_count(&self) -> usize {
@@ -335,12 +345,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 /// Server-side listener that drives the handshake path and produces `ClientHandle`s.
 /// All routing and session lifecycle state lives in the shared [`Router`].
 pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> {
-    router: Arc<Router<T, AE>>,
+    router: Arc<Router<T, AE, IG>>,
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     secret: ServerSecret<'static>,
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     secret: Arc<ServerSecret<'static>>,
-    identity_generator: IG,
     accept_tx: NotifyQueueSender<ClientHandle<T, AE>>,
     accept_rx: Mutex<NotifyQueueReceiver<ClientHandle<T, AE>>>,
     /// Maximum user-data bytes per packet so the wire packet fits within MTU.
@@ -349,6 +358,12 @@ pub struct Listener<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'sta
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> Listener<T, AE, IG> {
+    /// Settings shared by this listener's flow managers and sessions.
+    #[inline]
+    pub(crate) fn settings(&self) -> &Arc<Settings<AE>> {
+        &self.settings
+    }
+
     /// Create initial user crypto state from a handshake key (fast mode).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
     #[inline]
@@ -450,12 +465,33 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             if let Err(err) = session.process_incoming(incoming).await {
                 debug!("session processing error for {}: {}", identity.to_string(), err);
                 if matches!(err, SessionControllerError::ConnectionTerminated(_)) {
-                    self.router.remove_session(&identity).await;
+                    self.router.remove_session(&identity, session.handshake_pn()).await;
                 }
             }
         } else {
             debug!("packet from unknown identity {}, dropping", identity.to_string());
         }
+    }
+
+    /// Reject a handshake before a real identity exists (version mismatch or `generate` returning `None`), addressing the TERMINATION response with the client's version-string bytes as a transient bookkeeping key so it can still be encrypted with the just-derived initial key.
+    async fn reject_handshake(self: &Arc<Self>, flow_index: usize, transient_identity: &T, source_addr: SocketAddr, handshake_pn: u64, initial_key: &impl ByteBuffer, code: ReturnCode) {
+        {
+            let mut users = self.router.users.lock().await;
+            let crypto_state = self.make_initial_crypto_state(initial_key);
+            users.insert(transient_identity.clone(), UserServerState::new(crypto_state)).await;
+        }
+        self.router.flows[flow_index].register_user_binding(transient_identity.clone(), source_addr, handshake_pn).await;
+        let pn = (unix_timestamp_ms() / 1000) as u64;
+        let buf = self.settings.pool().allocate(Some(T::length()));
+        let tailer = Tailer::termination(buf, transient_identity, code, pn);
+        if let Err(err) = self.router.flows[flow_index].send_packet(tailer.into_buffer(), false, false).await {
+            warn!("failed to send handshake rejection ({code:?}): {err}");
+        }
+        {
+            let mut users = self.router.users.lock().await;
+            users.remove(transient_identity).await;
+        }
+        self.router.flows[flow_index].remove_user(transient_identity).await;
     }
 
     /// Handle a handshake from a new client: create session, send response, publish ClientHandle.
@@ -487,31 +523,33 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
         let client_version_identity = raw_packet.tailer.identity();
         let handshake_pn = raw_packet.tailer.packet_number();
-        if !self.identity_generator.verify_version(client_version_identity.to_bytes()) {
-            {
-                let mut users = self.router.users.lock().await;
-                let crypto_state = self.make_initial_crypto_state(&initial_key);
-                users.insert(client_version_identity.clone(), UserServerState::new(crypto_state)).await;
-            }
-            self.router.flows[flow_index].register_user_binding(client_version_identity.clone(), raw_packet.source_addr, handshake_pn).await;
-            let pn = ((unix_timestamp_ms() / 1000) as u64) << 32;
-            let buf = self.settings.pool().allocate(Some(T::length()));
-            let tailer = Tailer::termination(buf, &client_version_identity, ReturnCode::VersionMismatch, pn);
-            if let Err(err) = self.router.flows[flow_index].send_packet(tailer.into_buffer(), false, false).await {
-                warn!("failed to send version mismatch rejection: {err}");
-            }
-            {
-                let mut users = self.router.users.lock().await;
-                users.remove(&client_version_identity).await;
-            }
-            self.router.flows[flow_index].remove_user(&client_version_identity).await;
+        if !self.router.connection_handler.verify_version(client_version_identity.to_bytes()) {
+            self.reject_handshake(flow_index, &client_version_identity, raw_packet.source_addr, handshake_pn, &initial_key, ReturnCode::VersionMismatch).await;
             return;
         }
 
-        let identity = self.identity_generator.generate(client_initial_data.slice());
-        let server_initial_data = self.identity_generator.initial_data(&identity);
+        let Some(identity) = self.router.connection_handler.generate(client_initial_data.slice()) else {
+            debug!("identity generation rejected handshake from {source_addr}");
+            self.reject_handshake(flow_index, &client_version_identity, raw_packet.source_addr, handshake_pn, &initial_key, ReturnCode::IdentityRejected).await;
+            return;
+        };
+
+        // Reject stale or replayed handshakes before doing any further crypto work.
+        let existing_handshake_pn = self.router.sessions.read().await.get(&identity).map(|s| s.handshake_pn());
+        if let Some(existing_pn) = existing_handshake_pn
+            && handshake_pn <= existing_pn
+        {
+            debug!("stale or replayed handshake for {} rejected: pn {handshake_pn:#018x} <= current {existing_pn:#018x}", identity.to_string());
+            if let Some(packet) = original_wire_packet {
+                self.router.flows[flow_index].forward_to_probe(packet, source_addr).await;
+            }
+            return;
+        }
+
+        let server_initial_data = self.router.connection_handler.initial_data(&identity);
 
         let (incoming_tx, incoming_rx) = create_notify_queue::<DynamicByteBuffer>();
+        let (end_tx, end_rx) = create_watch::<()>();
         let router_weak: Weak<dyn OutgoingRouter<T>> = Arc::downgrade(&self.router) as Weak<dyn OutgoingRouter<T>>;
 
         let (response_body, session_key) = self.secret.encapsulate_handshake_server(server_data, self.settings.pool(), server_initial_data.slice(), &initial_key);
@@ -524,18 +562,17 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 users.remove(&identity).await;
             }
             let initial_crypto_state = self.make_initial_crypto_state(&initial_key);
-            let result = ServerSessionManager::assemble_session(initial_crypto_state, response_body, raw_packet.tailer, identity.clone(), &mut users, incoming_tx, router_weak, self.router.flow_count(), self.settings.clone()).await;
-            match result {
-                Ok((session, response_packet)) => (session, response_packet, replacing),
-                Err(err) => {
-                    warn!("handshake failed: {err}");
-                    return;
-                }
-            }
+            let (session, response_packet) = ServerSessionManager::assemble_session(initial_crypto_state, response_body, raw_packet.tailer, identity.clone(), &mut users, incoming_tx, end_tx, router_weak, self.router.flow_count(), self.settings.clone()).await;
+            (session, response_packet, replacing)
         };
 
         if replacing {
-            self.router.sessions.write().await.remove(&identity);
+            // Wake the displaced ClientHandle's receive() so it stops waiting.
+            // on_connect(identity, existing=true) reports the reconnect once the new connection is confirmed below.
+            let old = self.router.sessions.write().await.remove(&identity);
+            if let Some(old) = old {
+                old.signal_end();
+            }
             for flow in &self.router.flows {
                 flow.remove_user(&identity).await;
             }
@@ -576,13 +613,19 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             session,
             identity: identity.clone(),
             incoming_rx: Mutex::new(incoming_rx),
+            end_rx: Mutex::new(end_rx),
             max_data_payload: self.max_data_payload,
             settings: self.settings.clone(),
-            router: Arc::clone(&self.router),
+            router: Arc::clone(&self.router) as Arc<dyn OutgoingRouter<T>>,
         };
         self.accept_tx.push(client_handle);
+        self.router.connection_handler.on_connect(&identity, replacing);
 
-        info!("new client connected: {}", identity.to_string());
+        if replacing {
+            info!("client reconnected: {}", identity.to_string());
+        } else {
+            info!("new client connected: {}", identity.to_string());
+        }
     }
 
     /// Wait for the next client connection and return a handle to it.
@@ -593,7 +636,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
 /// OutgoingRouter implementation: selects an active flow via the per-session bitmask and sends the packet.
 #[async_trait]
-impl<T: IdentityType + Clone + Eq + Hash + Send + Sync + ToString + 'static, AE: AsyncExecutor + 'static> OutgoingRouter<T> for Router<T, AE> {
+impl<T: IdentityType + Clone + Eq + Hash + Send + Sync + ToString + 'static, AE: AsyncExecutor + 'static, IG: ServerConnectionHandler<T> + 'static> OutgoingRouter<T> for Router<T, AE, IG> {
     async fn route_packet(&self, packet: DynamicByteBuffer, identity: &T) -> bool {
         let session = {
             let sessions = self.sessions.read().await;
@@ -610,15 +653,28 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + Sync + ToString + 'static, AE:
         }
     }
 
-    async fn remove_session(&self, identity: &T) {
-        if self.sessions.write().await.remove(identity).is_none() {
-            return;
-        }
+    async fn is_current_session(&self, identity: &T, handshake_pn: u64) -> bool {
+        self.sessions.read().await.get(identity).is_some_and(|s| s.handshake_pn() == handshake_pn)
+    }
+
+    async fn remove_session(&self, identity: &T, handshake_pn: u64) -> bool {
+        let removed = {
+            let mut sessions = self.sessions.write().await;
+            match sessions.get(identity) {
+                Some(s) if s.handshake_pn() == handshake_pn => sessions.remove(identity),
+                _ => return false,
+            }
+        };
         self.users.lock().await.remove(identity).await;
         for flow in &self.flows {
             flow.remove_user(identity).await;
         }
+        if let Some(session) = removed {
+            session.signal_end();
+        }
+        self.connection_handler.on_disconnect(identity);
         info!("client session removed: {}", identity.to_string());
+        true
     }
 }
 
@@ -628,13 +684,21 @@ pub struct ClientHandle<T: IdentityType + Clone + Eq + Hash + Send + ToString + 
     session: Arc<ServerSessionManager<T, AE>>,
     identity: T,
     incoming_rx: Mutex<NotifyQueueReceiver<DynamicByteBuffer>>,
+    /// Fired once the session is removed from the router for any reason, so `receive()` can stop waiting on `incoming_rx` instead of hanging forever.
+    end_rx: Mutex<WatchReceiver<()>>,
     /// Maximum user-data bytes per packet so the wire packet fits within MTU.
     max_data_payload: usize,
     settings: Arc<Settings<AE>>,
-    router: Arc<Router<T, AE>>,
+    router: Arc<dyn OutgoingRouter<T>>,
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> ClientHandle<T, AE> {
+    /// The identity this handle is registered under.
+    #[inline]
+    pub fn identity(&self) -> &T {
+        &self.identity
+    }
+
     /// Send a packet using a pre-allocated buffer.
     pub async fn send(&self, packet: DynamicByteBuffer) -> Result<(), ServerSocketError> {
         let wire = self.session.prepare_outgoing(packet, false).await.map_err(ServerSocketError::SessionError)?;
@@ -676,9 +740,17 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> C
     }
 
     /// Receive a packet, returning the decrypted payload as a buffer.
+    /// Returns `Err(ChannelClosed)` once the session has ended for any reason, including being displaced by a re-handshake.
     pub async fn receive(&self) -> Result<DynamicByteBuffer, ServerSocketError> {
-        let buf = self.incoming_rx.lock().await.recv().await.ok_or(ServerSocketError::ChannelClosed)?;
-        Ok(buf)
+        let mut incoming = self.incoming_rx.lock().await;
+        let mut ended = self.end_rx.lock().await;
+        let recv_fut = incoming.recv();
+        let end_fut = ended.recv();
+        pin_mut!(recv_fut, end_fut);
+        match select(recv_fut, end_fut).await {
+            Either::Left((Some(buf), _)) => Ok(buf),
+            _ => Err(ServerSocketError::ChannelClosed),
+        }
     }
 
     /// Receive a packet, returning the decrypted payload as a byte vector.
@@ -686,18 +758,24 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> C
         let buffer = self.receive().await?;
         Ok(buffer.slice().to_vec())
     }
+
+    /// Send a TERMINATION packet and remove the session, unless a re-handshake has already replaced it. Shared by `Drop` and `ClientPool::disconnect`.
+    pub(crate) async fn terminate(&self) {
+        let handshake_pn = self.session.handshake_pn();
+        let pn = (unix_timestamp_ms() / 1000) as u64;
+        let buf = self.settings.pool().allocate(Some(Tailer::<T>::len()));
+        let termination = Tailer::termination(buf, &self.identity, ReturnCode::Success, pn).into_buffer();
+        if self.router.is_current_session(&self.identity, handshake_pn).await {
+            self.router.route_packet(termination, &self.identity).await;
+            self.router.remove_session(&self.identity, handshake_pn).await;
+        }
+    }
 }
 
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> Drop for ClientHandle<T, AE> {
-    /// Emit a TERMINATION packet and remove the session from the shared router before the handle is released.
+    /// Run `terminate()` synchronously before the handle is released.
     fn drop(&mut self) {
         let executor = self.settings.executor().clone();
-        let pn = (unix_timestamp_ms() / 1000) as u64 * (1u64 << 32);
-        let buf = self.settings.pool().allocate(Some(Tailer::<T>::len()));
-        let termination = Tailer::termination(buf, &self.identity, ReturnCode::Success, pn).into_buffer();
-        executor.block_on(async {
-            self.router.route_packet(termination, &self.identity).await;
-            self.router.remove_session(&self.identity).await;
-        });
+        executor.block_on(self.terminate());
     }
 }

@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -18,6 +18,7 @@ use crate::utils::sync::{Mutex, sleep};
 struct CapturingRouter {
     packets: Mutex<Vec<DynamicByteBuffer>>,
     remove_count: AtomicUsize,
+    current_pn: AtomicU64,
 }
 
 impl CapturingRouter {
@@ -25,6 +26,7 @@ impl CapturingRouter {
         Arc::new(Self {
             packets: Mutex::new(Vec::new()),
             remove_count: AtomicUsize::new(0),
+            current_pn: AtomicU64::new(1),
         })
     }
 }
@@ -36,8 +38,16 @@ impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
         true
     }
 
-    async fn remove_session(&self, _identity: &StaticByteBuffer) {
+    async fn is_current_session(&self, _identity: &StaticByteBuffer, handshake_pn: u64) -> bool {
+        self.current_pn.load(Ordering::Relaxed) == handshake_pn
+    }
+
+    async fn remove_session(&self, identity: &StaticByteBuffer, handshake_pn: u64) -> bool {
+        if !self.is_current_session(identity, handshake_pn).await {
+            return false;
+        }
         self.remove_count.fetch_add(1, Ordering::Relaxed);
+        true
     }
 }
 
@@ -56,8 +66,10 @@ fn test_identity() -> StaticByteBuffer {
 ///   TIMEOUT_MIN(5) ≤ TIMEOUT_DEFAULT(10) ≤ TIMEOUT_MAX(20)
 ///   HEALTH_CHECK_NEXT_IN_MIN(21) > TIMEOUT_MAX(20)
 ///   HEALTH_CHECK_NEXT_IN_MIN(21) ≤ HEALTH_CHECK_NEXT_IN_MAX(100)
+///   RTT_MIN(1) ≤ RTT_DEFAULT(1) ≤ RTT_MAX(5) — kept tiny so the shadowride window
+///   (smooth_rtt * 2) never dominates these tests' short sleep/assertion windows.
 fn fast_settings() -> Arc<Settings<DefaultExecutor>> {
-    Arc::new(SettingsBuilder::new().set(&keys::TIMEOUT_MIN, 5u64).set(&keys::TIMEOUT_DEFAULT, 10u64).set(&keys::TIMEOUT_MAX, 20u64).set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 21u64).set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 100u64).set(&keys::MAX_RETRIES, 2u64).build().unwrap())
+    Arc::new(SettingsBuilder::new().set(&keys::TIMEOUT_MIN, 5u64).set(&keys::TIMEOUT_DEFAULT, 10u64).set(&keys::TIMEOUT_MAX, 20u64).set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 21u64).set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 100u64).set(&keys::MAX_RETRIES, 2u64).set(&keys::RTT_MIN, 1u64).set(&keys::RTT_DEFAULT, 1u64).set(&keys::RTT_MAX, 5u64).build().unwrap())
 }
 
 /// Parse PN, TM and flags from the raw buffer emitted by ServerHealthProvider.
@@ -80,7 +92,7 @@ async fn test_server_health_response_echoes_client_pn() {
     let settings = fast_settings();
 
     // Very long initial_server_next_in → timer will not time out during the test.
-    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
 
     let client_pn: u64 = 0xDEAD_BEEF_0000_0001;
     provider.feed_health_check(10u32, client_pn);
@@ -103,7 +115,7 @@ async fn test_server_health_response_own_tm_in_range() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
 
     provider.feed_health_check(10u32, 0x1234_5678_0000_0001);
     sleep(Duration::from_millis(50)).await;
@@ -125,7 +137,7 @@ async fn test_server_health_response_has_health_check_flag() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
     provider.feed_health_check(10u32, 0xABCD);
     sleep(Duration::from_millis(50)).await;
     drop(provider);
@@ -141,9 +153,9 @@ async fn test_server_health_response_has_health_check_flag() {
 #[tokio::test]
 async fn test_server_health_response_delayed() {
     let router = CapturingRouter::new();
-    let settings: Arc<Settings<DefaultExecutor>> = Arc::new(SettingsBuilder::new().set(&keys::TIMEOUT_MIN, 5u64).set(&keys::TIMEOUT_DEFAULT, 10u64).set(&keys::TIMEOUT_MAX, 20u64).set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 300u64).set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 300u64).set(&keys::MAX_RETRIES, 2u64).build().unwrap());
+    let settings: Arc<Settings<DefaultExecutor>> = Arc::new(SettingsBuilder::new().set(&keys::TIMEOUT_MIN, 5u64).set(&keys::TIMEOUT_DEFAULT, 10u64).set(&keys::TIMEOUT_MAX, 20u64).set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 300u64).set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 300u64).set(&keys::MAX_RETRIES, 2u64).set(&keys::RTT_MIN, 1u64).set(&keys::RTT_DEFAULT, 1u64).set(&keys::RTT_MAX, 5u64).build().unwrap());
 
-    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
 
     // Request a 300 ms delay (clamped to MIN=MAX=300 ms).
     provider.feed_health_check(300u32, 0x9999);
@@ -169,7 +181,7 @@ async fn test_server_health_timer_removes_session_after_max_retries() {
     let settings = fast_settings(); // MAX_RETRIES=2, TIMEOUT_DEFAULT=10ms
 
     // initial_server_next_in = 1 ms → first timeout = 1 + 10 = 11 ms.
-    let _provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 1u32);
+    let _provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 1u32, 1u64);
 
     // Never call feed_health_check — let the timer expire MAX_RETRIES times.
     sleep(Duration::from_millis(500)).await;
@@ -183,12 +195,117 @@ async fn test_server_health_sends_termination_before_remove() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let _provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 1u32);
+    let _provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 1u32, 1u64);
 
     sleep(Duration::from_millis(500)).await;
 
     assert!(!router.packets.lock().await.is_empty(), "termination packet must be sent before remove_session");
     assert!(router.remove_count.load(Ordering::Relaxed) > 0, "remove_session must be called after termination");
+}
+
+// Test: if the session has been replaced (router reports a different current handshake_pn) by
+// the time the decay timer fires, the stale provider sends no termination and removes nothing.
+#[tokio::test]
+async fn test_server_health_skips_decay_cleanup_when_session_replaced() {
+    let router = CapturingRouter::new();
+    let settings = fast_settings();
+
+    let _provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 1u32, 1u64);
+
+    // Simulate a re-handshake replacing this session before decay can fire.
+    router.current_pn.store(2, Ordering::Relaxed);
+
+    sleep(Duration::from_millis(500)).await;
+
+    assert!(router.packets.lock().await.is_empty(), "no termination packet must be sent for a superseded session");
+    assert_eq!(router.remove_count.load(Ordering::Relaxed), 0, "remove_session must not be called for a superseded session");
+}
+
+// Test: feed_output is a no-op when shadowride_pending is None.
+#[tokio::test]
+async fn test_server_health_feed_output_noop_when_nothing_pending() {
+    let router = CapturingRouter::new();
+    let settings = fast_settings();
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
+
+    *provider.shadowride_pending.lock().await = None;
+
+    let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
+    let tailer = Tailer::data(buf, &test_identity(), 0u16, 0u64);
+
+    provider.feed_output(tailer.clone()).await.unwrap();
+
+    assert!(!tailer.flags().contains(PacketFlags::HEALTH_CHECK), "tailer must not be modified when nothing pending");
+}
+
+// Test: feed_output is a no-op when the packet already carries HEALTH_CHECK.
+#[tokio::test]
+async fn test_server_health_feed_output_noop_when_already_health_check() {
+    let router = CapturingRouter::new();
+    let settings = fast_settings();
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
+
+    *provider.shadowride_pending.lock().await = Some((0xCAFE, 42));
+
+    let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
+    let tailer = Tailer::health_check(buf, &test_identity(), 50u32, 0x1234);
+
+    provider.feed_output(tailer.clone()).await.unwrap();
+
+    assert!(provider.shadowride_pending.lock().await.is_some(), "pending must not be consumed when packet already carries HEALTH_CHECK");
+}
+
+// Test: feed_output attaches the pending health check to a DATA packet.
+#[tokio::test]
+async fn test_server_health_feed_output_attaches_shadowride() {
+    let router = CapturingRouter::new();
+    let settings = fast_settings();
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
+
+    let pn: u64 = 0xCAFE_0000_0000_BABE;
+    let next_in: u32 = 42;
+    *provider.shadowride_pending.lock().await = Some((pn, next_in));
+
+    let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
+    let tailer = Tailer::data(buf, &test_identity(), 0u16, 0u64);
+
+    provider.feed_output(tailer.clone()).await.unwrap();
+
+    assert!(tailer.flags().contains(PacketFlags::HEALTH_CHECK), "tailer must carry HEALTH_CHECK flag after shadowride");
+    assert_eq!(tailer.time(), next_in, "tailer TM must be set to next_in");
+    assert_eq!(tailer.packet_number(), pn, "tailer PN must be set to pending pn");
+    assert!(provider.shadowride_pending.lock().await.is_none(), "pending must be cleared after attachment");
+}
+
+// Test: a data packet absorbed during the shadowride window means no separate health-check
+// packet is sent.
+#[tokio::test]
+async fn test_server_health_shadowride_consumed_skips_dedicated_packet() {
+    let router = CapturingRouter::new();
+    // Generous RTT so the shadowride window (smooth_rtt * 2 = 200ms) is wide enough to reliably
+    // land a feed_output call inside it from a test, unlike fast_settings()'s tiny window.
+    // MAX_RETRIES is generous too, so the connection doesn't decay mid-test while waiting for a
+    // second health check that this test never sends.
+    let settings: Arc<Settings<DefaultExecutor>> = Arc::new(SettingsBuilder::new().set(&keys::TIMEOUT_MIN, 1u64).set(&keys::TIMEOUT_DEFAULT, 2u64).set(&keys::TIMEOUT_MAX, 10u64).set(&keys::HEALTH_CHECK_NEXT_IN_MIN, 50u64).set(&keys::HEALTH_CHECK_NEXT_IN_MAX, 50u64).set(&keys::MAX_RETRIES, 1000u64).set(&keys::RTT_MIN, 100u64).set(&keys::RTT_DEFAULT, 100u64).set(&keys::RTT_MAX, 500u64).build().unwrap());
+
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
+
+    provider.feed_health_check(50u32, 0xBEEF);
+
+    // Let the inner response-delay (HEALTH_CHECK_NEXT_IN ~50ms) elapse so the provider has
+    // computed server_next_in, set shadowride_pending, and entered its ~200ms shadowride window.
+    sleep(Duration::from_millis(70)).await;
+
+    let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
+    let tailer = Tailer::data(buf, &test_identity(), 0u16, 0u64);
+    provider.feed_output(tailer.clone()).await.unwrap();
+
+    // Wait past the full shadowride window — if shadowriding hadn't worked, the fallback
+    // dedicated packet would have been sent by now.
+    sleep(Duration::from_millis(250)).await;
+
+    assert!(router.packets.lock().await.is_empty(), "no dedicated health-check packet must be sent once shadowridden");
+    assert!(tailer.flags().contains(PacketFlags::HEALTH_CHECK), "the data tailer must carry the shadowridden health check");
 }
 
 // Test: dropping the router Arc causes the timer task to stop cleanly.
@@ -197,7 +314,7 @@ async fn test_server_health_stops_when_router_dropped() {
     let router = CapturingRouter::new();
     let settings = fast_settings();
 
-    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32);
+    let provider = ServerHealthProvider::new(downgrade_router(&router), test_identity(), Arc::clone(&settings), 60_000u32, 1u64);
 
     drop(router);
 
