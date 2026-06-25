@@ -1,5 +1,7 @@
 //! Server-side cryptographic tool for TYPHOON protocol.
 
+#[cfg(any(feature = "full_software", feature = "full_hardware"))]
+use std::future::ready;
 use std::hash::Hash;
 
 use cfg_if::cfg_if;
@@ -174,7 +176,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
 
     /// Verify tailer authentication (full mode: no-op).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub(crate) async fn verify_tailer(&mut self, _: &T, _: ObfuscationTranscript) -> Result<(), CryptoError> {
-        Ok(())
+    #[allow(clippy::unused_self)] // keeps the same call-site shape as the fast-mode variant
+    pub(crate) fn verify_tailer(&mut self, _: &T, _: ObfuscationTranscript) -> impl Future<Output = Result<(), CryptoError>> {
+        ready(Ok(()))
     }
 }

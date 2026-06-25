@@ -64,6 +64,7 @@ impl Socket {
     }
 
     #[cfg(feature = "async-std")]
+    #[allow(clippy::unused_async_trait_impl)] // keeps the same call-site shape as the tokio variant; bind/connect/Async::new are synchronous here
     pub async fn new(peer: SocketAddr, local: Option<SocketAddr>) -> Result<Self, SocketError> {
         let local_addr = local.unwrap_or_else(|| SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)));
         let sock = StdUdpSocket::bind(local_addr).map_err(SocketError::new_socket_error)?;
@@ -86,6 +87,7 @@ impl Socket {
 
     /// Bind a socket without connecting (for server use with multiple peers).
     #[cfg(all(feature = "async-std", feature = "server"))]
+    #[allow(clippy::unused_async_trait_impl)] // keeps the same call-site shape as the tokio variant; bind/Async::new are synchronous here
     pub async fn bind(local: SocketAddr) -> Result<Self, SocketError> {
         let sock = StdUdpSocket::bind(local).map_err(SocketError::new_socket_error)?;
         Ok(Self {
