@@ -11,11 +11,14 @@ use std::ops::Add;
 /// This ensures type-safe access to settings - you can only get/set
 /// values of the correct type for each key.
 pub struct Key<T> {
+    /// The `TYPHOON_*` environment variable name this key is overridden by.
     pub name: &'static str,
+    /// The value used when no override is present.
     pub default: T,
 }
 
 impl<T> Key<T> {
+    /// Create a new setting key with the given environment variable name and default value.
     pub const fn new(name: &'static str, default: T) -> Self {
         Self {
             name,
@@ -25,10 +28,13 @@ impl<T> Key<T> {
 }
 
 /// Trait for types that can be stored in Settings.
-/// Provides conversion to/from the internal SettingValue representation.
+/// Provides conversion to/from the internal `SettingValue` representation.
 pub trait SettingType: Copy {
+    /// Extract this type from its `SettingValue` representation. Panics if the variant doesn't match.
     fn from_value(v: SettingValue) -> Self;
+    /// Wrap this value into its `SettingValue` representation.
     fn to_value(self) -> SettingValue;
+    /// Parse this type from an environment variable's string value, e.g. for `TYPHOON_*` overrides.
     fn try_parse(s: &str) -> Option<Self>;
 }
 
@@ -95,8 +101,11 @@ impl SettingType for f64 {
 /// Internal representation of a setting value.
 #[derive(Copy, Clone, Debug)]
 pub enum SettingValue {
+    /// A signed integer setting.
     Signed(i64),
+    /// An unsigned integer setting.
     Unsigned(u64),
+    /// A floating-point setting.
     Float(f64),
 }
 

@@ -22,6 +22,7 @@ use crate::settings::Settings;
 use crate::tailer::{ClientConnectionHandler, IdentityType, PacketFlags, Tailer};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::{AsyncExecutor, Mutex, create_watch};
+use crate::utils::unix_timestamp_ms;
 
 type RecvFut = Pin<Box<dyn Future<Output = Result<DynamicByteBuffer, FlowControllerError>> + Send>>;
 
@@ -94,7 +95,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
     /// The counter is kept in the dominant half so raw `PN` ordering is immune to clock adjustments.
     fn next_packet_number(&self) -> u64 {
         let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
-        let timestamp = (crate::utils::unix_timestamp_ms() / 1000) as u32;
+        let timestamp = (unix_timestamp_ms() / 1000) as u32;
         ((counter as u64) << 32) | (timestamp as u64)
     }
 }
@@ -108,7 +109,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
                 let mut send_lock = self.send_internal.lock().await;
                 // Single get_mut() covers both encrypt_payload and identity() — one lock acquire.
                 let cipher = send_lock.cipher.get_mut();
-                let encrypted_payload = cipher.encrypt_payload(packet, None).map_err(SessionControllerError::CryptoError)?;
+                let encrypted_payload = cipher.encrypt_payload(packet, None).map_err(SessionControllerError::Crypto)?;
                 let payload_length = encrypted_payload.len() as u16;
                 let identity = cipher.identity();
                 (encrypted_payload, payload_length, identity)
@@ -127,7 +128,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
             encrypted_payload.expand_end(Tailer::<T>::len())
         };
 
-        self.select_flow().send_packet(full_packet, false, false).await.map_err(SessionControllerError::FlowError)
+        self.select_flow().send_packet(full_packet, false, false).await.map_err(SessionControllerError::Flow)
     }
 
     async fn receive_packet(&self) -> Result<DynamicByteBuffer, SessionControllerError> {
@@ -136,7 +137,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
             // For a single flow the fast path avoids the allocation overhead of select_all.
             let packet = if self.flows.len() == 1 {
                 let recv_buf = self.settings.pool().allocate_for_recv();
-                self.flows[0].receive_packet(recv_buf).await.map_err(SessionControllerError::FlowError)?
+                self.flows[0].receive_packet(recv_buf).await.map_err(SessionControllerError::Flow)?
             } else {
                 // Take the persistent future state (releasing the lock before awaiting).
                 let (futs, mut flow_indices) = {
@@ -165,7 +166,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
 
                 *self.recv_state.lock().await = Some((remaining_futs, flow_indices));
 
-                result.map_err(SessionControllerError::FlowError)?
+                result.map_err(SessionControllerError::Flow)?
             };
 
             // The flow manager returns: encrypted_payload || plaintext_tailer (full Tailer::<T>::len() bytes).

@@ -13,6 +13,10 @@ authors = [
 [lib]
 name = "typhoon"
 
+[package.metadata.docs.rs]
+features = ["debug", "capture"]
+rustdoc-args = ["--cfg", "docsrs"]
+
 
 [features]
 default = ["fast_software", "server", "client", "tokio"]
@@ -68,32 +72,22 @@ tempfile = "^3.15"
 [lints.clippy]
 all      = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-cast_possible_truncation   = "allow"
-cast_sign_loss             = "allow"
-cast_precision_loss        = "allow"
-cast_lossless              = "allow"
-missing_errors_doc         = "allow"
-missing_panics_doc         = "allow"
-doc_markdown               = "allow"
-must_use_candidate         = "allow"
-similar_names              = "allow"
-too_many_lines             = "allow"
-too_many_arguments         = "allow"
-type_complexity            = "allow"
-trivially_copy_pass_by_ref = "allow"
-wildcard_imports           = "allow"
-large_enum_variant         = "allow"
-return_self_not_must_use   = "allow"
-needless_pass_by_value     = "allow"
-mut_from_ref               = "allow"
-large_stack_arrays         = "allow"
-float_cmp                  = "allow"
-same_length_and_capacity   = "allow"
-module_inception           = "allow"
-missing_fields_in_debug    = "allow"
-unnecessary_wraps          = "allow"
-len_without_is_empty       = "allow"
-unused_async               = "allow"
+cast_possible_truncation = "allow"  # Numeric casts (ms/byte lengths, rate math) are bounded by protocol/settings invariants, not accidental truncation.
+cast_sign_loss           = "allow"  # Signed-to-unsigned casts only ever apply to values already known non-negative (deltas, counters).
+cast_precision_loss      = "allow"  # Integer-to-f64 casts feed decoy rate/length math, where sub-byte precision doesn't matter.
+cast_lossless            = "allow"  # `as` is used uniformly for primitive widening instead of `From`/`Into`.
+must_use_candidate       = "allow"  # Builder/accessor methods (e.g. in bytes::common, bytes::dynamic) aren't all annotated `#[must_use]`.
+similar_names            = "allow"  # Crypto/settings code deliberately uses parallel short names (epk_buf/esk_buf, assert_min_max_u64/f64).
+too_many_lines           = "allow"  # Some setup functions (settings::structure, override_map) are long by necessity; splitting would obscure the flow.
+wildcard_imports         = "allow"  # `use crate::settings::keys::*;` glob-imports dozens of named setting-key constants; explicit imports would be unreadable.
+large_enum_variant       = "allow"  # TyphoonRng::Seeded(StdRng) carries more state than Os(OsRng); boxing the test-only variant isn't worth it.
+return_self_not_must_use = "allow"  # Buffer-trait builder methods (bytes::common) return `Self`/views without `#[must_use]`.
+needless_pass_by_value   = "allow"  # ByteBuffer-implementing types are passed by value at API boundaries (cheap, often Copy-backed) even when only borrowed internally.
+large_stack_arrays       = "allow"  # Classic McEliece key/ciphertext buffers (certificate::client/server) are large fixed-size stack arrays by design.
+float_cmp                = "allow"  # Test assertions compare deterministic f64 rate/budget computations for exact equality, not lossy floating math.
+missing_fields_in_debug  = "allow"  # DynamicByteBuffer's manual Debug impl omits the internal `holder` field on purpose (internal bookkeeping, not user-facing state).
+unnecessary_wraps        = "allow"  # Some trait methods always return `Ok`/`Some` to keep one signature shared across implementations that do vary.
+unused_async             = "allow"  # Some async fns stay `async` for call-site consistency even on paths that happen not to await.
 
 
 [[test]]

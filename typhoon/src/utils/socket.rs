@@ -64,8 +64,9 @@ impl Socket {
     }
 
     #[cfg(feature = "async-std")]
+    #[allow(clippy::unused_async_trait_impl)] // keeps the same call-site shape as the tokio variant; bind/connect/Async::new are synchronous here
     pub async fn new(peer: SocketAddr, local: Option<SocketAddr>) -> Result<Self, SocketError> {
-        let local_addr = local.unwrap_or_else(|| SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)));
+        let local_addr = local.unwrap_or_else(|| SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)));
         let sock = StdUdpSocket::bind(local_addr).map_err(SocketError::new_socket_error)?;
         if let Err(err) = sock.connect(peer) {
             return Err(SocketError::new_socket_error(err));
@@ -86,6 +87,7 @@ impl Socket {
 
     /// Bind a socket without connecting (for server use with multiple peers).
     #[cfg(all(feature = "async-std", feature = "server"))]
+    #[allow(clippy::unused_async_trait_impl)] // keeps the same call-site shape as the tokio variant; bind/Async::new are synchronous here
     pub async fn bind(local: SocketAddr) -> Result<Self, SocketError> {
         let sock = StdUdpSocket::bind(local).map_err(SocketError::new_socket_error)?;
         Ok(Self {
@@ -203,13 +205,13 @@ impl Socket {
         match self.sock.send_to(data.slice(), target).await {
             Ok(sent) => {
                 if sent < len {
-                    debug!("socket: send_to partial write: {} of {} bytes sent to {}", sent, len, target);
+                    debug!("socket: send_to partial write: {sent} of {len} bytes sent to {target}");
                 }
-                trace!("socket: send_to {} bytes to {} → ok ({} sent)", len, target, sent);
+                trace!("socket: send_to {len} bytes to {target} → ok ({sent} sent)");
                 Ok(sent)
             }
             Err(e) => {
-                debug!("socket: send_to {} bytes to {} → error: {}", len, target, e);
+                debug!("socket: send_to {len} bytes to {target} → error: {e}");
                 Err(SocketError::new_socket_error(e))
             }
         }
@@ -235,11 +237,11 @@ impl Socket {
     pub async fn recv_from(&self, buf: DynamicByteBuffer) -> Result<(DynamicByteBuffer, SocketAddr), SocketError> {
         match self.sock.recv_from(buf.slice_mut()).await {
             Ok((res, addr)) => {
-                trace!("socket: recv_from {} bytes from {}", res, addr);
+                trace!("socket: recv_from {res} bytes from {addr}");
                 Ok((buf.rebuffer_end(res), addr))
             }
             Err(e) => {
-                debug!("socket: recv_from error: {}", e);
+                debug!("socket: recv_from error: {e}");
                 Err(SocketError::new_socket_error(e))
             }
         }

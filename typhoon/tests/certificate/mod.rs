@@ -30,7 +30,7 @@ impl ClientCertificate {
 }
 
 fn two_addrs() -> Vec<SocketAddr> {
-    vec![SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 19999)), SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 20000, 0, 0))]
+    vec![SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 19999)), SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 20000, 0, 0))]
 }
 
 // ── ServerKeyPair ─────────────────────────────────────────────────────────────

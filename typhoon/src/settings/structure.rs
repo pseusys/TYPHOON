@@ -28,7 +28,7 @@ fn try_env_override<T: SettingType>(key: &Key<T>) -> Option<T> {
 /// Configuration settings with type-safe access.
 ///
 /// Values are resolved in this order:
-/// 1. Explicit overrides set via SettingsBuilder
+/// 1. Explicit overrides set via `SettingsBuilder`
 /// 2. Environment variables (if not disabled)
 /// 3. Default value from the Key definition
 pub struct Settings<AE: AsyncExecutor> {

@@ -15,9 +15,9 @@ cfg_if! {
     if #[cfg(feature = "client")] {
         use log::warn;
         use rand::Rng;
-        use crate::bytes::{ByteBuffer, ByteBufferMut};
+        use crate::bytes::{ByteBuffer, ByteBufferMut, BytePool};
         use crate::cache::CachedValue;
-        use crate::crypto::ClientCryptoTool;
+        use crate::crypto::{ClientCryptoTool, TAILER_C2S_OVERHEAD};
         use crate::flow::config::FlowConfig;
         use crate::tailer::IdentityType;
         use crate::tailer::{PacketFlags, Tailer};
@@ -78,7 +78,7 @@ impl<T: IdentityType + Clone> FlowSendInternal<T> {
     /// Encrypt tailer, add fake header and body, return assembled packet ready for socket send.
     /// * When `fallthrough` is set, the trailing plaintext tailer bytes are dropped and the tailer-encryption step is skipped --- only fake header / body padding is added on top of the body.
     /// * When `is_maintenance` is set, the `FakeBodyMode::Random { service: true }` body is emitted on this packet (and only then); all other callers pass `false`.
-    pub(crate) fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &crate::bytes::BytePool, fallthrough: bool, is_maintenance: bool) -> Result<DynamicByteBuffer, FlowControllerError> {
+    pub(crate) fn prepare_outgoing(&mut self, packet: DynamicByteBuffer, mtu: usize, pool: &BytePool, fallthrough: bool, is_maintenance: bool) -> Result<DynamicByteBuffer, FlowControllerError> {
         let full_tailer_len = Tailer::<T>::len();
 
         let (encrypted_packet, packet_flags, data_len) = if fallthrough {
@@ -118,7 +118,7 @@ impl<T: IdentityType + Clone> FlowSendInternal<T> {
             let tailer_overhead = if fallthrough {
                 0
             } else {
-                crate::crypto::TAILER_C2S_OVERHEAD
+                TAILER_C2S_OVERHEAD
             };
             let tailer_len = if fallthrough {
                 0
@@ -137,7 +137,7 @@ impl<T: IdentityType + Clone> FlowReceiveInternal<T> {
     /// Deobfuscate the tailer from a raw wire packet.
     /// Returns `Ok(Some((body, tailer_buf)))` on success, `Ok(None)` on crypto failure
     /// (caller should treat the wire packet as unexpected), or `Err` on a programming error.
-    pub(crate) fn deobfuscate_incoming(&mut self, packet: DynamicByteBuffer, pool: &crate::bytes::BytePool) -> Result<Option<(DynamicByteBuffer, DynamicByteBuffer)>, FlowControllerError> {
+    pub(crate) fn deobfuscate_incoming(&mut self, packet: DynamicByteBuffer, pool: &BytePool) -> Result<Option<(DynamicByteBuffer, DynamicByteBuffer)>, FlowControllerError> {
         let encrypted_tailer_len = Tailer::<T>::encrypted_len_s2c();
         // A wire packet shorter than the encrypted tailer cannot be a valid Typhoon
         // packet — caller treats `None` the same as crypto failure and forwards

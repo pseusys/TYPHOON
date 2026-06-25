@@ -1,5 +1,5 @@
 /// End-to-end round-trip benchmarks:
-///   "batch" — 20 pipelined 1400 B messages under realistic flow obfuscation (mirrors heavy_traffic).
+///   "batch" — 20 pipelined 1400 B messages under realistic flow obfuscation (mirrors `heavy_traffic`).
 ///   "single" — random-sized single-packet round trips with no data-packet overhead; measures raw
 ///               per-packet protocol cost (crypto, tailer, socket I/O).
 use std::net::UdpSocket;
@@ -38,10 +38,10 @@ fn free_addr() -> std::net::SocketAddr {
 fn load_or_generate_key() -> ServerKeyPair {
     if let Ok(path) = std::env::var(KEY_ENV_VAR) {
         let p = std::path::Path::new(&path);
-        if p.exists() {
-            if let Ok(kp) = ServerKeyPair::load(p) {
-                return kp;
-            }
+        if p.exists()
+            && let Ok(kp) = ServerKeyPair::load(p)
+        {
+            return kp;
         }
         let kp = ServerKeyPair::generate();
         let _ = kp.save(p);
@@ -51,7 +51,7 @@ fn load_or_generate_key() -> ServerKeyPair {
     }
 }
 
-/// Pipelined throughput under realistic traffic obfuscation (mirrors heavy_traffic example).
+/// Pipelined throughput under realistic traffic obfuscation (mirrors `heavy_traffic` example).
 fn bench_batch(c: &mut Criterion) {
     let rt = Runtime::new().expect("tokio runtime");
     let settings = Arc::new(SettingsBuilder::<DefaultExecutor>::new().build().expect("settings"));
@@ -66,13 +66,8 @@ fn bench_batch(c: &mut Criterion) {
     let listener_echo = listener.clone();
     rt.spawn(async move {
         let client = listener_echo.accept().await.expect("accept");
-        loop {
-            match client.receive_bytes().await {
-                Ok(data) => {
-                    let _ = client.send_bytes(&data).await;
-                }
-                Err(_) => break,
-            }
+        while let Ok(data) = client.receive_bytes().await {
+            let _ = client.send_bytes(&data).await;
         }
     });
 
@@ -122,13 +117,8 @@ fn bench_single(c: &mut Criterion) {
     let listener_echo = listener.clone();
     rt.spawn(async move {
         let client = listener_echo.accept().await.expect("accept");
-        loop {
-            match client.receive_bytes().await {
-                Ok(data) => {
-                    let _ = client.send_bytes(&data).await;
-                }
-                Err(_) => break,
-            }
+        while let Ok(data) = client.receive_bytes().await {
+            let _ = client.send_bytes(&data).await;
         }
     });
 
@@ -146,7 +136,7 @@ fn bench_single(c: &mut Criterion) {
                 socket.receive_bytes().await.expect("receive");
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.finish();
 }

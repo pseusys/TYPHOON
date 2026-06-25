@@ -1,8 +1,9 @@
+//! EWMA round-trip-time estimator shared by the client- and server-side health check providers.
+
 #[cfg(test)]
 #[path = "../../tests/session/rtt.rs"]
 mod tests;
 
-/// EWMA round-trip-time estimator shared by the client- and server-side health check providers.
 use crate::settings::Settings;
 use crate::settings::keys::{RTT_ALPHA, RTT_BETA, RTT_DEFAULT, RTT_MAX, RTT_MIN, TIMEOUT_DEFAULT, TIMEOUT_MAX, TIMEOUT_MIN, TIMEOUT_RTT_FACTOR};
 use crate::utils::sync::AsyncExecutor;

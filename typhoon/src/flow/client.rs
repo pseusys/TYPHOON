@@ -1,4 +1,5 @@
-/// Client-side flow manager implementation.
+//! Client-side flow manager implementation.
+
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -96,14 +97,14 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> FlowManager
         let mut lock = self.send_internal.lock().await;
         let full_packet = lock.prepare_outgoing(notified_body.expand_end(tailer_buf.len()), self.mtu, self.settings.pool(), fallthrough, is_maintenance)?;
         if full_packet.len() > 0 {
-            self.sock.send(full_packet).await.map_err(FlowControllerError::SocketError)?;
+            self.sock.send(full_packet).await.map_err(FlowControllerError::Socket)?;
         }
         Ok(())
     }
 
     async fn receive_packet(&self, packet: DynamicByteBuffer) -> Result<DynamicByteBuffer, FlowControllerError> {
         loop {
-            let wire_packet = self.sock.recv(packet.clone()).await.map_err(FlowControllerError::SocketError)?;
+            let wire_packet = self.sock.recv(packet.clone()).await.map_err(FlowControllerError::Socket)?;
 
             let (body, tailer_buf) = {
                 let mut lock = self.receive_internal.lock().await;

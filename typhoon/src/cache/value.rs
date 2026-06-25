@@ -22,7 +22,7 @@ cfg_if! {
 /// them. Staleness is detected by comparing the last-seen shared pointer (`shared`) to the
 /// current `ArcSwap` value — independent of any local mutations made via [`SharedValue::get_mut`].
 ///
-/// `shared` always matches the ArcSwap. `local` may diverge (via `get_mut`) until the next
+/// `shared` always matches the `ArcSwap`. `local` may diverge (via `get_mut`) until the next
 /// shared-state update, at which point it is reset.
 ///
 /// `!Sync` by design: each instance must be driven from exactly one task at a time.
@@ -179,7 +179,7 @@ impl<T: Clone + Send + Sync> CachedValue<T> {
     }
 }
 
-/// Read-only, `Send + Sync`, live projection of a [`SharedValue`]'s published value.
+/// Read-only, `Send + Sync`, live projection of a `SharedValue`'s published value.
 pub struct DerivedValue<R> {
     read: Arc<dyn Fn() -> R + Send + Sync>,
 }

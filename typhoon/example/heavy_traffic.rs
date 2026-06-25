@@ -1,8 +1,8 @@
 /// Heavy-traffic example: server binds three UDP ports (three flow managers); the client
 /// certificate embeds only two of those addresses so traffic distributes across two flows.
-/// The client pipelines PIPELINE_DEPTH messages per batch, collects all echoes, then
+/// The client pipelines `PIPELINE_DEPTH` messages per batch, collects all echoes, then
 /// pauses before the next batch.  Total run-time is approximately five minutes.
-/// Both client and server use random FlowConfig for traffic obfuscation; byte-level counting
+/// Both client and server use random `FlowConfig` for traffic obfuscation; byte-level counting
 /// ensures correctness regardless of how messages are split into wire packets.
 use std::sync::Arc;
 use std::time::{Duration, Instant};

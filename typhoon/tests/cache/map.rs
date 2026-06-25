@@ -7,7 +7,7 @@ use crate::cache::SharedMap;
 async fn test_shared_map_insert_get() {
     let mut map: SharedMap<String, u32> = SharedMap::new();
     map.insert("a".to_string(), 42).await;
-    assert_eq!(map.contains_key(&"a".to_string()), true);
+    assert!(map.contains_key(&"a".to_string()));
 }
 
 // Test: contains_key reflects inserted and removed keys.
@@ -27,7 +27,7 @@ async fn test_shared_map_modify() {
     let mut map: SharedMap<String, u32> = SharedMap::new();
     map.insert("k".to_string(), 10).await;
     map.modify(&"k".to_string(), |v| *v += 5).await;
-    assert_eq!(map.contains_key(&"k".to_string()), true);
+    assert!(map.contains_key(&"k".to_string()));
 }
 
 // ── CachedMapEntry version-bump propagation ───────────────────────────────────

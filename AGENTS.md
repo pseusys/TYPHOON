@@ -39,6 +39,7 @@ There is a `go` module in `evaluation/protocols/wireguard_daita/wg-daita` as wel
 - When gating code, prefer applying `#[cfg(...)]` to imports, types, fields and functions, but not to the code (inside of a function).
 - All the test-related code (marked with `#[cfg(test)]`) should reside in `typhoon/tests` directory, the directory structure should match the `typhoon/src` source code structure, the test-related code should not be placed into sources.
 - Long lines should not be broken, for the other linting requirements please see `typhoon/.rustfmt.toml` (`fmt` tool) and `typhoon/.clippy.toml` (`clippy` tool).
+- All the rust code in `typhoon` crate (including sources, binaries, benches and examples in all configurations) should be linted, tested and documented according to the rust documentation standards, all that should be checked in CI on every commit.
 
 #### Python
 

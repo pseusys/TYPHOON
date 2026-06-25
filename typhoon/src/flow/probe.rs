@@ -28,8 +28,8 @@ pub trait ProbeFlowSender: Send + Sync {
 
 /// Handler for packets the flow manager could not identify (active probing protection).
 ///
-/// The flow manager calls [`start`] once at startup, then calls [`process`] for every packet
-/// whose tailer decryption or verification failed, and — on the server — for every
+/// The flow manager calls [`Self::start`] once at startup, then calls [`Self::process`] for every
+/// packet whose tailer decryption or verification failed, and — on the server — for every
 /// non-handshake, non-decoy packet from an unregistered user.
 #[async_trait]
 pub trait ActiveProbeHandler<AE: AsyncExecutor + 'static>: Send + Sync {
