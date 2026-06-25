@@ -22,6 +22,7 @@ use crate::settings::Settings;
 use crate::tailer::{ClientConnectionHandler, IdentityType, PacketFlags, Tailer};
 use crate::utils::random::{SupportRng, get_rng};
 use crate::utils::sync::{AsyncExecutor, Mutex, create_watch};
+use crate::utils::unix_timestamp_ms;
 
 type RecvFut = Pin<Box<dyn Future<Output = Result<DynamicByteBuffer, FlowControllerError>> + Send>>;
 
@@ -94,7 +95,7 @@ impl<T: IdentityType + Clone, AE: AsyncExecutor, FM: FlowManager + Clone + Send 
     /// The counter is kept in the dominant half so raw `PN` ordering is immune to clock adjustments.
     fn next_packet_number(&self) -> u64 {
         let counter = self.counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
-        let timestamp = (crate::utils::unix_timestamp_ms() / 1000) as u32;
+        let timestamp = (unix_timestamp_ms() / 1000) as u32;
         ((counter as u64) << 32) | (timestamp as u64)
     }
 }

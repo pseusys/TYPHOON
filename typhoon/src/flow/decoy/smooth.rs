@@ -9,7 +9,8 @@ use log::warn;
 
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::cache::DerivedValue;
-use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DecoyState, maintenance_timer_task, random_uniform, try_replicate};
+use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DecoyState, random_uniform};
+use crate::flow::decoy::features::{maintenance_timer_task, try_replicate};
 use crate::settings::Settings;
 use crate::settings::consts::FG_OFFSET;
 use crate::settings::keys::*;

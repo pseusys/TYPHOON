@@ -12,8 +12,8 @@ use crate::cache::SharedValue;
 use crate::certificate::{CertificateError, ClientCertificate};
 use crate::crypto::{ClientCryptoTool, KEY_LENGTH, PAYLOAD_CRYPTO_OVERHEAD};
 use crate::flow::client::ClientFlowManager;
-use crate::flow::decoy::{DecoyFactory, random_decoy_factory};
-use crate::flow::probe::ProbeFactory;
+use crate::flow::decoy::{DecoyCommunicationMode, DecoyFactory, decoy_factory, random_decoy_factory};
+use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, probe_factory};
 use crate::flow::{FlowConfig, FlowControllerError};
 use crate::session::{ClientSessionManager, SessionManager};
 use crate::settings::{Settings, keys};
@@ -69,8 +69,8 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
     }
 
     /// Set a fixed decoy provider type for all flows.
-    pub fn with_decoy<DP: crate::flow::decoy::DecoyCommunicationMode<T, AE> + 'static>(mut self) -> Self {
-        self.decoy_factory = crate::flow::decoy::decoy_factory::<T, AE, DP>();
+    pub fn with_decoy<DP: DecoyCommunicationMode<T, AE> + 'static>(mut self) -> Self {
+        self.decoy_factory = decoy_factory::<T, AE, DP>();
         self
     }
 
@@ -81,8 +81,8 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static, CC: ClientC
     }
 
     /// Set a fixed active probe handler type for all flows.
-    pub fn with_probe<PM: crate::flow::probe::ActiveProbeHandler<AE> + Default + 'static>(mut self) -> Self {
-        self.probe_factory = Some(crate::flow::probe::probe_factory::<AE, PM>());
+    pub fn with_probe<PM: ActiveProbeHandler<AE> + Default + 'static>(mut self) -> Self {
+        self.probe_factory = Some(probe_factory::<AE, PM>());
         self
     }
 

@@ -14,7 +14,7 @@ use rand::Rng;
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::DerivedValue;
 use crate::capture::{record_flow_config, record_server_send};
-use crate::crypto::{ObfuscationTranscript, ServerCryptoTool};
+use crate::crypto::{ObfuscationTranscript, ServerCryptoTool, TAILER_S2C_OVERHEAD};
 use crate::defaults::NoopProbeHandler;
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
@@ -332,9 +332,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 let mut crypto = self.crypto_send.lock().await;
                 crypto.obfuscate_tailer(packet_tailer, self.settings.pool()).await.map_err(FlowControllerError::TailerEncryption)?
             };
-            let tailer_overhead = crate::crypto::TAILER_S2C_OVERHEAD;
             let encrypted = packet_data.expand_end(encrypted_tailer.len());
-            (encrypted, flags, data_len, tailer_overhead)
+            (encrypted, flags, data_len, TAILER_S2C_OVERHEAD)
         };
 
         // Add fake header and body (single lock scope: len + fill must be consistent).

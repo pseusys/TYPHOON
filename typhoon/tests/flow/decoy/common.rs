@@ -4,14 +4,15 @@ use std::sync::atomic::AtomicU32;
 use crate::bytes::{ByteBuffer, StaticByteBuffer};
 use crate::cache::DerivedValue;
 use crate::defaults::DefaultExecutor;
-use crate::flow::decoy::common::{DecoyFeatureConfig, DecoyState, MaintenanceMode, ReplicationMode, SubheaderMode, exponential_variance, random_gauss, random_uniform};
+use crate::flow::decoy::common::{DecoyState, exponential_variance, random_gauss, random_uniform};
+use crate::flow::decoy::features::{MaintenanceMode, ReplicationMode, SubheaderMode, generate_random_fake_header};
 use crate::flow::decoy::{HeavyDecoyProvider, NoisyDecoyProvider, SmoothDecoyProvider};
-use crate::settings::SettingsBuilder;
 use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILER_LENGTH};
 use crate::settings::keys::*;
+use crate::settings::{Settings, SettingsBuilder};
 use crate::utils::unix_timestamp_ms;
 
-fn make_settings() -> Arc<crate::settings::Settings<DefaultExecutor>> {
+fn make_settings() -> Arc<Settings<DefaultExecutor>> {
     Arc::new(SettingsBuilder::new().build().unwrap())
 }
 
@@ -315,28 +316,6 @@ fn test_exponential_variance_positive_rate() {
     }
 }
 
-// === DecoyFeatureConfig tests ===
-
-// Test: DecoyFeatureConfig::random produces valid configs.
-#[test]
-fn test_decoy_feature_config_random_valid() {
-    let settings = make_settings();
-    for _ in 0..50 {
-        let config = DecoyFeatureConfig::random(&settings);
-
-        // Replication probability should be within configured bounds.
-        let prob_min = settings.get(&DECOY_REPLICATION_PROBABILITY_MIN);
-        let prob_max = settings.get(&DECOY_REPLICATION_PROBABILITY_MAX);
-        assert!(config.replication_probability >= prob_min && config.replication_probability <= prob_max, "replication_probability {} outside [{}, {}]", config.replication_probability, prob_min, prob_max);
-
-        // Subheader config should be Some iff mode is not None.
-        match config.subheader_mode {
-            SubheaderMode::None => assert!(config.subheader_config.is_none()),
-            _ => assert!(config.subheader_config.is_some()),
-        }
-    }
-}
-
 // === should_replicate tests ===
 
 // Test: ReplicationMode::None never replicates.
@@ -393,7 +372,7 @@ fn test_subheader_length_maintenance() {
     // Ensure a subheader config exists.
     let min_len = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
     let max_len = settings.get(&DECOY_SUBHEADER_LENGTH_MAX) as usize;
-    state.features.subheader_config = Some(super::generate_random_fake_header(&settings, min_len, max_len));
+    state.features.subheader_config = Some(generate_random_fake_header(&settings, min_len, max_len));
     assert_eq!(state.subheader_length(false), 0);
     assert!(state.subheader_length(true) > 0);
 }
@@ -406,7 +385,7 @@ fn test_subheader_length_all() {
     state.features.subheader_mode = SubheaderMode::All;
     let min_len = settings.get(&DECOY_SUBHEADER_LENGTH_MIN) as usize;
     let max_len = settings.get(&DECOY_SUBHEADER_LENGTH_MAX) as usize;
-    state.features.subheader_config = Some(super::generate_random_fake_header(&settings, min_len, max_len));
+    state.features.subheader_config = Some(generate_random_fake_header(&settings, min_len, max_len));
     assert!(state.subheader_length(false) > 0);
     assert!(state.subheader_length(true) > 0);
 }
@@ -462,7 +441,7 @@ fn test_seeded_packet_is_deterministic() {
         // Override subheader to All so the subheader path is always taken.
         // The config is generated from the seeded RNG, so it is deterministic.
         state.features.subheader_mode = SubheaderMode::All;
-        state.features.subheader_config = Some(super::generate_random_fake_header(&settings, sh_min, sh_max));
+        state.features.subheader_config = Some(generate_random_fake_header(&settings, sh_min, sh_max));
         let packet = state.create_decoy_packet(64, false);
         clear_test_rng();
         packet.as_ref().to_vec()
@@ -486,7 +465,7 @@ fn test_seeded_packets_differ_with_different_seeds() {
         set_test_rng_seed(seed);
         let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), DerivedValue::constant(StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH)), Arc::new(AtomicU32::new(0)), None);
         state.features.subheader_mode = SubheaderMode::All;
-        state.features.subheader_config = Some(super::generate_random_fake_header(&settings, sh_min, sh_max));
+        state.features.subheader_config = Some(generate_random_fake_header(&settings, sh_min, sh_max));
         let packet = state.create_decoy_packet(64, false);
         clear_test_rng();
         packet.as_ref().to_vec()
@@ -511,7 +490,7 @@ fn test_seeded_packet_snapshot() {
         set_test_rng_seed(seed);
         let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings.clone(), DerivedValue::constant(StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH)), Arc::new(AtomicU32::new(0)), None);
         state.features.subheader_mode = SubheaderMode::All;
-        state.features.subheader_config = Some(super::generate_random_fake_header(&settings, sh_min, sh_max));
+        state.features.subheader_config = Some(generate_random_fake_header(&settings, sh_min, sh_max));
         let packet = state.create_decoy_packet(16, false);
         clear_test_rng();
         packet.as_ref().to_vec()
@@ -554,7 +533,7 @@ fn test_create_replica_packet() {
 
 const LENGTH_SAMPLE_COUNT: usize = 500;
 
-fn sampled_state_busy(settings: Arc<crate::settings::Settings<DefaultExecutor>>) -> DecoyState<StaticByteBuffer, DefaultExecutor> {
+fn sampled_state_busy(settings: Arc<Settings<DefaultExecutor>>) -> DecoyState<StaticByteBuffer, DefaultExecutor> {
     let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings, DerivedValue::constant(StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH)), Arc::new(AtomicU32::new(0)), None);
     // Equal current and reference rates → quietness_index = 0.
     state.reference_rate = 200.0;
@@ -562,7 +541,7 @@ fn sampled_state_busy(settings: Arc<crate::settings::Settings<DefaultExecutor>>)
     state
 }
 
-fn sampled_state_quiet(settings: Arc<crate::settings::Settings<DefaultExecutor>>) -> DecoyState<StaticByteBuffer, DefaultExecutor> {
+fn sampled_state_quiet(settings: Arc<Settings<DefaultExecutor>>) -> DecoyState<StaticByteBuffer, DefaultExecutor> {
     let mut state = DecoyState::<StaticByteBuffer, DefaultExecutor>::new(settings, DerivedValue::constant(StaticByteBuffer::empty(DEFAULT_TYPHOON_ID_LENGTH)), Arc::new(AtomicU32::new(0)), None);
     // Reference_rate >> packet_rate → quietness_index ≈ 1.
     state.reference_rate = 200.0;

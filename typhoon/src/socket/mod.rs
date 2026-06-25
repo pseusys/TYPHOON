@@ -20,6 +20,8 @@
 
 #[cfg(feature = "client")]
 mod client;
+#[cfg(feature = "server")]
+mod client_handle;
 mod error;
 #[cfg(feature = "server")]
 mod pool;
@@ -38,9 +40,10 @@ cfg_if! {
 }
 cfg_if! {
     if #[cfg(feature = "server")] {
+        pub use client_handle::ClientHandle;
         pub use error::ServerSocketError;
         pub use pool::ClientPool;
-        pub use server::{ClientHandle, Listener, ServerBuilder, ServerFlowConfiguration};
+        pub use server::{Listener, ServerBuilder, ServerFlowConfiguration};
         pub use crate::certificate::ServerKeyPair;
         pub use crate::tailer::ServerConnectionHandler;
     }

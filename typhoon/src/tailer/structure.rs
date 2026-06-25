@@ -6,6 +6,7 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::marker::PhantomData;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
+use crate::crypto::{TAILER_C2S_OVERHEAD, TAILER_S2C_OVERHEAD};
 use crate::settings::consts::{CD_OFFSET, FG_OFFSET, ID_OFFSET, PL_OFFSET, PN_OFFSET, TAILER_LENGTH, TM_OFFSET};
 use crate::tailer::flags::{PacketFlags, ReturnCode};
 use crate::utils::unix_timestamp_ms;
@@ -385,13 +386,13 @@ impl<T: IdentityType> Tailer<T> {
     /// Wire length of the obfuscated client → server tailer (plaintext tailer + c2s obfuscation overhead).
     #[inline]
     pub(crate) fn encrypted_len_c2s() -> usize {
-        Self::len() + crate::crypto::TAILER_C2S_OVERHEAD
+        Self::len() + TAILER_C2S_OVERHEAD
     }
 
     /// Wire length of the obfuscated server → client tailer (plaintext tailer + s2c obfuscation overhead).
     #[inline]
     pub(crate) fn encrypted_len_s2c() -> usize {
-        Self::len() + crate::crypto::TAILER_S2C_OVERHEAD
+        Self::len() + TAILER_S2C_OVERHEAD
     }
 }
 

@@ -9,6 +9,7 @@
 //! Use [`decoy_factory::<T, AE, DP>()`](decoy_factory) to wrap a concrete type, or
 //! [`random_decoy_factory()`] for the default behavior (random selection per invocation).
 mod common;
+mod features;
 mod heavy;
 mod noisy;
 mod simple;

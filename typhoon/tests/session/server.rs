@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 
-use crate::bytes::{DynamicByteBuffer, StaticByteBuffer};
+use crate::bytes::{DynamicByteBuffer, FixedByteBuffer, StaticByteBuffer};
 use crate::cache::SharedMap;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-use crate::certificate::{ObfuscationBufferContainer, ServerKeyPair};
+use crate::certificate::{ObfuscationBufferContainer, ServerKeyPair, ServerSecret};
 use crate::crypto::{UserCryptoState, UserServerState};
 use crate::defaults::DefaultExecutor;
 use crate::session::SessionControllerError;
@@ -16,12 +16,12 @@ use crate::session::server::{IncomingPacket, OutgoingRouter, ServerSessionManage
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 use crate::settings::{Settings, SettingsBuilder, keys};
 use crate::tailer::{ReturnCode, Tailer};
-use crate::utils::sync::{create_notify_queue, create_watch};
+use crate::utils::sync::{Mutex, create_notify_queue, create_watch};
 
 /// Shared server secret — generated once so that concurrent tests don't each pay the
 /// expensive `McEliece` key-generation cost.
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-static TEST_SERVER_SECRET: LazyLock<crate::certificate::ServerSecret<'static>> = LazyLock::new(|| ServerKeyPair::for_tests().into_server_secret());
+static TEST_SERVER_SECRET: LazyLock<ServerSecret<'static>> = LazyLock::new(|| ServerKeyPair::for_tests().into_server_secret());
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
 
@@ -35,14 +35,14 @@ fn fast_settings() -> Arc<Settings<DefaultExecutor>> {
 
 /// Minimal outgoing router that records packets and `remove_session` calls.
 struct CapturingRouter {
-    packets: crate::utils::sync::Mutex<Vec<DynamicByteBuffer>>,
+    packets: Mutex<Vec<DynamicByteBuffer>>,
     remove_count: AtomicUsize,
 }
 
 impl CapturingRouter {
     fn new() -> Arc<Self> {
         Arc::new(Self {
-            packets: crate::utils::sync::Mutex::new(Vec::new()),
+            packets: Mutex::new(Vec::new()),
             remove_count: AtomicUsize::new(0),
         })
     }
@@ -70,7 +70,7 @@ impl OutgoingRouter<StaticByteBuffer> for CapturingRouter {
 async fn make_session(settings: Arc<Settings<DefaultExecutor>>, router: Arc<CapturingRouter>, num_flows: usize) -> Arc<ServerSessionManager<StaticByteBuffer, DefaultExecutor>> {
     let identity = test_identity();
 
-    let initial_key = crate::bytes::FixedByteBuffer::<32>::from([0u8; 32]);
+    let initial_key = FixedByteBuffer::<32>::from([0u8; 32]);
 
     // Build a minimal response body buffer (empty).
     let response_body = settings.pool().allocate(Some(0));
