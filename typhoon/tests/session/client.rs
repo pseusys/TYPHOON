@@ -1,3 +1,4 @@
+use std::future::ready;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -49,9 +50,9 @@ impl MockFlowManager {
 }
 
 impl FlowManager for MockFlowManager {
-    async fn send_packet(&self, _packet: DynamicByteBuffer, _fallthrough: bool, _is_maintenance: bool) -> Result<(), FlowControllerError> {
+    fn send_packet(&self, _packet: DynamicByteBuffer, _fallthrough: bool, _is_maintenance: bool) -> impl Future<Output = Result<(), FlowControllerError>> {
         self.send_calls.fetch_add(1, Ordering::Relaxed);
-        Ok(())
+        ready(Ok(()))
     }
 
     async fn receive_packet(&self, _buf: DynamicByteBuffer) -> Result<DynamicByteBuffer, FlowControllerError> {

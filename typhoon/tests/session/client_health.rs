@@ -1,3 +1,4 @@
+use std::future::ready;
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::Duration;
@@ -62,16 +63,16 @@ impl MockSessionManager {
 }
 
 impl SessionManager for MockSessionManager {
-    async fn send_packet(&self, packet: DynamicByteBuffer, _generated: bool) -> Result<(), SessionControllerError> {
+    fn send_packet(&self, packet: DynamicByteBuffer, _generated: bool) -> impl Future<Output = Result<(), SessionControllerError>> {
         if self.fail {
-            return Err(SessionControllerError::HealthProviderDied);
+            return ready(Err(SessionControllerError::HealthProviderDied));
         }
         self.sent.lock().unwrap().push(packet);
-        Ok(())
+        ready(Ok(()))
     }
 
-    async fn receive_packet(&self) -> Result<DynamicByteBuffer, SessionControllerError> {
-        Err(SessionControllerError::HealthProviderDied)
+    fn receive_packet(&self) -> impl Future<Output = Result<DynamicByteBuffer, SessionControllerError>> {
+        ready(Err(SessionControllerError::HealthProviderDied))
     }
 }
 
