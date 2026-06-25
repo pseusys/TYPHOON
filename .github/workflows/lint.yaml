@@ -52,6 +52,11 @@ jobs:
           rust-src-dir: typhoon
           override: true
 
+      - name: Install cargo-udeps and cargo-machete 📦
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-udeps,cargo-machete
+
       - name: Check formatting 🎨
         run: |
           cd typhoon && cargo fmt --check
@@ -72,11 +77,6 @@ jobs:
           cargo doc --no-deps --examples --features debug,capture,clap
           cargo doc --no-deps --examples --no-default-features --features full_hardware,server,client,async-std,debug,capture,clap
           cargo test --doc --features debug,capture,clap
-
-      - name: Install cargo-udeps and cargo-machete 📦
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-udeps,cargo-machete
 
       - name: Check for unused dependencies 🧹
         working-directory: typhoon
