@@ -1,4 +1,4 @@
-"""TYPHOON total evaluation pipeline (seven phases).
+"""TYPHOON total evaluation pipeline (eight phases).
 
   1. build       — protocol + background-generator Docker images
   2. capture     — bulk runs + scenario variants + optional chaos run
@@ -6,15 +6,16 @@
   4. visualize   — protocol comparison and flow plots
   5. typhoon     — TYPHOON intrinsic comparisons (self, use-case, traffic)
   6. background  — Part 3 corpus + blending + open-world + dist plots
-  7. report      — aggregate everything into artifacts/<pipeline_id>/report.md
+  7. benchmark   — cargo bench + example flamegraphs (Linux only, auto-skipped elsewhere)
+  8. report      — aggregate everything into artifacts/<pipeline_id>/report.md
 
 All derived artifacts go under ARTIFACTS_ROOT/<pipeline_id>/ (default
 ../../artifacts/). PCAPs stay in results/captures/ and results/background/
 because they are too large to ship as artifacts.
 
-To re-analyze already-stored PCAPs (e.g. to add XGBoost open-world scores
-without regenerating the corpus), skip generation and point the background
-phase at an existing corpus:
+To re-analyze already-stored PCAPs (e.g. after changing feature sets or
+classifier options) without regenerating the corpus, skip generation and
+point the background phase at an existing corpus:
 
     poe evaluate --skip build,capture \\
         --corpus-root results/background/pipeline_<id>
@@ -23,6 +24,7 @@ phase at an existing corpus:
 from datetime import UTC, datetime
 from json import dumps, loads
 from pathlib import Path
+from platform import system
 from shutil import copy2
 from subprocess import DEVNULL, run
 from sys import exit
@@ -36,6 +38,7 @@ from typhoon_eval.background.corpus import main as _bg_corpus_main
 from typhoon_eval.background.dist_plot import main as _bg_distplot_main
 from typhoon_eval.background.ml_blending import main as _bg_blending_main
 from typhoon_eval.background.ml_open_world import main as _bg_openworld_main
+from typhoon_eval.benchmark import main as _benchmark_main
 from typhoon_eval.protocols_op.proto_compare_plots import main as _proto_compare_main
 from typhoon_eval.self.self_compare import main as _self_compare_main
 from typhoon_eval.self.traffic_compare import main as _traffic_compare_main
@@ -52,7 +55,7 @@ RESULTS_DIR    = PROJECT_ROOT / "evaluation" / "results"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts"
 BACKGROUND_ROOT = RESULTS_DIR / "background"
 
-_ALL_PHASES = ("build", "capture", "analyze", "visualize", "typhoon", "background", "report")
+_ALL_PHASES = ("build", "capture", "analyze", "visualize", "typhoon", "background", "benchmark", "report")
 
 EVAL_ROOT = Path(__file__).parent.parent.parent
 PROTOCOL_COMPOSE   = EVAL_ROOT / "compose" / "docker-compose.build.yml"
@@ -256,8 +259,9 @@ def _phase_background(
 
     When *corpus_root_override* is given, corpus generation is skipped and the
     blending / open-world / distribution analyses run against those already-
-    stored PCAPs instead — useful for re-running e.g. XGBoost open-world scores
-    without regenerating the (large) corpus.
+    stored PCAPs instead — useful for re-running the analyses (e.g. after
+    changing feature sets or classifier options) without regenerating the
+    (large) corpus.
     """
     console.print(Rule("[bold]Phase 6 — Background blending[/bold]"))
     log_path = log_dir / "background.log"
@@ -335,6 +339,27 @@ def _phase_background(
     return generated
 
 
+# ── Phase 7: benchmark ────────────────────────────────────────────────────────
+
+def _phase_benchmark(artifacts_dir: Path, log_dir: Path) -> list[Path]:
+    """Run cargo bench + example flamegraphs. Linux only — auto-skipped elsewhere."""
+    console.print(Rule("[bold]Phase 7 — Benchmark[/bold]"))
+    generated: list[Path] = []
+
+    if system() != "Linux":
+        console.print("  [yellow]Skipping benchmark phase — requires Linux (perf + cargo-flamegraph).[/yellow]")
+        return generated
+
+    log_path = log_dir / "benchmark.log"
+    bench_dir = artifacts_dir / "benchmark"
+
+    if _invoke("benchmark", _benchmark_main, ["--out-dir", str(bench_dir)], log_path):
+        generated.extend(bench_dir.glob("*.txt"))
+        generated.extend((bench_dir / "flamegraphs").glob("*.pdf"))
+        generated.extend((bench_dir / "flamegraphs").glob("*.svg"))
+    return generated
+
+
 # ── Phase 8: report ───────────────────────────────────────────────────────────
 
 def _generate_report(
@@ -400,13 +425,15 @@ def _generate_report(
         "use_case_compare":  "TYPHOON per-use-case profiles (throughput / interactive / transparent / security)",
         "traffic_compare":   "TYPHOON traffic modes (constant/random payload × constant/random wait)",
         "background":        "Part 3 background-blending corpus: blending fraction, open-world detectability, distribution overlays",
+        "benchmark":         "Rust-level cargo bench results + example flamegraphs (Linux only)",
     }
     for section in ("proto_compare", "flow_plots", "self_compare", "use_case_compare",
-                    "traffic_compare", "background"):
+                    "traffic_compare", "background", "benchmark"):
         sd = artifacts_dir / section
         if not sd.exists():
             continue
-        files = sorted({*sd.rglob("*.pdf"), *sd.rglob("*.md"), *sd.rglob("*.json")})
+        files = sorted({*sd.rglob("*.pdf"), *sd.rglob("*.md"), *sd.rglob("*.json"),
+                         *sd.rglob("*.txt"), *sd.rglob("*.svg")})
         if not files:
             continue
         lines += [f"### {section.replace('_', ' ').title()}", _descriptions.get(section, ""), ""]
@@ -436,8 +463,12 @@ def _generate_report(
         "# Reuse existing Docker images + capture runs, skip the 7500-run corpus:",
         "poe evaluate --skip build,capture,background",
         "",
-        "# Re-analyze already-stored PCAPs (e.g. to add XGBoost open-world",
-        "# scores) without regenerating the corpus:",
+        "# Skip Rust-level benchmarking (cargo bench + flamegraphs) — it auto-skips",
+        "# on non-Linux hosts anyway:",
+        "poe evaluate --skip benchmark",
+        "",
+        "# Re-analyze already-stored PCAPs (e.g. after changing feature sets or",
+        "# classifier options) without regenerating the corpus:",
         "poe evaluate --skip build,capture \\",
         "    --corpus-root results/background/pipeline_<id>",
         "",
@@ -451,6 +482,7 @@ def _generate_report(
         "poe background-blending",
         "poe background-openworld",
         "poe background-distplot",
+        "poe benchmark",
         "```",
         "",
     ]
@@ -480,8 +512,7 @@ def _generate_report(
 @option("--corpus-root", "corpus_root", default=None, type=ClickPath(),
               help="Re-analyze an already-stored background corpus at this path instead of "
                    "generating a new one. Skips corpus generation; blending/open-world/distplot "
-                   "run on the stored PCAPs (e.g. to add XGBoost scores). Pair with "
-                   "'--skip build,capture' to reuse everything.")
+                   "run on the stored PCAPs. Pair with '--skip build,capture' to reuse everything.")
 @option("--artifacts-dir", default=str(ARTIFACTS_ROOT), show_default=True, type=ClickPath(),
               help="Root directory for per-pipeline-run artifact subdirectories.")
 @option("--skip", default="", show_default=True,
@@ -574,6 +605,9 @@ def main(
 
     if "background" not in skipped:
         _phase_background(background_runs, pipeline_id, artifacts_dir_run, log_dir, corpus_root_path)
+
+    if "benchmark" not in skipped:
+        _phase_benchmark(artifacts_dir_run, log_dir)
 
     if "report" not in skipped:
         _generate_report(pipeline_id, bulk_run_ids, artifacts_dir_run)
