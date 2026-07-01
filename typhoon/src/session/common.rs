@@ -12,8 +12,8 @@ use crate::session::error::SessionControllerError;
 #[cfg(feature = "client")]
 pub trait SessionManager {
     /// Send a packet through the session manager.
-    /// If `generated` is true, the packet is already assembled (body + tailer) by the health provider.
-    /// If `generated` is false, the packet is raw user data that needs encryption and tailer creation.
+    /// If `generated` is true, the packet is already assembled (body + trailer) by the health provider.
+    /// If `generated` is false, the packet is raw user data that needs encryption and trailer creation.
     fn send_packet(&self, packet: DynamicByteBuffer, generated: bool) -> impl Future<Output = Result<(), SessionControllerError>> + Send;
 
     /// Receive user data from the session manager.

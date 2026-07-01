@@ -58,8 +58,8 @@ pub mod keys {
     /// Probability that a flow is given a fake header at all.
     pub const FAKE_HEADER_PROBABILITY: Key<f64> = Key::new("TYPHOON_FAKE_HEADER_PROBABILITY", 0.60);
 
-    // Per-flow probability that a generated decoy packet bypasses the tailer step
-    /// Lower clamp when sampling a flow's fallthrough probability (chance a decoy packet skips the tailer step entirely).
+    // Per-flow probability that a generated decoy packet bypasses the trailer step
+    /// Lower clamp when sampling a flow's fallthrough probability (chance a decoy packet skips the trailer step entirely).
     pub const DECOY_FALLTHROUGH_PACKETS_MIN: Key<f64> = Key::new("TYPHOON_DECOY_FALLTHROUGH_PACKETS_MIN", 0.0);
     /// Upper clamp when sampling a flow's fallthrough probability.
     pub const DECOY_FALLTHROUGH_PACKETS_MAX: Key<f64> = Key::new("TYPHOON_DECOY_FALLTHROUGH_PACKETS_MAX", 0.25);
@@ -283,7 +283,7 @@ pub mod keys {
     pub const DEBUG_PROBE_TIMEOUT: Key<u64> = Key::new("TYPHOON_DEBUG_PROBE_TIMEOUT", 5000);
 }
 
-/// Fixed protocol constants: buffer sizes, default lengths, and tailer field byte offsets.
+/// Fixed protocol constants: buffer sizes, default lengths, and trailer field byte offsets.
 pub mod consts {
     /// Number of buffers pre-allocated when a `BytePool` is created.
     pub const DEFAULT_POOL_INITIAL_SIZE: usize = 128;
@@ -291,20 +291,20 @@ pub mod consts {
     pub const DEFAULT_POOL_CAPACITY: usize = 2 << 15;
     /// Default network MTU (bytes) assumed when sizing buffers.
     pub const DEFAULT_TYPHOON_MTU_LENGTH: usize = 1500;
-    /// Default length (bytes) of the tailer's `ID` field.
+    /// Default length (bytes) of the trailer's `ID` field.
     pub const DEFAULT_TYPHOON_ID_LENGTH: usize = 16;
-    /// Length (bytes) of the fixed-size part of the tailer, excluding the `ID` field.
-    pub const TAILER_LENGTH: usize = 16;
-    /// Byte offset of the `FG` (flags) field within the tailer.
+    /// Length (bytes) of the fixed-size part of the trailer, excluding the `ID` field.
+    pub const TRAILER_LENGTH: usize = 16;
+    /// Byte offset of the `FG` (flags) field within the trailer.
     pub const FG_OFFSET: usize = 0;
-    /// Byte offset of the `CD` (code) field within the tailer.
+    /// Byte offset of the `CD` (code) field within the trailer.
     pub const CD_OFFSET: usize = 1;
-    /// Byte offset of the `TM` (time) field within the tailer.
+    /// Byte offset of the `TM` (time) field within the trailer.
     pub const TM_OFFSET: usize = 2;
-    /// Byte offset of the `PN` (packet number) field within the tailer.
+    /// Byte offset of the `PN` (packet number) field within the trailer.
     pub const PN_OFFSET: usize = 6;
-    /// Byte offset of the `PL` (payload length) field within the tailer.
+    /// Byte offset of the `PL` (payload length) field within the trailer.
     pub const PL_OFFSET: usize = 14;
-    /// Byte offset of the `ID` (identity) field within the tailer.
+    /// Byte offset of the `ID` (identity) field within the trailer.
     pub const ID_OFFSET: usize = 16;
 }

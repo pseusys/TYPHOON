@@ -12,7 +12,7 @@ use crate::session::SessionControllerError;
 use crate::session::server::{OutgoingRouter, ServerSessionManager};
 use crate::settings::{Settings, keys};
 use crate::socket::error::ServerSocketError;
-use crate::tailer::{IdentityType, ReturnCode, Tailer};
+use crate::trailer::{IdentityType, ReturnCode, Trailer};
 use crate::utils::random::jittered_chunk_size;
 use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, WatchReceiver};
 use crate::utils::unix_timestamp_ms;
@@ -121,8 +121,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString, AE: AsyncExecutor> C
     pub(crate) async fn terminate(&self) {
         let handshake_pn = self.session.handshake_pn();
         let pn = (unix_timestamp_ms() / 1000) as u64;
-        let buf = self.settings.pool().allocate(Some(Tailer::<T>::len()));
-        let termination = Tailer::termination(buf, &self.identity, ReturnCode::Success, pn).into_buffer();
+        let buf = self.settings.pool().allocate(Some(Trailer::<T>::len()));
+        let termination = Trailer::termination(buf, &self.identity, ReturnCode::Success, pn).into_buffer();
         if self.router.is_current_session(&self.identity, handshake_pn).await {
             self.router.route_packet(termination, &self.identity).await;
             self.router.remove_session(&self.identity, handshake_pn).await;

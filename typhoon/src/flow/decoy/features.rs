@@ -20,7 +20,7 @@ use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::flow::config::{FakeHeaderConfig, FieldType, FieldTypeHolder};
 use crate::settings::Settings;
 use crate::settings::keys::*;
-use crate::tailer::IdentityType;
+use crate::trailer::IdentityType;
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
 use crate::utils::unix_timestamp_ms;

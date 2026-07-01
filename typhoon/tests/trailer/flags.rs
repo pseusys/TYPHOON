@@ -1,4 +1,4 @@
-use crate::tailer::flags::{PacketFlags, ReturnCode};
+use crate::trailer::flags::{PacketFlags, ReturnCode};
 
 #[test]
 fn test_packet_flags_values() {
