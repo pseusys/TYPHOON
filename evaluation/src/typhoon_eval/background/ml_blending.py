@@ -265,11 +265,11 @@ def _per_flow_features(
     """Emit one feature row per wire flow (Barradas USENIX'18 concatenated layout).
 
     A "wire flow" is the 5-tuple as it would be seen by a passive observer:
-    one (client_ip, server_ip, server_port) per class.  Background classes
-    typically expose a single server port and contribute one row per run.
-    TYPHOON exposes up to three server ports (see `eval_server.rs::PORTS`)
-    and the client may open any subset of them, so it contributes 1–3 rows
-    per run — matching what a censor would actually classify.
+    one (client_ip, server_ip, server_port) per class.  Both background
+    classes and TYPHOON expose one server port per run (TYPHOON picks one
+    at random from `eval_server.rs::PORTS`) and so contribute one row per
+    run — matching what a censor would actually classify, and keeping CV
+    folds free of same-run duplicate flows.
 
     Server-port discovery is automatic: whichever IP matches the protocol's
     ``server_ip`` from ``ip_map`` contributes its UDP port number as the
@@ -318,16 +318,22 @@ def _per_flow_features(
 def _load_corpus(
     corpus_root: Path,
     feature_set: str = "stats",
-) -> tuple[np.ndarray, list[str], list[str], list[Path]]:
+) -> tuple[np.ndarray, list[str], list[str], list[str], list[Path]]:
     """Walk every run dir under *corpus_root* and assemble per-flow features + labels.
 
-    Returns ``(X, class_labels, typhoon_profiles_or_na, skipped_runs)``.  One
-    row per (run × class) flow — Barradas USENIX'18 layout — with the row's
+    Returns ``(X, class_labels, typhoon_profiles_or_na, run_ids, skipped_runs)``.
+    One row per (run × class) flow — Barradas USENIX'18 layout — with the row's
     feature vector encoding the full conversation in *feature_set* format.
+    ``run_ids`` (the ``run_<timestamp>`` directory name) lets callers keep
+    same-run rows out of opposite sides of a cross-validation split — a run's
+    background flows share its chaos (latency/jitter/loss) draw with that
+    run's TYPHOON flow, so splitting them across train/test would leak that
+    shared, class-independent signal.
     """
     feats: list[np.ndarray] = []
     labels: list[str] = []
     profiles: list[str] = []
+    run_ids: list[str] = []
     skipped: list[Path] = []
     for run_dir in sorted(corpus_root.glob("run_*")):
         meta_path = run_dir / "metadata.json"
@@ -342,9 +348,10 @@ def _load_corpus(
                 feats.append(vec)
                 labels.append(cls)
                 profiles.append(typhoon_profile if cls == TYPHOON_CLASS else "n/a")
+                run_ids.append(run_dir.name)
     if not feats:
-        return np.empty((0, 0)), [], [], skipped
-    return np.vstack(feats), labels, profiles, skipped
+        return np.empty((0, 0)), [], [], [], skipped
+    return np.vstack(feats), labels, profiles, run_ids, skipped
 
 
 def _per_profile_breakdown(
@@ -394,7 +401,7 @@ def main(corpus_root: str | None, feature_set: str, out_dir: str | None) -> None
     feature_names = get_feature_names(feature_set)
     console.print(f"[dim]Feature set: [bold]{feature_set}[/bold] ({len(feature_names)} features per flow, Barradas USENIX'18 layout)[/dim]")
 
-    X, y, profiles, skipped = _load_corpus(root, feature_set)
+    X, y, profiles, _run_ids, skipped = _load_corpus(root, feature_set)
     if X.size == 0:
         console.print("[yellow]No flows extracted from corpus.[/yellow]")
         exit(1)

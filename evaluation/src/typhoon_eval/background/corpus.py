@@ -2,7 +2,7 @@
 
 For each of N randomised runs:
 
-  1. Sample a profile for TYPHOON (uniform over `PROFILES`).
+  1. Sample a profile for TYPHOON (stratified over `PART3_PROFILES`).
   2. Sample a subset of background generators of size ≥ 3 (uniform).
   3. Sample chaos parameters (latency, jitter, loss) bounded by §A.6.
   4. Allocate per-service IP slots from `SERVICE_SLOTS`.
@@ -40,6 +40,7 @@ from typhoon_eval.shared.profiles import (
     GENERATOR_WEIGHTS,
     OBSERVER_LEFT_IP,
     OBSERVER_RIGHT_IP,
+    PART3_PROFILES,
     PROFILES,
     SERVICE_SLOTS,
     bg_profile_to_env,
@@ -132,9 +133,10 @@ def _stratified_profile_schedule(rng: Random, total_runs: int, pool: list[str] |
     list is shuffled so the corpus interleaves profiles instead of running
     each in a contiguous block (which would hide systematic chaos drift).
 
-    *pool* restricts the candidate TYPHOON profiles (defaulting to ``PROFILES``).
+    *pool* restricts the candidate TYPHOON profiles (defaulting to ``PART3_PROFILES``
+    — excludes ``bulk_upload``, Part 2's operational-comparison-only profile).
     """
-    profiles = pool if pool is not None else list(PROFILES.keys())
+    profiles = pool if pool is not None else list(PART3_PROFILES)
     base = total_runs // len(profiles)
     extra = total_runs % len(profiles)
     schedule: list[str] = []

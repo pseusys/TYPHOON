@@ -102,11 +102,9 @@ def _load_corpus_packets(
       memory on large corpora for zero plotting benefit.
     * ``per_flow[(class_key, direction)] = [FlowRec, ...]`` — list of one
       ``FlowRec = (times_s, sizes_B)`` per wire flow.  Each pair of NumPy
-      arrays describes one (run, server_port, direction) flow.  TYPHOON's
-      1–3 flows per measurement appear as 1–3 separate entries here,
-      matching what a passive observer would see in production.  Used by
-      the macro-averaging dist-plot helpers and the packet-index
-      diagnostic.
+      arrays describes one (run, server_port, direction) flow, matching
+      what a passive observer would see in production.  Used by the
+      macro-averaging dist-plot helpers and the packet-index diagnostic.
     * ``per_flow_combined[class_key] = [CombinedRec, ...]`` — list of
       ``CombinedRec = (times_s, sizes_B, dir_ids)`` per wire flow, with
       both directions interleaved and sorted by timestamp.  Used for
@@ -116,11 +114,10 @@ def _load_corpus_packets(
 
     Server-port discovery is automatic: for each packet, whichever side
     matches the protocol's ``server_ip`` from ``ip_map`` contributes its
-    UDP port number as the flow's server-port discriminator.  Background
-    classes typically expose one server port and contribute one flow per
-    run; TYPHOON exposes up to three (``eval_server.rs::PORTS``) and the
-    client may open any subset of them, so it contributes 1–3 flows per
-    run uniformly.
+    UDP port number as the flow's server-port discriminator.  Both
+    background classes and TYPHOON expose one server port per run
+    (TYPHOON picks one at random from ``eval_server.rs::PORTS``) and so
+    contribute one flow per run uniformly.
     """
 
     n_packets_by_pair: dict[tuple[str, str], int] = defaultdict(int)

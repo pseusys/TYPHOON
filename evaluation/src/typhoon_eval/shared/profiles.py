@@ -234,6 +234,13 @@ PROFILES: Final[dict[str, Profile]] = {
 # Default profile when nothing is specified.
 DEFAULT_PROFILE: Final[str] = "bulk_upload"
 
+# Profiles eligible for the Part 3 background-blending corpus schedule.
+# `bulk_upload` is Part 2's operational-comparison default: it has no
+# `PROFILE_TARGET_CLASS` mimicry target, a degenerate (non-randomized)
+# bytes_c2s/duration_s budget, and no s2c traffic, so pooling it with the
+# camouflage profiles would dilute what Part 3's classifiers actually measure.
+PART3_PROFILES: Final[tuple[str, ...]] = tuple(name for name in PROFILES if name != "bulk_upload")
+
 
 # ── Per-service IP allocation (Part 3) ───────────────────────────────────────
 

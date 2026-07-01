@@ -1,24 +1,34 @@
 """Methodologically-grounded detectability metrics for Part 3.
 
-Two tests, both with 10-fold KFold cross-validation (shuffled, non-stratified
-— matches Barradas USENIX'18) so reported numbers reflect held-out
-performance, never training-set memorisation:
+Two tests, both with 10-fold ``GroupKFold`` cross-validation, grouped by
+corpus run id, so reported numbers reflect held-out performance, never
+training-set memorisation nor same-run leakage:
 
   * Test A — Pair-binary detection.  For each TYPHOON profile that targets a
     natural class (e.g. ``as_quic_d`` mimics ``quic_download``), train a
     binary classifier on (TYPHOON-as-X) vs (real-X) flows only, with
-    ``KFold(10, shuffle=True)``.  Report AUC-ROC and TPR @ 1% FPR aggregated
+    ``GroupKFold(10)``.  Report AUC-ROC and TPR @ 1% FPR aggregated
     from out-of-fold predictions.  AUC ≈ 0.5 means perfectly indistinguishable;
     AUC = 1.0 means trivially detected.  This is the threat model from
     Tschantz et al. S&P 2016: a censor who *suspects* the protocol and
     trains a pair-specific classifier.
 
   * Test B — Closed-world (n+1)-class.  Train a multi-class classifier on
-    all natural classes plus TYPHOON, with ``KFold(10, shuffle=True)`` and
+    all natural classes plus TYPHOON, with ``GroupKFold(10)`` and
     ``cross_val_predict`` for clean out-of-fold predictions.  Report
     accuracy, macro-F1, per-class precision/recall/F1, and a confusion
     matrix.  TYPHOON's recall is the headline: lower means the censor more
     often mistakes TYPHOON for a natural class.
+
+Grouping by run id is a deliberate departure from Barradas USENIX'18's plain
+non-stratified ``KFold(shuffle=True)``: a corpus run applies one chaos
+(latency/jitter/loss) draw to every flow captured in it, so a run's TYPHOON
+flow and any background flow captured alongside it share that draw.  Without
+grouping, a fold could train on one and test on the other, leaking a
+class-independent, run-specific signal into what should be a held-out
+estimate.  ``GroupKFold`` has no ``shuffle``/``random_state`` — its fold
+assignment is a deterministic, size-balanced partition of the run groups,
+which is the accepted trade-off for eliminating that leakage.
 
 The Test C (open-world unknown-class detection) lives in ``ml_blending.py``
 and remains the realistic-censor metric — a censor without TYPHOON labels
@@ -41,11 +51,12 @@ from rich.console import Console
 from rich.table import Table
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
-from sklearn.model_selection import KFold, cross_val_predict
+from sklearn.model_selection import GroupKFold, cross_val_predict
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.utils.class_weight import compute_sample_weight
 
 from typhoon_eval.background.ml_blending import (
     FEATURE_SETS,
@@ -125,6 +136,7 @@ RF_N_ESTIMATORS = 100                # Barradas defaults: RF n_estimators=100.
 RF_RANDOM_STATE = 42
 PAIR_FPR_TARGET = 0.01               # 1% — small samples (~30-40) make 0.1% unreliable.
 MIN_SAMPLES_PER_CLASS = KFOLD_SPLITS  # need ≥ k flows per class to run KFold(k).
+MIN_GROUPS_FOR_KFOLD = KFOLD_SPLITS   # GroupKFold(k) needs ≥ k distinct corpus runs to fill every fold.
 
 # Barradas USENIX'18 supervised classifiers — DT / RF / XGBoost.  All three
 # share the same default hyperparameters from MPTAnalysis except for
@@ -147,8 +159,8 @@ def _make_classifier(name: str) -> Any:
     RF/DT use ``class_weight="balanced"`` (matching Test B's convention) so a
     class with more captured flows — a corpus artefact of run scheduling, not
     a real signal — doesn't dominate the trained decision boundary.  XGBoost
-    has no equivalent constructor option (it needs per-sample weights passed
-    at fit time), so it's left unweighted here.
+    has no equivalent constructor option; callers weight it instead via
+    ``_balanced_sample_weight_params`` and a ``clf__sample_weight`` fit param.
     """
     if name == "rf":
         return RandomForestClassifier(
@@ -173,6 +185,16 @@ def _make_classifier(name: str) -> Any:
             n_jobs=-1,
         )
     raise ValueError(f"Unknown classifier: {name!r} (expected one of {CLASSIFIER_NAMES})")
+
+
+def _balanced_sample_weight_params(classifier_name: str, y: np.ndarray) -> dict[str, np.ndarray]:
+    """``clf__sample_weight`` fit param giving XGBoost the same class balancing RF/DT get via
+    ``class_weight="balanced"``.  Empty for RF/DT — weighting them again on top of their own
+    ``class_weight`` would double-apply the correction.
+    """
+    if classifier_name != "xgb":
+        return {}
+    return {"clf__sample_weight": compute_sample_weight("balanced", y)}
 
 
 def _tpr_at_fpr(scores_pos: np.ndarray, scores_neg: np.ndarray, target_fpr: float) -> tuple[float, float]:
@@ -224,9 +246,10 @@ def _run_pair_binary(
     X: np.ndarray,
     y: list[str],
     profiles: list[str],
+    groups: np.ndarray,
     classifier_name: str = "rf",
 ) -> dict[str, object] | None:
-    """Barradas USENIX'18 pair-binary test: 10-fold KFold, AUC + FPR @ TPR thresholds.
+    """Barradas USENIX'18 pair-binary test: 10-fold GroupKFold, AUC + FPR @ TPR thresholds.
 
     AUC and the FPR-at-TPR table come from out-of-fold predictions (no
     leakage).  Feature importance is averaged across the per-fold models — the
@@ -235,6 +258,8 @@ def _run_pair_binary(
     computed in z-space against a scaler fit on the pooled pair.
 
     *classifier_name* selects DT / RF / XGBoost — Barradas reports all three.
+    *groups* is the per-row corpus run id (see ``ml_blending._load_corpus``);
+    folds never split a run's TYPHOON and real-X flows across train/test.
     """
 
     pos_mask = np.array([(c == TYPHOON_CLASS) and (p == profile) for c, p in zip(y, profiles, strict=True)])
@@ -246,18 +271,24 @@ def _run_pair_binary(
     X_neg = X[neg_mask]
     X_pair = np.vstack([X_pos, X_neg])
     y_pair = np.concatenate([np.ones(int(pos_mask.sum())), np.zeros(int(neg_mask.sum()))])
+    groups_pair = np.concatenate([groups[pos_mask], groups[neg_mask]])
+    if len(np.unique(groups_pair)) < MIN_GROUPS_FOR_KFOLD:
+        return None
 
-    # 10-fold non-stratified CV with shuffling — matches Barradas USENIX'18.
-    # Fold membership is still approximate (non-stratified KFold can skew a
-    # given fold's split), but `_make_classifier` weights RF/DT by
+    # 10-fold GroupKFold, grouped by corpus run id — see module docstring for
+    # why plain (non-grouped) KFold would leak a run's shared chaos draw
+    # across train/test.  `_make_classifier` weights RF/DT by
     # class_weight="balanced" so the *fitted model* isn't biased toward
-    # whichever side of the pair has more captured flows; XGBoost has no
-    # equivalent and remains unweighted.
+    # whichever side of the pair has more captured flows; XGBoost gets the
+    # same balancing via a `clf__sample_weight` fit param instead.
     scaler = StandardScaler()
     clf = _make_classifier(classifier_name)
-    kfold = KFold(n_splits=KFOLD_SPLITS, shuffle=True, random_state=RF_RANDOM_STATE)
+    kfold = GroupKFold(n_splits=KFOLD_SPLITS)
     pipe = Pipeline([("scaler", scaler), ("clf", clf)])
-    proba = cross_val_predict(pipe, X_pair, y_pair, cv=kfold, method="predict_proba")[:, 1]
+    fit_params = _balanced_sample_weight_params(classifier_name, y_pair)
+    proba = cross_val_predict(
+        pipe, X_pair, y_pair, groups=groups_pair, cv=kfold, method="predict_proba", params=fit_params
+    )[:, 1]
 
     pos_scores = proba[y_pair == 1]
     neg_scores = proba[y_pair == 0]
@@ -275,12 +306,13 @@ def _run_pair_binary(
     # we record zeros (XGBoost provides it; RF/DT obviously do).
     importances = np.zeros(X_pair.shape[1])
     importance_folds = 0
-    for train_idx, _ in kfold.split(X_pair, y_pair):
+    for train_idx, _ in kfold.split(X_pair, y_pair, groups=groups_pair):
         fold_pipe = Pipeline([
             ("scaler", StandardScaler()),
             ("clf", _make_classifier(classifier_name)),
         ])
-        fold_pipe.fit(X_pair[train_idx], y_pair[train_idx])
+        fold_fit_params = {k: v[train_idx] for k, v in fit_params.items()}
+        fold_pipe.fit(X_pair[train_idx], y_pair[train_idx], **fold_fit_params)
         fold_clf = fold_pipe.named_steps["clf"]
         fimp = getattr(fold_clf, "feature_importances_", None)
         if fimp is not None:
@@ -312,8 +344,8 @@ def _run_pair_binary(
     }
 
 
-def _run_closed_world(X: np.ndarray, y: list[str]) -> dict[str, object]:
-    """Barradas-style closed-world (n+1)-class classifier: 10-fold KFold."""
+def _run_closed_world(X: np.ndarray, y: list[str], groups: np.ndarray) -> dict[str, object]:
+    """Barradas-style closed-world (n+1)-class classifier: 10-fold GroupKFold, grouped by run id."""
 
     classes = sorted(set(y))
     cls_to_idx = {c: i for i, c in enumerate(classes)}
@@ -326,6 +358,9 @@ def _run_closed_world(X: np.ndarray, y: list[str]) -> dict[str, object]:
     keep_mask = np.array([c in keep_classes for c in y])
     X_k = X[keep_mask]
     y_k = [c for c, m in zip(y, keep_mask, strict=True) if m]
+    groups_k = groups[keep_mask]
+    if len(np.unique(groups_k)) < MIN_GROUPS_FOR_KFOLD:
+        return {"error": "insufficient distinct corpus runs for k-fold"}
     classes_k = sorted(keep_classes)
     cls_to_idx_k = {c: i for i, c in enumerate(classes_k)}
     y_k_idx = np.array([cls_to_idx_k[c] for c in y_k])
@@ -333,9 +368,9 @@ def _run_closed_world(X: np.ndarray, y: list[str]) -> dict[str, object]:
     scaler = StandardScaler()
     rf = RandomForestClassifier(n_estimators=RF_N_ESTIMATORS, random_state=RF_RANDOM_STATE, class_weight="balanced")
     pipe = Pipeline([("scaler", scaler), ("rf", rf)])
-    # 10-fold non-stratified CV — matches Barradas USENIX'18.
-    kfold = KFold(n_splits=KFOLD_SPLITS, shuffle=True, random_state=RF_RANDOM_STATE)
-    pred_idx = cross_val_predict(pipe, X_k, y_k_idx, cv=kfold)
+    # 10-fold GroupKFold, grouped by corpus run id — see module docstring.
+    kfold = GroupKFold(n_splits=KFOLD_SPLITS)
+    pred_idx = cross_val_predict(pipe, X_k, y_k_idx, groups=groups_k, cv=kfold)
 
     report = classification_report(y_k_idx, pred_idx, target_names=classes_k, output_dict=True, zero_division=0)
     cm = confusion_matrix(y_k_idx, pred_idx, labels=list(range(len(classes_k))))
@@ -356,7 +391,7 @@ def _print_pair_binary(
     Each row is ``(profile, target, classifier_name, result_or_None)``.
     """
     summary = Table(show_header=True,
-                    title=f"Test A — pair-binary detection (Barradas USENIX'18: {KFOLD_SPLITS}-fold KFold, n_estimators={RF_N_ESTIMATORS})",
+                    title=f"Test A — pair-binary detection (Barradas USENIX'18: {KFOLD_SPLITS}-fold GroupKFold, n_estimators={RF_N_ESTIMATORS})",
                     title_style="bold")
     summary.add_column("TYPHOON profile", style="magenta")
     summary.add_column("Target class", style="cyan")
@@ -511,7 +546,7 @@ def _print_closed_world(result: dict[str, object]) -> None:
     cm: np.ndarray = result["confusion_matrix"]   # type: ignore[assignment]
     skipped: list[str] = result["skipped_classes"]   # type: ignore[assignment]
 
-    console.print(f"[bold]Test B — closed-world ({len(classes)}-class classifier, {KFOLD_SPLITS}-fold KFold CV)[/bold]")
+    console.print(f"[bold]Test B — closed-world ({len(classes)}-class classifier, {KFOLD_SPLITS}-fold GroupKFold CV)[/bold]")
     console.print(f"  Accuracy: [bold]{report['accuracy']:.3f}[/bold]   "
                   f"Macro-F1: [bold]{report['macro avg']['f1-score']:.3f}[/bold]")
     if skipped:
@@ -658,6 +693,7 @@ def _run_open_set_binary(
     X: np.ndarray,
     y: list[str],
     profiles: list[str],
+    groups: np.ndarray,
     classifier_name: str = "rf",
 ) -> dict[str, object]:
     """Test D — Barradas-style binary detector with open-set evaluation.
@@ -680,6 +716,14 @@ def _run_open_set_binary(
     against background traffic), Barradas USENIX'18 (RF/DT/XGB family),
     Wu USENIX'23 (real-world censor threat model: exempt known protocols,
     block unknown-fully-encrypted), Geng TPAMI'20 (open-set evaluation).
+
+    *groups* (per-row corpus run id) keeps the TYPHOON train/test split
+    run-disjoint via GroupKFold.  The in-distribution bg train/test halving
+    below is a separate, ungrouped ``fold_rng.permutation`` — a bg flow can
+    still land in ``in_dist_test`` from the same run as a flow in
+    ``train_typhoon_idx``.  Tying that split to the same run grouping would
+    need the bg and TYPHOON fold assignments to share one run→fold map;
+    left as a known residual gap rather than folded into this change.
     """
 
     typhoon_mask = np.array([c == TYPHOON_CLASS for c in y])
@@ -691,11 +735,14 @@ def _run_open_set_binary(
         return {"error": "no `unknown` flows in corpus — run the corpus with the unknown generator first"}
 
     typhoon_idx = np.flatnonzero(typhoon_mask)
-    typhoon_kfold = KFold(n_splits=OPEN_SET_N_FOLDS, shuffle=True, random_state=RF_RANDOM_STATE)
-    typhoon_folds = list(typhoon_kfold.split(typhoon_idx))
+    typhoon_groups = groups[typhoon_idx]
+    if len(np.unique(typhoon_groups)) < OPEN_SET_N_FOLDS:
+        return {"error": f"need ≥ {OPEN_SET_N_FOLDS} distinct corpus runs with a TYPHOON flow, found {len(np.unique(typhoon_groups))}"}
+    typhoon_kfold = GroupKFold(n_splits=OPEN_SET_N_FOLDS)
+    typhoon_folds = list(typhoon_kfold.split(typhoon_idx, groups=typhoon_groups))
 
     # Enumerate every C(n_known, k) hold-out combination; each combination
-    # becomes an outer-fold paired with one TYPHOON KFold split (round-robin).
+    # becomes an outer-fold paired with one TYPHOON GroupKFold split (round-robin).
     bg_splits = _enumerate_known_bg_splits(y, OPEN_SET_HOLDOUT_K)
 
     per_fold_tpr: list[float] = []
@@ -729,7 +776,7 @@ def _run_open_set_binary(
 
         clf = _make_classifier(classifier_name)
         pipe = Pipeline([("scaler", StandardScaler()), ("clf", clf)])
-        pipe.fit(X_train, y_train)
+        pipe.fit(X_train, y_train, **_balanced_sample_weight_params(classifier_name, y_train))
 
         scores_typhoon = pipe.predict_proba(X[test_typhoon_idx])[:, 1]
         threshold = _threshold_for_tpr(scores_typhoon, OPEN_SET_TPR_TARGET)
@@ -774,6 +821,7 @@ def _run_open_set_binary(
 def _run_one_class_typhoon(
     X: np.ndarray,
     y: list[str],
+    groups: np.ndarray,
 ) -> dict[str, object]:
     """Test E — one-class TYPHOON detector with open-set evaluation.
 
@@ -796,14 +844,17 @@ def _run_one_class_typhoon(
     held_out_mask = np.array([c in HELD_OUT_BG_CLASSES for c in y])
     bg_mask = ~typhoon_mask & ~held_out_mask
     typhoon_idx = np.flatnonzero(typhoon_mask)
-    typhoon_kfold = KFold(n_splits=OPEN_SET_N_FOLDS, shuffle=True, random_state=RF_RANDOM_STATE)
+    typhoon_groups = groups[typhoon_idx]
+    if len(np.unique(typhoon_groups)) < OPEN_SET_N_FOLDS:
+        return {"error": f"need ≥ {OPEN_SET_N_FOLDS} distinct corpus runs with a TYPHOON flow, found {len(np.unique(typhoon_groups))}"}
+    typhoon_kfold = GroupKFold(n_splits=OPEN_SET_N_FOLDS)
 
     per_fold_tpr: list[float] = []
     per_fold_fpr_known: list[float] = []
     per_fold_fpr_unknown: list[float] = []
     per_class_fpr: dict[str, list[float]] = {}
 
-    for train_local, test_local in typhoon_kfold.split(typhoon_idx):
+    for train_local, test_local in typhoon_kfold.split(typhoon_idx, groups=typhoon_groups):
         train_idx = typhoon_idx[train_local]
         test_idx  = typhoon_idx[test_local]
         pipe = Pipeline([
@@ -843,6 +894,7 @@ def _run_one_class_typhoon(
 def _run_one_class_open_set(
     X: np.ndarray,
     y: list[str],
+    groups: np.ndarray,
 ) -> dict[str, object]:
     """Test F — one-class TYPHOON detector with 3-of-7 bg evaluation hold-out.
 
@@ -869,8 +921,11 @@ def _run_one_class_open_set(
         return {"error": "no `unknown` flows in corpus — run the corpus with the unknown generator first"}
 
     typhoon_idx = np.flatnonzero(typhoon_mask)
-    typhoon_kfold = KFold(n_splits=OPEN_SET_N_FOLDS, shuffle=True, random_state=RF_RANDOM_STATE)
-    typhoon_folds = list(typhoon_kfold.split(typhoon_idx))
+    typhoon_groups = groups[typhoon_idx]
+    if len(np.unique(typhoon_groups)) < OPEN_SET_N_FOLDS:
+        return {"error": f"need ≥ {OPEN_SET_N_FOLDS} distinct corpus runs with a TYPHOON flow, found {len(np.unique(typhoon_groups))}"}
+    typhoon_kfold = GroupKFold(n_splits=OPEN_SET_N_FOLDS)
+    typhoon_folds = list(typhoon_kfold.split(typhoon_idx, groups=typhoon_groups))
 
     bg_splits = _enumerate_known_bg_splits(y, OPEN_SET_HOLDOUT_K)
 
@@ -1113,7 +1168,8 @@ def _open_set_to_json(result: dict[str, object]) -> dict[str, object]:
 def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_spec: str | None, out_dir: str | None) -> None:
     """Held-out detectability metrics — Tests A / B / D / E / F.
 
-    * Test A replicates the Barradas USENIX'18 protocol verbatim — 10-fold KFold,
+    * Test A replicates the Barradas USENIX'18 protocol, grouped by corpus run
+      (see module docstring) instead of Barradas's plain non-grouped KFold —
       AUC + FPR @ TPR ∈ {70%, 80%, 90%, 95%}, run independently for each
       selected classifier (DT / RF / XGBoost).
     * Test B is our closed-world (n+1)-class extension, RF-only.
@@ -1144,10 +1200,11 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
         f"Barradas USENIX'18 layout) · Classifiers: [bold]{', '.join(classifiers)}[/bold][/dim]"
     )
 
-    X, y, profiles, _ = _load_corpus(root, feature_set)
+    X, y, profiles, run_ids, _ = _load_corpus(root, feature_set)
     if X.size == 0:
         console.print("[yellow]No flows extracted from corpus.[/yellow]")
         exit(1)
+    groups = np.array(run_ids)
 
     if selected_profile is not None:
         keep = np.array([
@@ -1158,6 +1215,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
         X = X[keep]
         y = [cls for cls, k in zip(y, keep, strict=True) if k]
         profiles = [prof for prof, k in zip(profiles, keep, strict=True) if k]
+        groups = groups[keep]
         console.print(
             f"[dim]Pair filter active: TYPHOON profile = "
             f"[bold]{selected_profile}[/bold] ({kept_typhoon} flows kept); "
@@ -1186,7 +1244,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
             if clf_name in skipped_classifiers:
                 continue
             try:
-                res = _run_pair_binary(prof, target, X, y, profiles, classifier_name=clf_name)
+                res = _run_pair_binary(prof, target, X, y, profiles, groups, classifier_name=clf_name)
             except ImportError as exc:
                 console.print(f"[yellow]Skipping {CLASSIFIER_LABELS.get(clf_name, clf_name)}: {exc}[/yellow]")
                 skipped_classifiers.add(clf_name)
@@ -1204,7 +1262,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
     # ── Test B — Closed-world (n+1)-class ───────────────────────────────────
     # Test B is our extension to Barradas — kept as RF-only since the multi-
     # classifier sweep is meaningful only in the binary detection setting.
-    b_res = _run_closed_world(X, y)
+    b_res = _run_closed_world(X, y, groups)
     _print_closed_world(b_res)
 
     # ── Test D — Open-set binary detection ──────────────────────────────────
@@ -1217,7 +1275,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
         if clf_name in skipped_classifiers:
             continue
         try:
-            d_res = _run_open_set_binary(X, y, profiles, classifier_name=clf_name)
+            d_res = _run_open_set_binary(X, y, profiles, groups, classifier_name=clf_name)
         except ImportError as exc:
             console.print(f"[yellow]Test D skipping {CLASSIFIER_LABELS.get(clf_name, clf_name)}: {exc}[/yellow]")
             continue
@@ -1226,7 +1284,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
 
     # ── Test E — One-class TYPHOON detector ─────────────────────────────────
     # OneClassSVM trained on TYPHOON flows only; FPR breakdown matches Test D.
-    e_res = _run_one_class_typhoon(X, y)
+    e_res = _run_one_class_typhoon(X, y, groups)
     _print_open_set("Test E — One-class TYPHOON detector (OCSVM)", e_res)
 
     # ── Test F — One-class OCSVM + 3-of-7 bg evaluation hold-out ───────────
@@ -1235,7 +1293,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
     # directly comparable.  Models a "leaked-client + partial DPI catalog"
     # censor — has TYPHOON labels via OCSVM, uses a partial catalog as
     # filter (not training data).
-    f_res = _run_one_class_open_set(X, y)
+    f_res = _run_one_class_open_set(X, y, groups)
     _print_open_set("Test F — One-class OCSVM with 3-of-7 bg eval hold-out", f_res)
 
     # ── Confusion matrix — emitted when --pair is used so the per-class
@@ -1243,7 +1301,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
     if selected_profile is not None:
         cm_label = (
             f"Multi-class confusion matrix — TYPHOON({selected_profile}) vs all bg "
-            f"({KFOLD_SPLITS}-fold KFold, n_estimators={RF_N_ESTIMATORS})"
+            f"({KFOLD_SPLITS}-fold GroupKFold, n_estimators={RF_N_ESTIMATORS})"
         )
         _print_confusion_matrix(cm_label, b_res, typhoon_row_label=f"TYPHOON({selected_profile})")
 

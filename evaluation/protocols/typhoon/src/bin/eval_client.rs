@@ -17,10 +17,12 @@ use env_logger::{Builder, Env};
 use log::info;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::{Duration, sleep, timeout};
 use typhoon::certificate::ClientCertificate;
 use typhoon::defaults::{DefaultClientConnectionHandler, DefaultExecutor};
+use typhoon::flow::FlowConfig;
 use typhoon::flow::decoy::{SimpleDecoyProvider, SparseDecoyProvider};
 use typhoon::settings::SettingsBuilder;
 use typhoon::settings::keys::{
@@ -255,16 +257,19 @@ async fn main() {
     >::new(certificate.clone(), DefaultClientConnectionHandler)
     .with_settings(settings.clone());
 
+    let flow_addr = *certificate
+        .addresses()
+        .choose(&mut StdRng::from_entropy())
+        .expect("certificate must have at least one address");
     if !profile.is_unrestricted() {
         if is_quic {
             builder = builder.with_decoy::<SparseDecoyProvider<ShortIdentity, DefaultExecutor>>();
         } else if !profile.is_bulk_upload() {
             builder = builder.with_decoy::<SimpleDecoyProvider>();
         }
-        let flow_cfg = profile.flow_config();
-        for addr in certificate.addresses() {
-            builder = builder.with_flow_config(*addr, flow_cfg.clone());
-        }
+        builder = builder.with_flow_config(flow_addr, profile.flow_config());
+    } else {
+        builder = builder.with_flow_config(flow_addr, FlowConfig::random(&settings));
     }
 
     let socket = builder.build().await.expect("client socket build");
