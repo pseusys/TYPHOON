@@ -123,7 +123,7 @@ async fn run() {
     println!("Client: {MSG_COUNT} legitimate round trips completed normally");
 
     // --- An undersized, non-TYPHOON datagram sent directly at the server ---
-    // Far shorter than any valid encrypted tailer, so the flow manager forwards it to the probe
+    // Far shorter than any valid encrypted trailer, so the flow manager forwards it to the probe
     // handler regardless of any other protocol detail (see PROTOCOL.md "Active probing protection").
     let probe_socket = UdpSocket::bind("127.0.0.1:0").expect("probe socket bind");
     probe_socket.set_read_timeout(Some(Duration::from_secs(2))).expect("set read timeout");

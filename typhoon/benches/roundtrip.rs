@@ -1,7 +1,7 @@
 /// End-to-end round-trip benchmarks:
 ///   "batch" — 20 pipelined 1400 B messages under realistic flow obfuscation (mirrors `heavy_traffic`).
 ///   "single" — random-sized single-packet round trips with no data-packet overhead; measures raw
-///               per-packet protocol cost (crypto, tailer, socket I/O).
+///               per-packet protocol cost (crypto, trailer, socket I/O).
 use std::net::UdpSocket;
 use std::sync::Arc;
 

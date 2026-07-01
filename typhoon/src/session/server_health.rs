@@ -17,7 +17,7 @@ use crate::session::rtt::RttEstimator;
 use crate::session::server::OutgoingRouter;
 use crate::settings::Settings;
 use crate::settings::keys::*;
-use crate::tailer::{IdentityType, PacketFlags, ReturnCode, Tailer};
+use crate::trailer::{IdentityType, PacketFlags, ReturnCode, Trailer};
 use crate::utils::random::get_rng;
 use crate::utils::sync::{AsyncExecutor, Mutex, WatchReceiver, WatchSender, create_watch, sleep};
 use crate::utils::unix_timestamp_ms;
@@ -89,18 +89,18 @@ impl ServerHealthProvider {
         self.trigger_tx.send((client_next_in, client_pn, receive_time));
     }
 
-    /// Called before a data packet is sent. May modify the tailer for shadowriding.
-    pub(super) async fn feed_output<T: IdentityType>(&self, tailer: Tailer<T>) -> Result<(), SessionControllerError> {
-        if tailer.flags().contains(PacketFlags::HEALTH_CHECK) {
+    /// Called before a data packet is sent. May modify the trailer for shadowriding.
+    pub(super) async fn feed_output<T: IdentityType>(&self, trailer: Trailer<T>) -> Result<(), SessionControllerError> {
+        if trailer.flags().contains(PacketFlags::HEALTH_CHECK) {
             return Ok(());
         }
 
         let shadowridden = {
             let mut pending = self.shadowride_pending.lock().await;
             if let Some((pn, next_in)) = pending.take() {
-                tailer.set_flags(tailer.flags() | PacketFlags::HEALTH_CHECK);
-                tailer.set_time(next_in);
-                tailer.set_packet_number_raw(pn);
+                trailer.set_flags(trailer.flags() | PacketFlags::HEALTH_CHECK);
+                trailer.set_time(next_in);
+                trailer.set_packet_number_raw(pn);
                 debug!("ServerHealthProvider: health check shadowridden onto data packet (PN={pn:#018x})");
                 true
             } else {
@@ -180,7 +180,7 @@ impl ServerHealthProvider {
                                 *pending = None;
                             }
                             let buf = settings.pool().allocate(Some(T::length()));
-                            let response = Tailer::health_check(buf, &identity, server_next_in, response_pn).into_buffer();
+                            let response = Trailer::health_check(buf, &identity, server_next_in, response_pn).into_buffer();
 
                             let Some(r) = router.upgrade() else {
                                 debug!("ServerHealthProvider: router dropped, stopping");
@@ -211,7 +211,7 @@ impl ServerHealthProvider {
                         if r.is_current_session(&identity, handshake_pn).await {
                             let pn = (unix_timestamp_ms() / 1000) as u64;
                             let buf = settings.pool().allocate(Some(T::length()));
-                            let termination = Tailer::termination(buf, &identity, ReturnCode::ConnectionDecayed, pn).into_buffer();
+                            let termination = Trailer::termination(buf, &identity, ReturnCode::ConnectionDecayed, pn).into_buffer();
                             r.route_packet(termination, &identity).await;
                             r.remove_session(&identity, handshake_pn).await;
                         } else {
