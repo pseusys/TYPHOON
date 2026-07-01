@@ -164,8 +164,8 @@ pandas               = "pd"
   # ── Pipeline orchestrator ────────────────────────────────────────────────
   [tool.poe.tasks.evaluate]
   cmd  = "python -m typhoon_eval.pipeline"
-  help = "Run the full evaluation pipeline: capture → analyze → visualize → ML → report"
+  help = "Run the full evaluation pipeline: build → capture → analyze → visualize → typhoon → ml → background → report. Derived artifacts under artifacts/<pipeline_id>/; PCAPs stay in results/."
 
   [tool.poe.tasks.clean]
-  shell = "rm -rf results/captures results/logs"
-  help  = "Delete all captured pcap files and logs"
+  shell = "rm -rf results/captures results/background"
+  help  = "Delete all captured pcap directories (captures + background corpora). Artifacts under artifacts/ are left untouched."
