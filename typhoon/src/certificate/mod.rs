@@ -9,7 +9,7 @@
 //! | 0      | 7    | `TYPHOON`      | Magic bytes |
 //! | 7      | 1    | `S` or `C`     | Record type: server key pair or client certificate |
 //! | 8      | 1    | `s`/`h`/`S`/`H`| Build flavor: cipher mode (case: fast lower / full upper) crossed with cipher backend (`s`/`S` = software, `h`/`H` = hardware) |
-//! | 9      | 1    | `2`            | Format version (currently always 2) |
+//! | 9      | 1    | `1`            | Format version (currently always 1) |
 //! | 10     | 4    | e.g. `0`       | Protocol major version (big-endian `u32`, from `CARGO_PKG_VERSION`) |
 //! | 14     | 2    | e.g. `16`      | `ID` field length in bytes (big-endian `u16`) |
 //!

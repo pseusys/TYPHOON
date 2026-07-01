@@ -1290,7 +1290,7 @@ Every file produced by the certificate module begins with a fixed 16-byte header
 | 0 | 7 | Magic | `TYPHOON` | Fixed identifier |
 | 7 | 1 | Type | `S` / `C` | Server key pair or client certificate |
 | 8 | 1 | Flavor | `s`/`h`/`S`/`H` | Build flavor: cipher mode (fast = lowercase, full = uppercase) crossed with cipher backend (`s`/`S` = software, `h`/`H` = hardware) |
-| 9 | 1 | Version | `2` | Format version (currently always `2`) |
+| 9 | 1 | Version | `1` | Format version (currently always `1`) |
 | 10 | 4 | ProtoVersion | e.g. `0` | Protocol major version (big-endian u32, from `CARGO_PKG_VERSION`) |
 | 14 | 2 | IdLength | e.g. `16` | `ID` field length in bytes (big-endian u16) |
 
@@ -1306,17 +1306,17 @@ The payload immediately follows the header. Field sizes use these stable constan
 | `ED25519_BYTES` | 32 | [Ed25519](#handshake-encryption) key (signing seed, verifying key, or OBFS key) |
 | `X25519_BYTES` | 32 | [X25519](#marshalling-encryption) key (public or static secret) |
 
-**Server key pair — fast mode (`SF2`):**
+**Server key pair — fast mode (`SF1`):**
 
 | Offset | Size | Field | Description |
 | --- | --- | --- | --- |
 | 16 | 261120 | EPK | Classic McEliece 348864 public key |
 | 261136 | 6492 | ESK | Classic McEliece 348864 secret key |
 | 267628 | 32 | VSK | Ed25519 signing key seed |
-| 267660 | 32 | OBFS | Symmetric tailer obfuscation key |
+| 267660 | 32 | OBFS | Symmetric trailer obfuscation key |
 | **267692** | — | EOF | |
 
-**Server key pair — full mode (`SU2`):**
+**Server key pair — full mode (`SU1`):**
 
 | Offset | Size | Field | Description |
 | --- | --- | --- | --- |
@@ -1327,17 +1327,17 @@ The payload immediately follows the header. Field sizes use these stable constan
 | 267692 | 32 | OSK | X25519 static secret key |
 | **267724** | — | EOF | |
 
-**Client certificate — fast mode (`CF2`):**
+**Client certificate — fast mode (`CF1`):**
 
 | Offset | Size | Field | Description |
 | --- | --- | --- | --- |
 | 16 | 261120 | EPK | Classic McEliece 348864 public key |
 | 261136 | 32 | VPK | Ed25519 verifying key |
-| 261168 | 32 | OBFS | Symmetric tailer obfuscation key |
+| 261168 | 32 | OBFS | Symmetric trailer obfuscation key |
 | 261200 | 2 | ADDR_COUNT | Number of addresses (big-endian u16) |
 | 261202 | varies | ADDRS | Address list (see below) |
 
-**Client certificate — full mode (`CU2`):**
+**Client certificate — full mode (`CU1`):**
 
 | Offset | Size | Field | Description |
 | --- | --- | --- | --- |
