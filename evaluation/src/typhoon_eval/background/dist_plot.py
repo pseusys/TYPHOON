@@ -116,9 +116,12 @@ def _load_corpus_packets(
     matches a slot's ``server_ip`` in ``ip_map`` contributes its UDP port
     number as the flow's server-port discriminator.  Every slot — each
     background class and each concurrently-running TYPHOON profile
-    instance — exposes one server port per run (TYPHOON picks one at
-    random from ``eval_server.rs::PORTS``) and so contributes one flow per
-    run uniformly.
+    instance — normally exposes one server port per run and so contributes
+    one flow per run uniformly.  ``raw_default``/``tuned_default`` are the
+    exception: they exercise the protocol's genuine auto-fill flow selection
+    (1 to ``eval_server.rs::PORTS`` addresses, each independently
+    randomised — see `eval_client.rs`), so a single run of either profile
+    may contribute 1–3 flows here.
     """
 
     n_packets_by_pair: dict[tuple[str, str], int] = defaultdict(int)

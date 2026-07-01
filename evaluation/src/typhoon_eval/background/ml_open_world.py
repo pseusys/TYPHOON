@@ -197,17 +197,6 @@ def _balanced_sample_weight_params(classifier_name: str, y: np.ndarray) -> dict[
     return {"clf__sample_weight": compute_sample_weight("balanced", y)}
 
 
-def _tpr_at_fpr(scores_pos: np.ndarray, scores_neg: np.ndarray, target_fpr: float) -> tuple[float, float]:
-    """TPR at FPR ≤ *target_fpr* given out-of-fold positive (TYPHOON) and negative (natural) scores."""
-    if len(scores_neg) == 0 or len(scores_pos) == 0:
-        return float("nan"), float("nan")
-    sorted_neg = np.sort(scores_neg)[::-1]
-    cutoff_idx = max(0, int(np.floor(target_fpr * len(sorted_neg))) - 1)
-    threshold = float(sorted_neg[cutoff_idx])
-    tpr = float((scores_pos > threshold).sum()) / len(scores_pos)
-    return threshold, tpr
-
-
 def _threshold_for_tpr(scores_pos: np.ndarray, target_tpr: float) -> float:
     """Smallest *observed* positive score achieving TPR ``(# pos >= threshold) / n_pos ≥ target_tpr``.
 
@@ -221,6 +210,29 @@ def _threshold_for_tpr(scores_pos: np.ndarray, target_tpr: float) -> float:
     quantile_idx = int(np.floor((1.0 - target_tpr) * len(sorted_pos)))
     quantile_idx = max(0, min(quantile_idx, len(sorted_pos) - 1))
     return float(sorted_pos[quantile_idx])
+
+
+def _threshold_for_fpr(scores_neg: np.ndarray, target_fpr: float) -> float:
+    """Largest *observed* negative score achieving FPR ``(# neg >= threshold) / n_neg`` closest to
+    *target_fpr*.  Mirrors ``_threshold_for_tpr``'s order-statistic convention (same reasoning:
+    ``np.quantile`` interpolation can silently overshoot or undershoot the target), applied to the
+    negative side instead of the positive side.
+    """
+    sorted_neg = np.sort(scores_neg)
+    quantile_idx = int(np.floor((1.0 - target_fpr) * len(sorted_neg)))
+    quantile_idx = max(0, min(quantile_idx, len(sorted_neg) - 1))
+    return float(sorted_neg[quantile_idx])
+
+
+def _tpr_at_fpr(scores_pos: np.ndarray, scores_neg: np.ndarray, target_fpr: float) -> tuple[float, float]:
+    """TPR at FPR ≈ *target_fpr* given out-of-fold positive (TYPHOON) and negative (natural) scores."""
+    if len(scores_neg) == 0 or len(scores_pos) == 0:
+        return float("nan"), float("nan")
+    # The "captured" side must use >= (not >), same reasoning as `_fpr_at_tpr` below — otherwise
+    # the achieved FPR lands one sample short of target_fpr.
+    threshold = _threshold_for_fpr(scores_neg, target_fpr)
+    tpr = float((scores_pos >= threshold).sum()) / len(scores_pos)
+    return threshold, tpr
 
 
 def _fpr_at_tpr(scores_pos: np.ndarray, scores_neg: np.ndarray, target_tpr: float) -> float:
@@ -281,14 +293,34 @@ def _run_pair_binary(
     # class_weight="balanced" so the *fitted model* isn't biased toward
     # whichever side of the pair has more captured flows; XGBoost gets the
     # same balancing via a `clf__sample_weight` fit param instead.
-    scaler = StandardScaler()
-    clf = _make_classifier(classifier_name)
+    #
+    # Hand-rolled OOF loop (rather than `cross_val_predict`) for two reasons:
+    # it lets XGBoost's sample weights be recomputed from each fold's own
+    # training labels — `compute_sample_weight("balanced", ...)` on the full
+    # pooled y_pair would apply the *global* class balance to every fold,
+    # drifting from the fold's actual balance when GroupKFold produces
+    # unevenly-sized folds — and it reuses the one fitted model per fold for
+    # both the OOF prediction and the feature-importance average, instead of
+    # fitting every fold twice (once inside `cross_val_predict`, again here).
     kfold = GroupKFold(n_splits=KFOLD_SPLITS)
-    pipe = Pipeline([("scaler", scaler), ("clf", clf)])
-    fit_params = _balanced_sample_weight_params(classifier_name, y_pair)
-    proba = cross_val_predict(
-        pipe, X_pair, y_pair, groups=groups_pair, cv=kfold, method="predict_proba", params=fit_params
-    )[:, 1]
+    proba = np.empty(len(y_pair))
+    importances = np.zeros(X_pair.shape[1])
+    importance_folds = 0
+    for train_idx, test_idx in kfold.split(X_pair, y_pair, groups=groups_pair):
+        fold_pipe = Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", _make_classifier(classifier_name)),
+        ])
+        fold_fit_params = _balanced_sample_weight_params(classifier_name, y_pair[train_idx])
+        fold_pipe.fit(X_pair[train_idx], y_pair[train_idx], **fold_fit_params)
+        proba[test_idx] = fold_pipe.predict_proba(X_pair[test_idx])[:, 1]
+        fold_clf = fold_pipe.named_steps["clf"]
+        fimp = getattr(fold_clf, "feature_importances_", None)
+        if fimp is not None:
+            importances += np.asarray(fimp, dtype=np.float64)
+            importance_folds += 1
+    if importance_folds > 0:
+        importances /= importance_folds
 
     pos_scores = proba[y_pair == 1]
     neg_scores = proba[y_pair == 0]
@@ -299,27 +331,6 @@ def _run_pair_binary(
     # Barradas-style FPR @ target TPR table.  One FPR value per requested TPR.
     fpr_at_tpr = {target: _fpr_at_tpr(pos_scores, neg_scores, target)
                   for target in BARRADAS_TPR_LEVELS}
-
-    # Feature importance: average across per-fold classifiers trained inside
-    # the same pipeline.  Only tree-based classifiers expose
-    # ``feature_importances_`` directly; if a particular classifier doesn't,
-    # we record zeros (XGBoost provides it; RF/DT obviously do).
-    importances = np.zeros(X_pair.shape[1])
-    importance_folds = 0
-    for train_idx, _ in kfold.split(X_pair, y_pair, groups=groups_pair):
-        fold_pipe = Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", _make_classifier(classifier_name)),
-        ])
-        fold_fit_params = {k: v[train_idx] for k, v in fit_params.items()}
-        fold_pipe.fit(X_pair[train_idx], y_pair[train_idx], **fold_fit_params)
-        fold_clf = fold_pipe.named_steps["clf"]
-        fimp = getattr(fold_clf, "feature_importances_", None)
-        if fimp is not None:
-            importances += np.asarray(fimp, dtype=np.float64)
-            importance_folds += 1
-    if importance_folds > 0:
-        importances /= importance_folds
 
     # Z-scored mean comparison against the pooled pair distribution.  Fitting
     # on the negative class alone makes features where bg has near-zero

@@ -22,7 +22,6 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::{Duration, sleep, timeout};
 use typhoon::certificate::ClientCertificate;
 use typhoon::defaults::{DefaultClientConnectionHandler, DefaultExecutor};
-use typhoon::flow::FlowConfig;
 use typhoon::flow::decoy::{SimpleDecoyProvider, SparseDecoyProvider};
 use typhoon::settings::SettingsBuilder;
 use typhoon::settings::keys::{
@@ -257,19 +256,25 @@ async fn main() {
     >::new(certificate.clone(), DefaultClientConnectionHandler)
     .with_settings(settings.clone());
 
-    let flow_addr = *certificate
-        .addresses()
-        .choose(&mut StdRng::from_entropy())
-        .expect("certificate must have at least one address");
+    // `raw_default`/`tuned_default` (is_unrestricted()) must NOT pin a flow config here —
+    // they exist to measure genuine protocol-default behaviour, which includes the builder's
+    // auto-fill flow-count selection (1..=addresses().len(), each independently randomised).
+    // Pinning a single address here (as the mimicry branch below does deliberately) would
+    // silently narrow "default" to just the N=1 sub-case of that distribution.
     if !profile.is_unrestricted() {
         if is_quic {
             builder = builder.with_decoy::<SparseDecoyProvider<ShortIdentity, DefaultExecutor>>();
         } else if !profile.is_bulk_upload() {
             builder = builder.with_decoy::<SimpleDecoyProvider>();
         }
+        // Mimicry profiles pin exactly one randomly-chosen address so a TYPHOON flow's
+        // packet cadence matches a real single-flow target session (e.g. quic_download)
+        // instead of being diluted across several concurrently-multiplexed flows.
+        let flow_addr = *certificate
+            .addresses()
+            .choose(&mut StdRng::from_entropy())
+            .expect("certificate must have at least one address");
         builder = builder.with_flow_config(flow_addr, profile.flow_config());
-    } else {
-        builder = builder.with_flow_config(flow_addr, FlowConfig::random(&settings));
     }
 
     let socket = builder.build().await.expect("client socket build");

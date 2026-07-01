@@ -264,12 +264,19 @@ def _per_flow_features(
     """Emit one feature row per wire flow (Barradas USENIX'18 concatenated layout).
 
     A "wire flow" is the 5-tuple as it would be seen by a passive observer:
-    one (client_ip, server_ip, server_port) per ``ip_map`` slot.  Every slot —
-    each background class and each TYPHOON profile instance, all running
-    concurrently — exposes one server port per run (TYPHOON picks one at
-    random from `eval_server.rs::PORTS`) and so contributes one row per run —
-    matching what a censor would actually classify, and keeping CV folds
-    free of same-run duplicate flows.
+    one (client_ip, server_ip, server_port) per ``ip_map`` slot.  Every
+    background class and every mimicry-profile (``as_*``, ``silent_idle``)
+    TYPHOON instance opens exactly one server port per run and so contributes
+    one row per run — the mimicry profiles pin a single randomly-chosen
+    address deliberately (see `eval_client.rs`), matching what a censor would
+    actually classify against those profiles' real-flow targets.
+    ``raw_default``/``tuned_default`` are the exception: they exercise the
+    protocol's genuine auto-fill flow selection (1 to
+    ``eval_server.rs::PORTS`` addresses, each independently randomised) so
+    they can contribute 1–3 rows per run.  Every row still carries the same
+    run id (see ``_load_corpus``), so `GroupKFold` folds never split a run's
+    rows across train/test regardless of how many a given run/class/profile
+    combination produced.
 
     Server-port discovery is automatic: whichever IP matches a slot's
     ``server_ip`` in ``ip_map`` contributes its UDP port number as the
@@ -281,8 +288,8 @@ def _per_flow_features(
     for key, slot in ip_map.items():
         cls = slot.get("class", key)
         profile = slot.get("profile", "n/a")
-        ip_to_slot[slot["client_ip"]] = (cls, "client", profile)
-        ip_to_slot[slot["server_ip"]] = (cls, "server", profile)
+        ip_to_slot[slot["client_ip"]] = (cls, profile, "client")
+        ip_to_slot[slot["server_ip"]] = (cls, profile, "server")
 
     timelines: dict[tuple[str, str, int], list[tuple[float, int, bytes, str]]] = defaultdict(list)
     with PcapReader(str(pcap)) as reader:
@@ -292,14 +299,19 @@ def _per_flow_features(
             ip_layer = pkt[IP]
             src_meta = ip_to_slot.get(ip_layer.src)
             dst_meta = ip_to_slot.get(ip_layer.dst)
-            if src_meta is None or dst_meta is None or src_meta[0] != dst_meta[0]:
+            # Compare the full (class, profile) slot identity, not just class —
+            # every TYPHOON mimicry profile shares the "typhoon" class label, so
+            # a class-only check would silently accept (and mis-attribute) a
+            # packet between two *different* concurrently-running TYPHOON
+            # profile instances as belonging to one flow.
+            if src_meta is None or dst_meta is None or src_meta[:2] != dst_meta[:2]:
                 continue
-            cls, _, profile = src_meta
+            cls, profile, src_role = src_meta
             udp_layer = pkt[UDP]
-            if src_meta[1] == "client" and dst_meta[1] == "server":
+            if src_role == "client" and dst_meta[2] == "server":
                 direction = "c2s"
                 server_port = int(udp_layer.dport)
-            elif src_meta[1] == "server" and dst_meta[1] == "client":
+            elif src_role == "server" and dst_meta[2] == "client":
                 direction = "s2c"
                 server_port = int(udp_layer.sport)
             else:

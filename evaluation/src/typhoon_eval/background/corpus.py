@@ -2,8 +2,14 @@
 
 For each of N runs, every `PART3_PROFILES` TYPHOON mimicry profile and every
 `BACKGROUND_PROFILES` class (incl. `unknown`) run concurrently — no per-run
-sampling of which classes/profiles participate, so every class ends up with
-exactly N flows and no class is ever absent from a run its peers are in:
+sampling of which classes/profiles participate, so no class is ever absent
+from a run its peers are in.  Every class/profile contributes exactly one
+flow per run it appears in, except `raw_default`/`tuned_default`: they
+exercise the protocol's genuine auto-fill flow selection (see
+`eval_client.rs`), so a given run of either may contribute 1–3 flows instead
+of exactly 1 — the analyzer's per-flow feature extraction and
+`GroupKFold`-by-run-id grouping both already handle that (see
+`ml_blending.py::_per_flow_features`/`_load_corpus`).
 
   1. Sample per-run parameters for every TYPHOON profile and every background
      class independently (each still draws its own random shape per run).
