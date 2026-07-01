@@ -2,7 +2,7 @@
 Statistical analysis of TYPHOON capture log records.
 
 Records come from the typhoon::capture logger (JSONL on stderr).
-Packet records have: t (unix ms), dir, flow, kind, tailer, crypto, header, payload, body.
+Packet records have: t (unix ms), dir, flow, kind, trailer, crypto, header, payload, body.
 Config records have kind="Config": dir, flow, body_mode, header_len, decoy.
 """
 
@@ -10,12 +10,12 @@ from collections.abc import Callable
 
 import numpy as np
 
-COMPONENTS = ["tailer", "crypto", "header", "payload", "body"]
+COMPONENTS = ["trailer", "crypto", "header", "payload", "body"]
 # Minimum samples needed to compute IAT entropy (need ≥ 2 values to take a diff).
 MIN_SAMPLES_FOR_STATS = 2
 
 COMP_COLORS = {
-    "tailer":  "#555555",
+    "trailer":  "#555555",
     "crypto":  "#9b59b6",
     "header":  "#e67e22",
     "payload": "#2980b9",

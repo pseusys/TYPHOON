@@ -37,7 +37,7 @@ use tokio::time::sleep;
 use typhoon::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::{AsyncExecutor, DefaultClientConnectionHandler, DefaultExecutor, DefaultServerConnectionHandler};
-use typhoon::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DerivedValue, IdentityType, PacketFlags, SparseDecoyProvider, Tailer, decoy_factory};
+use typhoon::flow::decoy::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider, DerivedValue, IdentityType, PacketFlags, SparseDecoyProvider, Trailer, decoy_factory};
 use typhoon::flow::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use typhoon::settings::consts::FG_OFFSET;
 use typhoon::settings::keys::DECOY_LENGTH_MIN;
@@ -92,14 +92,14 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
 
     async fn start(&self) {}
 
-    async fn feed_input(&self, packet: DynamicByteBuffer, tailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
-        let flags = PacketFlags::from_bits_truncate(*tailer_buf.get(FG_OFFSET));
+    async fn feed_input(&self, packet: DynamicByteBuffer, trailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+        let flags = PacketFlags::from_bits_truncate(*trailer_buf.get(FG_OFFSET));
         if flags.is_discardable() {
             let len = self.settings.get(&DECOY_LENGTH_MIN) as usize;
-            let total = len + Tailer::<T>::len();
+            let total = len + Trailer::<T>::len();
             let buf = self.settings.pool().allocate(Some(total));
             rand::thread_rng().fill(buf.slice_end_mut(len));
-            Tailer::decoy(buf.rebuffer_start(len), &self.identity.get(), self.next_packet_number());
+            Trailer::decoy(buf.rebuffer_start(len), &self.identity.get(), self.next_packet_number());
             if let Some(mgr) = self.manager.upgrade()
                 && let Err(err) = mgr.send_decoy_packet(buf, self.should_fallthrough(), false).await
             {
@@ -109,7 +109,7 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         Some(packet)
     }
 
-    async fn feed_output(&self, body: DynamicByteBuffer, _tailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_output(&self, body: DynamicByteBuffer, _trailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         Some(body)
     }
 }

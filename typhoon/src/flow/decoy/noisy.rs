@@ -14,7 +14,7 @@ use crate::flow::decoy::features::{maintenance_timer_task, try_replicate};
 use crate::settings::Settings;
 use crate::settings::consts::FG_OFFSET;
 use crate::settings::keys::*;
-use crate::tailer::{IdentityType, PacketFlags};
+use crate::trailer::{IdentityType, PacketFlags};
 use crate::utils::sync::{AsyncExecutor, RwLock, sleep};
 use crate::utils::unix_timestamp_ms;
 
@@ -121,17 +121,17 @@ impl<T: IdentityType + Clone + 'static, AE: AsyncExecutor + 'static> DecoyProvid
         executor.spawn(maintenance_timer_task(manager, state));
     }
 
-    async fn feed_input(&self, packet: DynamicByteBuffer, _tailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_input(&self, packet: DynamicByteBuffer, _trailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         let mut state = self.state.write().await;
         state.update(packet.len(), false);
         Some(packet)
     }
 
-    async fn feed_output(&self, body: DynamicByteBuffer, tailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
-        let flags = PacketFlags::from_bits_truncate(*tailer_buf.get(FG_OFFSET));
+    async fn feed_output(&self, body: DynamicByteBuffer, trailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+        let flags = PacketFlags::from_bits_truncate(*trailer_buf.get(FG_OFFSET));
         if !flags.is_discardable() {
             let mut state = self.state.write().await;
-            state.update(body.len() + tailer_buf.len(), true);
+            state.update(body.len() + trailer_buf.len(), true);
         }
         Some(body)
     }

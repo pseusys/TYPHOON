@@ -9,7 +9,7 @@ use crate::bytes::DynamicByteBuffer;
 use crate::cache::DerivedValue;
 use crate::flow::decoy::common::{DecoyCommunicationMode, DecoyFlowSender, DecoyProvider};
 use crate::settings::Settings;
-use crate::tailer::IdentityType;
+use crate::trailer::IdentityType;
 use crate::utils::sync::AsyncExecutor;
 
 /// Simple mode does not spawn any coroutines and does not send any packets.
@@ -24,11 +24,11 @@ impl DecoyProvider for SimpleDecoyProvider {
 
     async fn start(&self) {}
 
-    async fn feed_input(&self, packet: DynamicByteBuffer, _tailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_input(&self, packet: DynamicByteBuffer, _trailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         Some(packet)
     }
 
-    async fn feed_output(&self, body: DynamicByteBuffer, _tailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
+    async fn feed_output(&self, body: DynamicByteBuffer, _trailer_buf: DynamicByteBuffer) -> Option<DynamicByteBuffer> {
         Some(body)
     }
 }

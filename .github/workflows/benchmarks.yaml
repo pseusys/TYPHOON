@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - 'typhoon/**'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

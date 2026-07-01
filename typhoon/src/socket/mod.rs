@@ -35,7 +35,7 @@ cfg_if! {
         pub use client::{ClientSocket, ClientSocketBuilder};
         pub use error::ClientSocketError;
         pub use crate::certificate::ClientCertificate;
-        pub use crate::tailer::ClientConnectionHandler;
+        pub use crate::trailer::ClientConnectionHandler;
     }
 }
 cfg_if! {
@@ -45,6 +45,6 @@ cfg_if! {
         pub use pool::ClientPool;
         pub use server::{Listener, ServerBuilder, ServerFlowConfiguration};
         pub use crate::certificate::ServerKeyPair;
-        pub use crate::tailer::ServerConnectionHandler;
+        pub use crate::trailer::ServerConnectionHandler;
     }
 }
