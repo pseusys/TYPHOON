@@ -123,10 +123,7 @@ pub(crate) fn write_header(w: &mut impl Write, record_type: u8) -> Result<(), io
 /// compile time and cannot be renegotiated at runtime — build flavor, protocol major version, and
 /// `ID` length — matches between the running build and the build that produced this
 /// certificate/key file. A mismatch on any of these would otherwise corrupt the wire format
-/// rather than fail cleanly, since neither side can detect it from the handshake alone. (The
-/// fixed non-`ID` tailer layout is not included here: unlike `ID` length — which varies per
-/// `IdentityType` implementation — it has no variability axis within a protocol major version, so
-/// a mismatch is already impossible without also bumping the major version.)
+/// rather than fail cleanly, since neither side can detect it from the handshake alone.
 pub(crate) fn read_header(r: &mut impl Read, expected_type: u8) -> Result<(), CertificateError> {
     let mut magic = [0u8; 7];
     r.read_exact(&mut magic)?;
