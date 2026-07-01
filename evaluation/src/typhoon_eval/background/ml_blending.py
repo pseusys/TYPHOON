@@ -35,6 +35,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 
 from typhoon_eval.shared.pcap_stats import _entropy, _size_entropy
+from typhoon_eval.shared.profiles import HELD_OUT_BG_CLASSES
 
 console = Console()
 
@@ -398,15 +399,19 @@ def main(corpus_root: str | None, feature_set: str, out_dir: str | None) -> None
         console.print("[yellow]No flows extracted from corpus.[/yellow]")
         exit(1)
 
-    bg_mask = np.array([lbl != TYPHOON_CLASS for lbl in y])
-    typhoon_mask = ~bg_mask
+    bg_mask = np.array([lbl != TYPHOON_CLASS and lbl not in HELD_OUT_BG_CLASSES for lbl in y])
+    typhoon_mask = np.array([lbl == TYPHOON_CLASS for lbl in y])
     if bg_mask.sum() == 0 or typhoon_mask.sum() == 0:
         console.print("[red]Corpus must contain both TYPHOON and background flows.[/red]")
         exit(1)
 
     bg_classes = sorted({lbl for lbl, m in zip(y, bg_mask, strict=True) if m})
     class_to_idx = {c: i for i, c in enumerate(bg_classes)}
-    y_bg_idx_full = np.array([class_to_idx[lbl] for lbl in y if lbl != TYPHOON_CLASS])
+    y_bg_idx_full = np.array([class_to_idx[lbl] for lbl, m in zip(y, bg_mask, strict=True) if m])
+
+    n_held_out = sum(1 for lbl in y if lbl in HELD_OUT_BG_CLASSES)
+    if n_held_out:
+        console.print(f"  [dim]Excluded {n_held_out} held-out-class flows ({', '.join(sorted(HELD_OUT_BG_CLASSES))}) from training.[/dim]")
 
     # Hold out 30% of background flows for a "what does a real natural flow
     # score look like?" baseline.  Without this baseline the TYPHOON confidence
@@ -424,7 +429,10 @@ def main(corpus_root: str | None, feature_set: str, out_dir: str | None) -> None
     X_t  = scaler.transform(X[typhoon_mask])
 
     # Barradas USENIX'18 RF defaults: n_estimators=100, default split criterion.
-    clf = RandomForestClassifier(n_estimators=100, random_state=42)
+    # class_weight="balanced" keeps a bg class with more captured flows (a
+    # corpus-scheduling artefact, not a real signal) from dominating the
+    # decision boundary — matches the convention in ml_open_world.py.
+    clf = RandomForestClassifier(n_estimators=100, random_state=42, class_weight="balanced")
     clf.fit(X_bg_train, y_bg_idx_full[train_idx])
 
     proba = clf.predict_proba(X_t)

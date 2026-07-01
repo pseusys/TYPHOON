@@ -46,26 +46,16 @@ from typhoon_eval.background.ml_blending import (
     TYPHOON_CLASS,
     _compute_bursts_per_direction,
 )
+
+# (TYPHOON profile, target natural class) mapping — imported rather than
+# redefined so this module's plots always compare the same pair Test A
+# actually trains on.  A previously-duplicated copy of this dict had drifted
+# (`silent_idle` pointed at `dns` here vs. `wireguard_idle` in Test A),
+# silently comparing distributions against the wrong natural class.
+from typhoon_eval.background.ml_open_world import PROFILE_TARGET_CLASS
 from typhoon_eval.shared.pcap_stats import _entropy
 
 console = Console()
-
-# (TYPHOON profile, target natural class) — same mapping as ml_open_world Test A.
-# The `raw_default` / `tuned_default` ↔ `unknown` pairs are intentional: both
-# profiles use pure FlowConfig::random and broad per-packet randomization, while
-# `unknown` samples the long-tail UDP feature space broadly — neither tries to
-# mimic any specific natural class.  `tuned_default` additionally exercises the
-# blending-oriented settings (jitter / fallthrough / decoy rates).
-PROFILE_TARGET_CLASS: dict[str, str] = {
-    "as_quic_d":       "quic_download",
-    "as_quic_u":       "quic_upload",
-    "as_video":        "rtp_video",
-    "as_video_bursty": "rtp_video",
-    "as_voice":        "rtp_voice",
-    "silent_idle":     "dns",
-    "raw_default":     "unknown",
-    "tuned_default":   "unknown",
-}
 
 # Number of packets per flow to plot in the packet-index diagnostic.
 POSITION_PLOT_PACKETS = 200

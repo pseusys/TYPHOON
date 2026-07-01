@@ -1,19 +1,20 @@
 """Methodologically-grounded detectability metrics for Part 3.
 
-Two tests, both with stratified k-fold cross-validation so reported numbers
-reflect held-out performance, never training-set memorisation:
+Two tests, both with 10-fold KFold cross-validation (shuffled, non-stratified
+— matches Barradas USENIX'18) so reported numbers reflect held-out
+performance, never training-set memorisation:
 
   * Test A — Pair-binary detection.  For each TYPHOON profile that targets a
     natural class (e.g. ``as_quic_d`` mimics ``quic_download``), train a
     binary classifier on (TYPHOON-as-X) vs (real-X) flows only, with
-    ``StratifiedKFold(5)``.  Report AUC-ROC and TPR @ 1% FPR aggregated from
-    out-of-fold predictions.  AUC ≈ 0.5 means perfectly indistinguishable;
+    ``KFold(10, shuffle=True)``.  Report AUC-ROC and TPR @ 1% FPR aggregated
+    from out-of-fold predictions.  AUC ≈ 0.5 means perfectly indistinguishable;
     AUC = 1.0 means trivially detected.  This is the threat model from
     Tschantz et al. S&P 2016: a censor who *suspects* the protocol and
     trains a pair-specific classifier.
 
   * Test B — Closed-world (n+1)-class.  Train a multi-class classifier on
-    all natural classes plus TYPHOON, with ``StratifiedKFold(5)`` and
+    all natural classes plus TYPHOON, with ``KFold(10, shuffle=True)`` and
     ``cross_val_predict`` for clean out-of-fold predictions.  Report
     accuracy, macro-F1, per-class precision/recall/F1, and a confusion
     matrix.  TYPHOON's recall is the headline: lower means the censor more
@@ -142,16 +143,23 @@ def _make_classifier(name: str) -> Any:
     Random Forest and Decision Tree are always available (sklearn).  XGBoost is
     an optional dependency; raises ImportError if unavailable so callers can
     surface a helpful skip message.
+
+    RF/DT use ``class_weight="balanced"`` (matching Test B's convention) so a
+    class with more captured flows — a corpus artefact of run scheduling, not
+    a real signal — doesn't dominate the trained decision boundary.  XGBoost
+    has no equivalent constructor option (it needs per-sample weights passed
+    at fit time), so it's left unweighted here.
     """
     if name == "rf":
         return RandomForestClassifier(
             n_estimators=RF_N_ESTIMATORS,
             max_features="sqrt",
             random_state=RF_RANDOM_STATE,
+            class_weight="balanced",
             n_jobs=-1,
         )
     if name == "dt":
-        return DecisionTreeClassifier(random_state=RF_RANDOM_STATE)
+        return DecisionTreeClassifier(random_state=RF_RANDOM_STATE, class_weight="balanced")
     if name == "xgb":
         if XGBClassifier is None:
             raise ImportError(
@@ -178,6 +186,21 @@ def _tpr_at_fpr(scores_pos: np.ndarray, scores_neg: np.ndarray, target_fpr: floa
     return threshold, tpr
 
 
+def _threshold_for_tpr(scores_pos: np.ndarray, target_tpr: float) -> float:
+    """Smallest *observed* positive score achieving TPR ``(# pos >= threshold) / n_pos ≥ target_tpr``.
+
+    Selects an actual order statistic rather than ``np.quantile``'s default
+    linearly-interpolated value — interpolation can land strictly between two
+    tied scores and silently overshoot or undershoot ``target_tpr`` when the
+    classifier emits few distinct probabilities (routine for DT/RF/XGB, whose
+    ``predict_proba`` output is bounded by leaf/tree-vote granularity).
+    """
+    sorted_pos = np.sort(scores_pos)
+    quantile_idx = int(np.floor((1.0 - target_tpr) * len(sorted_pos)))
+    quantile_idx = max(0, min(quantile_idx, len(sorted_pos) - 1))
+    return float(sorted_pos[quantile_idx])
+
+
 def _fpr_at_tpr(scores_pos: np.ndarray, scores_neg: np.ndarray, target_tpr: float) -> float:
     """FPR achieved when the threshold is set so the classifier captures ≥ ``target_tpr`` of positives.
 
@@ -187,13 +210,12 @@ def _fpr_at_tpr(scores_pos: np.ndarray, scores_neg: np.ndarray, target_tpr: floa
     """
     if len(scores_neg) == 0 or len(scores_pos) == 0:
         return float("nan")
-    sorted_pos = np.sort(scores_pos)
-    # We want the smallest threshold such that TPR = (# pos > threshold) / n_pos >= target.
-    # Equivalent: threshold is the (1 - target_tpr) quantile of the positive scores.
-    quantile_idx = int(np.floor((1.0 - target_tpr) * len(sorted_pos)))
-    quantile_idx = max(0, min(quantile_idx, len(sorted_pos) - 1))
-    threshold = float(sorted_pos[quantile_idx])
-    return float((scores_neg > threshold).sum()) / len(scores_neg)
+    # Threshold is the (1 - target_tpr) quantile of the positive scores.  The
+    # "captured" side must use >= (not >) — the threshold score itself has to
+    # count as caught, otherwise the achieved TPR lands one sample short of
+    # target_tpr.
+    threshold = _threshold_for_tpr(scores_pos, target_tpr)
+    return float((scores_neg >= threshold).sum()) / len(scores_neg)
 
 
 def _run_pair_binary(
@@ -226,8 +248,11 @@ def _run_pair_binary(
     y_pair = np.concatenate([np.ones(int(pos_mask.sum())), np.zeros(int(neg_mask.sum()))])
 
     # 10-fold non-stratified CV with shuffling — matches Barradas USENIX'18.
-    # Class-balance is approximate; the per-fold y can be skewed, but ROC-AUC
-    # and threshold-based metrics are robust to mild imbalance.
+    # Fold membership is still approximate (non-stratified KFold can skew a
+    # given fold's split), but `_make_classifier` weights RF/DT by
+    # class_weight="balanced" so the *fitted model* isn't biased toward
+    # whichever side of the pair has more captured flows; XGBoost has no
+    # equivalent and remains unweighted.
     scaler = StandardScaler()
     clf = _make_classifier(classifier_name)
     kfold = KFold(n_splits=KFOLD_SPLITS, shuffle=True, random_state=RF_RANDOM_STATE)
@@ -486,7 +511,7 @@ def _print_closed_world(result: dict[str, object]) -> None:
     cm: np.ndarray = result["confusion_matrix"]   # type: ignore[assignment]
     skipped: list[str] = result["skipped_classes"]   # type: ignore[assignment]
 
-    console.print(f"[bold]Test B — closed-world ({len(classes)}-class classifier, stratified 5-fold CV)[/bold]")
+    console.print(f"[bold]Test B — closed-world ({len(classes)}-class classifier, {KFOLD_SPLITS}-fold KFold CV)[/bold]")
     console.print(f"  Accuracy: [bold]{report['accuracy']:.3f}[/bold]   "
                   f"Macro-F1: [bold]{report['macro avg']['f1-score']:.3f}[/bold]")
     if skipped:
@@ -707,7 +732,7 @@ def _run_open_set_binary(
         pipe.fit(X_train, y_train)
 
         scores_typhoon = pipe.predict_proba(X[test_typhoon_idx])[:, 1]
-        threshold = float(np.quantile(scores_typhoon, 1.0 - OPEN_SET_TPR_TARGET))
+        threshold = _threshold_for_tpr(scores_typhoon, OPEN_SET_TPR_TARGET)
         tpr = float((scores_typhoon >= threshold).sum()) / max(len(scores_typhoon), 1)
         per_fold_tpr.append(tpr)
 
@@ -787,7 +812,7 @@ def _run_one_class_typhoon(
         ])
         pipe.fit(X[train_idx])
         scores_typhoon = pipe.decision_function(X[test_idx])
-        threshold = float(np.quantile(scores_typhoon, 1.0 - OPEN_SET_TPR_TARGET))
+        threshold = _threshold_for_tpr(scores_typhoon, OPEN_SET_TPR_TARGET)
         tpr = float((scores_typhoon >= threshold).sum()) / max(len(scores_typhoon), 1)
         per_fold_tpr.append(tpr)
 
@@ -868,7 +893,7 @@ def _run_one_class_open_set(
         ])
         pipe.fit(X[train_idx])
         scores_typhoon = pipe.decision_function(X[test_idx])
-        threshold = float(np.quantile(scores_typhoon, 1.0 - OPEN_SET_TPR_TARGET))
+        threshold = _threshold_for_tpr(scores_typhoon, OPEN_SET_TPR_TARGET)
         tpr = float((scores_typhoon >= threshold).sum()) / max(len(scores_typhoon), 1)
         per_fold_tpr.append(tpr)
 
