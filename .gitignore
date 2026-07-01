@@ -37,3 +37,6 @@ evaluation/results/
 # Diagrams and graphs
 flamegraphs
 diagrams
+
+# Pipeline artifacts (ship as zipped bundles)
+artifacts/

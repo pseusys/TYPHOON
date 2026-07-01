@@ -20,7 +20,7 @@ profile:
 from __future__ import annotations
 
 from collections import defaultdict
-from json import loads
+from json import dumps, loads
 from pathlib import Path
 from sys import exit
 
@@ -380,7 +380,9 @@ def _per_profile_breakdown(
 @option("--features", "feature_set", default="stats",
               type=Choice(list(FEATURE_SETS)), show_default=True,
               help="Barradas USENIX'18 feature set: stats (174 features), histogram (300 features), or both.")
-def main(corpus_root: str | None, feature_set: str) -> None:
+@option("--out-dir", default=None, type=ClickPath(),
+              help="Directory for the blending.json result summary (default: <corpus-root>/plots).")
+def main(corpus_root: str | None, feature_set: str, out_dir: str | None) -> None:
     """Compute confident-blend fraction + per-profile breakdown from a finished corpus."""
 
     root = Path(corpus_root) if corpus_root else Path(__file__).parent.parent.parent.parent / "results" / "background"
@@ -501,6 +503,44 @@ def main(corpus_root: str | None, feature_set: str) -> None:
                 top_str,
             )
         console.print(ptable)
+
+    # Persist the metrics so the pipeline can pick them up as an artifact —
+    # mirrors what background-openworld / -distplot write to --out-dir.
+    out_root = Path(out_dir) if out_dir else root / "plots"
+    out_root.mkdir(parents=True, exist_ok=True)
+    result = {
+        "feature_set":              feature_set,
+        "n_features":               len(feature_names),
+        "confident_threshold":      CONFIDENT_THRESHOLD,
+        "n_typhoon_flows":          len(confidence),
+        "n_background_flows":       int(bg_mask.sum()),
+        "n_background_train":       len(train_idx),
+        "n_background_holdout":     len(holdout_idx),
+        "n_background_classes":     len(bg_classes),
+        "blend_fraction":           blend_fraction,
+        "typhoon_mean_confidence":  float(confidence.mean()),
+        "typhoon_median_confidence": float(np.median(confidence)),
+        "typhoon_max_confidence":   float(confidence.max()),
+        "bg_holdout_mean_confidence":   float(bg_holdout_conf.mean()),
+        "bg_holdout_median_confidence": float(np.median(bg_holdout_conf)),
+        "uniform_baseline":         1.0 / len(bg_classes),
+        "detector_threshold_bg_p1": bg_p1,
+        "typhoon_caught_fraction":  typhoon_caught,
+        "bg_false_positive_fraction": bg_caught,
+        "skipped_runs":             len(skipped),
+        "predicted_distribution": {
+            cls: {
+                "count":     len(confs),
+                "share":     len(confs) / len(pred_classes),
+                "mean_conf": float(np.mean(confs)),
+            }
+            for cls, confs in by_pred.items()
+        },
+        "per_profile": breakdown,
+    }
+    result_path = out_root / "blending.json"
+    result_path.write_text(dumps(result, indent=2))
+    console.print(f"\n  [green]wrote[/green] {result_path}")
 
 
 if __name__ == "__main__":

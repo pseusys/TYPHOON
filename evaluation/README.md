@@ -52,13 +52,14 @@ Protocols compared: `raw_udp`, `raw_tcp`, `tls`, `wireguard`, `quic`, `obfs4` (�
 
 - **Docker** (or rootful Podman — rootless cannot grant `NET_ADMIN` to the observer).
 - **Python 3.11+** with [Poetry](https://python-poetry.org/).
-- Optional ML extras: `torch` (CNN models), `xgboost`, `umap-learn` — installed via the `ml` Poetry group.
+- Optional ML extra: `xgboost` — enables the XGBoost open-world classifier (`background-openworld`); install with `-E xgboost`. Without it, that classifier is skipped and RF/DT still run.
 
 ## Installation
 
 ```shell
 cd evaluation
-poetry install --with ml      # Python deps
+poetry install --with ml            # Python deps (scikit-learn)
+poetry install --with ml -E xgboost # …plus the optional XGBoost open-world classifier
 poetry poe build              # build the 15 comparison-protocol images (once)
 poetry poe background-build   # build the 9 background generator images (once, only for Part 3)
 ```
@@ -99,13 +100,23 @@ poe background-distplot       # per-pair size/IAT distribution overlays
 ### Pipeline
 
 ```shell
-poe evaluate                  # capture → analyze → Part 1 + 2 plots → ML → report.md
-poe clean                     # delete results/captures and results/logs
+poe evaluate                    # build → capture → analyze → Part 1 + 2 plots → background → report.md
+poe evaluate --skip background  # everything except the 7500-run Part 3 corpus
+poe evaluate --skip build       # reuse existing Docker images
+
+# Re-analyze already-stored PCAPs without regenerating the corpus — e.g. to add
+# XGBoost open-world scores to a prior run (install xgboost first, see above):
+poe evaluate --skip build,capture --corpus-root results/background/pipeline_<id>
+
+poe clean                       # delete results/captures and results/background
 ```
 
 ## Reading the results
 
-Outputs land under `results/`:
+Outputs are split into two trees:
+
+- **`results/`** — raw PCAPs (captures and background corpora). Too large to ship; regenerable via `poe evaluate`.
+- **`artifacts/<pipeline_id>/`** — every derived output (plots, tables, stats.json, top-level `report.md`). Designed to be zipped and uploaded as a conference artifact bundle.
 
 ```text
 results/
@@ -114,11 +125,21 @@ results/
 │   ├── stats.json                 # per-pcap metrics — see below
 │   ├── metadata.json              # transfer_bytes, scenario, timing
 │   └── logs/<protocol>/           # client + server + observer container logs
-├── self_compare/, traffic_compare/, use_case_compare/  # Part 1 PNGs
-├── plots/                         # Part 2 PNGs + comparison table
-├── flow_plots/                    # Part 1 per-flow packet-structure SVGs
-├── background/run_*/              # Part 3 per-run pcaps and metadata
-└── ml/                            # feature matrices, model weights
+└── background/pipeline_<id>/run_*/  # Part 3 per-run pcaps + metadata
+
+artifacts/pipeline_<timestamp>/
+├── pipeline_config.json           # resolved CLI parameters
+├── report.md                      # top-level index with links to everything below
+├── logs/<phase>.log               # per-phase invocation logs
+├── analyze/run_*/stats.json       # copies of per-run stats
+├── proto_compare/                 # Part 2 PDFs + markdown comparison table
+├── flow_plots/                    # Part 1 per-flow packet-structure PDFs
+├── self_compare/, use_case_compare/, traffic_compare/  # Part 1 PDFs + JSON
+└── background/                    # Part 3 derived outputs (no PCAPs)
+    ├── corpus_metadata/run_*/{metadata,config}.json
+    ├── blending/blending.json     # confident-blend fraction + per-profile breakdown
+    ├── openworld/                 # Tests A–E PDFs + JSON
+    └── distplot/                  # per-pair size/IAT overlays PDFs + JSON
 ```
 
 ### Per-pcap metrics (`stats.json`)
@@ -138,18 +159,18 @@ Computed separately per direction (`c2s`, `s2c`, `all`). Packet sizes are **tran
 | `first_n_sizes[100]`, `first_n_iats[100]` | First-100 direction-signed sequences (for ML) |
 | `hs_duration_s`, `hs_pkt_count`, `hs_byte_frac` | Handshake window (when sniffer configured) |
 
-### Part 1 plots
+### Part 1 plots (under `artifacts/<pipeline_id>/`)
 
-- `self_compare/default_self_compare.png` — overlaid size + IAT CDFs across N runs of identical config. Look for tight bands.
-- `traffic_compare/default_traffic_compare.png` — same CDFs per scenario. Look for clearly separated bands.
-- `use_case_compare/use_case_compare.png` — per-PROTOCOL.md-use-case profiles side by side.
-- `flow_plots/<example>.png` — stacked-bar of every wire packet showing fake-header / tailer / body composition. Useful to verify per-flow knobs.
+- `self_compare/default_self_compare.pdf` — overlaid size + IAT CDFs across N runs of identical config. Look for tight bands.
+- `traffic_compare/default_traffic_compare.pdf` — same CDFs per scenario. Look for clearly separated bands.
+- `use_case_compare/use_case_compare.pdf` — per-PROTOCOL.md-use-case profiles side by side.
+- `flow_plots/run_<id>_pcap_flow.pdf` — stacked-bar of every wire packet showing fake-header / tailer / body composition. Useful to verify per-flow knobs.
 
-### Part 2 plots
+### Part 2 plots (under `artifacts/<pipeline_id>/proto_compare/`)
 
-- `<run>_proto_compare.png` — six panels: (A) size CDF, (B) IAT CDF, (C) throughput vs goodput-efficiency scatter, (D) overhead bars, (E) byte entropy by phase, (F) normalised heatmap.
-- `<run>_handshake.png` — handshake duration / packet count / byte fraction across protocols.
-- `<run>_compare_table.md` — one row per protocol; quick-glance ranking by any column.
+- `run_<id>_proto_compare.pdf` — six panels: (A) size CDF, (B) IAT CDF, (C) throughput vs goodput-efficiency scatter, (D) overhead bars, (E) byte entropy by phase, (F) normalised heatmap.
+- `run_<id>_handshake.pdf` — handshake duration / packet count / byte fraction across protocols.
+- `run_<id>_compare_table.md` — one row per protocol; quick-glance ranking by any column.
 
 ### Part 3 outputs
 
