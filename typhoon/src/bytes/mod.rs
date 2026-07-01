@@ -7,7 +7,7 @@
 //!
 //! - [`DynamicByteBuffer`]: the workhorse type. Allocated from a [`BytePool`] with header
 //!   (`before_cap`) and trailer (`after_cap`) headroom, so flow managers can prepend a fake header
-//!   or append an encrypted tailer without copying the payload. Pool-attached buffers return to
+//!   or append an encrypted trailer without copying the payload. Pool-attached buffers return to
 //!   the pool on drop. `Send`, not `Sync`.
 //! - [`FixedByteBuffer<N>`]: a stack-allocated `[u8; N]`, `Copy`. Used where the size is known at
 //!   compile time and is small enough that copying beats an atomic refcount (keys, nonces,

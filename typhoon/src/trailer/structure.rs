@@ -1,21 +1,21 @@
 #[cfg(test)]
-#[path = "../../tests/tailer/structure.rs"]
+#[path = "../../tests/trailer/structure.rs"]
 mod tests;
 
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::marker::PhantomData;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
-use crate::crypto::{TAILER_C2S_OVERHEAD, TAILER_S2C_OVERHEAD};
-use crate::settings::consts::{CD_OFFSET, FG_OFFSET, ID_OFFSET, PL_OFFSET, PN_OFFSET, TAILER_LENGTH, TM_OFFSET};
-use crate::tailer::flags::{PacketFlags, ReturnCode};
+use crate::crypto::{TRAILER_C2S_OVERHEAD, TRAILER_S2C_OVERHEAD};
+use crate::settings::consts::{CD_OFFSET, FG_OFFSET, ID_OFFSET, PL_OFFSET, PN_OFFSET, TM_OFFSET, TRAILER_LENGTH};
+use crate::trailer::flags::{PacketFlags, ReturnCode};
 use crate::utils::unix_timestamp_ms;
 
 const TM_LENGTH: usize = 4;
 const PN_LENGTH: usize = 8;
 const PL_LENGTH: usize = 2;
 
-/// A client identity that can be read from and written into the tailer's fixed-size `ID` field.
+/// A client identity that can be read from and written into the trailer's fixed-size `ID` field.
 pub trait IdentityType: Send + Sync {
     /// Construct an identity from the raw `ID` field bytes.
     fn from_bytes(bytes: &[u8]) -> Self;
@@ -36,7 +36,7 @@ pub trait ServerConnectionHandler<T: IdentityType>: Send + Sync {
     /// Produce initial data to include in the server handshake response for the given identity.
     fn initial_data(&self, identity: &T) -> StaticByteBuffer;
 
-    /// Check whether the client version (from the handshake tailer ID field) is compatible.
+    /// Check whether the client version (from the handshake trailer ID field) is compatible.
     /// Returns `true` if the handshake should proceed, `false` if it should be rejected.
     /// Implementations are responsible for any logging before returning.
     fn verify_version(&self, version_bytes: &[u8]) -> bool;
@@ -57,12 +57,12 @@ pub trait ClientConnectionHandler: Send + Sync {
     /// Produce initial data to include in the client handshake.
     fn initial_data(&self) -> StaticByteBuffer;
 
-    /// Produce the version bytes to place in the handshake tailer ID field, clamped to `length` bytes.
+    /// Produce the version bytes to place in the handshake trailer ID field, clamped to `length` bytes.
     fn version(&self, length: usize) -> StaticByteBuffer;
 }
 
-/// Tailer view (16 + `TYPHOON_ID_LENGTH` bytes total).
-/// Zero-copy view into a `DynamicByteBuffer` containing tailer metadata.
+/// Trailer view (16 + `TYPHOON_ID_LENGTH` bytes total).
+/// Zero-copy view into a `DynamicByteBuffer` containing trailer metadata.
 /// All field access reads directly from the underlying buffer.
 ///
 /// Layout:
@@ -72,13 +72,13 @@ pub trait ClientConnectionHandler: Send + Sync {
 /// - PN (packet number): 8 bytes - incremental (4) + timestamp (4)
 /// - PL (payload length): 2 bytes - length of encrypted payload
 /// - ID (identity): `TYPHOON_ID_LENGTH` bytes - client UUID
-pub struct Tailer<T: IdentityType> {
+pub struct Trailer<T: IdentityType> {
     buffer: DynamicByteBuffer,
     _phantom: PhantomData<T>,
 }
 
-impl<T: IdentityType> Tailer<T> {
-    /// Wrap an existing buffer as a tailer view. No data is copied.
+impl<T: IdentityType> Trailer<T> {
+    /// Wrap an existing buffer as a trailer view. No data is copied.
     /// The buffer must contain at least `Self::len()` bytes.
     pub fn new(buffer: DynamicByteBuffer) -> Self {
         let buffer = buffer.ensure_size(Self::len());
@@ -88,8 +88,8 @@ impl<T: IdentityType> Tailer<T> {
         }
     }
 
-    /// Construct a tailer view from a received buffer and validate it against the
-    /// accompanying body length. Unlike [`Tailer::new`], this constructor never
+    /// Construct a trailer view from a received buffer and validate it against the
+    /// accompanying body length. Unlike [`Trailer::new`], this constructor never
     /// expands the buffer via the pool — receive paths must supply a slice whose
     /// length is already at least `Self::len()`.
     pub fn validated(buffer: DynamicByteBuffer, body_len: usize) -> Option<Self> {
@@ -113,7 +113,7 @@ impl<T: IdentityType> Tailer<T> {
         Some(view)
     }
 
-    /// Write a data packet tailer into the buffer.
+    /// Write a data packet trailer into the buffer.
     pub fn data(buffer: DynamicByteBuffer, identity: &T, payload_length: u16, packet_number: u64) -> Self {
         let view = Self::new(buffer);
         view.set_flags(PacketFlags::DATA);
@@ -125,7 +125,7 @@ impl<T: IdentityType> Tailer<T> {
         view
     }
 
-    /// Write a health check packet tailer into the buffer.
+    /// Write a health check packet trailer into the buffer.
     pub fn health_check(buffer: DynamicByteBuffer, identity: &T, next_in: u32, packet_number: u64) -> Self {
         let view = Self::new(buffer);
         view.set_flags(PacketFlags::HEALTH_CHECK);
@@ -137,8 +137,8 @@ impl<T: IdentityType> Tailer<T> {
         view
     }
 
-    /// Write a handshake packet tailer into the buffer.
-    /// `body_len` is the length of the handshake body (excluding tailer), allowing receivers
+    /// Write a handshake packet trailer into the buffer.
+    /// `body_len` is the length of the handshake body (excluding trailer), allowing receivers
     /// to strip any fake header/body prefix before parsing the handshake data.
     pub fn handshake(buffer: DynamicByteBuffer, identity: &T, code: u8, next_in: u32, packet_number: u64, body_len: u16) -> Self {
         let view = Self::new(buffer);
@@ -151,7 +151,7 @@ impl<T: IdentityType> Tailer<T> {
         view
     }
 
-    /// Write a decoy packet tailer into the buffer.
+    /// Write a decoy packet trailer into the buffer.
     pub fn decoy(buffer: DynamicByteBuffer, identity: &T, packet_number: u64) -> Self {
         let view = Self::new(buffer);
         view.set_flags(PacketFlags::DECOY);
@@ -163,7 +163,7 @@ impl<T: IdentityType> Tailer<T> {
         view
     }
 
-    /// Write a debug probe tailer into the buffer.
+    /// Write a debug probe trailer into the buffer.
     ///
     /// Field semantics in debug mode:
     /// - **FG**: `DATA` flag (same as data packets so probes blend in).
@@ -182,7 +182,7 @@ impl<T: IdentityType> Tailer<T> {
         view
     }
 
-    /// Write a termination packet tailer into the buffer.
+    /// Write a termination packet trailer into the buffer.
     pub fn termination(buffer: DynamicByteBuffer, identity: &T, code: ReturnCode, packet_number: u64) -> Self {
         let view = Self::new(buffer);
         view.set_flags(PacketFlags::TERMINATION);
@@ -212,7 +212,7 @@ impl<T: IdentityType> Tailer<T> {
     ///
     /// # Panics
     ///
-    /// Never in practice: both `Tailer` constructors guarantee the backing buffer is at least
+    /// Never in practice: both `Trailer` constructors guarantee the backing buffer is at least
     /// `Self::len()` bytes.
     #[inline]
     pub fn time(&self) -> u32 {
@@ -223,7 +223,7 @@ impl<T: IdentityType> Tailer<T> {
     ///
     /// # Panics
     ///
-    /// Never in practice: both `Tailer` constructors guarantee the backing buffer is at least
+    /// Never in practice: both `Trailer` constructors guarantee the backing buffer is at least
     /// `Self::len()` bytes.
     #[inline]
     pub fn packet_number(&self) -> u64 {
@@ -234,7 +234,7 @@ impl<T: IdentityType> Tailer<T> {
     ///
     /// # Panics
     ///
-    /// Never in practice: both `Tailer` constructors guarantee the backing buffer is at least
+    /// Never in practice: both `Trailer` constructors guarantee the backing buffer is at least
     /// `Self::len()` bytes.
     #[inline]
     pub fn payload_length(&self) -> u16 {
@@ -299,7 +299,7 @@ impl<T: IdentityType> Tailer<T> {
         &self.buffer
     }
 
-    /// Consume the tailer view and return the underlying buffer.
+    /// Consume the trailer view and return the underlying buffer.
     #[inline]
     pub fn into_buffer(self) -> DynamicByteBuffer {
         self.buffer
@@ -359,44 +359,44 @@ impl<T: IdentityType> Tailer<T> {
 
     // --- Static helpers that read from a raw buffer ---
 
-    /// Read the `PL` (payload length) field directly from a raw tailer buffer, without constructing a `Tailer` view.
+    /// Read the `PL` (payload length) field directly from a raw trailer buffer, without constructing a `Trailer` view.
     ///
     /// # Panics
     ///
-    /// Never in practice: the buffer is expanded to at least `TAILER_LENGTH` bytes before reading.
+    /// Never in practice: the buffer is expanded to at least `TRAILER_LENGTH` bytes before reading.
     #[inline]
     pub fn get_payload_length(buffer: &DynamicByteBuffer) -> u16 {
-        let correct_buffer = buffer.ensure_size(TAILER_LENGTH);
+        let correct_buffer = buffer.ensure_size(TRAILER_LENGTH);
         u16::from_be_bytes(correct_buffer.slice_both(PL_OFFSET, PL_OFFSET + PL_LENGTH).try_into().unwrap())
     }
 
-    /// Extract identity from a raw tailer buffer.
+    /// Extract identity from a raw trailer buffer.
     #[inline]
     pub fn get_identity(buffer: &DynamicByteBuffer) -> T {
         let correct_buffer = buffer.ensure_size(Self::len());
         T::from_bytes(correct_buffer.slice_both(ID_OFFSET, ID_OFFSET + T::length()))
     }
 
-    /// Total tailer length (bytes): the fixed-size part plus `T`'s `ID` field length.
+    /// Total trailer length (bytes): the fixed-size part plus `T`'s `ID` field length.
     #[inline]
     pub fn len() -> usize {
-        T::length() + TAILER_LENGTH
+        T::length() + TRAILER_LENGTH
     }
 
-    /// Wire length of the obfuscated client → server tailer (plaintext tailer + c2s obfuscation overhead).
+    /// Wire length of the obfuscated client → server trailer (plaintext trailer + c2s obfuscation overhead).
     #[inline]
     pub(crate) fn encrypted_len_c2s() -> usize {
-        Self::len() + TAILER_C2S_OVERHEAD
+        Self::len() + TRAILER_C2S_OVERHEAD
     }
 
-    /// Wire length of the obfuscated server → client tailer (plaintext tailer + s2c obfuscation overhead).
+    /// Wire length of the obfuscated server → client trailer (plaintext trailer + s2c obfuscation overhead).
     #[inline]
     pub(crate) fn encrypted_len_s2c() -> usize {
-        Self::len() + TAILER_S2C_OVERHEAD
+        Self::len() + TRAILER_S2C_OVERHEAD
     }
 }
 
-impl<T: IdentityType> Clone for Tailer<T> {
+impl<T: IdentityType> Clone for Trailer<T> {
     fn clone(&self) -> Self {
         Self {
             buffer: self.buffer.clone(),
@@ -405,14 +405,14 @@ impl<T: IdentityType> Clone for Tailer<T> {
     }
 }
 
-impl<T: IdentityType + PartialEq> PartialEq for Tailer<T> {
+impl<T: IdentityType + PartialEq> PartialEq for Trailer<T> {
     fn eq(&self, other: &Self) -> bool {
         self.buffer.slice() == other.buffer.slice()
     }
 }
 
-impl<T: IdentityType> Debug for Tailer<T> {
+impl<T: IdentityType> Debug for Trailer<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        f.debug_struct("Tailer").field("flags", &self.flags()).field("code", &self.code()).field("time", &self.time()).field("packet_number", &self.packet_number()).field("payload_length", &self.payload_length()).finish()
+        f.debug_struct("Trailer").field("flags", &self.flags()).field("code", &self.code()).field("time", &self.time()).field("packet_number", &self.packet_number()).field("payload_length", &self.payload_length()).finish()
     }
 }

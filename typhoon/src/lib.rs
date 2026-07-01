@@ -2,7 +2,7 @@
 //!
 //! An obfuscated UDP transport protocol designed to be statistically indistinguishable from
 //! generic network traffic. Each wire packet consists of an optional fake body, an optional fake
-//! header, an encrypted payload, and an encrypted tailer. Decoy packets (pure random bytes) are
+//! header, an encrypted payload, and an encrypted trailer. Decoy packets (pure random bytes) are
 //! injected by the flow layer to obscure timing and volume patterns.
 //!
 //! # Entry points
@@ -31,8 +31,8 @@
 //! |---|---|
 //! | `fast_software` | XChaCha20-Poly1305 for everything (default) |
 //! | `fast_hardware` | AES-GCM-256 for everything |
-//! | `full_software` | X25519 for tailer + XChaCha20-Poly1305 for session |
-//! | `full_hardware` | X25519 for tailer + AES-GCM-256 for session |
+//! | `full_software` | X25519 for trailer + XChaCha20-Poly1305 for session |
+//! | `full_hardware` | X25519 for trailer + AES-GCM-256 for session |
 //! | `server` | Server-side listener and session management |
 //! | `client` | Client-side socket and session management |
 //! | `debug` | Debug probe tools (requires `client` + `server`) |
@@ -77,5 +77,5 @@ pub mod flow;
 mod session;
 pub mod settings;
 pub mod socket;
-mod tailer;
+mod trailer;
 mod utils;

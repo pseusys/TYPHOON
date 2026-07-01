@@ -3,7 +3,7 @@
 > Transfer Your Packets Hidden Over Observed Networks
 
 An obfuscated UDP transport protocol designed to be statistically indistinguishable from generic network traffic.
-Every wire packet is made up of an optional fake body, an optional fake header, an encrypted payload, and an encrypted tailer; a flow-layer decoy stream injects pure-random packets to mask timing and volume patterns even when no real data is in flight.
+Every wire packet is made up of an optional fake body, an optional fake header, an encrypted payload, and an encrypted trailer; a flow-layer decoy stream injects pure-random packets to mask timing and volume patterns even when no real data is in flight.
 
 Unlike most UDP-based VPN protocols (WireGuard, OpenVPN, QUIC), a TYPHOON session is not pinned to a single UDP 4-tuple.
 Each side splits into a session manager (state, encryption) and one or more flow managers, each owning its own UDP socket — a client can spread one session's traffic across several server "proxy" addresses/ports, and a server flow manager can be reused across many client sessions.
@@ -35,8 +35,8 @@ Numbers below are from the protocol paper's evaluation chapters (criterion bench
 
   | Packet class | Floor | Made up of |
   | --- | --- | --- |
-  | Data-bearing | 144 B | identity (16 B) + tailer encryption (72 B) + payload AEAD (56 B) |
-  | Decoy / health-check | 88 B | identity (16 B) + tailer encryption (72 B) |
+  | Data-bearing | 144 B | identity (16 B) + trailer encryption (72 B) + payload AEAD (56 B) |
+  | Decoy / health-check | 88 B | identity (16 B) + trailer encryption (72 B) |
 
 - **Comparative overhead**: in a 10 MiB client → server transfer measured alongside 15 other UDP/TCP encrypted transports, TYPHOON's overhead ratio (extra bytes over payload) was 12.1% — above plain WireGuard/OpenVPN (~5%) but below other traffic-shaping protocols measured in the same harness (obfs4 32.5%, WireGuard+DAITA 29.5%, Tor 37.9%), reflecting the cost of its randomized padding and decoy traffic.
   Mean packet size was 1313±31 B at maximum payload entropy (8.00 bits/byte).
@@ -56,8 +56,8 @@ Numbers below are from the protocol paper's evaluation chapters (criterion bench
 | --- | --- |
 | `fast_software` | XChaCha20-Poly1305 for everything (default) |
 | `fast_hardware` | AES-GCM-256 for everything |
-| `full_software` | X25519 for tailer + XChaCha20-Poly1305 for session |
-| `full_hardware` | X25519 for tailer + AES-GCM-256 for session |
+| `full_software` | X25519 for trailer + XChaCha20-Poly1305 for session |
+| `full_hardware` | X25519 for trailer + AES-GCM-256 for session |
 | `server` | Server-side listener and session management |
 | `client` | Client-side socket and session management |
 | `debug` | Debug probe tools (`DebugMode`, `run_debug`, `DebugServerConnectionHandler`); requires `client` + `server` |
@@ -115,11 +115,11 @@ On a server using Linux's default UDP socket buffer, a bursty arrival pattern un
 
 The full design rationale lives in [PROTOCOL.md § Proposed implementation](https://github.com/pseusys/TYPHOON/blob/main/PROTOCOL.md#proposed-implementation); this is a summary of how this crate structures it.
 
-**Moving parts.** Each side splits into a session manager (handshake, encryption, data) and one or more flow managers (decoy injection, traffic obfuscation, tailer-only decryption):
+**Moving parts.** Each side splits into a session manager (handshake, encryption, data) and one or more flow managers (decoy injection, traffic obfuscation, trailer-only decryption):
 
 - **Listener** (server, one per process): tracks global state, spawns/recycles per-user session managers, issues client certificates.
 - **Client pool** (server, optional, one per process): wraps a `Listener`, owns every `ClientHandle` in a map keyed by identity, and exposes a single identity-tagged `receive`/`send` pair instead of one handle per connection.
-- **Session controller** (one per session): encrypts user data with the session key, appends the encrypted tailer, and hands the packet to a flow.
+- **Session controller** (one per session): encrypts user data with the session key, appends the encrypted trailer, and hands the packet to a flow.
 - **Health check provider** (one per session): drives handshake/keepalive timers and injects health-check packets.
 - **Flow controller** (one per flow): owns a UDP socket, prepends the fake header/body, and writes the packet to the wire.
 - **Decoy provider** (one per flow): observes the real packet stream and injects decoy packets per one of the five communication-mode profiles (heavy / noisy / sparse / smooth / random).
@@ -131,11 +131,11 @@ The full design rationale lives in [PROTOCOL.md § Proposed implementation](http
 - [`flow`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/src/flow) — `ClientFlowManager` / `ServerFlowManager`, the `DecoyProvider` / `ActiveProbeHandler` traits and their built-in implementations.
 - [`certificate`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/src/certificate) — server key pair / client certificate generation, persistence, and the binary file format.
 - [`settings`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/src/settings) — `SettingsBuilder`, the `TYPHOON_*` constant keys, and environment-variable override resolution.
-- [`bytes`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/src/bytes) — `DynamicByteBuffer` / `BytePool` (pooled, zero-copy buffers with prefix/suffix capacity for fake headers and tailers), plus `FixedByteBuffer<N>` and `StaticByteBuffer`.
+- [`bytes`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/src/bytes) — `DynamicByteBuffer` / `BytePool` (pooled, zero-copy buffers with prefix/suffix capacity for fake headers and trailers), plus `FixedByteBuffer<N>` and `StaticByteBuffer`.
 - [`defaults`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/src/defaults) — default constant values and type aliases.
 - [`debug`](https://github.com/pseusys/TYPHOON/blob/main/typhoon/src/debug) *(feature `debug`)* — reachability, round-trip-time, and throughput probes against a live server.
 
-Cryptography (`crypto`), session lifecycle (`session`), the wire tailer (`tailer`), and the lock-free cache primitives (`cache`) are deliberately kept internal (`pub(crate)`/private) — they are implementation details of the modules above, not a stable API surface.
+Cryptography (`crypto`), session lifecycle (`session`), the wire trailer (`trailer`), and the lock-free cache primitives (`cache`) are deliberately kept internal (`pub(crate)`/private) — they are implementation details of the modules above, not a stable API surface.
 
 **Open items.** Tracked at length in [PROTOCOL.md § Future work](https://github.com/pseusys/TYPHOON/blob/main/PROTOCOL.md#future-work):
 
