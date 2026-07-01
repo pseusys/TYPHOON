@@ -24,7 +24,7 @@ evaluation/
 
 ## Experiments
 
-Three independent parts; each answers one question.
+Four independent parts; each answers one question.
 
 ### Part 1 — Self-comparison
 
@@ -51,20 +51,24 @@ Protocols compared: `raw_udp`, `raw_tcp`, `tls`, `wireguard`, `quic`, `obfs4` (�
 > NB! Tests A/B/D/E/F cross-validate with `GroupKFold`, grouped by corpus run id, instead of Barradas USENIX'18's plain non-grouped `KFold` — a run's flows share one chaos (latency/jitter/loss) draw, so an ungrouped split could train and test on flows from the same run. Tests D/E/F additionally restrict every evaluation bucket (held-out background, unseen classes, `unknown`, per-class breakdown) to the fold's test-run set, so a background flow from a run that fed training is never scored as if it were independently held out.
 > See `background/ml_open_world.py`'s module docstring and each test's own docstring for the full rationale.
 
+### Part 4 — Rust-level benchmarking
+
+*How fast is the TYPHOON implementation itself?* `cargo bench` roundtrip/handshake timings plus `perf`-based flamegraphs (kept as interactive `.svg` and a static `.pdf` for embedding) for every example binary.
+Linux only (needs `perf` + `cargo-flamegraph` on the host) — mirrors `.github/workflows/benchmarks.yaml` and auto-skips on non-Linux hosts.
+
 ## Requirements
 
 - **Docker** (or rootful Podman — rootless cannot grant `NET_ADMIN` to the observer).
-- **Python 3.11+** with [Poetry](https://python-poetry.org/).
-- Optional ML extra: `xgboost` — enables the XGBoost open-world classifier (`background-openworld`); install with `-E xgboost`. Without it, that classifier is skipped and RF/DT still run.
+- **Python 3.11+** with [Poetry](https://python-poetry.org/). `poetry install` pulls in everything needed for Parts 1–3, including scikit-learn and XGBoost.
+- Optional, Linux only: `perf` + [`cargo-flamegraph`](https://github.com/flamegraph-rs/flamegraph) — enables Part 4 (`benchmark`). Without them, `poe benchmark` / the pipeline's `benchmark` phase is skipped. `rsvg-convert` (`librsvg2-bin`) is also recommended to additionally render flamegraphs as `.pdf`; without it, only the interactive `.svg` is produced.
 
 ## Installation
 
 ```shell
 cd evaluation
-poetry install --with ml            # Python deps (scikit-learn)
-poetry install --with ml -E xgboost # …plus the optional XGBoost open-world classifier
-poetry poe build              # build the 15 comparison-protocol images (once)
-poetry poe background-build   # build the 9 background generator images (once, only for Part 3)
+poetry install                # Python deps (incl. scikit-learn, XGBoost)
+poetry poe build               # build the 15 comparison-protocol images (once)
+poetry poe background-build    # build the 9 background generator images (once, only for Part 3)
 ```
 
 ## Running the experiments
@@ -100,15 +104,24 @@ poe background-openworld      # Tests A–E open-world scores
 poe background-distplot       # per-pair size/IAT distribution overlays
 ```
 
+### Part 4 — Rust-level benchmarking (CLI)
+
+```shell
+poe benchmark                 # cargo bench (roundtrip, handshake) + example flamegraphs
+```
+
+Linux only — requires `perf` and `cargo-flamegraph` already installed on the host (see `.github/workflows/benchmarks.yaml` for the one-time setup commands); this task does not install them for you. Each flamegraph is kept as the interactive `.svg` (search/zoom) plus a `.pdf` rendered via `rsvg-convert` (`librsvg2-bin`) for embedding in reports; without `rsvg-convert`, only the `.svg` is produced.
+
 ### Pipeline
 
 ```shell
-poe evaluate                    # build → capture → analyze → Part 1 + 2 plots → background → report.md
+poe evaluate                    # build → capture → analyze → Part 1 + 2 plots → background → benchmark → report.md
 poe evaluate --skip background  # everything except the 7500-run Part 3 corpus
 poe evaluate --skip build       # reuse existing Docker images
+poe evaluate --skip benchmark   # skip cargo bench + flamegraphs (auto-skipped on non-Linux anyway)
 
-# Re-analyze already-stored PCAPs without regenerating the corpus — e.g. to add
-# XGBoost open-world scores to a prior run (install xgboost first, see above):
+# Re-analyze already-stored PCAPs without regenerating the corpus — e.g. after
+# changing feature sets or classifier options:
 poe evaluate --skip build,capture --corpus-root results/background/pipeline_<id>
 
 poe clean                       # delete results/captures and results/background
