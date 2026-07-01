@@ -1283,14 +1283,19 @@ Both session types delegate health-check timing to a dedicated provider (`Client
 
 ### Certificate file format
 
-Every file produced by the certificate module begins with a fixed 10-byte header:
+Every file produced by the certificate module begins with a fixed 16-byte header:
 
 | Offset | Size | Field | Values | Description |
 | --- | --- | --- | --- | --- |
 | 0 | 7 | Magic | `TYPHOON` | Fixed identifier |
 | 7 | 1 | Type | `S` / `C` | Server key pair or client certificate |
-| 8 | 1 | Mode | `F` / `U` | Cipher mode: fast or full |
-| 9 | 1 | Version | `1` | Format version (currently always `1`) |
+| 8 | 1 | Flavor | `s`/`h`/`S`/`H` | Build flavor: cipher mode (fast = lowercase, full = uppercase) crossed with cipher backend (`s`/`S` = software, `h`/`H` = hardware) |
+| 9 | 1 | Version | `2` | Format version (currently always `2`) |
+| 10 | 4 | ProtoVersion | e.g. `0` | Protocol major version (big-endian u32, from `CARGO_PKG_VERSION`) |
+| 14 | 2 | IdLength | e.g. `16` | `ID` field length in bytes (big-endian u16) |
+
+The `Flavor`, `ProtoVersion`, and `IdLength` fields are all fixed at compile time and cannot be renegotiated at runtime; loading a file whose values don't match the running build fails with a dedicated `CertificateError` variant (`FlavorMismatch`, `VersionMismatch`, `IdLengthMismatch`) rather than silently corrupting the wire format.
+`Flavor` packs cipher mode and cipher backend into a single byte rather than two, since `fast_software`/`fast_hardware`/`full_software`/`full_hardware` are the only four valid combinations (they use different ciphers and nonce lengths) and exactly one is ever active per build.
 
 The payload immediately follows the header. Field sizes use these stable constants:
 
@@ -1301,46 +1306,46 @@ The payload immediately follows the header. Field sizes use these stable constan
 | `ED25519_BYTES` | 32 | [Ed25519](#handshake-encryption) key (signing seed, verifying key, or OBFS key) |
 | `X25519_BYTES` | 32 | [X25519](#marshalling-encryption) key (public or static secret) |
 
-**Server key pair — fast mode (`SF1`):**
+**Server key pair — fast mode (`SF2`):**
 
 | Offset | Size | Field | Description |
 | --- | --- | --- | --- |
-| 10 | 261120 | EPK | Classic McEliece 348864 public key |
-| 261130 | 6492 | ESK | Classic McEliece 348864 secret key |
-| 267622 | 32 | VSK | Ed25519 signing key seed |
-| 267654 | 32 | OBFS | Symmetric tailer obfuscation key |
-| **267686** | — | EOF | |
+| 16 | 261120 | EPK | Classic McEliece 348864 public key |
+| 261136 | 6492 | ESK | Classic McEliece 348864 secret key |
+| 267628 | 32 | VSK | Ed25519 signing key seed |
+| 267660 | 32 | OBFS | Symmetric tailer obfuscation key |
+| **267692** | — | EOF | |
 
-**Server key pair — full mode (`SU1`):**
-
-| Offset | Size | Field | Description |
-| --- | --- | --- | --- |
-| 10 | 261120 | EPK | Classic McEliece 348864 public key |
-| 261130 | 6492 | ESK | Classic McEliece 348864 secret key |
-| 267622 | 32 | VSK | Ed25519 signing key seed |
-| 267654 | 32 | OPK | X25519 long-term public key |
-| 267686 | 32 | OSK | X25519 static secret key |
-| **267718** | — | EOF | |
-
-**Client certificate — fast mode (`CF1`):**
+**Server key pair — full mode (`SU2`):**
 
 | Offset | Size | Field | Description |
 | --- | --- | --- | --- |
-| 10 | 261120 | EPK | Classic McEliece 348864 public key |
-| 261130 | 32 | VPK | Ed25519 verifying key |
-| 261162 | 32 | OBFS | Symmetric tailer obfuscation key |
-| 261194 | 2 | ADDR_COUNT | Number of addresses (big-endian u16) |
-| 261196 | varies | ADDRS | Address list (see below) |
+| 16 | 261120 | EPK | Classic McEliece 348864 public key |
+| 261136 | 6492 | ESK | Classic McEliece 348864 secret key |
+| 267628 | 32 | VSK | Ed25519 signing key seed |
+| 267660 | 32 | OPK | X25519 long-term public key |
+| 267692 | 32 | OSK | X25519 static secret key |
+| **267724** | — | EOF | |
 
-**Client certificate — full mode (`CU1`):**
+**Client certificate — fast mode (`CF2`):**
 
 | Offset | Size | Field | Description |
 | --- | --- | --- | --- |
-| 10 | 261120 | EPK | Classic McEliece 348864 public key |
-| 261130 | 32 | VPK | Ed25519 verifying key |
-| 261162 | 32 | OPK | X25519 long-term public key |
-| 261194 | 2 | ADDR_COUNT | Number of addresses (big-endian u16) |
-| 261196 | varies | ADDRS | Address list (see below) |
+| 16 | 261120 | EPK | Classic McEliece 348864 public key |
+| 261136 | 32 | VPK | Ed25519 verifying key |
+| 261168 | 32 | OBFS | Symmetric tailer obfuscation key |
+| 261200 | 2 | ADDR_COUNT | Number of addresses (big-endian u16) |
+| 261202 | varies | ADDRS | Address list (see below) |
+
+**Client certificate — full mode (`CU2`):**
+
+| Offset | Size | Field | Description |
+| --- | --- | --- | --- |
+| 16 | 261120 | EPK | Classic McEliece 348864 public key |
+| 261136 | 32 | VPK | Ed25519 verifying key |
+| 261168 | 32 | OPK | X25519 long-term public key |
+| 261200 | 2 | ADDR_COUNT | Number of addresses (big-endian u16) |
+| 261202 | varies | ADDRS | Address list (see below) |
 
 **Address list encoding** (`ADDRS` field, repeated `ADDR_COUNT` times):
 

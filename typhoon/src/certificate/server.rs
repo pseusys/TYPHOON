@@ -181,12 +181,12 @@ impl ServerKeyPair {
     ///
     /// | Offset       | Size                 | Field  | Description |
     /// |--------------|----------------------|--------|-------------|
-    /// | 0            | 10                   | Header | Magic `TYPHOON`, type `S`, mode `F`, version `1` |
-    /// | 10           | 261120 (`EPK_BYTES`) | EPK    | Classic `McEliece` 348864 public key |
-    /// | 261130       | 6492 (`ESK_BYTES`)   | ESK    | Classic `McEliece` 348864 secret key |
-    /// | 267622       | 32 (`ED25519_BYTES`) | VSK    | Ed25519 signing key (seed) |
-    /// | 267654       | 32 (`ED25519_BYTES`) | OBFS   | Symmetric tailer obfuscation key |
-    /// | **267686**   | —                    | EOF    | |
+    /// | 0            | 16                   | Header | Magic `TYPHOON`, type `S`, build flavor, version `2`, protocol version, ID length |
+    /// | 16           | 261120 (`EPK_BYTES`) | EPK    | Classic `McEliece` 348864 public key |
+    /// | 261136       | 6492 (`ESK_BYTES`)   | ESK    | Classic `McEliece` 348864 secret key |
+    /// | 267628       | 32 (`ED25519_BYTES`) | VSK    | Ed25519 signing key (seed) |
+    /// | 267660       | 32 (`ED25519_BYTES`) | OBFS   | Symmetric tailer obfuscation key |
+    /// | **267692**   | —                    | EOF    | |
     ///
     /// # Errors
     ///
@@ -208,13 +208,13 @@ impl ServerKeyPair {
     ///
     /// | Offset       | Size                 | Field  | Description |
     /// |--------------|----------------------|--------|-------------|
-    /// | 0            | 10                   | Header | Magic `TYPHOON`, type `S`, mode `U`, version `1` |
-    /// | 10           | 261120 (`EPK_BYTES`) | EPK    | Classic `McEliece` 348864 public key |
-    /// | 261130       | 6492 (`ESK_BYTES`)   | ESK    | Classic `McEliece` 348864 secret key |
-    /// | 267622       | 32 (`ED25519_BYTES`) | VSK    | Ed25519 signing key (seed) |
-    /// | 267654       | 32 (`X25519_BYTES`)  | OPK    | X25519 long-term public key |
-    /// | 267686       | 32 (`X25519_BYTES`)  | OSK    | X25519 static secret key |
-    /// | **267718**   | —                    | EOF    | |
+    /// | 0            | 16                   | Header | Magic `TYPHOON`, type `S`, build flavor, version `2`, protocol version, ID length |
+    /// | 16           | 261120 (`EPK_BYTES`) | EPK    | Classic `McEliece` 348864 public key |
+    /// | 261136       | 6492 (`ESK_BYTES`)   | ESK    | Classic `McEliece` 348864 secret key |
+    /// | 267628       | 32 (`ED25519_BYTES`) | VSK    | Ed25519 signing key (seed) |
+    /// | 267660       | 32 (`X25519_BYTES`)  | OPK    | X25519 long-term public key |
+    /// | 267692       | 32 (`X25519_BYTES`)  | OSK    | X25519 static secret key |
+    /// | **267724**   | —                    | EOF    | |
     ///
     /// # Errors
     ///

@@ -59,12 +59,12 @@ impl ClientCertificate {
     ///
     /// | Offset | Size                 | Field      | Description |
     /// |--------|----------------------|------------|-------------|
-    /// | 0      | 10                   | Header     | Magic `TYPHOON`, type `C`, mode `F`, version `1` |
-    /// | 10     | 261120 (`EPK_BYTES`) | EPK        | Classic `McEliece` 348864 public key |
-    /// | 261130 | 32 (`ED25519_BYTES`) | VPK        | Ed25519 verifying key |
-    /// | 261162 | 32 (`ED25519_BYTES`) | OBFS       | Symmetric tailer obfuscation key |
-    /// | 261194 | 2                    | `ADDR_COUNT` | Number of addresses (big-endian u16) |
-    /// | 261196 | varies               | ADDRS      | Address list; each entry: 1-byte family (`4`/`6`), 4 or 16 IP bytes, 2-byte port (big-endian) |
+    /// | 0      | 16                   | Header     | Magic `TYPHOON`, type `C`, build flavor, version `2`, protocol version, ID length |
+    /// | 16     | 261120 (`EPK_BYTES`) | EPK        | Classic `McEliece` 348864 public key |
+    /// | 261136 | 32 (`ED25519_BYTES`) | VPK        | Ed25519 verifying key |
+    /// | 261168 | 32 (`ED25519_BYTES`) | OBFS       | Symmetric tailer obfuscation key |
+    /// | 261200 | 2                    | `ADDR_COUNT` | Number of addresses (big-endian u16) |
+    /// | 261202 | varies               | ADDRS      | Address list; each entry: 1-byte family (`4`/`6`), 4 or 16 IP bytes, 2-byte port (big-endian) |
     ///
     /// # Errors
     ///
@@ -86,12 +86,12 @@ impl ClientCertificate {
     ///
     /// | Offset | Size                 | Field      | Description |
     /// |--------|----------------------|------------|-------------|
-    /// | 0      | 10                   | Header     | Magic `TYPHOON`, type `C`, mode `U`, version `1` |
-    /// | 10     | 261120 (`EPK_BYTES`) | EPK        | Classic `McEliece` 348864 public key |
-    /// | 261130 | 32 (`ED25519_BYTES`) | VPK        | Ed25519 verifying key |
-    /// | 261162 | 32 (`X25519_BYTES`)  | OPK        | X25519 long-term public key |
-    /// | 261194 | 2                    | `ADDR_COUNT` | Number of addresses (big-endian u16) |
-    /// | 261196 | varies               | ADDRS      | Address list; each entry: 1-byte family (`4`/`6`), 4 or 16 IP bytes, 2-byte port (big-endian) |
+    /// | 0      | 16                   | Header     | Magic `TYPHOON`, type `C`, build flavor, version `2`, protocol version, ID length |
+    /// | 16     | 261120 (`EPK_BYTES`) | EPK        | Classic `McEliece` 348864 public key |
+    /// | 261136 | 32 (`ED25519_BYTES`) | VPK        | Ed25519 verifying key |
+    /// | 261168 | 32 (`X25519_BYTES`)  | OPK        | X25519 long-term public key |
+    /// | 261200 | 2                    | `ADDR_COUNT` | Number of addresses (big-endian u16) |
+    /// | 261202 | varies               | ADDRS      | Address list; each entry: 1-byte family (`4`/`6`), 4 or 16 IP bytes, 2-byte port (big-endian) |
     ///
     /// # Errors
     ///
