@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
 use crate::crypto::{TRAILER_C2S_OVERHEAD, TRAILER_S2C_OVERHEAD};
-use crate::settings::consts::{CD_OFFSET, FG_OFFSET, ID_OFFSET, PL_OFFSET, PN_OFFSET, TRAILER_LENGTH, TM_OFFSET};
+use crate::settings::consts::{CD_OFFSET, FG_OFFSET, ID_OFFSET, PL_OFFSET, PN_OFFSET, TM_OFFSET, TRAILER_LENGTH};
 use crate::trailer::flags::{PacketFlags, ReturnCode};
 use crate::utils::unix_timestamp_ms;
 
