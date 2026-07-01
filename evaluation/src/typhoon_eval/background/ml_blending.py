@@ -35,12 +35,11 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 
 from typhoon_eval.shared.pcap_stats import _entropy, _size_entropy
-from typhoon_eval.shared.profiles import HELD_OUT_BG_CLASSES
+from typhoon_eval.shared.profiles import HELD_OUT_BG_CLASSES, TYPHOON_CLASS
 
 console = Console()
 
 CONFIDENT_THRESHOLD = 0.9
-TYPHOON_CLASS = "typhoon"
 # Minimum packets per flow required to compute the Barradas feature vector.
 MIN_SAMPLES_FOR_STATS = 2
 
@@ -261,36 +260,41 @@ def _per_flow_features(
     pcap: Path,
     ip_map: dict[str, dict],
     feature_set: str = "stats",
-) -> list[tuple[str, np.ndarray]]:
+) -> list[tuple[str, str, np.ndarray]]:
     """Emit one feature row per wire flow (Barradas USENIX'18 concatenated layout).
 
     A "wire flow" is the 5-tuple as it would be seen by a passive observer:
-    one (client_ip, server_ip, server_port) per class.  Both background
-    classes and TYPHOON expose one server port per run (TYPHOON picks one
-    at random from `eval_server.rs::PORTS`) and so contribute one row per
-    run — matching what a censor would actually classify, and keeping CV
-    folds free of same-run duplicate flows.
+    one (client_ip, server_ip, server_port) per ``ip_map`` slot.  Every slot —
+    each background class and each TYPHOON profile instance, all running
+    concurrently — exposes one server port per run (TYPHOON picks one at
+    random from `eval_server.rs::PORTS`) and so contributes one row per run —
+    matching what a censor would actually classify, and keeping CV folds
+    free of same-run duplicate flows.
 
-    Server-port discovery is automatic: whichever IP matches the protocol's
-    ``server_ip`` from ``ip_map`` contributes its UDP port number as the
-    flow's discriminator.
+    Server-port discovery is automatic: whichever IP matches a slot's
+    ``server_ip`` in ``ip_map`` contributes its UDP port number as the
+    flow's discriminator.  Returns ``(class_label, typhoon_profile_or_na,
+    feature_vector)`` triples — every non-TYPHOON slot's ``profile`` is
+    ``"n/a"``.
     """
-    ip_to_cls_role: dict[str, tuple[str, str]] = {}
-    for cls, slot in ip_map.items():
-        ip_to_cls_role[slot["client_ip"]] = (cls, "client")
-        ip_to_cls_role[slot["server_ip"]] = (cls, "server")
+    ip_to_slot: dict[str, tuple[str, str, str]] = {}
+    for key, slot in ip_map.items():
+        cls = slot.get("class", key)
+        profile = slot.get("profile", "n/a")
+        ip_to_slot[slot["client_ip"]] = (cls, "client", profile)
+        ip_to_slot[slot["server_ip"]] = (cls, "server", profile)
 
-    timelines: dict[tuple[str, int], list[tuple[float, int, bytes, str]]] = defaultdict(list)
+    timelines: dict[tuple[str, str, int], list[tuple[float, int, bytes, str]]] = defaultdict(list)
     with PcapReader(str(pcap)) as reader:
         for pkt in reader:
             if IP not in pkt or UDP not in pkt:
                 continue
             ip_layer = pkt[IP]
-            src_meta = ip_to_cls_role.get(ip_layer.src)
-            dst_meta = ip_to_cls_role.get(ip_layer.dst)
+            src_meta = ip_to_slot.get(ip_layer.src)
+            dst_meta = ip_to_slot.get(ip_layer.dst)
             if src_meta is None or dst_meta is None or src_meta[0] != dst_meta[0]:
                 continue
-            cls = src_meta[0]
+            cls, _, profile = src_meta
             udp_layer = pkt[UDP]
             if src_meta[1] == "client" and dst_meta[1] == "server":
                 direction = "c2s"
@@ -301,17 +305,17 @@ def _per_flow_features(
             else:
                 continue
             payload = bytes(udp_layer.payload)
-            timelines[(cls, server_port)].append((float(pkt.time), len(payload), payload, direction))
+            timelines[(cls, profile, server_port)].append((float(pkt.time), len(payload), payload, direction))
 
-    out: list[tuple[str, np.ndarray]] = []
-    for (cls, _port), timeline in timelines.items():
+    out: list[tuple[str, str, np.ndarray]] = []
+    for (cls, profile, _port), timeline in timelines.items():
         # Need ≥ 2 packets total across both directions for the flow to be usable;
         # individual directions may have 0–1 packets and the corresponding blocks
         # land at zero (Barradas-compatible behaviour).
         if len(timeline) < MIN_SAMPLES_FOR_STATS:
             continue
         bursts = _compute_bursts_per_direction([(t, s, d) for t, s, _, d in timeline])
-        out.append((cls, _features_from_flow(timeline, bursts, feature_set)))
+        out.append((cls, profile, _features_from_flow(timeline, bursts, feature_set)))
     return out
 
 
@@ -342,12 +346,11 @@ def _load_corpus(
             continue
         meta = loads(meta_path.read_text())
         ip_map = meta.get("ip_map", {})
-        typhoon_profile = meta.get("typhoon_profile", "unknown")
         for pcap in run_dir.glob("*.pcap"):
-            for cls, vec in _per_flow_features(pcap, ip_map, feature_set):
+            for cls, profile, vec in _per_flow_features(pcap, ip_map, feature_set):
                 feats.append(vec)
                 labels.append(cls)
-                profiles.append(typhoon_profile if cls == TYPHOON_CLASS else "n/a")
+                profiles.append(profile)
                 run_ids.append(run_dir.name)
     if not feats:
         return np.empty((0, 0)), [], [], [], skipped

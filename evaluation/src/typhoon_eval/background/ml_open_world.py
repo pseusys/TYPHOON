@@ -717,13 +717,14 @@ def _run_open_set_binary(
     Wu USENIX'23 (real-world censor threat model: exempt known protocols,
     block unknown-fully-encrypted), Geng TPAMI'20 (open-set evaluation).
 
-    *groups* (per-row corpus run id) keeps the TYPHOON train/test split
-    run-disjoint via GroupKFold.  The in-distribution bg train/test halving
-    below is a separate, ungrouped ``fold_rng.permutation`` — a bg flow can
-    still land in ``in_dist_test`` from the same run as a flow in
-    ``train_typhoon_idx``.  Tying that split to the same run grouping would
-    need the bg and TYPHOON fold assignments to share one run→fold map;
-    left as a known residual gap rather than folded into this change.
+    *groups* (per-row corpus run id) drives a single train-runs/test-runs
+    partition per fold (derived from the TYPHOON GroupKFold split below) —
+    every training-time signal (TYPHOON flows *and* in-distribution bg
+    flows) comes only from train-runs, and every evaluation bucket
+    (in-distribution held-out, unseen, synthetic unknown, per-class
+    breakdown) comes only from test-runs.  No run ever contributes both
+    training and held-out evaluation data, closing the gap where a bg flow
+    could previously land in the eval set for a run that also fed training.
     """
 
     typhoon_mask = np.array([c == TYPHOON_CLASS for c in y])
@@ -755,22 +756,20 @@ def _run_open_set_binary(
         if not train_classes:
             continue
         train_typhoon_local, test_typhoon_local = typhoon_folds[fold_id % len(typhoon_folds)]
-        fold_rng = np.random.default_rng(RF_RANDOM_STATE + fold_id + 1)
-
-        train_bg_mask = np.array([c in train_classes for c in y])
-        unseen_bg_mask = np.array([c in unseen_classes for c in y])
         train_typhoon_idx = typhoon_idx[train_typhoon_local]
         test_typhoon_idx  = typhoon_idx[test_typhoon_local]
 
-        # Hold out half of the in-distribution bg flows for FPR_in.  Stable
-        # split per fold seeded by fold_rng so the eval-set composition is
-        # reproducible.
-        in_dist_idx = np.flatnonzero(train_bg_mask)
-        in_dist_perm = fold_rng.permutation(len(in_dist_idx))
-        in_dist_train = in_dist_idx[in_dist_perm[: len(in_dist_idx) // 2]]
-        in_dist_test  = in_dist_idx[in_dist_perm[len(in_dist_idx) // 2 :]]
+        # GroupKFold guarantees these two run sets are disjoint — every row
+        # in the corpus is unambiguously training-side or evaluation-side.
+        train_run_mask = np.isin(groups, groups[train_typhoon_idx])
+        test_run_mask  = np.isin(groups, groups[test_typhoon_idx])
 
-        train_idx = np.concatenate([train_typhoon_idx, in_dist_train])
+        train_bg_mask   = np.array([c in train_classes for c in y]) & train_run_mask
+        in_dist_eval_mask = np.array([c in train_classes for c in y]) & test_run_mask
+        unseen_bg_mask  = np.array([c in unseen_classes for c in y]) & test_run_mask
+        held_out_eval_mask = held_out_mask & test_run_mask
+
+        train_idx = np.concatenate([train_typhoon_idx, np.flatnonzero(train_bg_mask)])
         X_train = X[train_idx]
         y_train = np.array([1.0 if y[i] == TYPHOON_CLASS else 0.0 for i in train_idx])
 
@@ -783,9 +782,9 @@ def _run_open_set_binary(
         tpr = float((scores_typhoon >= threshold).sum()) / max(len(scores_typhoon), 1)
         per_fold_tpr.append(tpr)
 
-        scores_in    = pipe.predict_proba(X[in_dist_test])[:, 1] if len(in_dist_test) else np.array([])
+        scores_in     = pipe.predict_proba(X[in_dist_eval_mask])[:, 1] if in_dist_eval_mask.any() else np.array([])
         scores_unseen = pipe.predict_proba(X[unseen_bg_mask])[:, 1] if unseen_bg_mask.any() else np.array([])
-        scores_unknown = pipe.predict_proba(X[held_out_mask])[:, 1] if held_out_mask.any() else np.array([])
+        scores_unknown = pipe.predict_proba(X[held_out_eval_mask])[:, 1] if held_out_eval_mask.any() else np.array([])
 
         if len(scores_in):
             per_fold_fpr_in.append(float((scores_in >= threshold).sum()) / len(scores_in))
@@ -794,13 +793,13 @@ def _run_open_set_binary(
         if len(scores_unknown):
             per_fold_fpr_unknown.append(float((scores_unknown >= threshold).sum()) / len(scores_unknown))
 
-        # Per-class FPR contributions for the breakdown table.
+        # Per-class FPR contributions for the breakdown table — test-runs only,
+        # same as every other evaluation bucket above.
         for cls in train_classes | unseen_classes | HELD_OUT_BG_CLASSES:
-            cls_mask = np.array([c == cls for c in y])
-            eval_mask = cls_mask & ~np.isin(np.arange(len(y)), train_idx)
-            if not eval_mask.any():
+            cls_mask = np.array([c == cls for c in y]) & test_run_mask
+            if not cls_mask.any():
                 continue
-            cls_scores = pipe.predict_proba(X[eval_mask])[:, 1]
+            cls_scores = pipe.predict_proba(X[cls_mask])[:, 1]
             per_class_fpr.setdefault(cls, []).append(float((cls_scores >= threshold).sum()) / len(cls_scores))
 
     if not per_fold_tpr:
@@ -835,6 +834,11 @@ def _run_one_class_typhoon(
     is the citation-clean baseline), AAE-DSVDD Computer Networks 2023
     (one-class for VPN/tunnel detection — argues label-free training is
     the right framing when the negative class is unenumerable).
+
+    *groups* restricts every evaluation bucket (bg / unknown / per-class) to
+    the fold's test-run set — a bg flow from a run that fed training is
+    never scored as if it were held out, even though the OCSVM never saw
+    its label.
     """
 
     typhoon_mask = np.array([c == TYPHOON_CLASS for c in y])
@@ -857,6 +861,7 @@ def _run_one_class_typhoon(
     for train_local, test_local in typhoon_kfold.split(typhoon_idx, groups=typhoon_groups):
         train_idx = typhoon_idx[train_local]
         test_idx  = typhoon_idx[test_local]
+        test_run_mask = np.isin(groups, groups[test_idx])
         pipe = Pipeline([
             ("scaler", StandardScaler()),
             ("ocsvm",  OneClassSVM(kernel="rbf", gamma=OCSVM_GAMMA, nu=OCSVM_NU)),
@@ -867,15 +872,17 @@ def _run_one_class_typhoon(
         tpr = float((scores_typhoon >= threshold).sum()) / max(len(scores_typhoon), 1)
         per_fold_tpr.append(tpr)
 
-        if bg_mask.any():
-            bg_scores = pipe.decision_function(X[bg_mask])
+        bg_eval_mask = bg_mask & test_run_mask
+        held_out_eval_mask = held_out_mask & test_run_mask
+        if bg_eval_mask.any():
+            bg_scores = pipe.decision_function(X[bg_eval_mask])
             per_fold_fpr_known.append(float((bg_scores >= threshold).sum()) / len(bg_scores))
-        if held_out_mask.any():
-            unk_scores = pipe.decision_function(X[held_out_mask])
+        if held_out_eval_mask.any():
+            unk_scores = pipe.decision_function(X[held_out_eval_mask])
             per_fold_fpr_unknown.append(float((unk_scores >= threshold).sum()) / len(unk_scores))
 
         for cls in (set(y) - {TYPHOON_CLASS}):
-            cls_mask = np.array([c == cls for c in y])
+            cls_mask = np.array([c == cls for c in y]) & test_run_mask
             if not cls_mask.any():
                 continue
             cls_scores = pipe.decision_function(X[cls_mask])
@@ -910,6 +917,9 @@ def _run_one_class_open_set(
     Threat model: "leaked-client + partial-catalog censor".  Bridges the
     gap between Test D (TYPHOON + bg labels in training) and Test E
     (TYPHOON labels only, no bg classification at evaluation).
+
+    *groups* restricts every evaluation bucket (catalog / unseen / unknown /
+    per-class) to the fold's test-run set, same rationale as Test E.
     """
 
     typhoon_mask = np.array([c == TYPHOON_CLASS for c in y])
@@ -941,6 +951,7 @@ def _run_one_class_open_set(
         train_typhoon_local, test_typhoon_local = typhoon_folds[fold_id % len(typhoon_folds)]
         train_idx = typhoon_idx[train_typhoon_local]
         test_idx = typhoon_idx[test_typhoon_local]
+        test_run_mask = np.isin(groups, groups[test_idx])
 
         pipe = Pipeline([
             ("scaler", StandardScaler()),
@@ -952,8 +963,9 @@ def _run_one_class_open_set(
         tpr = float((scores_typhoon >= threshold).sum()) / max(len(scores_typhoon), 1)
         per_fold_tpr.append(tpr)
 
-        catalog_mask = np.array([c in catalog_classes for c in y])
-        unseen_bg_mask = np.array([c in unseen_classes for c in y])
+        catalog_mask = np.array([c in catalog_classes for c in y]) & test_run_mask
+        unseen_bg_mask = np.array([c in unseen_classes for c in y]) & test_run_mask
+        held_out_eval_mask = held_out_mask & test_run_mask
 
         if catalog_mask.any():
             catalog_scores = pipe.decision_function(X[catalog_mask])
@@ -961,12 +973,12 @@ def _run_one_class_open_set(
         if unseen_bg_mask.any():
             unseen_scores = pipe.decision_function(X[unseen_bg_mask])
             per_fold_fpr_unseen.append(float((unseen_scores >= threshold).sum()) / len(unseen_scores))
-        if held_out_mask.any():
-            unknown_scores = pipe.decision_function(X[held_out_mask])
+        if held_out_eval_mask.any():
+            unknown_scores = pipe.decision_function(X[held_out_eval_mask])
             per_fold_fpr_unknown.append(float((unknown_scores >= threshold).sum()) / len(unknown_scores))
 
         for cls in catalog_classes | unseen_classes | HELD_OUT_BG_CLASSES:
-            cls_mask = np.array([c == cls for c in y])
+            cls_mask = np.array([c == cls for c in y]) & test_run_mask
             if not cls_mask.any():
                 continue
             cls_scores = pipe.decision_function(X[cls_mask])
