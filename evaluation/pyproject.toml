@@ -16,16 +16,11 @@ scapy              = "^2.6"
 numpy              = "^2.0"
 matplotlib         = "^3.9"
 jinja2             = "^3.1"
-xgboost    = { version = "^2.0", optional = true }
+scikit-learn       = "^1.4"
+xgboost            = "^2.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.15"
-
-[tool.poetry.group.ml.dependencies]
-scikit-learn = "^1.4"
-
-[tool.poetry.extras]
-xgboost = ["xgboost"]
 
 [tool.poetry.requires-plugins]
 poethepoet = { version = ">=0.24", extras = ["poetry_plugin"] }
@@ -67,7 +62,6 @@ ignore = [
 numpy                = "np"
 "matplotlib.pyplot"  = "plt"
 "matplotlib.patches" = "mpatches"
-pandas               = "pd"
 
 
 [tool.poe.tasks]
@@ -136,10 +130,15 @@ pandas               = "pd"
   cmd  = "python -m typhoon_eval.background.dist_plot"
   help = "Plot size / IAT distribution overlays per TYPHOON-vs-target pair + per-flow packet-index diagnostic"
 
+  # ── PART 4 — Rust-level performance benchmarking (Linux only) ────────────
+  [tool.poe.tasks.benchmark]
+  cmd  = "python -m typhoon_eval.benchmark"
+  help = "Run cargo bench (roundtrip, handshake) + example flamegraphs. Linux only — requires perf and cargo-flamegraph already installed."
+
   # ── Pipeline orchestrator ────────────────────────────────────────────────
   [tool.poe.tasks.evaluate]
   cmd  = "python -m typhoon_eval.pipeline"
-  help = "Run the full evaluation pipeline: build → capture → analyze → visualize → typhoon → background → report. Derived artifacts under artifacts/<pipeline_id>/; PCAPs stay in results/. Pass --corpus-root to re-analyze a stored corpus without regenerating it."
+  help = "Run the full evaluation pipeline: build → capture → analyze → visualize → typhoon → background → benchmark → report. Derived artifacts under artifacts/<pipeline_id>/; PCAPs stay in results/. Pass --corpus-root to re-analyze a stored corpus without regenerating it. Benchmark phase auto-skips on non-Linux hosts."
 
   [tool.poe.tasks.clean]
   shell = "rm -rf results/captures results/background"
