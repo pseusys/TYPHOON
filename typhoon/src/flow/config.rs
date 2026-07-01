@@ -75,7 +75,7 @@ impl FakeBodyMode {
     }
 
     /// Compute the fake body length for one packet, given the room left after the real
-    /// payload/tailer (`max_packet_size - taken_packet_size`) and whether this packet is a
+    /// payload/trailer (`max_packet_size - taken_packet_size`) and whether this packet is a
     /// maintenance-substream decoy (`is_service`).
     pub fn get_length(&self, max_packet_size: usize, taken_packet_size: usize, is_service: bool) -> usize {
         match self {
@@ -396,17 +396,17 @@ impl FlowConfig {
         self.fake_header_mode.len() + self.fake_body_mode.max_len()
     }
 
-    /// Maximum user-data bytes per packet given MTU and the per-packet crypto/tailer overhead.
+    /// Maximum user-data bytes per packet given MTU and the per-packet crypto/trailer overhead.
     /// For Constant mode the wire size is fixed to `packet_length`, so the data budget is
-    /// `min(packet_length, mtu) - (fake_header + crypto + tailer)`.
-    /// For other modes it is `mtu - (fake_header + fake_body_max + crypto + tailer)`.
-    pub fn max_user_payload(&self, mtu: usize, crypto_overhead: usize, tailer_len: usize) -> usize {
-        let fixed = self.fake_header_mode.len() + crypto_overhead + tailer_len;
+    /// `min(packet_length, mtu) - (fake_header + crypto + trailer)`.
+    /// For other modes it is `mtu - (fake_header + fake_body_max + crypto + trailer)`.
+    pub fn max_user_payload(&self, mtu: usize, crypto_overhead: usize, trailer_len: usize) -> usize {
+        let fixed = self.fake_header_mode.len() + crypto_overhead + trailer_len;
         match &self.fake_body_mode {
             FakeBodyMode::Constant {
                 packet_length,
             } => packet_length.min(&mtu).saturating_sub(fixed),
-            _ => mtu.saturating_sub(self.max_overhead() + crypto_overhead + tailer_len),
+            _ => mtu.saturating_sub(self.max_overhead() + crypto_overhead + trailer_len),
         }
     }
 

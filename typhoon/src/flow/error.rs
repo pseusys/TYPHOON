@@ -18,7 +18,7 @@ pub enum FlowControllerError {
         expected: usize,
         /// Size of the payload that was requested to be sent.
         actual: usize,
-        /// Fixed protocol overhead (fake header/body, crypto, tailer) added on top of `actual`.
+        /// Fixed protocol overhead (fake header/body, crypto, trailer) added on top of `actual`.
         overhead: usize,
     },
 
@@ -26,9 +26,9 @@ pub enum FlowControllerError {
     #[error("error accessing cached cipher: {}", .0.to_string())]
     MissingCache(#[source] CacheError),
 
-    /// Encrypting or obfuscating the packet tailer failed.
-    #[error("error encrypting packet tailer: {}", .0.to_string())]
-    TailerEncryption(#[source] CryptoError),
+    /// Encrypting or obfuscating the packet trailer failed.
+    #[error("error encrypting packet trailer: {}", .0.to_string())]
+    TrailerEncryption(#[source] CryptoError),
 
     /// A [`crate::flow::FlowConfig`] failed its internal consistency check.
     #[error("flow config assertion failed: {message}")]

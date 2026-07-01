@@ -14,14 +14,14 @@ use rand::Rng;
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer};
 use crate::cache::DerivedValue;
 use crate::capture::{record_flow_config, record_server_send};
-use crate::crypto::{ObfuscationTranscript, ServerCryptoTool, TAILER_S2C_OVERHEAD};
+use crate::crypto::{ObfuscationTranscript, ServerCryptoTool, TRAILER_S2C_OVERHEAD};
 use crate::defaults::NoopProbeHandler;
 use crate::flow::config::{FakeBodyMode, FakeHeaderConfig, FlowConfig};
 use crate::flow::decoy::{DecoyFactory, DecoyFlowSender, DecoyProvider};
 use crate::flow::error::FlowControllerError;
 use crate::flow::probe::{ActiveProbeHandler, ProbeFactory, ProbeFlowSender};
 use crate::settings::Settings;
-use crate::tailer::{IdentityType, PacketFlags, Tailer};
+use crate::trailer::{IdentityType, PacketFlags, Trailer};
 use crate::utils::random::get_rng;
 use crate::utils::socket::{Socket, SocketError};
 use crate::utils::sync::{AsyncExecutor, Mutex, RwLock};
@@ -29,7 +29,7 @@ use crate::utils::sync::{AsyncExecutor, Mutex, RwLock};
 /// Raw received packet from the server flow manager before session-level processing.
 pub(crate) struct RawReceivedPacket<T: IdentityType> {
     pub(crate) body: DynamicByteBuffer,
-    pub(crate) tailer: Tailer<T>,
+    pub(crate) trailer: Trailer<T>,
     pub(crate) source_addr: SocketAddr,
     pub(crate) handshake_transcript: Option<ObfuscationTranscript>,
     pub(crate) original_wire_packet: Option<DynamicByteBuffer>,
@@ -162,62 +162,62 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         self.user_bindings.write().await.remove(id);
     }
 
-    /// Receive a raw packet, deobfuscating the tailer but returning the full body + tailer view.
+    /// Receive a raw packet, deobfuscating the trailer but returning the full body + trailer view.
     /// For handshake packets, per-user verification is skipped (user not registered yet).
     /// Decoy packets are filtered. Non-handshake packets are verified per-user and fed to decoy providers.
     /// `sock` is the specific socket to read from; the caller (drain task) owns one socket per task.
     pub(crate) async fn receive_raw(&self, packet: DynamicByteBuffer, sock: &Socket) -> Result<RawReceivedPacket<T>, FlowControllerError> {
-        let encrypted_tailer_len = Tailer::<T>::encrypted_len_c2s();
+        let encrypted_trailer_len = Trailer::<T>::encrypted_len_c2s();
 
         loop {
             let (packet, source_addr) = sock.recv_from(packet.clone()).await.map_err(FlowControllerError::Socket)?;
 
-            // Undersized wire packets (shorter than the encrypted tailer) can't be valid Typhoon; forward to the probe handler and keep draining.
-            if packet.len() < encrypted_tailer_len {
-                warn!("server flow: undersized wire packet from {source_addr} ({} < {})", packet.len(), encrypted_tailer_len);
+            // Undersized wire packets (shorter than the encrypted trailer) can't be valid Typhoon; forward to the probe handler and keep draining.
+            if packet.len() < encrypted_trailer_len {
+                warn!("server flow: undersized wire packet from {source_addr} ({} < {})", packet.len(), encrypted_trailer_len);
                 self.probe_handler.lock().await.process(packet, Some(source_addr)).await;
                 continue;
             }
 
-            let (encrypted_packet, encrypted_tailer) = packet.split_buf_end(encrypted_tailer_len);
+            let (encrypted_packet, encrypted_trailer) = packet.split_buf_end(encrypted_trailer_len);
 
-            // Deobfuscate tailer; for non-handshake packets verify immediately, for handshake packets defer the HMAC check until the listener has decapsulated the body and can recompute the initial-data encryption key.
-            let (tailer, handshake_transcript) = {
+            // Deobfuscate trailer; for non-handshake packets verify immediately, for handshake packets defer the HMAC check until the listener has decapsulated the body and can recompute the initial-data encryption key.
+            let (trailer, handshake_transcript) = {
                 let mut crypto = self.crypto_recv.lock().await;
-                let (tailer_buf, transcript) = match crypto.deobfuscate_tailer(encrypted_tailer, self.settings.pool()) {
+                let (trailer_buf, transcript) = match crypto.deobfuscate_trailer(encrypted_trailer, self.settings.pool()) {
                     Ok(result) => result,
                     Err(err) => {
-                        warn!("server flow: tailer decryption failed from {source_addr}: {err}");
-                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(encrypted_tailer_len), Some(source_addr)).await;
+                        warn!("server flow: trailer decryption failed from {source_addr}: {err}");
+                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(encrypted_trailer_len), Some(source_addr)).await;
                         continue;
                     }
                 };
-                let Some(tailer) = Tailer::<T>::validated(tailer_buf, encrypted_packet.len()) else {
-                    warn!("server flow: malformed tailer from {source_addr} (size, flags or payload_length out of range)");
-                    self.probe_handler.lock().await.process(encrypted_packet.expand_end(encrypted_tailer_len), Some(source_addr)).await;
+                let Some(trailer) = Trailer::<T>::validated(trailer_buf, encrypted_packet.len()) else {
+                    warn!("server flow: malformed trailer from {source_addr} (size, flags or payload_length out of range)");
+                    self.probe_handler.lock().await.process(encrypted_packet.expand_end(encrypted_trailer_len), Some(source_addr)).await;
                     continue;
                 };
-                if tailer.flags().contains(PacketFlags::HANDSHAKE) {
-                    (tailer, Some(transcript))
+                if trailer.flags().contains(PacketFlags::HANDSHAKE) {
+                    (trailer, Some(transcript))
                 } else {
-                    let identity = tailer.identity();
-                    if let Err(err) = crypto.verify_tailer(&identity, transcript).await {
-                        debug!("error verifying packet tailer: {err}");
-                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(encrypted_tailer_len), Some(source_addr)).await;
+                    let identity = trailer.identity();
+                    if let Err(err) = crypto.verify_trailer(&identity, transcript).await {
+                        debug!("error verifying packet trailer: {err}");
+                        self.probe_handler.lock().await.process(encrypted_packet.expand_end(encrypted_trailer_len), Some(source_addr)).await;
                         continue;
                     }
-                    (tailer, None)
+                    (trailer, None)
                 }
             };
 
-            let packet_flags = tailer.flags();
-            let identity = tailer.identity();
+            let packet_flags = trailer.flags();
+            let identity = trailer.identity();
 
             // For non-handshake packets, refresh the path binding for this
             // identity on this flow and feed the decoy provider if one has
             // already been instantiated locally.
             if !packet_flags.contains(PacketFlags::HANDSHAKE) {
-                let pn = tailer.packet_number();
+                let pn = trailer.packet_number();
                 let bindings = self.user_bindings.read().await;
                 if let Some(binding_rw) = bindings.get(&identity) {
                     let latest = binding_rw.read().await.latest_pn;
@@ -242,7 +242,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
                 let dp = self.decoy_providers.read().await.get(&identity).cloned();
                 if let Some(dp) = dp {
-                    let notified = dp.feed_input(encrypted_packet.clone(), tailer.buffer().clone()).await;
+                    let notified = dp.feed_input(encrypted_packet.clone(), trailer.buffer().clone()).await;
                     if notified.is_none() {
                         continue;
                     }
@@ -255,12 +255,12 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             }
 
             // Preserve a view over the original wire bytes so a failed deferred handshake verification can route the packet to the flow's probe handler.
-            let original_wire_packet = packet_flags.contains(PacketFlags::HANDSHAKE).then(|| encrypted_packet.expand_end(encrypted_tailer_len));
+            let original_wire_packet = packet_flags.contains(PacketFlags::HANDSHAKE).then(|| encrypted_packet.expand_end(encrypted_trailer_len));
 
             // For handshake packets, strip fake header/body using payload_length so the
             // session layer receives only the raw handshake data.
             let body = if packet_flags.contains(PacketFlags::HANDSHAKE) {
-                let payload_len = tailer.payload_length() as usize;
+                let payload_len = trailer.payload_length() as usize;
                 encrypted_packet.rebuffer_start(encrypted_packet.len().saturating_sub(payload_len))
             } else {
                 encrypted_packet
@@ -269,7 +269,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             debug!("server flow: received {packet_flags:?} packet from {source_addr}");
             return Ok(RawReceivedPacket {
                 body,
-                tailer,
+                trailer,
                 source_addr,
                 handshake_transcript,
                 original_wire_packet,
@@ -293,21 +293,21 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncExecutor + 'static> ServerFlowManager<T, AE> {
     /// Send a packet through this flow.
     pub(crate) async fn send_packet(&self, packet: DynamicByteBuffer, fallthrough: bool, is_maintenance: bool) -> Result<(), FlowControllerError> {
-        let tailer_len = Tailer::<T>::len();
-        let (body, tailer_buf) = packet.split_buf_end(tailer_len);
-        let identity = ServerCryptoTool::<T>::extract_identity(&tailer_buf);
+        let trailer_len = Trailer::<T>::len();
+        let (body, trailer_buf) = packet.split_buf_end(trailer_len);
+        let identity = ServerCryptoTool::<T>::extract_identity(&trailer_buf);
 
         // Feed decoy provider for rate tracking.
         let notified_packet = {
             let dp = self.decoy_providers.read().await.get(&identity).cloned();
             if let Some(dp) = dp {
-                let notified = dp.feed_output(body, tailer_buf.clone()).await;
+                let notified = dp.feed_output(body, trailer_buf.clone()).await;
                 match notified {
                     None => return Ok(()),
-                    Some(b) => b.expand_end(tailer_len),
+                    Some(b) => b.expand_end(trailer_len),
                 }
             } else {
-                body.expand_end(tailer_len)
+                body.expand_end(trailer_len)
             }
         };
 
@@ -319,21 +319,21 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             binding.read().await.addr
         };
 
-        // Fallthrough decoys: drop the plaintext tailer, skip encryption, treat the remaining body as opaque random bytes.  Non-fallthrough path is unchanged.
-        let (encrypted_packet, packet_flags, data_len, tailer_overhead) = if fallthrough {
-            let body_only = notified_packet.rebuffer_end(notified_packet.len() - tailer_len);
+        // Fallthrough decoys: drop the plaintext trailer, skip encryption, treat the remaining body as opaque random bytes.  Non-fallthrough path is unchanged.
+        let (encrypted_packet, packet_flags, data_len, trailer_overhead) = if fallthrough {
+            let body_only = notified_packet.rebuffer_end(notified_packet.len() - trailer_len);
             let body_len = body_only.len();
             (body_only, PacketFlags::DECOY, body_len, 0_usize)
         } else {
-            let (packet_data, packet_tailer) = notified_packet.split_buf_end(tailer_len);
-            let flags = PacketFlags::from_bits_truncate(*packet_tailer.get(0));
+            let (packet_data, packet_trailer) = notified_packet.split_buf_end(trailer_len);
+            let flags = PacketFlags::from_bits_truncate(*packet_trailer.get(0));
             let data_len = packet_data.len();
-            let encrypted_tailer = {
+            let encrypted_trailer = {
                 let mut crypto = self.crypto_send.lock().await;
-                crypto.obfuscate_tailer(packet_tailer, self.settings.pool()).await.map_err(FlowControllerError::TailerEncryption)?
+                crypto.obfuscate_trailer(packet_trailer, self.settings.pool()).await.map_err(FlowControllerError::TrailerEncryption)?
             };
-            let encrypted = packet_data.expand_end(encrypted_tailer.len());
-            (encrypted, flags, data_len, TAILER_S2C_OVERHEAD)
+            let encrypted = packet_data.expand_end(encrypted_trailer.len());
+            (encrypted, flags, data_len, TRAILER_S2C_OVERHEAD)
         };
 
         // Add fake header and body (single lock scope: len + fill must be consistent).
@@ -363,12 +363,12 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             } else {
                 "Data"
             };
-            let tailer_len = if fallthrough {
+            let trailer_len = if fallthrough {
                 0
             } else {
-                Tailer::<T>::len()
+                Trailer::<T>::len()
             };
-            (kind, tailer_len, tailer_overhead, cap_header, data_len, cap_body)
+            (kind, trailer_len, trailer_overhead, cap_header, data_len, cap_body)
         });
         Ok(())
     }

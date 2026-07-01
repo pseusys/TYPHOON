@@ -9,7 +9,7 @@ use crate::bytes::DynamicByteBuffer;
 use crate::socket::client_handle::ClientHandle;
 use crate::socket::error::ServerSocketError;
 use crate::socket::server::Listener;
-use crate::tailer::{IdentityType, ServerConnectionHandler};
+use crate::trailer::{IdentityType, ServerConnectionHandler};
 use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, NotifyQueueSender, RwLock, create_notify_queue};
 
 /// Server entrypoint that owns every connected client's [`ClientHandle`], keyed by identity.
