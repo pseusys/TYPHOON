@@ -16,8 +16,6 @@ scapy              = "^2.6"
 numpy              = "^2.0"
 matplotlib         = "^3.9"
 jinja2             = "^3.1"
-umap-learn = { version = "^0.5", optional = true }
-torch      = { version = "^2.2", optional = true }
 xgboost    = { version = "^2.0", optional = true }
 
 [tool.poetry.group.dev.dependencies]
@@ -28,8 +26,6 @@ scikit-learn = "^1.4"
 
 [tool.poetry.extras]
 xgboost = ["xgboost"]
-umap    = ["umap-learn"]
-torch   = ["torch"]
 
 [tool.poetry.requires-plugins]
 poethepoet = { version = ">=0.24", extras = ["poetry_plugin"] }
@@ -119,27 +115,6 @@ pandas               = "pd"
   cmd  = "python -m typhoon_eval.protocols_op.proto_compare_plots"
   help = "Multi-protocol comparison plots from pcap captures — pass --run <YYYYMMDD_HHMMSS> or omit for latest"
 
-  # ── ML utilities (kept for reuse in PART 3 — background blending) ────────
-  [tool.poe.tasks.ml-features]
-  cmd  = "python -m typhoon_eval.ml.ml_features"
-  help = "Extract ML feature matrix from stats.json — pass --run or omit for latest"
-
-  [tool.poe.tasks.ml-classify]
-  cmd  = "python -m typhoon_eval.ml.ml_classify"
-  help = "Supervised protocol classification (RF, SVM, GB) from feature matrix"
-
-  [tool.poe.tasks.ml-cluster]
-  cmd  = "python -m typhoon_eval.ml.ml_cluster"
-  help = "Unsupervised clustering + PCA/UMAP visualisation from feature matrix"
-
-  [tool.poe.tasks.ml-sequence]
-  cmd  = "python -m typhoon_eval.ml.ml_sequence"
-  help = "Sequence-based classification (MLP / 1D-CNN) from first-100-packet sizes"
-
-  [tool.poe.tasks.ml-bytes]
-  cmd  = "python -m typhoon_eval.ml.ml_bytes"
-  help = "Header-byte classification (RF / 1D-CNN) from first-50-packet IP+UDP headers"
-
   # ── PART 3 — Background-blending evaluation ──────────────────────────────
   [tool.poe.tasks.background-build]
   cmd  = "docker compose -f background/compose/docker-compose.build.yml build"
@@ -164,7 +139,7 @@ pandas               = "pd"
   # ── Pipeline orchestrator ────────────────────────────────────────────────
   [tool.poe.tasks.evaluate]
   cmd  = "python -m typhoon_eval.pipeline"
-  help = "Run the full evaluation pipeline: build → capture → analyze → visualize → typhoon → ml → background → report. Derived artifacts under artifacts/<pipeline_id>/; PCAPs stay in results/."
+  help = "Run the full evaluation pipeline: build → capture → analyze → visualize → typhoon → background → report. Derived artifacts under artifacts/<pipeline_id>/; PCAPs stay in results/. Pass --corpus-root to re-analyze a stored corpus without regenerating it."
 
   [tool.poe.tasks.clean]
   shell = "rm -rf results/captures results/background"

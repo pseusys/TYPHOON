@@ -241,7 +241,23 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, pr
                 )
     except KeyboardInterrupt:
         _purge_stale_stacks()
-        console.print("\n[yellow]Interrupted — containers cleaned up.[/yellow]")
+        captured = [k for k in run_results if not k.startswith("_")]
+        succeeded = sum(1 for k in captured if run_results[k].get("success"))
+        run_results["_notice"] = {
+            "aborted": True,
+            "reason": "KeyboardInterrupt",
+            "protocols_total": len(protocols),
+            "protocols_attempted": len(captured),
+            "protocols_succeeded": succeeded,
+            "message": (
+                f"Run interrupted before completion — {succeeded}/{len(protocols)} protocols "
+                f"captured. Partial artifact retained intentionally (aborted run, not a protocol bug)."
+            ),
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        meta_path = captures_dir / "metadata.json"
+        meta_path.write_text(dumps(run_results, indent=2))
+        console.print(f"\n[yellow]Interrupted — containers cleaned up. Partial metadata → [dim]{meta_path}[/dim][/yellow]")
         exit(1)
 
     _purge_stale_stacks()
@@ -276,6 +292,18 @@ def main(run_all: bool, protocol_name: str | None, chaos: bool, timeout: int, pr
     console.print(table)
     console.print(f"\n{ok}/{len(protocols)} captures succeeded.\n")
 
+    complete = ok == len(protocols)
+    run_results["_notice"] = {
+        "aborted": False,
+        "complete": complete,
+        "protocols_total": len(protocols),
+        "protocols_succeeded": ok,
+        "message": (
+            f"{ok}/{len(protocols)} protocols captured successfully."
+            + ("" if complete else " Partial run — some protocols failed; artifact retained intentionally.")
+        ),
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
     meta_path = captures_dir / "metadata.json"
     meta_path.write_text(dumps(run_results, indent=2))
     console.print(f"Metadata → [dim]{meta_path}[/dim]\n")

@@ -1,17 +1,23 @@
-"""TYPHOON total evaluation pipeline (eight phases).
+"""TYPHOON total evaluation pipeline (seven phases).
 
   1. build       — protocol + background-generator Docker images
   2. capture     — bulk runs + scenario variants + optional chaos run
   3. analyze     — pcap statistics per capture run
   4. visualize   — protocol comparison and flow plots
   5. typhoon     — TYPHOON intrinsic comparisons (self, use-case, traffic)
-  6. ml          — feature extraction + supervised/sequence/byte classifiers
-  7. background  — Part 3 corpus + blending + open-world + dist plots
-  8. report      — aggregate everything into artifacts/<pipeline_id>/report.md
+  6. background  — Part 3 corpus + blending + open-world + dist plots
+  7. report      — aggregate everything into artifacts/<pipeline_id>/report.md
 
 All derived artifacts go under ARTIFACTS_ROOT/<pipeline_id>/ (default
 ../../artifacts/). PCAPs stay in results/captures/ and results/background/
 because they are too large to ship as artifacts.
+
+To re-analyze already-stored PCAPs (e.g. to add XGBoost open-world scores
+without regenerating the corpus), skip generation and point the background
+phase at an existing corpus:
+
+    poe evaluate --skip build,capture \\
+        --corpus-root results/background/pipeline_<id>
 """
 
 from datetime import UTC, datetime
@@ -19,7 +25,7 @@ from json import dumps, loads
 from pathlib import Path
 from shutil import copy2
 from subprocess import DEVNULL, run
-from sys import executable, exit
+from sys import exit
 
 from click import ClickException, Command, command, option
 from click import Path as ClickPath
@@ -45,9 +51,8 @@ PROJECT_ROOT   = Path(__file__).parent.parent.parent.parent
 RESULTS_DIR    = PROJECT_ROOT / "evaluation" / "results"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts"
 BACKGROUND_ROOT = RESULTS_DIR / "background"
-_PYTHON        = executable
 
-_ALL_PHASES = ("build", "capture", "analyze", "visualize", "typhoon", "ml", "background", "report")
+_ALL_PHASES = ("build", "capture", "analyze", "visualize", "typhoon", "background", "report")
 
 EVAL_ROOT = Path(__file__).parent.parent.parent
 PROTOCOL_COMPOSE   = EVAL_ROOT / "compose" / "docker-compose.build.yml"
@@ -92,11 +97,6 @@ def _shell(label: str, cmd: list[str], log_path: Path | None = None) -> bool:
     return result.returncode == 0
 
 
-def _mod(module: str, *args: str) -> list[str]:
-    """Build `python -m <module> <args>` for `_shell`."""
-    return [_PYTHON, "-m", module, *args]
-
-
 # ── Phase 1: build ────────────────────────────────────────────────────────────
 
 def _phase_build(log_dir: Path) -> None:
@@ -118,11 +118,14 @@ def _phase_capture(
     classification_runs: int,
     profiles: list[str],
     chaos: bool,
-    transfer_bytes: int,
     log_dir: Path,
 ) -> list[str]:
-    """Return list of run IDs created (bulk classification runs only)."""
-    console.print(Rule("[bold]Phase 1 — Captures[/bold]"))
+    """Return list of run IDs created (bulk classification runs only).
+
+    Transfer size is not a parameter here: the orchestrator derives it from the
+    selected profile's ``PROFILE_BYTES_C2S`` env, so there is nothing to pass.
+    """
+    console.print(Rule("[bold]Phase 2 — Captures[/bold]"))
     log_path = log_dir / "capture.log"
 
     bulk_run_ids: list[str] = []
@@ -155,7 +158,7 @@ def _phase_capture(
 # ── Phase 3: analysis ─────────────────────────────────────────────────────────
 
 def _phase_analyze(artifacts_dir: Path, log_dir: Path) -> None:
-    console.print(Rule("[bold]Phase 2 — Analysis[/bold]"))
+    console.print(Rule("[bold]Phase 3 — Analysis[/bold]"))
     log_path = log_dir / "analyze.log"
 
     all_runs = sorted(p for p in CAPTURES_ROOT.glob("run_*") if p.is_dir()) if CAPTURES_ROOT.exists() else []
@@ -166,6 +169,11 @@ def _phase_analyze(artifacts_dir: Path, log_dir: Path) -> None:
     analyze_dir = artifacts_dir / "analyze"
     for rd in all_runs:
         run_id = rd.name.removeprefix("run_")
+        # Skip aborted captures (config.json but no pcaps) — analysis has
+        # nothing to parse and would only emit an empty run.
+        if not any(rd.glob("*.pcap")):
+            console.print(f"\n  [yellow]Skipping [dim]{rd.name}[/dim] — no pcaps (aborted capture).[/yellow]")
+            continue
         console.print(f"\n  Analyzing [dim]{rd.name}[/dim]…")
         if _invoke("analyze", _analysis_main, ["--run", run_id], log_path):
             sp = rd / "stats.json"
@@ -178,7 +186,7 @@ def _phase_analyze(artifacts_dir: Path, log_dir: Path) -> None:
 # ── Phase 4: protocol visualization ──────────────────────────────────────────
 
 def _phase_visualize(bulk_run_ids: list[str], artifacts_dir: Path, log_dir: Path) -> list[Path]:
-    console.print(Rule("[bold]Phase 3 — Protocol visualization[/bold]"))
+    console.print(Rule("[bold]Phase 4 — Protocol visualization[/bold]"))
     log_path = log_dir / "visualize.log"
     generated: list[Path] = []
 
@@ -208,7 +216,7 @@ def _phase_typhoon(
     artifacts_dir: Path,
     log_dir: Path,
 ) -> list[Path]:
-    console.print(Rule("[bold]Phase 4 — TYPHOON intrinsic comparisons[/bold]"))
+    console.print(Rule("[bold]Phase 5 — TYPHOON intrinsic comparisons[/bold]"))
     log_path = log_dir / "typhoon.log"
     generated: list[Path] = []
 
@@ -231,72 +239,25 @@ def _phase_typhoon(
     return generated
 
 
-# ── Phase 6: ML ───────────────────────────────────────────────────────────────
-
-def _phase_ml(
-    bulk_run_ids: list[str],
-    artifacts_dir: Path,
-    log_dir: Path,
-) -> tuple[Path | None, list[Path]]:
-    """Returns (features_npz_path, list_of_plot_paths). Both under artifacts/<id>/ml/."""
-    console.print(Rule("[bold]Phase 5 — ML[/bold]"))
-    log_path  = log_dir / "ml.log"
-    ml_dir    = artifacts_dir / "ml"
-    ml_plots  = ml_dir
-    ml_models = ml_dir / "models"
-
-    if not bulk_run_ids:
-        console.print("  [yellow]No bulk classification runs available — skipping ML.[/yellow]")
-        return None, []
-
-    ml_dir.mkdir(parents=True, exist_ok=True)
-    features_path = ml_dir / "features.npz"
-    console.print("\n  [cyan]ml-features[/cyan] (all runs → aggregated feature matrix)")
-    _shell("ml-features", _mod("typhoon_eval.ml.ml_features", "--all-runs", "--out", str(features_path)), log_path)
-
-    if not features_path.exists():
-        console.print("  [yellow]features.npz not found — skipping ML training.[/yellow]")
-        return None, []
-
-    # ml-classify/cluster/sequence/bytes look for features.npz inside the run dir.
-    latest_bulk_run_dir = CAPTURES_ROOT / f"run_{bulk_run_ids[-1]}"
-    dest = latest_bulk_run_dir / "features.npz"
-    if not dest.exists() or dest.stat().st_mtime < features_path.stat().st_mtime:
-        copy2(features_path, dest)
-
-    run_id = bulk_run_ids[-1]
-    generated: list[Path] = []
-
-    for label, module in [
-        ("ml-classify",  "typhoon_eval.ml.ml_classify"),
-        ("ml-cluster",   "typhoon_eval.ml.ml_cluster"),
-        ("ml-sequence",  "typhoon_eval.ml.ml_sequence"),
-        ("ml-bytes",     "typhoon_eval.ml.ml_bytes"),
-    ]:
-        console.print(f"\n  [cyan]{label}[/cyan]")
-        _shell(
-            label,
-            _mod(module, "--run", run_id, "--out-dir", str(ml_plots), "--model-dir", str(ml_models)),
-            log_path,
-        )
-
-    generated.extend(ml_plots.glob("*.pdf"))
-    return features_path, generated
-
-
-# ── Phase 7: background blending (Part 3) ─────────────────────────────────────
+# ── Phase 6: background blending (Part 3) ─────────────────────────────────────
 
 def _phase_background(
     background_runs: int,
     pipeline_id: str,
     artifacts_dir: Path,
     log_dir: Path,
+    corpus_root_override: Path | None = None,
 ) -> list[Path]:
     """Run the randomised background corpus + the three analyses on it.
 
     Corpus PCAPs land in ``results/background/pipeline_<id>/`` (kept out of
     artifacts — too large). Derived plots / JSON / per-run metadata.json
     summaries are copied / written under ``artifacts/<id>/background/``.
+
+    When *corpus_root_override* is given, corpus generation is skipped and the
+    blending / open-world / distribution analyses run against those already-
+    stored PCAPs instead — useful for re-running e.g. XGBoost open-world scores
+    without regenerating the (large) corpus.
     """
     console.print(Rule("[bold]Phase 6 — Background blending[/bold]"))
     log_path = log_dir / "background.log"
@@ -304,18 +265,26 @@ def _phase_background(
 
     bg_dir = artifacts_dir / "background"
     bg_dir.mkdir(parents=True, exist_ok=True)
-    corpus_pcap_root = BACKGROUND_ROOT / f"pipeline_{pipeline_id}"
 
-    console.print(f"\n  [cyan]background-corpus[/cyan] ({background_runs} runs → {corpus_pcap_root})")
-    ok = _invoke(
-        "bg-corpus",
-        _bg_corpus_main,
-        ["--runs", str(background_runs), "--out-dir", str(corpus_pcap_root)],
-        log_path,
-    )
-    if not ok or not corpus_pcap_root.is_dir():
-        console.print("  [yellow]Corpus failed — skipping downstream blending analyses.[/yellow]")
-        return generated
+    if corpus_root_override is not None:
+        corpus_pcap_root = corpus_root_override
+        if not corpus_pcap_root.is_dir():
+            console.print(f"  [red]--corpus-root not found:[/red] {corpus_pcap_root} — skipping background analyses.")
+            return generated
+        n_runs = sum(1 for _ in corpus_pcap_root.glob("run_*"))
+        console.print(f"\n  [cyan]reusing stored corpus[/cyan] ({n_runs} runs ← {corpus_pcap_root})")
+    else:
+        corpus_pcap_root = BACKGROUND_ROOT / f"pipeline_{pipeline_id}"
+        console.print(f"\n  [cyan]background-corpus[/cyan] ({background_runs} runs → {corpus_pcap_root})")
+        ok = _invoke(
+            "bg-corpus",
+            _bg_corpus_main,
+            ["--runs", str(background_runs), "--out-dir", str(corpus_pcap_root)],
+            log_path,
+        )
+        if not ok or not corpus_pcap_root.is_dir():
+            console.print("  [yellow]Corpus failed — skipping downstream blending analyses.[/yellow]")
+            return generated
 
     # Aggregate per-run metadata.json into artifacts (no PCAPs).
     meta_dir = bg_dir / "corpus_metadata"
@@ -332,8 +301,14 @@ def _phase_background(
     openworld_dir = bg_dir / "openworld"
     distplot_dir = bg_dir / "distplot"
 
-    console.print("\n  [cyan]background-blending[/cyan]")
-    _invoke("bg-blending", _bg_blending_main, ["--corpus-root", str(corpus_pcap_root)], log_path)
+    console.print(f"\n  [cyan]background-blending[/cyan] → {blending_dir}")
+    if _invoke(
+        "bg-blending",
+        _bg_blending_main,
+        ["--corpus-root", str(corpus_pcap_root), "--out-dir", str(blending_dir)],
+        log_path,
+    ):
+        generated.extend(blending_dir.glob("*.json"))
 
     console.print(f"\n  [cyan]background-openworld[/cyan] → {openworld_dir}")
     if _invoke(
@@ -357,7 +332,6 @@ def _phase_background(
 
     # Stash a pointer to the corpus PCAP root so the report can cite it.
     (bg_dir / "corpus_pcap_root.txt").write_text(str(corpus_pcap_root) + "\n")
-    blending_dir.mkdir(parents=True, exist_ok=True)
     return generated
 
 
@@ -425,11 +399,10 @@ def _generate_report(
         "self_compare":      "TYPHOON variability across repeated runs (same config, N executions)",
         "use_case_compare":  "TYPHOON per-use-case profiles (throughput / interactive / transparent / security)",
         "traffic_compare":   "TYPHOON traffic modes (constant/random payload × constant/random wait)",
-        "ml":                "ML classification + clustering outputs (confusion matrices, importances, PCA/UMAP)",
         "background":        "Part 3 background-blending corpus: blending fraction, open-world detectability, distribution overlays",
     }
     for section in ("proto_compare", "flow_plots", "self_compare", "use_case_compare",
-                    "traffic_compare", "ml", "background"):
+                    "traffic_compare", "background"):
         sd = artifacts_dir / section
         if not sd.exists():
             continue
@@ -440,53 +413,6 @@ def _generate_report(
         for f in files:
             lines.append(f"- `{f.relative_to(artifacts_dir)}`")
         lines.append("")
-
-    # ── ML weights ────────────────────────────────────────────────────────────
-    ml_model_dir = artifacts_dir / "ml" / "models"
-    lines += ["## ML Model Weights", ""]
-    model_files = sorted(ml_model_dir.glob("*")) if ml_model_dir.exists() else []
-    if model_files:
-        lines.append("| File | Format | Description |")
-        lines.append("|------|--------|-------------|")
-        _model_desc = {
-            "_rf.joblib":       ("joblib", "Random Forest classifier (sklearn)"),
-            "_gb.joblib":       ("joblib", "Gradient Boosting classifier (sklearn)"),
-            "_svm.joblib":      ("joblib", "SVM (RBF) + StandardScaler tuple (sklearn)"),
-            "_xgb.joblib":      ("joblib", "XGBoost classifier"),
-            "_cluster.joblib":  ("joblib", "StandardScaler + PCA(2) fitted transformers"),
-            "_mlp.joblib":      ("joblib", "MLP + StandardScaler for sequence classification"),
-            "_deepfp.pt":       ("torch",  "1D-CNN (Deep Fingerprinting) state dict — sequence"),
-            "_bytes_rf.joblib": ("joblib", "Random Forest on IP+UDP header bytes"),
-            "_bytes_cnn.pt":    ("torch",  "1D-CNN (ByteCNN) state dict — header bytes"),
-        }
-        for f in model_files:
-            for suffix, (fmt, desc) in _model_desc.items():
-                if f.name.endswith(suffix):
-                    lines.append(f"| `{f.relative_to(artifacts_dir)}` | {fmt} | {desc} |")
-                    break
-            else:
-                lines.append(f"| `{f.relative_to(artifacts_dir)}` | — | — |")
-        lines.append("")
-    else:
-        lines += ["*(no model weights — ML phase may have been skipped)*", ""]
-
-    # ── Feature matrix ────────────────────────────────────────────────────────
-    features_path = artifacts_dir / "ml" / "features.npz"
-    if features_path.exists():
-        lines += [
-            "## Feature Matrix",
-            "",
-            f"`{features_path.relative_to(artifacts_dir)}` — NumPy archive (npz):",
-            "",
-            "| Array | Shape | Description |",
-            "|-------|-------|-------------|",
-            "| `X_stat` | (N, 35) | Scalar statistical features per capture |",
-            "| `X_seq`  | (N, 100) | Direction-signed first-100-packet sizes |",
-            "| `X_iat`  | (N, 100) | Direction-signed first-100-packet IATs (ms) |",
-            "| `y`      | (N,) | Integer class labels |",
-            "| `labels` | (P,) | Protocol names ordered by class index |",
-            "",
-        ]
 
     # ── Phase logs ────────────────────────────────────────────────────────────
     lines += ["## Phase Logs", ""]
@@ -510,13 +436,16 @@ def _generate_report(
         "# Reuse existing Docker images + capture runs, skip the 7500-run corpus:",
         "poe evaluate --skip build,capture,background",
         "",
+        "# Re-analyze already-stored PCAPs (e.g. to add XGBoost open-world",
+        "# scores) without regenerating the corpus:",
+        "poe evaluate --skip build,capture \\",
+        "    --corpus-root results/background/pipeline_<id>",
+        "",
         "# Individual steps:",
         "poe build",
         "poe capture --all --profile bulk_upload",
         "poe analyze",
         "poe proto-compare",
-        "poe ml-features --all-runs",
-        "poe ml-classify",
         "poe background-build",
         "poe background-corpus",
         "poe background-blending",
@@ -537,19 +466,22 @@ def _generate_report(
 
 @command(context_settings={"help_option_names": ["-h", "--help"]})
 @option("--classification-runs", default=3, show_default=True, type=int,
-              help="Number of bulk all-protocol capture runs for ML training data.")
+              help="Number of bulk all-protocol capture runs used by the visualize phase (proto-compare + flow plots).")
 @option("--profiles", default="bulk_upload", show_default=True,
               help="Comma-separated profiles to capture (one run each beyond the bulk classification runs).")
 @option("--chaos/--no-chaos", default=True, show_default=True,
               help="Run one chaos (pumba) capture.")
-@option("--bytes", "transfer_bytes", default=10_485_760, show_default=True, type=int,
-              help="Payload bytes per client for capture runs.")
 @option("--typhoon-runs", default=6, show_default=True, type=int,
               help="Repeated runs for self-compare.")
 @option("--typhoon-uc-runs", default=3, show_default=True, type=int,
               help="Runs per use case for use-case-compare.")
 @option("--background-runs", default=7500, show_default=True, type=int,
-              help="Number of randomised background-blending corpus runs (long).")
+              help="Number of randomised background-blending corpus runs (long). Ignored when --corpus-root is given.")
+@option("--corpus-root", "corpus_root", default=None, type=ClickPath(),
+              help="Re-analyze an already-stored background corpus at this path instead of "
+                   "generating a new one. Skips corpus generation; blending/open-world/distplot "
+                   "run on the stored PCAPs (e.g. to add XGBoost scores). Pair with "
+                   "'--skip build,capture' to reuse everything.")
 @option("--artifacts-dir", default=str(ARTIFACTS_ROOT), show_default=True, type=ClickPath(),
               help="Root directory for per-pipeline-run artifact subdirectories.")
 @option("--skip", default="", show_default=True,
@@ -558,14 +490,14 @@ def main(
     classification_runs: int,
     profiles: str,
     chaos: bool,
-    transfer_bytes: int,
     typhoon_runs: int,
     typhoon_uc_runs: int,
     background_runs: int,
+    corpus_root: str | None,
     artifacts_dir: str,
     skip: str,
 ) -> None:
-    """TYPHOON total evaluation pipeline: build → capture → analyze → visualize → typhoon → ml → background → report."""
+    """TYPHOON total evaluation pipeline: build → capture → analyze → visualize → typhoon → background → report."""
 
     skipped = {s.strip() for s in skip.split(",") if s.strip()}
     invalid = skipped - set(_ALL_PHASES)
@@ -575,6 +507,7 @@ def main(
         exit(1)
 
     profile_list = [s.strip() for s in profiles.split(",") if s.strip()]
+    corpus_root_path = Path(corpus_root) if corpus_root else None
 
     pipeline_id = "pipeline_" + datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     artifacts_root = Path(artifacts_dir)
@@ -587,6 +520,8 @@ def main(
     console.print(f"  Phases    : {', '.join(p for p in _ALL_PHASES if p not in skipped)}")
     if skipped:
         console.print(f"  Skipped   : {', '.join(sorted(skipped))}")
+    if corpus_root_path:
+        console.print(f"  Corpus    : [dim]{corpus_root_path}[/dim] (reusing stored PCAPs — no corpus generation)")
     console.print(f"  Artifacts : [dim]{artifacts_dir_run}[/dim]")
     console.print(f"  PCAP root : [dim]{CAPTURES_ROOT}[/dim] (kept outside artifacts)\n")
 
@@ -596,10 +531,10 @@ def main(
         "classification_runs": classification_runs,
         "profiles":            profile_list,
         "chaos":               chaos,
-        "transfer_bytes":      transfer_bytes,
         "typhoon_runs":        typhoon_runs,
         "typhoon_uc_runs":     typhoon_uc_runs,
         "background_runs":     background_runs,
+        "corpus_root":         str(corpus_root_path) if corpus_root_path else None,
         "skipped_phases":      sorted(skipped),
     }, indent=2))
 
@@ -609,12 +544,16 @@ def main(
     bulk_run_ids: list[str] = []
 
     if "capture" not in skipped:
-        bulk_run_ids = _phase_capture(classification_runs, profile_list, chaos, transfer_bytes, log_dir)
+        bulk_run_ids = _phase_capture(classification_runs, profile_list, chaos, log_dir)
     else:
         all_runs = sorted(CAPTURES_ROOT.glob("run_*")) if CAPTURES_ROOT.exists() else []
         for rd in reversed(all_runs):
             cfg_path = rd / "config.json"
             if not cfg_path.exists():
+                continue
+            # Skip aborted captures (config.json but no pcaps) — otherwise they
+            # get fed to proto-compare / flow-plot, which fail on empty runs.
+            if not any(rd.glob("*.pcap")):
                 continue
             cfg: dict = loads(cfg_path.read_text())
             if not cfg.get("chaos") and cfg.get("profile", cfg.get("scenario")) == "bulk_upload":
@@ -633,11 +572,8 @@ def main(
     if "typhoon" not in skipped:
         _phase_typhoon(typhoon_runs, typhoon_uc_runs, artifacts_dir_run, log_dir)
 
-    if "ml" not in skipped:
-        _phase_ml(bulk_run_ids, artifacts_dir_run, log_dir)
-
     if "background" not in skipped:
-        _phase_background(background_runs, pipeline_id, artifacts_dir_run, log_dir)
+        _phase_background(background_runs, pipeline_id, artifacts_dir_run, log_dir, corpus_root_path)
 
     if "report" not in skipped:
         _generate_report(pipeline_id, bulk_run_ids, artifacts_dir_run)
