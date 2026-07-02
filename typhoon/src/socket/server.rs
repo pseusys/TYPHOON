@@ -23,7 +23,7 @@ use crate::settings::{Settings, keys};
 use crate::socket::client_handle::ClientHandle;
 use crate::socket::error::ServerSocketError;
 use crate::socket::pool::ClientPool;
-use crate::tailer::{IdentityType, PacketFlags, ReturnCode, ServerConnectionHandler, Tailer};
+use crate::trailer::{IdentityType, PacketFlags, ReturnCode, ServerConnectionHandler, Trailer};
 use crate::utils::socket::Socket;
 use crate::utils::sync::{AsyncExecutor, Mutex, NotifyQueueReceiver, NotifyQueueSender, RwLock, assert_runtime, create_bounded_notify_queue, create_notify_queue, create_watch};
 use crate::utils::unix_timestamp_ms;
@@ -192,7 +192,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let users: SharedMap<T, UserServerState> = SharedMap::new();
         let mut flows = Vec::with_capacity(self.flow_configs.len());
 
-        let tailer_wire_len = Tailer::<T>::encrypted_len_s2c();
+        let trailer_wire_len = Trailer::<T>::encrypted_len_s2c();
         let mut max_data_payload = usize::MAX;
 
         let obfs_buffer = self.secret.obfuscation_buffer();
@@ -200,7 +200,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         for flow_config in self.flow_configs.drain(..) {
             flow_config.config.assert(settings.mtu()).map_err(ServerSocketError::Flow)?;
 
-            max_data_payload = max_data_payload.min(flow_config.config.max_user_payload(settings.mtu(), PAYLOAD_CRYPTO_OVERHEAD, tailer_wire_len));
+            max_data_payload = max_data_payload.min(flow_config.config.max_user_payload(settings.mtu(), PAYLOAD_CRYPTO_OVERHEAD, trailer_wire_len));
 
             let socks: Vec<Arc<Socket>> = if let Some(socket) = flow_config.socket {
                 vec![Arc::new(socket)]
@@ -278,7 +278,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let users: SharedMap<T, UserServerState> = SharedMap::new();
         let mut flows = Vec::with_capacity(self.flow_configs.len());
 
-        let tailer_wire_len = Tailer::<T>::encrypted_len_s2c();
+        let trailer_wire_len = Trailer::<T>::encrypted_len_s2c();
         let mut max_data_payload = usize::MAX;
 
         let secret_arc = Arc::new(self.secret);
@@ -286,7 +286,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         for flow_config in self.flow_configs.drain(..) {
             flow_config.config.assert(settings.mtu()).map_err(ServerSocketError::Flow)?;
 
-            max_data_payload = max_data_payload.min(flow_config.config.max_user_payload(settings.mtu(), PAYLOAD_CRYPTO_OVERHEAD, tailer_wire_len));
+            max_data_payload = max_data_payload.min(flow_config.config.max_user_payload(settings.mtu(), PAYLOAD_CRYPTO_OVERHEAD, trailer_wire_len));
 
             let socks: Vec<Arc<Socket>> = if let Some(socket) = flow_config.socket {
                 vec![Arc::new(socket)]
@@ -469,9 +469,9 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
     /// Route an incoming packet to the appropriate session or create a new one.
     async fn route_incoming(self: &Arc<Self>, raw_packet: RawReceivedPacket<T>, flow_index: usize) {
-        let identity = raw_packet.tailer.identity();
+        let identity = raw_packet.trailer.identity();
 
-        if raw_packet.tailer.flags().contains(PacketFlags::HANDSHAKE) {
+        if raw_packet.trailer.flags().contains(PacketFlags::HANDSHAKE) {
             self.handle_new_client(raw_packet, flow_index).await;
             return;
         }
@@ -487,7 +487,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
 
             let incoming = IncomingPacket {
                 body: raw_packet.body,
-                tailer: raw_packet.tailer,
+                trailer: raw_packet.trailer,
             };
             if let Err(err) = session.process_incoming(incoming).await {
                 debug!("session processing error for {}: {}", identity.to_string(), err);
@@ -510,8 +510,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         self.router.flows[flow_index].register_user_binding(transient_identity.clone(), source_addr, handshake_pn).await;
         let pn = (unix_timestamp_ms() / 1000) as u64;
         let buf = self.settings.pool().allocate(Some(T::length()));
-        let tailer = Tailer::termination(buf, transient_identity, code, pn);
-        if let Err(err) = self.router.flows[flow_index].send_packet(tailer.into_buffer(), false, false).await {
+        let trailer = Trailer::termination(buf, transient_identity, code, pn);
+        if let Err(err) = self.router.flows[flow_index].send_packet(trailer.into_buffer(), false, false).await {
             warn!("failed to send handshake rejection ({code:?}): {err}");
         }
         {
@@ -536,11 +536,11 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             return;
         };
 
-        // Verify the handshake tailer with the initial-data encryption key just produced by the KEM decapsulation.
+        // Verify the handshake trailer with the initial-data encryption key just produced by the KEM decapsulation.
         let verified = matches!((&handshake_transcript, &original_wire_packet), (Some(transcript), Some(_)) if verify_transcript_with_key(&initial_key, transcript).is_ok());
         if !verified {
             if let Some(packet) = original_wire_packet {
-                debug!("handshake tailer verification failed from {source_addr}, forwarding to probe handler");
+                debug!("handshake trailer verification failed from {source_addr}, forwarding to probe handler");
                 self.router.flows[flow_index].forward_to_probe(packet, source_addr).await;
             } else {
                 debug!("handshake packet from {source_addr} missing deferred transcript or wire packet, dropping");
@@ -548,8 +548,8 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
             return;
         }
 
-        let client_version_identity = raw_packet.tailer.identity();
-        let handshake_pn = raw_packet.tailer.packet_number();
+        let client_version_identity = raw_packet.trailer.identity();
+        let handshake_pn = raw_packet.trailer.packet_number();
         if !self.router.connection_handler.verify_version(client_version_identity.to_bytes()) {
             self.reject_handshake(flow_index, &client_version_identity, raw_packet.source_addr, handshake_pn, &initial_key, ReturnCode::VersionMismatch).await;
             return;
@@ -589,7 +589,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                 users.remove(&identity).await;
             }
             let initial_crypto_state = self.make_initial_crypto_state(&initial_key);
-            let (session, response_packet) = ServerSessionManager::assemble_session(initial_crypto_state, response_body, raw_packet.tailer, identity.clone(), &mut users, incoming_tx, end_tx, router_weak, self.router.flow_count(), self.settings.clone()).await;
+            let (session, response_packet) = ServerSessionManager::assemble_session(initial_crypto_state, response_body, raw_packet.trailer, identity.clone(), &mut users, incoming_tx, end_tx, router_weak, self.router.flow_count(), self.settings.clone()).await;
             (session, response_packet, replacing)
         };
 

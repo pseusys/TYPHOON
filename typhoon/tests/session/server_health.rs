@@ -8,9 +8,9 @@ use super::ServerHealthProvider;
 use crate::bytes::{ByteBuffer, ByteBufferMut, DynamicByteBuffer, StaticByteBuffer};
 use crate::defaults::DefaultExecutor;
 use crate::session::server::OutgoingRouter;
-use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILER_LENGTH};
+use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TRAILER_LENGTH};
 use crate::settings::{Settings, SettingsBuilder, keys};
-use crate::tailer::{PacketFlags, Tailer};
+use crate::trailer::{PacketFlags, Trailer};
 use crate::utils::sync::{Mutex, sleep};
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
@@ -73,14 +73,14 @@ fn fast_settings() -> Arc<Settings<DefaultExecutor>> {
 }
 
 /// Parse PN, TM and flags from the raw buffer emitted by `ServerHealthProvider`.
-/// A health-check response has no body, so the whole buffer is the tailer.
+/// A health-check response has no body, so the whole buffer is the trailer.
 fn parse_response(packet: &DynamicByteBuffer) -> (u64, u32, PacketFlags) {
-    let tailer_size = TAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH;
-    assert!(packet.len() >= tailer_size, "packet too short: {} < {tailer_size}", packet.len());
-    let tailer_start = packet.len() - tailer_size;
-    let (_, tailer_buf) = packet.split_buf_start(tailer_start);
-    let tailer = Tailer::<StaticByteBuffer>::new(tailer_buf);
-    (tailer.packet_number(), tailer.time(), tailer.flags())
+    let trailer_size = TRAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH;
+    assert!(packet.len() >= trailer_size, "packet too short: {} < {trailer_size}", packet.len());
+    let trailer_start = packet.len() - trailer_size;
+    let (_, trailer_buf) = packet.split_buf_start(trailer_start);
+    let trailer = Trailer::<StaticByteBuffer>::new(trailer_buf);
+    (trailer.packet_number(), trailer.time(), trailer.flags())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -231,11 +231,11 @@ async fn test_server_health_feed_output_noop_when_nothing_pending() {
     *provider.shadowride_pending.lock().await = None;
 
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
-    let tailer = Tailer::data(buf, &test_identity(), 0u16, 0u64);
+    let trailer = Trailer::data(buf, &test_identity(), 0u16, 0u64);
 
-    provider.feed_output(tailer.clone()).await.unwrap();
+    provider.feed_output(trailer.clone()).await.unwrap();
 
-    assert!(!tailer.flags().contains(PacketFlags::HEALTH_CHECK), "tailer must not be modified when nothing pending");
+    assert!(!trailer.flags().contains(PacketFlags::HEALTH_CHECK), "trailer must not be modified when nothing pending");
 }
 
 // Test: feed_output is a no-op when the packet already carries HEALTH_CHECK.
@@ -248,9 +248,9 @@ async fn test_server_health_feed_output_noop_when_already_health_check() {
     *provider.shadowride_pending.lock().await = Some((0xCAFE, 42));
 
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
-    let tailer = Tailer::health_check(buf, &test_identity(), 50u32, 0x1234);
+    let trailer = Trailer::health_check(buf, &test_identity(), 50u32, 0x1234);
 
-    provider.feed_output(tailer.clone()).await.unwrap();
+    provider.feed_output(trailer.clone()).await.unwrap();
 
     assert!(provider.shadowride_pending.lock().await.is_some(), "pending must not be consumed when packet already carries HEALTH_CHECK");
 }
@@ -267,13 +267,13 @@ async fn test_server_health_feed_output_attaches_shadowride() {
     *provider.shadowride_pending.lock().await = Some((pn, next_in));
 
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
-    let tailer = Tailer::data(buf, &test_identity(), 0u16, 0u64);
+    let trailer = Trailer::data(buf, &test_identity(), 0u16, 0u64);
 
-    provider.feed_output(tailer.clone()).await.unwrap();
+    provider.feed_output(trailer.clone()).await.unwrap();
 
-    assert!(tailer.flags().contains(PacketFlags::HEALTH_CHECK), "tailer must carry HEALTH_CHECK flag after shadowride");
-    assert_eq!(tailer.time(), next_in, "tailer TM must be set to next_in");
-    assert_eq!(tailer.packet_number(), pn, "tailer PN must be set to pending pn");
+    assert!(trailer.flags().contains(PacketFlags::HEALTH_CHECK), "trailer must carry HEALTH_CHECK flag after shadowride");
+    assert_eq!(trailer.time(), next_in, "trailer TM must be set to next_in");
+    assert_eq!(trailer.packet_number(), pn, "trailer PN must be set to pending pn");
     assert!(provider.shadowride_pending.lock().await.is_none(), "pending must be cleared after attachment");
 }
 
@@ -297,15 +297,15 @@ async fn test_server_health_shadowride_consumed_skips_dedicated_packet() {
     sleep(Duration::from_millis(70)).await;
 
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
-    let tailer = Tailer::data(buf, &test_identity(), 0u16, 0u64);
-    provider.feed_output(tailer.clone()).await.unwrap();
+    let trailer = Trailer::data(buf, &test_identity(), 0u16, 0u64);
+    provider.feed_output(trailer.clone()).await.unwrap();
 
     // Wait past the full shadowride window — if shadowriding hadn't worked, the fallback
     // dedicated packet would have been sent by now.
     sleep(Duration::from_millis(250)).await;
 
     assert!(router.packets.lock().await.is_empty(), "no dedicated health-check packet must be sent once shadowridden");
-    assert!(tailer.flags().contains(PacketFlags::HEALTH_CHECK), "the data tailer must carry the shadowridden health check");
+    assert!(trailer.flags().contains(PacketFlags::HEALTH_CHECK), "the data trailer must carry the shadowridden health check");
 }
 
 // Test: dropping the router Arc causes the timer task to stop cleanly.

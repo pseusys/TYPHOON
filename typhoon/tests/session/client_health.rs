@@ -15,7 +15,7 @@ use crate::session::SessionControllerError;
 use crate::session::common::SessionManager;
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 use crate::settings::{Settings, SettingsBuilder, keys};
-use crate::tailer::{PacketFlags, Tailer};
+use crate::trailer::{PacketFlags, Trailer};
 use crate::utils::sync::{WatchReceiver, create_watch};
 
 // ── Cached test key material (McEliece keygen is expensive) ──────────────────
@@ -146,13 +146,13 @@ async fn test_feed_input_wrong_pn_discarded() {
     let settings = fast_settings();
     let (provider, _) = make_provider(Arc::clone(&mgr), Arc::clone(&settings));
 
-    // Set current_pn = 100; feed a tailer with PN = 99.
+    // Set current_pn = 100; feed a trailer with PN = 99.
     provider.state.lock().await.current_pn = 100;
 
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
-    let tailer = Tailer::health_check(buf, &test_identity(), 50u32, 99u64);
+    let trailer = Trailer::health_check(buf, &test_identity(), 50u32, 99u64);
 
-    provider.feed_input(tailer).await.unwrap();
+    provider.feed_input(trailer).await.unwrap();
 
     // The watch channel has no pending value — try receiving with a timeout.
     let mut rx = provider.response_tx.subscribe();
@@ -172,16 +172,16 @@ async fn test_feed_input_correct_pn_delivers() {
 
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
     let server_tm: u32 = 50; // within [21, 100]
-    let tailer = Tailer::health_check(buf, &test_identity(), server_tm, pn);
+    let trailer = Trailer::health_check(buf, &test_identity(), server_tm, pn);
 
     // Subscribe before feeding so we don't miss the send.
     let mut rx = provider.response_tx.subscribe();
-    provider.feed_input(tailer).await.unwrap();
+    provider.feed_input(trailer).await.unwrap();
 
     let result = timeout(Duration::from_millis(100), rx.recv()).await.expect("response must arrive").expect("channel must not be closed");
 
     let (received_tm, _time, body, _identity) = result;
-    assert_eq!(received_tm, server_tm, "received TM must match tailer TM");
+    assert_eq!(received_tm, server_tm, "received TM must match trailer TM");
     assert!(body.is_none(), "standalone health check has no body");
 }
 
@@ -197,10 +197,10 @@ async fn test_feed_input_tm_clamped() {
 
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
     // Use TM = 0 (below HEALTH_CHECK_NEXT_IN_MIN = 21).
-    let tailer = Tailer::health_check(buf, &test_identity(), 0u32, pn);
+    let trailer = Trailer::health_check(buf, &test_identity(), 0u32, pn);
 
     let mut rx = provider.response_tx.subscribe();
-    provider.feed_input(tailer).await.unwrap();
+    provider.feed_input(trailer).await.unwrap();
 
     let (received_tm, _, _, _) = timeout(Duration::from_millis(100), rx.recv()).await.unwrap().unwrap();
 
@@ -219,9 +219,9 @@ async fn test_feed_output_noop_when_already_health_check() {
 
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
     // A packet that already carries HEALTH_CHECK (e.g., standalone or shadowride).
-    let tailer = Tailer::health_check(buf, &test_identity(), 50u32, 0x1234);
+    let trailer = Trailer::health_check(buf, &test_identity(), 50u32, 0x1234);
 
-    provider.feed_output(tailer).await.unwrap();
+    provider.feed_output(trailer).await.unwrap();
 
     // Shadowride channel must NOT have been signalled.
     let result = timeout(Duration::from_millis(20), shadowride_rx.recv()).await;
@@ -239,9 +239,9 @@ async fn test_feed_output_noop_when_nothing_pending() {
     provider.state.lock().await.shadowride_pending = None;
 
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
-    let tailer = Tailer::data(buf, &test_identity(), 0u16, 0u64);
+    let trailer = Trailer::data(buf, &test_identity(), 0u16, 0u64);
 
-    provider.feed_output(tailer).await.unwrap();
+    provider.feed_output(trailer).await.unwrap();
 
     let result = timeout(Duration::from_millis(20), shadowride_rx.recv()).await;
     assert!(result.is_err(), "no shadowride signal when nothing pending");
@@ -259,19 +259,19 @@ async fn test_feed_output_attaches_shadowride() {
     provider.state.lock().await.shadowride_pending = Some((pn, next_in));
 
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
-    let tailer = Tailer::data(buf.clone(), &test_identity(), 0u16, 0u64);
+    let trailer = Trailer::data(buf.clone(), &test_identity(), 0u16, 0u64);
 
-    provider.feed_output(tailer.clone()).await.unwrap();
+    provider.feed_output(trailer.clone()).await.unwrap();
 
     // Shadowride channel must have been signalled.
     let result = timeout(Duration::from_millis(100), shadowride_rx.recv()).await;
     assert!(result.is_ok(), "shadowride_tx must fire after attachment");
 
-    // The tailer flags must now include HEALTH_CHECK.
-    assert!(tailer.flags().contains(PacketFlags::HEALTH_CHECK), "tailer must carry HEALTH_CHECK flag after shadowride");
-    // The tailer TM and PN must have been updated.
-    assert_eq!(tailer.time(), next_in, "tailer TM must be set to next_in");
-    assert_eq!(tailer.packet_number(), pn, "tailer PN must be set to pending pn");
+    // The trailer flags must now include HEALTH_CHECK.
+    assert!(trailer.flags().contains(PacketFlags::HEALTH_CHECK), "trailer must carry HEALTH_CHECK flag after shadowride");
+    // The trailer TM and PN must have been updated.
+    assert_eq!(trailer.time(), next_in, "trailer TM must be set to next_in");
+    assert_eq!(trailer.packet_number(), pn, "trailer PN must be set to pending pn");
 }
 
 // Test: after feed_output attaches a shadowride, shadowride_pending is cleared.
@@ -284,9 +284,9 @@ async fn test_feed_output_clears_pending_after_attach() {
     provider.state.lock().await.shadowride_pending = Some((1u64, 10u32));
 
     let buf = settings.pool().allocate(Some(DEFAULT_TYPHOON_ID_LENGTH));
-    let tailer = Tailer::data(buf, &test_identity(), 0u16, 0u64);
+    let trailer = Trailer::data(buf, &test_identity(), 0u16, 0u64);
 
-    provider.feed_output(tailer).await.unwrap();
+    provider.feed_output(trailer).await.unwrap();
 
     assert!(provider.state.lock().await.shadowride_pending.is_none(), "shadowride_pending must be cleared after attachment");
 }

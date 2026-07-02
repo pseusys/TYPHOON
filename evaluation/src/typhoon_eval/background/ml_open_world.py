@@ -45,6 +45,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
 from sklearn.tree import DecisionTreeClassifier
+from xgboost import XGBClassifier
 
 from typhoon_eval.background.ml_blending import (
     FEATURE_SETS,
@@ -53,17 +54,6 @@ from typhoon_eval.background.ml_blending import (
     get_feature_names,
 )
 from typhoon_eval.shared.profiles import HELD_OUT_BG_CLASSES
-
-# XGBoost is optional — install via `poetry install --with ml -E xgboost`.
-# We import it eagerly here (instead of lazily inside `_make_classifier`)
-# so missing-module errors surface at module-load time with a helpful
-# message rather than per-fold during a long run.  When missing, the
-# `_make_classifier("xgb")` branch raises `ImportError`, which is caught
-# in `main()`'s classifier-resolution loop and skipped with a warning.
-try:
-    from xgboost import XGBClassifier
-except ImportError:
-    XGBClassifier = None  # type: ignore[assignment, misc]
 
 console = Console()
 
@@ -137,12 +127,7 @@ CLASSIFIER_LABELS: dict[str, str] = {
 
 
 def _make_classifier(name: str) -> Any:
-    """Construct a Barradas-default classifier instance.
-
-    Random Forest and Decision Tree are always available (sklearn).  XGBoost is
-    an optional dependency; raises ImportError if unavailable so callers can
-    surface a helpful skip message.
-    """
+    """Construct a Barradas-default classifier instance (RF / DT / XGBoost)."""
     if name == "rf":
         return RandomForestClassifier(
             n_estimators=RF_N_ESTIMATORS,
@@ -153,11 +138,6 @@ def _make_classifier(name: str) -> Any:
     if name == "dt":
         return DecisionTreeClassifier(random_state=RF_RANDOM_STATE)
     if name == "xgb":
-        if XGBClassifier is None:
-            raise ImportError(
-                "xgboost is required for --classifier=xgb; install via the optional"
-                " 'ml' poetry group: poetry install --with ml -E xgboost"
-            )
         return XGBClassifier(
             n_estimators=RF_N_ESTIMATORS,
             random_state=RF_RANDOM_STATE,
@@ -1152,20 +1132,12 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
     # ── Test A — Pair-binary detection (Barradas USENIX'18 protocol) ───────
     # Iterate (pair, classifier) so the report groups consecutive rows for
     # the same pair together (read top-to-bottom: vary classifier within
-    # each pair).  Skip a classifier entirely if its optional dep is missing.
+    # each pair).
     pair_iter = tuple(PROFILE_TARGET_CLASS.items()) if selected_profile is None else ((selected_profile, selected_target),)
     rows: list[tuple[str, str, str, dict[str, object] | None]] = []
-    skipped_classifiers: set[str] = set()
     for prof, target in pair_iter:
         for clf_name in classifiers:
-            if clf_name in skipped_classifiers:
-                continue
-            try:
-                res = _run_pair_binary(prof, target, X, y, profiles, classifier_name=clf_name)
-            except ImportError as exc:
-                console.print(f"[yellow]Skipping {CLASSIFIER_LABELS.get(clf_name, clf_name)}: {exc}[/yellow]")
-                skipped_classifiers.add(clf_name)
-                continue
+            res = _run_pair_binary(prof, target, X, y, profiles, classifier_name=clf_name)
             rows.append((prof, target, clf_name, res))
     _print_pair_binary(rows, feature_names)
 
@@ -1189,13 +1161,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
     # Reported once per classifier so DT/RF/XGBoost can be compared directly.
     test_d_results: list[tuple[str, dict[str, object]]] = []
     for clf_name in classifiers:
-        if clf_name in skipped_classifiers:
-            continue
-        try:
-            d_res = _run_open_set_binary(X, y, profiles, classifier_name=clf_name)
-        except ImportError as exc:
-            console.print(f"[yellow]Test D skipping {CLASSIFIER_LABELS.get(clf_name, clf_name)}: {exc}[/yellow]")
-            continue
+        d_res = _run_open_set_binary(X, y, profiles, classifier_name=clf_name)
         _print_open_set(f"Test D — Open-set binary detection [{CLASSIFIER_LABELS.get(clf_name, clf_name)}]", d_res)
         test_d_results.append((clf_name, d_res))
 

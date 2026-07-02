@@ -25,7 +25,7 @@ pub(crate) struct ServerData {
 }
 use crate::crypto::symmetric::{ObfuscationTranscript, Symmetric};
 use crate::settings::consts::ID_OFFSET;
-use crate::tailer::{IdentityType, Tailer};
+use crate::trailer::{IdentityType, Trailer};
 
 /// Per-user cryptographic state.
 #[derive(Clone)]
@@ -103,7 +103,7 @@ impl UserServerState {
     }
 }
 
-/// Server-side cryptographic tool that manages per-user tailer encryption.
+/// Server-side cryptographic tool that manages per-user trailer encryption.
 pub(crate) struct ServerCryptoTool<T: IdentityType + Clone + Eq + Hash + Send + ToString> {
     users: CachedMap<T, UserServerState>,
     /// Shared decryptor using OBFS-derived encryption key (fast mode only).
@@ -133,51 +133,51 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString> ServerCryptoTool<T> 
         }
     }
 
-    /// Extract user identity from a raw tailer buffer.
+    /// Extract user identity from a raw trailer buffer.
     pub(crate) fn extract_identity(buffer: &DynamicByteBuffer) -> T {
-        let correct_buffer = buffer.ensure_size(Tailer::<T>::len());
+        let correct_buffer = buffer.ensure_size(Trailer::<T>::len());
         T::from_bytes(correct_buffer.rebuffer_both(ID_OFFSET, ID_OFFSET + T::length()).slice())
     }
 
-    /// Obfuscate tailer for sending to a specific user (fast mode).
+    /// Obfuscate trailer for sending to a specific user (fast mode).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub(crate) async fn obfuscate_tailer(&mut self, plaintext: DynamicByteBuffer, _: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
+    pub(crate) async fn obfuscate_trailer(&mut self, plaintext: DynamicByteBuffer, _: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
         let identity = Self::extract_identity(&plaintext);
         let user = self.users.get_mut(&identity).await.map_err(|e| CryptoError::authentication_error(&e.to_string()))?;
         user.crypto.obfuscation_key.encrypt_auth(plaintext, None::<&DynamicByteBuffer>)
     }
 
-    /// Obfuscate tailer for sending to a specific user (full mode: encrypt with session key).
+    /// Obfuscate trailer for sending to a specific user (full mode: encrypt with session key).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub(crate) async fn obfuscate_tailer(&mut self, plaintext: DynamicByteBuffer, _: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
+    pub(crate) async fn obfuscate_trailer(&mut self, plaintext: DynamicByteBuffer, _: &BytePool) -> Result<DynamicByteBuffer, CryptoError> {
         let identity = Self::extract_identity(&plaintext);
         let user = self.users.get_mut(&identity).await.map_err(|e| CryptoError::authentication_error(&e.to_string()))?;
         user.crypto.key.encrypt_auth(plaintext, None::<&DynamicByteBuffer>)
     }
 
-    /// Deobfuscate received tailer (fast mode: decrypt with shared OBFS key, defer verification).
+    /// Deobfuscate received trailer (fast mode: decrypt with shared OBFS key, defer verification).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub(crate) fn deobfuscate_tailer(&mut self, ciphertext: DynamicByteBuffer, pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+    pub(crate) fn deobfuscate_trailer(&mut self, ciphertext: DynamicByteBuffer, pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
         self.shared_obfs_decryptor.decrypt_no_verify(ciphertext, pool)
     }
 
-    /// Deobfuscate received tailer (full mode: decrypt with server's X25519 secret).
+    /// Deobfuscate received trailer (full mode: decrypt with server's X25519 secret).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
-    pub(crate) fn deobfuscate_tailer(&mut self, ciphertext: DynamicByteBuffer, _pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
+    pub(crate) fn deobfuscate_trailer(&mut self, ciphertext: DynamicByteBuffer, _pool: &BytePool) -> Result<(DynamicByteBuffer, ObfuscationTranscript), CryptoError> {
         self.secret.decrypt_deobfuscate(ciphertext).map(|r| (r, ObfuscationTranscript {})).map_err(|e| CryptoError::authentication_error(&e.to_string()))
     }
 
-    /// Verify tailer authentication (fast mode: verify with per-user key).
+    /// Verify trailer authentication (fast mode: verify with per-user key).
     #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
-    pub(crate) async fn verify_tailer(&mut self, identity: &T, transcript: ObfuscationTranscript) -> Result<(), CryptoError> {
+    pub(crate) async fn verify_trailer(&mut self, identity: &T, transcript: ObfuscationTranscript) -> Result<(), CryptoError> {
         let user = self.users.get_mut(identity).await.map_err(|e| CryptoError::authentication_error(&e.to_string()))?;
         user.crypto.obfuscation_key.verify_decrypted(transcript, None::<&DynamicByteBuffer>)
     }
 
-    /// Verify tailer authentication (full mode: no-op).
+    /// Verify trailer authentication (full mode: no-op).
     #[cfg(any(feature = "full_software", feature = "full_hardware"))]
     #[allow(clippy::unused_self)] // keeps the same call-site shape as the fast-mode variant
-    pub(crate) fn verify_tailer(&mut self, _: &T, _: ObfuscationTranscript) -> impl Future<Output = Result<(), CryptoError>> {
+    pub(crate) fn verify_trailer(&mut self, _: &T, _: ObfuscationTranscript) -> impl Future<Output = Result<(), CryptoError>> {
         ready(Ok(()))
     }
 }

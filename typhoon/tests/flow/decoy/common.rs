@@ -7,7 +7,7 @@ use crate::defaults::DefaultExecutor;
 use crate::flow::decoy::common::{DecoyState, exponential_variance, random_gauss, random_uniform};
 use crate::flow::decoy::features::{MaintenanceMode, ReplicationMode, SubheaderMode, generate_random_fake_header};
 use crate::flow::decoy::{HeavyDecoyProvider, NoisyDecoyProvider, SmoothDecoyProvider};
-use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, PL_OFFSET, PN_OFFSET, TAILER_LENGTH};
+use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, PL_OFFSET, PN_OFFSET, TRAILER_LENGTH};
 use crate::settings::keys::*;
 use crate::settings::{Settings, SettingsBuilder};
 use crate::utils::unix_timestamp_ms;
@@ -136,7 +136,7 @@ fn test_schedule_next() {
 
 // === DecoyState::create_decoy_packet tests ===
 
-// Test: create_decoy_packet returns a packet of body + tailer + identity length.
+// Test: create_decoy_packet returns a packet of body + trailer + identity length.
 #[test]
 fn test_create_decoy_packet_size() {
     let settings = make_settings();
@@ -147,10 +147,10 @@ fn test_create_decoy_packet_size() {
     let body_length = 64;
     let packet = state.create_decoy_packet(body_length, false);
 
-    assert_eq!(packet.len(), body_length + TAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH, "packet should be body + tailer + identity length");
+    assert_eq!(packet.len(), body_length + TRAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH, "packet should be body + trailer + identity length");
 }
 
-// Test: create_decoy_packet with zero body returns tailer + identity length.
+// Test: create_decoy_packet with zero body returns trailer + identity length.
 #[test]
 fn test_create_decoy_packet_zero_body() {
     let settings = make_settings();
@@ -159,7 +159,7 @@ fn test_create_decoy_packet_zero_body() {
     state.features.subheader_config = None;
 
     let packet = state.create_decoy_packet(0, false);
-    assert_eq!(packet.len(), TAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
+    assert_eq!(packet.len(), TRAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
 }
 
 // === DecoyState::update tests ===
@@ -527,7 +527,7 @@ fn test_create_replica_packet() {
     let body: Vec<u8> = vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE];
     let packet = state.create_replica_packet(&body, false);
 
-    let expected_len = body.len() + TAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH;
+    let expected_len = body.len() + TRAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH;
     assert_eq!(packet.len(), expected_len, "replica packet should have correct total length");
 
     // Body bytes should be identical.
