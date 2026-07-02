@@ -111,7 +111,7 @@ flowchart LR
         FH["Fake Header: see below (optional)"]
         FB["Fake Body: see below (optional)"]
         EP["Encrypted Payload: data/hs packets (variable length)"]
-        ET["Encrypted Tailor: packet meta-information (fixed length)"]
+        ET["Encrypted Trailer: packet meta-information (fixed length)"]
     end
 ```
 
