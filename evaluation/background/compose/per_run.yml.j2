@@ -1,8 +1,10 @@
 name: typhoon-eval-bg-{{ run_id_dashed }}
 
 volumes:
-  eval_keys: {}
   wg_shared: {}
+{%- for tp in typhoon_profiles %}
+  eval_keys_{{ tp.name }}: {}
+{%- endfor %}
 
 networks:
   net_left:
@@ -21,9 +23,9 @@ services:
   observer:
     image: typhoon-eval-observer
     networks:
-      net_left: 
+      net_left:
         ipv4_address: {{ observer_left_ip }}
-      net_right: 
+      net_right:
         ipv4_address: {{ observer_right_ip }}
     privileged: true
     pid: "host"
@@ -36,46 +38,47 @@ services:
       PROTOCOL: background
       PROTOCOL_SUFFIX: ""
       CAPTURE_FILTER: "{{ capture_filter }}"
-
-  typhoon-server:
+{% for tp in typhoon_profiles %}
+  {{ tp.name }}-typhoon-server:
     image: typhoon-eval-typhoon-server
     networks:
-      net_right: 
-        ipv4_address: {{ typhoon_server_ip }}
+      net_right:
+        ipv4_address: {{ tp.server_ip }}
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun:/dev/net/tun]
     sysctls: [net.ipv6.conf.all.disable_ipv6=1]
-    volumes: [eval_keys:/keys]
+    volumes: [eval_keys_{{ tp.name }}:/keys]
     stop_grace_period: 5s
     environment:
       OBSERVER_GW: {{ observer_right_ip }}
-      CERT_HOST: {{ typhoon_server_ip }}
-{%- for k, v in profile_env.items() %}
+      CERT_HOST: {{ tp.server_ip }}
+{%- for k, v in tp.env.items() %}
       {{ k }}: "{{ v }}"
 {%- endfor %}
     depends_on: [observer]
 
-  typhoon-client:
+  {{ tp.name }}-typhoon-client:
     image: typhoon-eval-typhoon-client
     networks:
-      net_left: 
-        ipv4_address: {{ typhoon_client_ip }}
+      net_left:
+        ipv4_address: {{ tp.client_ip }}
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun:/dev/net/tun]
     sysctls: [net.ipv6.conf.all.disable_ipv6=1]
-    volumes: [eval_keys:/keys]
+    volumes: [eval_keys_{{ tp.name }}:/keys]
     stop_grace_period: 5s
     environment:
       OBSERVER_GW: {{ observer_left_ip }}
-{%- for k, v in profile_env.items() %}
+{%- for k, v in tp.env.items() %}
       {{ k }}: "{{ v }}"
 {%- endfor %}
-    depends_on: [typhoon-server]
+    depends_on: [{{ tp.name }}-typhoon-server]
+{% endfor %}
 {% for gen in generators %}
   {{ gen.name }}-server:
     image: {{ gen.image_prefix }}-server
     networks:
-      net_right: 
+      net_right:
         ipv4_address: {{ gen.server_ip }}
     cap_add: [NET_ADMIN]
     sysctls: [net.ipv6.conf.all.disable_ipv6=1]

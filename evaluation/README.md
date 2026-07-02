@@ -38,7 +38,7 @@ Protocols compared: `raw_udp`, `raw_tcp`, `tls`, `wireguard`, `quic`, `obfs4` (�
 
 ### Part 3 — Background-blending
 
-*Can a passive observer pick TYPHOON out of a realistic UDP traffic mix?* Runs TYPHOON alongside a randomised subset of 8 generators producing common UDP traffic classes (QUIC d/l + u/l, DNS, RTP voice/video, gaming, WireGuard idle, control plane) plus one open-set `unknown` class held out from training. Five ML setups, each modelling a different threat model:
+*Can a passive observer pick TYPHOON out of a realistic UDP traffic mix?* Every corpus run captures all 8 TYPHOON mimicry profiles alongside all 8 generators producing common UDP traffic classes (QUIC d/l + u/l, DNS, RTP voice/video, gaming, WireGuard idle, control plane) plus one open-set `unknown` class held out from training — no per-run sampling, so no profile/class is ever absent from a run its peers are in. Every profile/class contributes exactly one flow per run, except `raw_default`/`tuned_default`: they exercise the protocol's genuine auto-fill flow selection and so may contribute 1–3 flows per run (see `background/corpus.py`'s module docstring). Five ML setups, each modelling a different threat model:
 
 | Test | Threat model | TYPHOON wins when… |
 | --- | --- | --- |
@@ -48,9 +48,13 @@ Protocols compared: `raw_udp`, `raw_tcp`, `tls`, `wireguard`, `quic`, `obfs4` (�
 | **D** Open-set binary | Observer has labels for TYPHOON + a *subset* of background classes; unseen classes + `unknown` held out at test time | high FPR on unseen background and `unknown` |
 | **E** One-class TYPHOON | Observer has only TYPHOON labels (e.g. from a leaked client) | high FPR on `unknown` |
 
+> NB! Tests A/B/D/E/F cross-validate with `GroupKFold`, grouped by corpus run id, instead of Barradas USENIX'18's plain non-grouped `KFold` — a run's flows share one chaos (latency/jitter/loss) draw, so an ungrouped split could train and test on flows from the same run. Tests D/E/F additionally restrict every evaluation bucket (held-out background, unseen classes, `unknown`, per-class breakdown) to the fold's test-run set, so a background flow from a run that fed training is never scored as if it were independently held out.
+> See `background/ml_open_world.py`'s module docstring and each test's own docstring for the full rationale.
+
 ### Part 4 — Rust-level benchmarking
 
-*How fast is the TYPHOON implementation itself?* `cargo bench` roundtrip/handshake timings plus `perf`-based flamegraphs (kept as interactive `.svg` and a static `.pdf` for embedding) for every example binary. Linux only (needs `perf` + `cargo-flamegraph` on the host) — mirrors `.github/workflows/benchmarks.yaml` and auto-skips on non-Linux hosts.
+*How fast is the TYPHOON implementation itself?* `cargo bench` roundtrip/handshake timings plus `perf`-based flamegraphs (kept as interactive `.svg` and a static `.pdf` for embedding) for every example binary.
+Linux only (needs `perf` + `cargo-flamegraph` on the host) — mirrors `.github/workflows/benchmarks.yaml` and auto-skips on non-Linux hosts.
 
 ## Requirements
 
@@ -94,7 +98,7 @@ Useful flags: `--protocol <name>` (single protocol), `--scenario {bulk,interacti
 ### Part 3 — Background-blending (CLI)
 
 ```shell
-poe background-corpus         # randomised corpus (default 70 runs)
+poe background-corpus         # every TYPHOON profile + bg class per run (default 70 runs)
 poe background-blending       # confident-blend fraction (primary metric)
 poe background-openworld      # Tests A–E open-world scores
 poe background-distplot       # per-pair size/IAT distribution overlays

@@ -35,11 +35,11 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 
 from typhoon_eval.shared.pcap_stats import _entropy, _size_entropy
+from typhoon_eval.shared.profiles import HELD_OUT_BG_CLASSES, TYPHOON_CLASS
 
 console = Console()
 
 CONFIDENT_THRESHOLD = 0.9
-TYPHOON_CLASS = "typhoon"
 # Minimum packets per flow required to compute the Barradas feature vector.
 MIN_SAMPLES_FOR_STATS = 2
 
@@ -260,73 +260,96 @@ def _per_flow_features(
     pcap: Path,
     ip_map: dict[str, dict],
     feature_set: str = "stats",
-) -> list[tuple[str, np.ndarray]]:
+) -> list[tuple[str, str, np.ndarray]]:
     """Emit one feature row per wire flow (Barradas USENIX'18 concatenated layout).
 
     A "wire flow" is the 5-tuple as it would be seen by a passive observer:
-    one (client_ip, server_ip, server_port) per class.  Background classes
-    typically expose a single server port and contribute one row per run.
-    TYPHOON exposes up to three server ports (see `eval_server.rs::PORTS`)
-    and the client may open any subset of them, so it contributes 1–3 rows
-    per run — matching what a censor would actually classify.
+    one (client_ip, server_ip, server_port) per ``ip_map`` slot.  Every
+    background class and every mimicry-profile (``as_*``, ``silent_idle``)
+    TYPHOON instance opens exactly one server port per run and so contributes
+    one row per run — the mimicry profiles pin a single randomly-chosen
+    address deliberately (see `eval_client.rs`), matching what a censor would
+    actually classify against those profiles' real-flow targets.
+    ``raw_default``/``tuned_default`` are the exception: they exercise the
+    protocol's genuine auto-fill flow selection (1 to
+    ``eval_server.rs::PORTS`` addresses, each independently randomised) so
+    they can contribute 1–3 rows per run.  Every row still carries the same
+    run id (see ``_load_corpus``), so `GroupKFold` folds never split a run's
+    rows across train/test regardless of how many a given run/class/profile
+    combination produced.
 
-    Server-port discovery is automatic: whichever IP matches the protocol's
-    ``server_ip`` from ``ip_map`` contributes its UDP port number as the
-    flow's discriminator.
+    Server-port discovery is automatic: whichever IP matches a slot's
+    ``server_ip`` in ``ip_map`` contributes its UDP port number as the
+    flow's discriminator.  Returns ``(class_label, typhoon_profile_or_na,
+    feature_vector)`` triples — every non-TYPHOON slot's ``profile`` is
+    ``"n/a"``.
     """
-    ip_to_cls_role: dict[str, tuple[str, str]] = {}
-    for cls, slot in ip_map.items():
-        ip_to_cls_role[slot["client_ip"]] = (cls, "client")
-        ip_to_cls_role[slot["server_ip"]] = (cls, "server")
+    ip_to_slot: dict[str, tuple[str, str, str]] = {}
+    for key, slot in ip_map.items():
+        cls = slot.get("class", key)
+        profile = slot.get("profile", "n/a")
+        ip_to_slot[slot["client_ip"]] = (cls, profile, "client")
+        ip_to_slot[slot["server_ip"]] = (cls, profile, "server")
 
-    timelines: dict[tuple[str, int], list[tuple[float, int, bytes, str]]] = defaultdict(list)
+    timelines: dict[tuple[str, str, int], list[tuple[float, int, bytes, str]]] = defaultdict(list)
     with PcapReader(str(pcap)) as reader:
         for pkt in reader:
             if IP not in pkt or UDP not in pkt:
                 continue
             ip_layer = pkt[IP]
-            src_meta = ip_to_cls_role.get(ip_layer.src)
-            dst_meta = ip_to_cls_role.get(ip_layer.dst)
-            if src_meta is None or dst_meta is None or src_meta[0] != dst_meta[0]:
+            src_meta = ip_to_slot.get(ip_layer.src)
+            dst_meta = ip_to_slot.get(ip_layer.dst)
+            # Compare the full (class, profile) slot identity, not just class —
+            # every TYPHOON mimicry profile shares the "typhoon" class label, so
+            # a class-only check would silently accept (and mis-attribute) a
+            # packet between two *different* concurrently-running TYPHOON
+            # profile instances as belonging to one flow.
+            if src_meta is None or dst_meta is None or src_meta[:2] != dst_meta[:2]:
                 continue
-            cls = src_meta[0]
+            cls, profile, src_role = src_meta
             udp_layer = pkt[UDP]
-            if src_meta[1] == "client" and dst_meta[1] == "server":
+            if src_role == "client" and dst_meta[2] == "server":
                 direction = "c2s"
                 server_port = int(udp_layer.dport)
-            elif src_meta[1] == "server" and dst_meta[1] == "client":
+            elif src_role == "server" and dst_meta[2] == "client":
                 direction = "s2c"
                 server_port = int(udp_layer.sport)
             else:
                 continue
             payload = bytes(udp_layer.payload)
-            timelines[(cls, server_port)].append((float(pkt.time), len(payload), payload, direction))
+            timelines[(cls, profile, server_port)].append((float(pkt.time), len(payload), payload, direction))
 
-    out: list[tuple[str, np.ndarray]] = []
-    for (cls, _port), timeline in timelines.items():
+    out: list[tuple[str, str, np.ndarray]] = []
+    for (cls, profile, _port), timeline in timelines.items():
         # Need ≥ 2 packets total across both directions for the flow to be usable;
         # individual directions may have 0–1 packets and the corresponding blocks
         # land at zero (Barradas-compatible behaviour).
         if len(timeline) < MIN_SAMPLES_FOR_STATS:
             continue
         bursts = _compute_bursts_per_direction([(t, s, d) for t, s, _, d in timeline])
-        out.append((cls, _features_from_flow(timeline, bursts, feature_set)))
+        out.append((cls, profile, _features_from_flow(timeline, bursts, feature_set)))
     return out
 
 
 def _load_corpus(
     corpus_root: Path,
     feature_set: str = "stats",
-) -> tuple[np.ndarray, list[str], list[str], list[Path]]:
+) -> tuple[np.ndarray, list[str], list[str], list[str], list[Path]]:
     """Walk every run dir under *corpus_root* and assemble per-flow features + labels.
 
-    Returns ``(X, class_labels, typhoon_profiles_or_na, skipped_runs)``.  One
-    row per (run × class) flow — Barradas USENIX'18 layout — with the row's
+    Returns ``(X, class_labels, typhoon_profiles_or_na, run_ids, skipped_runs)``.
+    One row per (run × class) flow — Barradas USENIX'18 layout — with the row's
     feature vector encoding the full conversation in *feature_set* format.
+    ``run_ids`` (the ``run_<timestamp>`` directory name) lets callers keep
+    same-run rows out of opposite sides of a cross-validation split — a run's
+    background flows share its chaos (latency/jitter/loss) draw with that
+    run's TYPHOON flow, so splitting them across train/test would leak that
+    shared, class-independent signal.
     """
     feats: list[np.ndarray] = []
     labels: list[str] = []
     profiles: list[str] = []
+    run_ids: list[str] = []
     skipped: list[Path] = []
     for run_dir in sorted(corpus_root.glob("run_*")):
         meta_path = run_dir / "metadata.json"
@@ -335,15 +358,15 @@ def _load_corpus(
             continue
         meta = loads(meta_path.read_text())
         ip_map = meta.get("ip_map", {})
-        typhoon_profile = meta.get("typhoon_profile", "unknown")
         for pcap in run_dir.glob("*.pcap"):
-            for cls, vec in _per_flow_features(pcap, ip_map, feature_set):
+            for cls, profile, vec in _per_flow_features(pcap, ip_map, feature_set):
                 feats.append(vec)
                 labels.append(cls)
-                profiles.append(typhoon_profile if cls == TYPHOON_CLASS else "n/a")
+                profiles.append(profile)
+                run_ids.append(run_dir.name)
     if not feats:
-        return np.empty((0, 0)), [], [], skipped
-    return np.vstack(feats), labels, profiles, skipped
+        return np.empty((0, 0)), [], [], [], skipped
+    return np.vstack(feats), labels, profiles, run_ids, skipped
 
 
 def _per_profile_breakdown(
@@ -393,20 +416,24 @@ def main(corpus_root: str | None, feature_set: str, out_dir: str | None) -> None
     feature_names = get_feature_names(feature_set)
     console.print(f"[dim]Feature set: [bold]{feature_set}[/bold] ({len(feature_names)} features per flow, Barradas USENIX'18 layout)[/dim]")
 
-    X, y, profiles, skipped = _load_corpus(root, feature_set)
+    X, y, profiles, _run_ids, skipped = _load_corpus(root, feature_set)
     if X.size == 0:
         console.print("[yellow]No flows extracted from corpus.[/yellow]")
         exit(1)
 
-    bg_mask = np.array([lbl != TYPHOON_CLASS for lbl in y])
-    typhoon_mask = ~bg_mask
+    bg_mask = np.array([lbl != TYPHOON_CLASS and lbl not in HELD_OUT_BG_CLASSES for lbl in y])
+    typhoon_mask = np.array([lbl == TYPHOON_CLASS for lbl in y])
     if bg_mask.sum() == 0 or typhoon_mask.sum() == 0:
         console.print("[red]Corpus must contain both TYPHOON and background flows.[/red]")
         exit(1)
 
     bg_classes = sorted({lbl for lbl, m in zip(y, bg_mask, strict=True) if m})
     class_to_idx = {c: i for i, c in enumerate(bg_classes)}
-    y_bg_idx_full = np.array([class_to_idx[lbl] for lbl in y if lbl != TYPHOON_CLASS])
+    y_bg_idx_full = np.array([class_to_idx[lbl] for lbl, m in zip(y, bg_mask, strict=True) if m])
+
+    n_held_out = sum(1 for lbl in y if lbl in HELD_OUT_BG_CLASSES)
+    if n_held_out:
+        console.print(f"  [dim]Excluded {n_held_out} held-out-class flows ({', '.join(sorted(HELD_OUT_BG_CLASSES))}) from training.[/dim]")
 
     # Hold out 30% of background flows for a "what does a real natural flow
     # score look like?" baseline.  Without this baseline the TYPHOON confidence
@@ -424,7 +451,10 @@ def main(corpus_root: str | None, feature_set: str, out_dir: str | None) -> None
     X_t  = scaler.transform(X[typhoon_mask])
 
     # Barradas USENIX'18 RF defaults: n_estimators=100, default split criterion.
-    clf = RandomForestClassifier(n_estimators=100, random_state=42)
+    # class_weight="balanced" keeps a bg class with more captured flows (a
+    # corpus-scheduling artefact, not a real signal) from dominating the
+    # decision boundary — matches the convention in ml_open_world.py.
+    clf = RandomForestClassifier(n_estimators=100, random_state=42, class_weight="balanced")
     clf.fit(X_bg_train, y_bg_idx_full[train_idx])
 
     proba = clf.predict_proba(X_t)
