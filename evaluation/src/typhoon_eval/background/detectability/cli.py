@@ -16,11 +16,13 @@ import numpy as np
 from click import Choice, command, option
 from click import Path as ClickPath
 
-from typhoon_eval.background.detectability._common import (
+from typhoon_eval.background.classifiers import (
     CLASSIFIER_LABELS,
-    KFOLD_SPLITS,
     RF_N_ESTIMATORS,
-    _resolve_classifiers,
+    resolve_classifiers,
+)
+from typhoon_eval.background.detectability._common import (
+    KFOLD_SPLITS,
     console,
 )
 from typhoon_eval.background.detectability.closed_world import (
@@ -95,7 +97,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
             exit(1)
         selected_profile, selected_target = parts[0], parts[1]
 
-    classifiers = _resolve_classifiers(classifier_spec)
+    classifiers = resolve_classifiers(classifier_spec)
     feature_names = get_feature_names(feature_set)
     console.print(
         f"[dim]Feature set: [bold]{feature_set}[/bold] ({len(feature_names)} features per flow, "

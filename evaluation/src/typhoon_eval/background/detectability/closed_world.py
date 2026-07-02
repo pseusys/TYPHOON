@@ -19,12 +19,11 @@ from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from typhoon_eval.background.classifiers import RF_N_ESTIMATORS, RF_RANDOM_STATE
 from typhoon_eval.background.detectability._common import (
     KFOLD_SPLITS,
     MIN_CLASSES_FOR_FIT,
     MIN_SAMPLES_PER_CLASS,
-    RF_N_ESTIMATORS,
-    RF_RANDOM_STATE,
     console,
 )
 from typhoon_eval.background.features import TYPHOON_CLASS

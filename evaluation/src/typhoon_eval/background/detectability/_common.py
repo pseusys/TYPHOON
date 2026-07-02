@@ -1,27 +1,19 @@
 """Shared plumbing for the held-out detectability tests (Part 3).
 
-Barradas USENIX'18 classifier factory, threshold metrics, and the small
-JSON / CLI helpers reused across the pair-binary (Test A), closed-world
-(Test B), and open-set (Tests D/E/F) test modules.  Holds no test logic of
-its own — only the pieces every test depends on.
+Cross-validation / threshold-metric helpers reused across the pair-binary
+(Test A), closed-world (Test B), and open-set (Tests D/E/F) test modules.
+Holds no test logic of its own; the Barradas classifier catalogue lives in
+``classifiers.py``.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
-from click import BadParameter
 from rich.console import Console
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.tree import DecisionTreeClassifier
-from xgboost import XGBClassifier
 
 console = Console()
 
 KFOLD_SPLITS = 10                    # Barradas USENIX'18 uses 10-fold non-stratified.
-RF_N_ESTIMATORS = 100                # Barradas defaults: RF n_estimators=100.
-RF_RANDOM_STATE = 42
 MIN_SAMPLES_PER_CLASS = KFOLD_SPLITS  # need ≥ k flows per class to run KFold(k).
 
 # Minimum number of distinct classes required for the multi-class classifier to
@@ -29,37 +21,6 @@ MIN_SAMPLES_PER_CLASS = KFOLD_SPLITS  # need ≥ k flows per class to run KFold(
 # split (Tests D, F).  Below this, the test reports a clean error instead of
 # fitting a degenerate model.
 MIN_CLASSES_FOR_FIT = 2
-
-# Barradas USENIX'18 supervised classifiers — DT / RF / XGBoost.  All three
-# share the same default hyperparameters from MPTAnalysis except for
-# random_state, which we pin to make the evaluation reproducible.
-CLASSIFIER_NAMES: tuple[str, ...] = ("rf", "dt", "xgb")
-CLASSIFIER_LABELS: dict[str, str] = {
-    "rf":  "Random Forest",
-    "dt":  "Decision Tree",
-    "xgb": "XGBoost",
-}
-
-
-def _make_classifier(name: str) -> Any:
-    """Construct a Barradas-default classifier instance (RF / DT / XGBoost)."""
-    if name == "rf":
-        return RandomForestClassifier(
-            n_estimators=RF_N_ESTIMATORS,
-            max_features="sqrt",
-            random_state=RF_RANDOM_STATE,
-            n_jobs=-1,
-        )
-    if name == "dt":
-        return DecisionTreeClassifier(random_state=RF_RANDOM_STATE)
-    if name == "xgb":
-        return XGBClassifier(
-            n_estimators=RF_N_ESTIMATORS,
-            random_state=RF_RANDOM_STATE,
-            verbosity=0,
-            n_jobs=-1,
-        )
-    raise ValueError(f"Unknown classifier: {name!r} (expected one of {CLASSIFIER_NAMES})")
 
 
 def _tpr_at_fpr(scores_pos: np.ndarray, scores_neg: np.ndarray, target_fpr: float) -> tuple[float, float]:
@@ -89,17 +50,6 @@ def _fpr_at_tpr(scores_pos: np.ndarray, scores_neg: np.ndarray, target_tpr: floa
     quantile_idx = max(0, min(quantile_idx, len(sorted_pos) - 1))
     threshold = float(sorted_pos[quantile_idx])
     return float((scores_neg > threshold).sum()) / len(scores_neg)
-
-
-def _resolve_classifiers(spec: str) -> list[str]:
-    """Parse the --classifier flag.  Accepts ``all`` or a comma-separated subset."""
-    if spec == "all":
-        return list(CLASSIFIER_NAMES)
-    names = [c.strip() for c in spec.split(",") if c.strip()]
-    unknown = [c for c in names if c not in CLASSIFIER_NAMES]
-    if unknown:
-        raise BadParameter(f"unknown classifier(s): {', '.join(unknown)}; valid: {', '.join(CLASSIFIER_NAMES)} or 'all'")
-    return names
 
 
 def _ms(mean_std: tuple[float, float] | None) -> dict[str, float] | None:

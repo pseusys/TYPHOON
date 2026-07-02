@@ -22,15 +22,17 @@ from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from typhoon_eval.background.detectability._common import (
+from typhoon_eval.background.classifiers import (
     CLASSIFIER_LABELS,
     CLASSIFIER_NAMES,
-    KFOLD_SPLITS,
-    MIN_SAMPLES_PER_CLASS,
     RF_N_ESTIMATORS,
     RF_RANDOM_STATE,
+    make_classifier,
+)
+from typhoon_eval.background.detectability._common import (
+    KFOLD_SPLITS,
+    MIN_SAMPLES_PER_CLASS,
     _fpr_at_tpr,
-    _make_classifier,
     _tpr_at_fpr,
     console,
 )
@@ -106,7 +108,7 @@ def _run_pair_binary(
     # Class-balance is approximate; the per-fold y can be skewed, but ROC-AUC
     # and threshold-based metrics are robust to mild imbalance.
     scaler = StandardScaler()
-    clf = _make_classifier(classifier_name)
+    clf = make_classifier(classifier_name)
     kfold = KFold(n_splits=KFOLD_SPLITS, shuffle=True, random_state=RF_RANDOM_STATE)
     pipe = Pipeline([("scaler", scaler), ("clf", clf)])
     proba = cross_val_predict(pipe, X_pair, y_pair, cv=kfold, method="predict_proba")[:, 1]
@@ -130,7 +132,7 @@ def _run_pair_binary(
     for train_idx, _ in kfold.split(X_pair, y_pair):
         fold_pipe = Pipeline([
             ("scaler", StandardScaler()),
-            ("clf", _make_classifier(classifier_name)),
+            ("clf", make_classifier(classifier_name)),
         ])
         fold_pipe.fit(X_pair[train_idx], y_pair[train_idx])
         fold_clf = fold_pipe.named_steps["clf"]

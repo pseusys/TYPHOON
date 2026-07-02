@@ -27,10 +27,9 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
 
+from typhoon_eval.background.classifiers import RF_RANDOM_STATE, make_classifier
 from typhoon_eval.background.detectability._common import (
     MIN_CLASSES_FOR_FIT,
-    RF_RANDOM_STATE,
-    _make_classifier,
     _ms,
     console,
 )
@@ -156,7 +155,7 @@ def _run_open_set_binary(
         X_train = X[train_idx]
         y_train = np.array([1.0 if y[i] == TYPHOON_CLASS else 0.0 for i in train_idx])
 
-        clf = _make_classifier(classifier_name)
+        clf = make_classifier(classifier_name)
         pipe = Pipeline([("scaler", StandardScaler()), ("clf", clf)])
         pipe.fit(X_train, y_train)
 
