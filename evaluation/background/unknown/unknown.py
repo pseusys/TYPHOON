@@ -21,7 +21,7 @@ random point in a broad parameter space covering:
 Each parameter is sampled **independently of any TYPHOON profile parameter**,
 so the resulting traffic is statistically broad but adversarially-unbiased
 toward / away from TYPHOON's wire shape — matching the "long tail of
-private / custom / legacy UDP protocols a deployed censor cannot enumerate"
+private / custom / legacy UDP protocols a deployed adversary cannot enumerate"
 threat-model assumption.
 
 Reads only `PROFILE_DURATION_S` and `PROFILE_SEED` from the per-run env so

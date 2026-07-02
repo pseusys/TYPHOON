@@ -31,13 +31,13 @@ OVP_PID=$!
 
 trap 'kill "${OVP_PID}" 2>/dev/null; exit 0' SIGTERM SIGINT
 
-# Wait for VPN tunnel to assign an IP on tun0
+# Wait for the tunnel to assign an IP on tun0
 for i in {1..30}; do
     if ip addr show tun0 2>/dev/null | grep -q "10\.200\.0\."; then break; fi
     sleep 1
 done
 
-# Connect through the VPN tunnel, not the direct path
+# Connect through the tunnel, not the direct path
 SERVER_HOST=10.200.0.1 \
 SERVER_PORT=9000 \
 OBSERVER_GW="" \
