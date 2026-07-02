@@ -16,7 +16,7 @@ evaluation/
 │   ├── shared/            # capture, parse pcaps, common stats
 │   ├── self/              # Part 1
 │   ├── protocols_op/      # Part 2
-│   └── background/        # Part 3 corpus + ML (ml_blending = Test C, ml_open_world = Tests A/B/D/E/F)
+│   └── background/        # Part 3 corpus + ML (features + classifiers shared; ml_blending = Test C, detectability/ = Tests A/B/D/E/F)
 └── results/               # generated pcaps, plots, ML artefacts (gitignored)
 ```
 
@@ -36,13 +36,13 @@ Protocols compared: `raw_udp`, `raw_tcp`, `tls`, `wireguard`, `quic`, `obfs4` (�
 
 ### Part 3 — Background-blending
 
-*Can a passive observer pick TYPHOON out of a realistic UDP traffic mix?* Runs TYPHOON alongside a randomised subset of 8 generators producing common UDP traffic classes (QUIC d/l + u/l, DNS, RTP voice/video, gaming, WireGuard idle, control plane) plus one open-set `unknown` class held out from training. Six ML setups, each modelling a different threat model. Test C is the primary blending metric and lives in [`ml_blending.py`](src/typhoon_eval/background/ml_blending.py); Tests A, B, D, E and F live in [`ml_open_world.py`](src/typhoon_eval/background/ml_open_world.py):
+*Can a passive observer pick TYPHOON out of a realistic UDP traffic mix?* Runs TYPHOON alongside a randomised subset of 8 generators producing common UDP traffic classes (QUIC d/l + u/l, DNS, RTP voice/video, gaming, WireGuard idle, control plane) plus one open-set `unknown` class held out from training. Six ML setups, each modelling a different threat model. Test C is the primary blending metric and lives in [`ml_blending.py`](src/typhoon_eval/background/ml_blending.py); Tests A, B, D, E and F live in the [`detectability/`](src/typhoon_eval/background/detectability/) package (`pair_binary.py` = A, `closed_world.py` = B, `open_set.py` = D/E/F). Both share the feature pipeline in [`features.py`](src/typhoon_eval/background/features.py):
 
 | Test | Threat model | TYPHOON wins when… |
 | --- | --- | --- |
 | **A** Pair-binary | Observer suspects TYPHOON-as-X and trains a binary classifier on real X vs TYPHOON-as-X | AUC near 0.5 |
 | **B** Closed-world | Observer has labels for every class incl. TYPHOON | TYPHOON recall low (often confused with a real class) |
-| **C** Open-world threshold | Observer has labels for background only and flags low-confidence flows | TPR @ 1 % FPR low |
+| **C** Open-world threshold | Observer has labels for background only and flags low-confidence flows; every Barradas classifier (rf/dt/xgb) is evaluated and the adversary-strongest one headlines | TPR @ 1 % FPR low |
 | **D** Open-set binary | Observer has labels for TYPHOON + a *subset* of background classes; unseen classes + `unknown` held out at test time | high FPR on unseen background and `unknown` |
 | **E** One-class TYPHOON | Observer has only TYPHOON labels (e.g. from a leaked client) trained into a one-class SVM, evaluated against pooled background | high FPR on `unknown` |
 | **F** One-class + partial catalogue | Same one-class TYPHOON SVM as E, but the FPR breakdown reuses D's 3-of-7 background hold-out — models a leaked-client observer who also has a *partial* protocol catalogue used post-hoc as a filter; bridges D and E | high FPR on unseen background and `unknown` |
@@ -97,7 +97,7 @@ Useful flags: `--protocol <name>` (single protocol), `--scenario {bulk,interacti
 ```shell
 poe background-corpus         # randomised corpus (default 70 runs)
 poe background-blending       # Test C — confident-blend fraction (primary metric)
-poe background-openworld      # Tests A, B, D, E, F held-out detectability scores
+poe background-detectability  # Tests A, B, D, E, F held-out detectability scores
 poe background-distplot       # per-pair size/IAT distribution overlays
 ```
 
@@ -160,8 +160,8 @@ artifacts/pipeline_<timestamp>/
 ├── self_compare/, use_case_compare/, traffic_compare/  # Part 1 PDFs + JSON
 └── background/                    # Part 3 derived outputs (no PCAPs)
     ├── corpus_metadata/run_*/{metadata,config}.json
-    ├── blending/blending.json     # confident-blend fraction + per-profile breakdown
-    ├── openworld/                 # Tests A, B, D, E, F PDFs + JSON
+    ├── blending/blending.json     # per-classifier blend metrics + headline (adversary-strongest) + per-profile
+    ├── detectability/             # Tests A, B, D, E, F PDFs + JSON
     └── distplot/                  # per-pair size/IAT overlays PDFs + JSON
 ```
 
@@ -197,8 +197,8 @@ Computed separately per direction (`c2s`, `s2c`, `all`). Packet sizes are **tran
 
 ### Part 3 outputs
 
-- `background-blending` prints the **confident-blend fraction** (Test C) — the share of TYPHOON flows the open-world classifier labels as a concrete background class with high confidence. Higher = less distinguishable.
-- `background-openworld` reports per-test scores (Tests A, B, D, E, F above). Each test answers a distinct ML setup; treat them as complementary not redundant.
+- `background-blending` prints the **confident-blend fraction** (Test C) — the share of TYPHOON flows the open-world classifier labels as a concrete background class with high confidence. Higher = less distinguishable. It evaluates every Barradas classifier (`rf`/`dt`/`xgb`) with k-fold out-of-fold scoring and reports them all, headlining the **adversary-strongest** (the one catching the most TYPHOON at the shared ~1 % background false-positive point) — so the reported worst case tracks whichever classifier is best on the data, not a hard-coded one. `--classifier` narrows the set.
+- `background-detectability` reports per-test scores (Tests A, B, D, E, F above). Each test answers a distinct ML setup; treat them as complementary not redundant.
 - `background-distplot` overlays the actual TYPHOON size/IAT distributions on each background class — visual check of where TYPHOON differs.
 
 ## Settings overrides
