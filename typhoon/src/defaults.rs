@@ -8,7 +8,6 @@
 
 use std::future::Future;
 use std::net::SocketAddr;
-use std::str::from_utf8;
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
@@ -22,6 +21,7 @@ use crate::settings::Settings;
 use crate::settings::consts::DEFAULT_TYPHOON_ID_LENGTH;
 pub use crate::trailer::{ClientConnectionHandler, ServerConnectionHandler};
 use crate::trailer::{IdentityType, Trailer};
+use crate::utils::parse_version;
 use crate::utils::random::{SupportRng, get_rng};
 pub use crate::utils::sync::AsyncExecutor;
 
@@ -33,19 +33,6 @@ cfg_if! {
     } else if #[cfg(feature = "async-std")] {
         use async_io::block_on as async_io_block_on;
     }
-}
-
-/// Parse a version byte slice of the form `"major[.minor[.patch[-tag]]]"` into `(major, minor, patch)`.
-/// Bytes after the first null are ignored. Components that cannot be parsed default to `0`.
-fn parse_version(bytes: &[u8]) -> (u64, u64, u64) {
-    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    let s = from_utf8(&bytes[..end]).unwrap_or("").trim();
-    let base = s.split('-').next().unwrap_or(s);
-    let mut parts = base.split('.');
-    let major = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let minor = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let patch = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    (major, minor, patch)
 }
 
 impl IdentityType for StaticByteBuffer {

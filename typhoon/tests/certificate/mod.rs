@@ -10,6 +10,7 @@ use tempfile::NamedTempFile;
 
 #[cfg(any(feature = "full_software", feature = "full_hardware"))]
 use crate::certificate::X25519_BYTES;
+use crate::certificate::utils::FLAVOR_BYTE;
 use crate::certificate::{CertificateError, ClientCertificate, ED25519_BYTES, EPK_BYTES, ESK_BYTES, ServerKeyPair};
 
 impl ClientCertificate {
@@ -32,6 +33,9 @@ impl ClientCertificate {
 fn two_addrs() -> Vec<SocketAddr> {
     vec![SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 19999)), SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 20000, 0, 0))]
 }
+
+/// Header size (bytes): `magic(7) + type(1) + flavor(1) + version(1) + major_version(4) + id_length(2)`.
+const HEADER_LEN: usize = 16;
 
 // ── ServerKeyPair ─────────────────────────────────────────────────────────────
 
@@ -60,12 +64,12 @@ fn test_server_key_pair_file_layout_fast() {
 
     assert_eq!(&bytes[0..7], b"TYPHOON", "magic");
     assert_eq!(bytes[7], b'S', "type byte");
-    assert_eq!(bytes[8], b'F', "mode byte");
+    assert_eq!(bytes[8], FLAVOR_BYTE, "flavor byte");
     assert_eq!(bytes[9], 1, "version byte");
-    assert_eq!(bytes.len(), 10 + EPK_BYTES + ESK_BYTES + ED25519_BYTES + ED25519_BYTES, "file size");
+    assert_eq!(bytes.len(), HEADER_LEN + EPK_BYTES + ESK_BYTES + ED25519_BYTES + ED25519_BYTES, "file size");
 
-    assert_eq!(&bytes[10..10 + EPK_BYTES], kp.epk_bytes(), "EPK bytes");
-    let esk_off = 10 + EPK_BYTES;
+    assert_eq!(&bytes[HEADER_LEN..HEADER_LEN + EPK_BYTES], kp.epk_bytes(), "EPK bytes");
+    let esk_off = HEADER_LEN + EPK_BYTES;
     assert_eq!(&bytes[esk_off..esk_off + ESK_BYTES], kp.esk_bytes(), "ESK bytes");
     let vsk_off = esk_off + ESK_BYTES;
     assert_eq!(&bytes[vsk_off..vsk_off + ED25519_BYTES], kp.vsk_bytes().as_ref(), "VSK bytes");
@@ -84,12 +88,12 @@ fn test_server_key_pair_file_layout_full() {
 
     assert_eq!(&bytes[0..7], b"TYPHOON", "magic");
     assert_eq!(bytes[7], b'S', "type byte");
-    assert_eq!(bytes[8], b'U', "mode byte");
+    assert_eq!(bytes[8], FLAVOR_BYTE, "flavor byte");
     assert_eq!(bytes[9], 1, "version byte");
-    assert_eq!(bytes.len(), 10 + EPK_BYTES + ESK_BYTES + ED25519_BYTES + X25519_BYTES + X25519_BYTES, "file size");
+    assert_eq!(bytes.len(), HEADER_LEN + EPK_BYTES + ESK_BYTES + ED25519_BYTES + X25519_BYTES + X25519_BYTES, "file size");
 
-    assert_eq!(&bytes[10..10 + EPK_BYTES], kp.epk_bytes(), "EPK bytes");
-    let esk_off = 10 + EPK_BYTES;
+    assert_eq!(&bytes[HEADER_LEN..HEADER_LEN + EPK_BYTES], kp.epk_bytes(), "EPK bytes");
+    let esk_off = HEADER_LEN + EPK_BYTES;
     assert_eq!(&bytes[esk_off..esk_off + ESK_BYTES], kp.esk_bytes(), "ESK bytes");
     let vsk_off = esk_off + ESK_BYTES;
     assert_eq!(&bytes[vsk_off..vsk_off + ED25519_BYTES], kp.vsk_bytes().as_ref(), "VSK bytes");
@@ -163,11 +167,11 @@ fn test_client_certificate_file_layout_fast() {
 
     assert_eq!(&bytes[0..7], b"TYPHOON", "magic");
     assert_eq!(bytes[7], b'C', "type byte");
-    assert_eq!(bytes[8], b'F', "mode byte");
+    assert_eq!(bytes[8], FLAVOR_BYTE, "flavor byte");
     assert_eq!(bytes[9], 1, "version byte");
 
-    assert_eq!(&bytes[10..10 + EPK_BYTES], cert.epk_bytes(), "EPK bytes");
-    let vpk_off = 10 + EPK_BYTES;
+    assert_eq!(&bytes[HEADER_LEN..HEADER_LEN + EPK_BYTES], cert.epk_bytes(), "EPK bytes");
+    let vpk_off = HEADER_LEN + EPK_BYTES;
     assert_eq!(&bytes[vpk_off..vpk_off + ED25519_BYTES], cert.vpk_bytes().as_ref(), "VPK bytes");
     let obfs_off = vpk_off + ED25519_BYTES;
     assert_eq!(&bytes[obfs_off..obfs_off + ED25519_BYTES], cert.obfs_bytes(), "OBFS bytes");
@@ -201,11 +205,11 @@ fn test_client_certificate_file_layout_full() {
 
     assert_eq!(&bytes[0..7], b"TYPHOON", "magic");
     assert_eq!(bytes[7], b'C', "type byte");
-    assert_eq!(bytes[8], b'U', "mode byte");
+    assert_eq!(bytes[8], FLAVOR_BYTE, "flavor byte");
     assert_eq!(bytes[9], 1, "version byte");
 
-    assert_eq!(&bytes[10..10 + EPK_BYTES], cert.epk_bytes(), "EPK bytes");
-    let vpk_off = 10 + EPK_BYTES;
+    assert_eq!(&bytes[HEADER_LEN..HEADER_LEN + EPK_BYTES], cert.epk_bytes(), "EPK bytes");
+    let vpk_off = HEADER_LEN + EPK_BYTES;
     assert_eq!(&bytes[vpk_off..vpk_off + ED25519_BYTES], cert.vpk_bytes().as_ref(), "VPK bytes");
     let opk_off = vpk_off + ED25519_BYTES;
     assert_eq!(&bytes[opk_off..opk_off + X25519_BYTES], cert.opk_bytes(), "OPK bytes");
@@ -245,6 +249,47 @@ fn test_client_certificate_unsupported_version() {
 
     let err = ClientCertificate::load(&path).expect_err("should fail");
     assert!(matches!(err, CertificateError::UnsupportedVersion(42)), "expected UnsupportedVersion(42), got {err:?}");
+}
+
+// Test: loading a file written for a different build flavor (cipher mode/backend) returns FlavorMismatch.
+#[test]
+fn test_client_certificate_flavor_mismatch() {
+    let path = NamedTempFile::new().expect("tempfile").into_temp_path();
+    ServerKeyPair::for_tests().to_client_certificate(vec![]).save(&path).expect("save should succeed");
+    let mut bytes = std::fs::read(&path).expect("read file");
+    bytes[8] = bytes[8].wrapping_add(1);
+    std::fs::write(&path, &bytes).expect("write tampered file");
+
+    let err = ClientCertificate::load(&path).expect_err("should fail");
+    assert!(matches!(err, CertificateError::FlavorMismatch), "expected FlavorMismatch, got {err:?}");
+}
+
+// Test: loading a file generated by a different protocol major version returns VersionMismatch.
+#[test]
+fn test_client_certificate_version_mismatch() {
+    let path = NamedTempFile::new().expect("tempfile").into_temp_path();
+    ServerKeyPair::for_tests().to_client_certificate(vec![]).save(&path).expect("save should succeed");
+    let mut bytes = std::fs::read(&path).expect("read file");
+    let tampered = u32::from_be_bytes([bytes[10], bytes[11], bytes[12], bytes[13]]).wrapping_add(1);
+    bytes[10..14].copy_from_slice(&tampered.to_be_bytes());
+    std::fs::write(&path, &bytes).expect("write tampered file");
+
+    let err = ClientCertificate::load(&path).expect_err("should fail");
+    assert!(matches!(err, CertificateError::VersionMismatch { certificate, .. } if certificate == tampered), "expected VersionMismatch, got {err:?}");
+}
+
+// Test: loading a file generated with a different `ID` length returns IdLengthMismatch.
+#[test]
+fn test_client_certificate_id_length_mismatch() {
+    let path = NamedTempFile::new().expect("tempfile").into_temp_path();
+    ServerKeyPair::for_tests().to_client_certificate(vec![]).save(&path).expect("save should succeed");
+    let mut bytes = std::fs::read(&path).expect("read file");
+    let tampered = u16::from_be_bytes([bytes[14], bytes[15]]).wrapping_add(1);
+    bytes[14..16].copy_from_slice(&tampered.to_be_bytes());
+    std::fs::write(&path, &bytes).expect("write tampered file");
+
+    let err = ClientCertificate::load(&path).expect_err("should fail");
+    assert!(matches!(err, CertificateError::IdLengthMismatch { certificate, .. } if certificate == tampered as usize), "expected IdLengthMismatch, got {err:?}");
 }
 
 // Test: two certificates derived from the same key pair contain identical public material.
