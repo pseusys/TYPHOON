@@ -1,27 +1,47 @@
-"""Methodologically-grounded detectability metrics for Part 3.
+"""Held-out detectability metrics for Part 3.
 
-Two tests, both with stratified k-fold cross-validation so reported numbers
-reflect held-out performance, never training-set memorisation:
+Five complementary tests, each modelling a distinct threat model and all
+using k-fold cross-validation so reported numbers reflect held-out
+performance, never training-set memorisation.  Test C (open-world
+confidence-threshold detection) lives in ``ml_blending.py``; the five tests
+implemented here cover the remaining threat models:
 
   * Test A — Pair-binary detection.  For each TYPHOON profile that targets a
     natural class (e.g. ``as_quic_d`` mimics ``quic_download``), train a
-    binary classifier on (TYPHOON-as-X) vs (real-X) flows only, with
-    ``StratifiedKFold(5)``.  Report AUC-ROC and TPR @ 1% FPR aggregated from
-    out-of-fold predictions.  AUC ≈ 0.5 means perfectly indistinguishable;
-    AUC = 1.0 means trivially detected.  This is the threat model from
-    Tschantz et al. S&P 2016: a censor who *suspects* the protocol and
-    trains a pair-specific classifier.
+    binary classifier on (TYPHOON-as-X) vs (real-X) flows only, with 10-fold
+    ``KFold``.  Report AUC-ROC and TPR @ 1% FPR aggregated from out-of-fold
+    predictions, plus the Barradas FPR-@-TPR table.  AUC ≈ 0.5 means
+    perfectly indistinguishable; AUC = 1.0 means trivially detected.  Threat
+    model from Tschantz et al. S&P 2016: an adversary who *suspects* the
+    protocol and trains a pair-specific classifier.  Run once per selected
+    classifier (DT / RF / XGBoost).
 
-  * Test B — Closed-world (n+1)-class.  Train a multi-class classifier on
-    all natural classes plus TYPHOON, with ``StratifiedKFold(5)`` and
+  * Test B — Closed-world (n+1)-class.  Train one multi-class classifier
+    (RF) on all natural classes plus TYPHOON, with 10-fold ``KFold`` and
     ``cross_val_predict`` for clean out-of-fold predictions.  Report
     accuracy, macro-F1, per-class precision/recall/F1, and a confusion
-    matrix.  TYPHOON's recall is the headline: lower means the censor more
-    often mistakes TYPHOON for a natural class.
+    matrix.  TYPHOON's recall is the headline: lower means the adversary
+    more often mistakes TYPHOON for a natural class.
 
-The Test C (open-world unknown-class detection) lives in ``ml_blending.py``
-and remains the realistic-censor metric — a censor without TYPHOON labels
-runs a multi-class classifier and thresholds confidence.
+  * Test D — Open-set binary detection.  Train a TYPHOON-vs-known-background
+    binary classifier on a random subset of the catalogued background
+    classes (3-of-7 held out per fold), then measure FPR separately on
+    training-time classes, on unseen natural classes, and on the synthetic
+    ``unknown`` long-tail bucket.  Models an adversary with a *partial*
+    protocol catalogue.  Run once per selected classifier.
+
+  * Test E — One-class TYPHOON detector.  Train a one-class SVM on TYPHOON
+    flows only (no background labels), calibrate the threshold for a target
+    TYPHOON TPR, and report the same in-distribution / unseen / unknown FPR
+    breakdown.  Models an adversary with leaked TYPHOON samples but no
+    background classification.
+
+  * Test F — One-class OCSVM with 3-of-7 background hold-out.  Same OCSVM
+    training as Test E, but the FPR breakdown reuses Test D's 3-of-7
+    hold-out so the in-distribution / unseen / unknown buckets are directly
+    comparable.  Models a "leaked-client + partial-catalogue" adversary who
+    has TYPHOON labels and uses a partial catalogue as a filter (not as
+    training data), bridging Tests D and E.
 """
 
 from __future__ import annotations
@@ -61,9 +81,9 @@ PAIR_TOP_FEATURES = 5
 LARGE_DELTA = 1.0
 MEDIUM_DELTA = 0.5
 
-# Test A AUC verdict bands — "indistinguishable" if censor cannot tell TYPHOON
-# from real X, "weakly detectable" if censor can find a workable threshold,
-# "strongly detectable" if censor wins outright (AUC ≥ 0.8).
+# Test A AUC verdict bands — "indistinguishable" if the adversary cannot tell
+# TYPHOON from real X, "weakly detectable" if a workable threshold exists,
+# "strongly detectable" if the adversary wins outright (AUC ≥ 0.8).
 AUC_INDISTINGUISHABLE_BELOW = 0.6
 AUC_WEAKLY_DETECTABLE_BELOW = 0.8
 
@@ -92,7 +112,7 @@ MIN_CLASSES_FOR_FIT = 2
 PAIR_SPEC_PARTS = 2
 
 # TPR levels at which we report the matched FPR — matches Barradas USENIX'18,
-# which reports the FPR a censor pays for each target TPR.  A lower FPR at the
+# which reports the FPR an adversary pays for each target TPR.  A lower FPR at the
 # same TPR means a more accurate detector → harder for TYPHOON to hide.
 BARRADAS_TPR_LEVELS: tuple[float, ...] = (0.70, 0.80, 0.90, 0.95)
 
@@ -345,7 +365,7 @@ def _print_pair_binary(
         )
     console.print(summary)
     console.print(
-        "[dim]AUC closer to 0.50 means the censor cannot tell TYPHOON-as-X from real X.  "
+        "[dim]AUC closer to 0.50 means the adversary cannot tell TYPHOON-as-X from real X.  "
         "AUC = 1.0 means the pair is trivially separable.[/dim]\n"
     )
 
@@ -382,7 +402,7 @@ def _print_pair_binary(
     console.print(barradas)
     console.print(
         "[dim]Barradas USENIX'18 metric: at each TPR level (column), the FPR shows the false-positive "
-        "rate the censor pays to capture that fraction of TYPHOON flows.  Higher FPR = harder to "
+        "rate the adversary pays to capture that fraction of TYPHOON flows.  Higher FPR = harder to "
         "detect TYPHOON without flooding alerts.  Green = good blending; red = strongly detectable.[/dim]\n"
     )
 
@@ -492,7 +512,7 @@ def _print_closed_world(result: dict[str, object]) -> None:
     console.print(perclass)
     console.print(
         f"[dim]Headline: TYPHOON recall = {report[TYPHOON_CLASS]['recall']:.1%}.  "
-        f"Lower is better for blending — a censor running this classifier mistakes TYPHOON for a natural class "
+        f"Lower is better for blending — an adversary running this classifier mistakes TYPHOON for a natural class "
         f"{1 - report[TYPHOON_CLASS]['recall']:.0%} of the time.[/dim]\n"
     )
 
@@ -520,7 +540,7 @@ def _print_closed_world(result: dict[str, object]) -> None:
 def _plot_fpr_at_tpr(rows: list[tuple[str, str, str, dict[str, object] | None]], out_path: Path) -> None:
     """Faceted grouped bar chart: one sub-plot per classifier, one group per (profile, target) pair.
 
-    Lower bars (lower FPR) = the censor pays less to catch that TPR fraction →
+    Lower bars (lower FPR) = the adversary pays less to catch that TPR fraction →
     TYPHOON more detectable; higher bars = better blending.  When only one
     classifier was evaluated, falls back to a single panel.
     """
@@ -633,8 +653,8 @@ def _run_open_set_binary(
 
     Cites: Wang & Dyer CCS'15 (binary detection of obfuscated tunnelling
     against background traffic), Barradas USENIX'18 (RF/DT/XGB family),
-    Wu USENIX'23 (real-world censor threat model: exempt known protocols,
-    block unknown-fully-encrypted), Geng TPAMI'20 (open-set evaluation).
+    Wu USENIX'23 (real-world adversary threat model: exempt known protocols,
+    flag unknown-fully-encrypted), Geng TPAMI'20 (open-set evaluation).
     """
 
     typhoon_mask = np.array([c == TYPHOON_CLASS for c in y])
@@ -740,7 +760,7 @@ def _run_one_class_typhoon(
 
     Cites: Ruff ICML'18 (Deep SVDD — same intuition, deep variant; OCSVM
     is the citation-clean baseline), AAE-DSVDD Computer Networks 2023
-    (one-class for VPN/tunnel detection — argues label-free training is
+    (one-class for encrypted-tunnel detection — argues label-free training is
     the right framing when the negative class is unenumerable).
     """
 
@@ -803,14 +823,14 @@ def _run_one_class_open_set(
 
     Same training as Test E (OCSVM on TYPHOON only) but evaluation reuses
     Test D's bg-class hold-out structure: each of the ``C(n_known, k)``
-    bg splits assigns ``k`` catalogued bg classes to the "censor's catalog
-    gap" bucket and the remaining ``n_known - k`` to the "catalog subset"
+    bg splits assigns ``k`` catalogued bg classes to the "catalogue gap"
+    bucket and the remaining ``n_known - k`` to the "catalogue subset"
     bucket.  Since the OCSVM does not train on bg, this hold-out is purely
-    a *post-hoc* labelling of evaluation data — modelling a censor who runs
-    an OCSVM trained on leaked TYPHOON samples *and* has a partial DPI
-    catalog they use as a filter (not training data).
+    a *post-hoc* labelling of evaluation data — modelling an adversary who
+    runs an OCSVM trained on leaked TYPHOON samples *and* has a partial DPI
+    catalogue they use as a filter (not training data).
 
-    Threat model: "leaked-client + partial-catalog censor".  Bridges the
+    Threat model: "leaked-client + partial-catalogue adversary".  Bridges the
     gap between Test D (TYPHOON + bg labels in training) and Test E
     (TYPHOON labels only, no bg classification at evaluation).
     """
@@ -1174,7 +1194,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
     # Same OCSVM training as Test E but the FPR breakdown uses Test D's
     # 3-of-7 bg hold-out so the in_dist / unseen / unknown buckets are
     # directly comparable.  Models a "leaked-client + partial DPI catalog"
-    # censor — has TYPHOON labels via OCSVM, uses a partial catalog as
+    # adversary — has TYPHOON labels via OCSVM, uses a partial catalogue as
     # filter (not training data).
     f_res = _run_one_class_open_set(X, y)
     _print_open_set("Test F — One-class OCSVM with 3-of-7 bg eval hold-out", f_res)

@@ -29,7 +29,7 @@ The following scenarios illustrate the trade-off space:
   enable [fake headers](#fake-header) to match the expected traffic profile of a locally common protocol, and keep decoy traffic at a moderate rate.
   The goal is to appear indistinguishable from permitted traffic rather than to resist deep analysis.
 
-- **High-security / traffic-analysis-resistant** (e.g. communicating under active network surveillance):
+- **High-security / traffic-analysis-resistant** (e.g. communicating under active traffic analysis):
   maximize padding, decoy traffic rates, and fake-header randomization.
   Overhead increases substantially, but the traffic becomes hardest to characterize, correlate, or block.
 
