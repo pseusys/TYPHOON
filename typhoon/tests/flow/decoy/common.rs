@@ -7,7 +7,7 @@ use crate::defaults::DefaultExecutor;
 use crate::flow::decoy::common::{DecoyState, exponential_variance, random_gauss, random_uniform};
 use crate::flow::decoy::features::{MaintenanceMode, ReplicationMode, SubheaderMode, generate_random_fake_header};
 use crate::flow::decoy::{HeavyDecoyProvider, NoisyDecoyProvider, SmoothDecoyProvider};
-use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, TAILER_LENGTH};
+use crate::settings::consts::{DEFAULT_TYPHOON_ID_LENGTH, PL_OFFSET, PN_OFFSET, TAILER_LENGTH};
 use crate::settings::keys::*;
 use crate::settings::{Settings, SettingsBuilder};
 use crate::utils::unix_timestamp_ms;
@@ -444,12 +444,18 @@ fn test_seeded_packet_is_deterministic() {
         state.features.subheader_config = Some(generate_random_fake_header(&settings, sh_min, sh_max));
         let packet = state.create_decoy_packet(64, false);
         clear_test_rng();
-        packet.as_ref().to_vec()
+        let mut bytes = packet.as_ref().to_vec();
+        // PN embeds the real wall-clock timestamp (see `next_packet_number`), which the seeded
+        // RNG does not control, so it can differ by a second between the two calls below. Mask
+        // it out before comparing the rest of the packet for determinism.
+        let tailer_start = bytes.len() - (TAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
+        bytes[tailer_start + PN_OFFSET..tailer_start + PL_OFFSET].fill(0);
+        bytes
     };
 
     let first = make_packet(42);
     let second = make_packet(42);
-    assert_eq!(first, second, "same seed should produce identical packet bytes");
+    assert_eq!(first, second, "same seed should produce identical packet bytes (excluding the real-time PN field)");
 }
 
 // Test: create_decoy_packet with different seeds produces different bytes.
@@ -493,13 +499,19 @@ fn test_seeded_packet_snapshot() {
         state.features.subheader_config = Some(generate_random_fake_header(&settings, sh_min, sh_max));
         let packet = state.create_decoy_packet(16, false);
         clear_test_rng();
-        packet.as_ref().to_vec()
+        let mut bytes = packet.as_ref().to_vec();
+        // PN embeds the real wall-clock timestamp (see `next_packet_number`), which the seeded
+        // RNG does not control, so it can differ by a second between the two calls below. Mask
+        // it out before comparing the rest of the packet for determinism.
+        let tailer_start = bytes.len() - (TAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
+        bytes[tailer_start + PN_OFFSET..tailer_start + PL_OFFSET].fill(0);
+        bytes
     };
 
     // Build snapshot on first run, then assert second run is identical.
     let snapshot = make_packet(1337);
     let replay = make_packet(1337);
-    assert_eq!(snapshot, replay, "snapshot must be reproducible across runs");
+    assert_eq!(snapshot, replay, "snapshot must be reproducible across runs (excluding the real-time PN field)");
 }
 
 // === create_replica_packet tests ===
