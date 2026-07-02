@@ -37,7 +37,7 @@ from rich.console import Console
 from scapy.layers.inet import IP, UDP
 from scapy.utils import PcapReader
 
-from typhoon_eval.background.ml_blending import (
+from typhoon_eval.background.features import (
     BARRADAS_HIST_BIN_WIDTH,
     BARRADAS_HIST_MAX,
     BARRADAS_HIST_N_BINS,
@@ -50,7 +50,7 @@ from typhoon_eval.shared.pcap_stats import _entropy
 
 console = Console()
 
-# (TYPHOON profile, target natural class) — same mapping as ml_open_world Test A.
+# (TYPHOON profile, target natural class) — same mapping as detectability Test A.
 # The `raw_default` / `tuned_default` ↔ `unknown` pairs are intentional: both
 # profiles use pure FlowConfig::random and broad per-packet randomization, while
 # `unknown` samples the long-tail UDP feature space broadly — neither tries to
@@ -76,7 +76,7 @@ IAT_BINS = 80
 # squash the bulk of the distribution into one bin.
 IAT_AXIS_PCTILE = 99
 # First N packets per flow used for payload-entropy calculation — matches
-# Barradas USENIX'18 (and our ml_blending `_features_stats`).
+# Barradas USENIX'18 (and our features `_features_stats`).
 PAYLOAD_ENTROPY_WINDOW = 200
 # Minimum packets per flow required to compute IATs, percentiles, or burst stats.
 MIN_SAMPLES_FOR_STATS = 2
@@ -248,7 +248,7 @@ def _burst_per_flow(
     Returns ``{direction: {"pkts": [flow0_pkts, flow1_pkts, …], "bytes": [...]}}``
     so downstream macro-averaging can treat each flow as a single sample.
 
-    ``_compute_bursts_per_direction`` lives in ``ml_blending`` and still takes
+    ``_compute_bursts_per_direction`` lives in ``features`` and still takes
     ``list[(ts, size, direction_str)]``, so we materialise that representation
     one flow at a time — bounded scope, no corpus-wide memory blow-up.
     """

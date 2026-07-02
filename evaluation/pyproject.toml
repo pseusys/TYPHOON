@@ -51,8 +51,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"src/typhoon_eval/background/features.py"      = ["N806", "N803"]   # sklearn X / X_train convention
 "src/typhoon_eval/background/ml_blending.py"   = ["N806", "N803"]   # sklearn X / X_train convention
-"src/typhoon_eval/background/ml_open_world.py" = ["N806", "N803"]   # sklearn X / X_train convention
+"src/typhoon_eval/background/detectability/*.py" = ["N806", "N803"] # sklearn X / X_train convention
 "protocols/common/_profile.py"                 = ["ANN001"]         # script entrypoint
 "protocols/common/*sender.py"                  = ["ANN001"]         # script entrypoint
 "protocols/common/*sink.py"                    = ["ANN001"]         # script entrypoint (signal handlers)
@@ -122,9 +123,9 @@ numpy                = "np"
   cmd  = "python -m typhoon_eval.background.ml_blending"
   help = "Compute primary blending metric (confident-blend fraction) from corpus"
 
-  [tool.poe.tasks.background-openworld]
-  cmd  = "python -m typhoon_eval.background.ml_open_world"
-  help = "Held-out detectability — Test A (pair-binary AUC) + Test B (closed-world n+1, k-fold CV)"
+  [tool.poe.tasks.background-detectability]
+  cmd  = "python -m typhoon_eval.background.detectability"
+  help = "Held-out detectability — Test A (pair-binary) + B (closed-world n+1) + D/E/F (open-set), k-fold CV"
 
   [tool.poe.tasks.background-distplot]
   cmd  = "python -m typhoon_eval.background.dist_plot"

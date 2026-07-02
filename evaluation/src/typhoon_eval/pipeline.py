@@ -5,7 +5,7 @@
   3. analyze     — pcap statistics per capture run
   4. visualize   — protocol comparison and flow plots
   5. typhoon     — TYPHOON intrinsic comparisons (self, use-case, traffic)
-  6. background  — Part 3 corpus + blending + open-world + dist plots
+  6. background  — Part 3 corpus + blending + detectability + dist plots
   7. benchmark   — cargo bench + example flamegraphs (Linux only, auto-skipped elsewhere)
   8. report      — aggregate everything into artifacts/<pipeline_id>/report.md
 
@@ -35,9 +35,9 @@ from rich.console import Console
 from rich.rule import Rule
 
 from typhoon_eval.background.corpus import main as _bg_corpus_main
+from typhoon_eval.background.detectability.cli import main as _bg_detectability_main
 from typhoon_eval.background.dist_plot import main as _bg_distplot_main
 from typhoon_eval.background.ml_blending import main as _bg_blending_main
-from typhoon_eval.background.ml_open_world import main as _bg_openworld_main
 from typhoon_eval.benchmark import main as _benchmark_main
 from typhoon_eval.protocols_op.proto_compare_plots import main as _proto_compare_main
 from typhoon_eval.self.self_compare import main as _self_compare_main
@@ -302,7 +302,7 @@ def _phase_background(
                 copy2(src, dst)
 
     blending_dir = bg_dir / "blending"
-    openworld_dir = bg_dir / "openworld"
+    detectability_dir = bg_dir / "detectability"
     distplot_dir = bg_dir / "distplot"
 
     console.print(f"\n  [cyan]background-blending[/cyan] → {blending_dir}")
@@ -314,15 +314,15 @@ def _phase_background(
     ):
         generated.extend(blending_dir.glob("*.json"))
 
-    console.print(f"\n  [cyan]background-openworld[/cyan] → {openworld_dir}")
+    console.print(f"\n  [cyan]background-detectability[/cyan] → {detectability_dir}")
     if _invoke(
-        "bg-openworld",
-        _bg_openworld_main,
-        ["--corpus-root", str(corpus_pcap_root), "--out-dir", str(openworld_dir)],
+        "bg-detectability",
+        _bg_detectability_main,
+        ["--corpus-root", str(corpus_pcap_root), "--out-dir", str(detectability_dir)],
         log_path,
     ):
-        generated.extend(openworld_dir.glob("*.pdf"))
-        generated.extend(openworld_dir.glob("*.json"))
+        generated.extend(detectability_dir.glob("*.pdf"))
+        generated.extend(detectability_dir.glob("*.json"))
 
     console.print(f"\n  [cyan]background-distplot[/cyan] → {distplot_dir}")
     if _invoke(
@@ -480,7 +480,7 @@ def _generate_report(
         "poe background-build",
         "poe background-corpus",
         "poe background-blending",
-        "poe background-openworld",
+        "poe background-detectability",
         "poe background-distplot",
         "poe benchmark",
         "```",
