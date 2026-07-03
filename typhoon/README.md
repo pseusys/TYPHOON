@@ -5,7 +5,7 @@
 An obfuscated UDP transport protocol designed to be statistically indistinguishable from generic network traffic.
 Every wire packet is made up of an optional fake body, an optional fake header, an encrypted payload, and an encrypted trailer; a flow-layer decoy stream injects pure-random packets to mask timing and volume patterns even when no real data is in flight.
 
-Unlike most UDP-based VPN protocols (WireGuard, OpenVPN, QUIC), a TYPHOON session is not pinned to a single UDP 4-tuple.
+Unlike most UDP-based tunnelling protocols (WireGuard, OpenVPN, QUIC), a TYPHOON session is not pinned to a single UDP 4-tuple.
 Each side splits into a session manager (state, encryption) and one or more flow managers, each owning its own UDP socket — a client can spread one session's traffic across several server "proxy" addresses/ports, and a server flow manager can be reused across many client sessions.
 Real packets are routed across whichever flows are configured, and each flow runs its own independent decoy stream, so the session's wire footprint is not a single fixed flow's worth of traffic.
 
@@ -93,7 +93,7 @@ let settings = Arc::new(
 
 ## Design choices
 
-- **One session, many flows**: a `ClientSocket`/`Listener` can fan a single session out across multiple flow managers — each with its own UDP port and, optionally, its own IP address — selected per-packet rather than pinned for the session's lifetime. Most UDP VPN protocols bind a session to one fixed 4-tuple; spreading traffic (and each flow's independent decoy stream) across several makes the per-session footprint inherently harder to characterize as a single flow. See [Architecture](https://github.com/pseusys/TYPHOON/blob/main/PROTOCOL.md#architecture) for the full diagram.
+- **One session, many flows**: a `ClientSocket`/`Listener` can fan a single session out across multiple flow managers — each with its own UDP port and, optionally, its own IP address — selected per-packet rather than pinned for the session's lifetime. Most UDP tunnelling protocols bind a session to one fixed 4-tuple; spreading traffic (and each flow's independent decoy stream) across several makes the per-session footprint inherently harder to characterize as a single flow. See [Architecture](https://github.com/pseusys/TYPHOON/blob/main/PROTOCOL.md#architecture) for the full diagram.
 - **Runtime agnostic**: async primitives are abstracted behind `AsyncExecutor` and the wrappers in `utils/sync.rs`; switching between `tokio` (multi-threaded flavor) and `async-std` is a feature flag, not a code change.
 - **Zero-copy by design**: payload bytes travel as views over pooled `ByteBuffer`s from allocation to the UDP socket; copies are introduced only at system boundaries (user API and OS socket calls).
 - **Lock-free hot paths**: per-packet paths use `CachedMap` snapshots (wait-free reads) and `AtomicBitSet` for active-flow tracking; `Mutex`/`RwLock` is confined to session lifecycle operations (handshake, teardown).
