@@ -46,26 +46,16 @@ from typhoon_eval.background.ml_blending import (
     TYPHOON_CLASS,
     _compute_bursts_per_direction,
 )
+
+# (TYPHOON profile, target natural class) mapping — imported rather than
+# redefined so this module's plots always compare the same pair Test A
+# actually trains on.  A previously-duplicated copy of this dict had drifted
+# (`silent_idle` pointed at `dns` here vs. `wireguard_idle` in Test A),
+# silently comparing distributions against the wrong natural class.
+from typhoon_eval.background.ml_open_world import PROFILE_TARGET_CLASS
 from typhoon_eval.shared.pcap_stats import _entropy
 
 console = Console()
-
-# (TYPHOON profile, target natural class) — same mapping as ml_open_world Test A.
-# The `raw_default` / `tuned_default` ↔ `unknown` pairs are intentional: both
-# profiles use pure FlowConfig::random and broad per-packet randomization, while
-# `unknown` samples the long-tail UDP feature space broadly — neither tries to
-# mimic any specific natural class.  `tuned_default` additionally exercises the
-# blending-oriented settings (jitter / fallthrough / decoy rates).
-PROFILE_TARGET_CLASS: dict[str, str] = {
-    "as_quic_d":       "quic_download",
-    "as_quic_u":       "quic_upload",
-    "as_video":        "rtp_video",
-    "as_video_bursty": "rtp_video",
-    "as_voice":        "rtp_voice",
-    "silent_idle":     "dns",
-    "raw_default":     "unknown",
-    "tuned_default":   "unknown",
-}
 
 # Number of packets per flow to plot in the packet-index diagnostic.
 POSITION_PLOT_PACKETS = 200
@@ -112,11 +102,9 @@ def _load_corpus_packets(
       memory on large corpora for zero plotting benefit.
     * ``per_flow[(class_key, direction)] = [FlowRec, ...]`` — list of one
       ``FlowRec = (times_s, sizes_B)`` per wire flow.  Each pair of NumPy
-      arrays describes one (run, server_port, direction) flow.  TYPHOON's
-      1–3 flows per measurement appear as 1–3 separate entries here,
-      matching what a passive observer would see in production.  Used by
-      the macro-averaging dist-plot helpers and the packet-index
-      diagnostic.
+      arrays describes one (run, server_port, direction) flow, matching
+      what a passive observer would see in production.  Used by the
+      macro-averaging dist-plot helpers and the packet-index diagnostic.
     * ``per_flow_combined[class_key] = [CombinedRec, ...]`` — list of
       ``CombinedRec = (times_s, sizes_B, dir_ids)`` per wire flow, with
       both directions interleaved and sorted by timestamp.  Used for
@@ -125,12 +113,15 @@ def _load_corpus_packets(
       — one Shannon-entropy value per wire flow per direction.
 
     Server-port discovery is automatic: for each packet, whichever side
-    matches the protocol's ``server_ip`` from ``ip_map`` contributes its
-    UDP port number as the flow's server-port discriminator.  Background
-    classes typically expose one server port and contribute one flow per
-    run; TYPHOON exposes up to three (``eval_server.rs::PORTS``) and the
-    client may open any subset of them, so it contributes 1–3 flows per
-    run uniformly.
+    matches a slot's ``server_ip`` in ``ip_map`` contributes its UDP port
+    number as the flow's server-port discriminator.  Every slot — each
+    background class and each concurrently-running TYPHOON profile
+    instance — normally exposes one server port per run and so contributes
+    one flow per run uniformly.  ``raw_default``/``tuned_default`` are the
+    exception: they exercise the protocol's genuine auto-fill flow selection
+    (1 to ``eval_server.rs::PORTS`` addresses, each independently
+    randomised — see `eval_client.rs`), so a single run of either profile
+    may contribute 1–3 flows here.
     """
 
     n_packets_by_pair: dict[tuple[str, str], int] = defaultdict(int)
@@ -148,12 +139,14 @@ def _load_corpus_packets(
             continue
         meta = loads(meta_path.read_text())
         ip_map = meta.get("ip_map", {})
-        typhoon_profile = meta.get("typhoon_profile", "unknown")
         # Map every IP in the slot table to (class_key, role) so we can
         # classify each captured packet's direction without an explicit pair.
+        # TYPHOON slots get a per-profile display key so its 8 concurrently
+        # running profiles don't collapse into one "typhoon" bucket.
         ip_to_key_role: dict[str, tuple[str, str]] = {}
-        for cls, slot in ip_map.items():
-            key = f"typhoon::{typhoon_profile}" if cls == TYPHOON_CLASS else cls
+        for map_key, slot in ip_map.items():
+            cls = slot.get("class", map_key)
+            key = f"typhoon::{slot['profile']}" if cls == TYPHOON_CLASS else cls
             ip_to_key_role[slot["client_ip"]] = (key, "client")
             ip_to_key_role[slot["server_ip"]] = (key, "server")
 
