@@ -1,7 +1,8 @@
 """Test B — closed-world (n+1)-class classifier.
 
 Train one multi-class Random Forest on every natural class plus TYPHOON,
-with 10-fold ``KFold`` and ``cross_val_predict`` for clean out-of-fold
+with 10-fold ``GroupKFold`` (grouped by corpus run id — see ``cli.py``'s
+module docstring) and ``cross_val_predict`` for clean out-of-fold
 predictions.  Reports accuracy, macro-F1, per-class precision/recall/F1, and
 a confusion matrix.  TYPHOON's recall is the headline: lower means the
 adversary more often mistakes TYPHOON for a natural class.  A strictly
@@ -15,7 +16,7 @@ import numpy as np
 from rich.table import Table
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.model_selection import KFold, cross_val_predict
+from sklearn.model_selection import GroupKFold, cross_val_predict
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -23,14 +24,15 @@ from typhoon_eval.background.classifiers import RF_N_ESTIMATORS, RF_RANDOM_STATE
 from typhoon_eval.background.detectability._common import (
     KFOLD_SPLITS,
     MIN_CLASSES_FOR_FIT,
+    MIN_GROUPS_FOR_KFOLD,
     MIN_SAMPLES_PER_CLASS,
     console,
 )
 from typhoon_eval.background.features import TYPHOON_CLASS
 
 
-def _run_closed_world(X: np.ndarray, y: list[str]) -> dict[str, object]:
-    """Barradas-style closed-world (n+1)-class classifier: 10-fold KFold."""
+def _run_closed_world(X: np.ndarray, y: list[str], groups: np.ndarray) -> dict[str, object]:
+    """Barradas-style closed-world (n+1)-class classifier: 10-fold GroupKFold, grouped by run id."""
 
     classes = sorted(set(y))
     cls_to_idx = {c: i for i, c in enumerate(classes)}
@@ -43,6 +45,9 @@ def _run_closed_world(X: np.ndarray, y: list[str]) -> dict[str, object]:
     keep_mask = np.array([c in keep_classes for c in y])
     X_k = X[keep_mask]
     y_k = [c for c, m in zip(y, keep_mask, strict=True) if m]
+    groups_k = groups[keep_mask]
+    if len(np.unique(groups_k)) < MIN_GROUPS_FOR_KFOLD:
+        return {"error": "insufficient distinct corpus runs for k-fold"}
     classes_k = sorted(keep_classes)
     cls_to_idx_k = {c: i for i, c in enumerate(classes_k)}
     y_k_idx = np.array([cls_to_idx_k[c] for c in y_k])
@@ -50,9 +55,9 @@ def _run_closed_world(X: np.ndarray, y: list[str]) -> dict[str, object]:
     scaler = StandardScaler()
     rf = RandomForestClassifier(n_estimators=RF_N_ESTIMATORS, random_state=RF_RANDOM_STATE, class_weight="balanced")
     pipe = Pipeline([("scaler", scaler), ("rf", rf)])
-    # 10-fold non-stratified CV — matches Barradas USENIX'18.
-    kfold = KFold(n_splits=KFOLD_SPLITS, shuffle=True, random_state=RF_RANDOM_STATE)
-    pred_idx = cross_val_predict(pipe, X_k, y_k_idx, cv=kfold)
+    # 10-fold GroupKFold, grouped by corpus run id — see cli.py's module docstring.
+    kfold = GroupKFold(n_splits=KFOLD_SPLITS)
+    pred_idx = cross_val_predict(pipe, X_k, y_k_idx, groups=groups_k, cv=kfold)
 
     report = classification_report(y_k_idx, pred_idx, target_names=classes_k, output_dict=True, zero_division=0)
     cm = confusion_matrix(y_k_idx, pred_idx, labels=list(range(len(classes_k))))
@@ -109,7 +114,7 @@ def _print_closed_world(result: dict[str, object]) -> None:
     cm: np.ndarray = result["confusion_matrix"]   # type: ignore[assignment]
     skipped: list[str] = result["skipped_classes"]   # type: ignore[assignment]
 
-    console.print(f"[bold]Test B — closed-world ({len(classes)}-class classifier, {KFOLD_SPLITS}-fold CV)[/bold]")
+    console.print(f"[bold]Test B — closed-world ({len(classes)}-class classifier, {KFOLD_SPLITS}-fold GroupKFold CV)[/bold]")
     console.print(f"  Accuracy: [bold]{report['accuracy']:.3f}[/bold]   "
                   f"Macro-F1: [bold]{report['macro avg']['f1-score']:.3f}[/bold]")
     if skipped:

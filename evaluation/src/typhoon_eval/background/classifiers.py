@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 from click import BadParameter
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.utils.class_weight import compute_sample_weight
 from xgboost import XGBClassifier
 
 RF_N_ESTIMATORS = 100                # Barradas defaults: RF n_estimators=100.
@@ -30,16 +32,24 @@ CLASSIFIER_LABELS: dict[str, str] = {
 
 
 def make_classifier(name: str) -> Any:
-    """Construct a Barradas-default classifier instance (RF / DT / XGBoost)."""
+    """Construct a Barradas-default classifier instance (RF / DT / XGBoost).
+
+    RF/DT use ``class_weight="balanced"`` (matching Test B's convention) so a
+    class with more captured flows — a corpus artefact of run scheduling, not
+    a real signal — doesn't dominate the trained decision boundary.  XGBoost
+    has no equivalent constructor option; callers weight it instead via
+    ``balanced_sample_weight_params`` and a ``clf__sample_weight`` fit param.
+    """
     if name == "rf":
         return RandomForestClassifier(
             n_estimators=RF_N_ESTIMATORS,
             max_features="sqrt",
             random_state=RF_RANDOM_STATE,
+            class_weight="balanced",
             n_jobs=-1,
         )
     if name == "dt":
-        return DecisionTreeClassifier(random_state=RF_RANDOM_STATE)
+        return DecisionTreeClassifier(random_state=RF_RANDOM_STATE, class_weight="balanced")
     if name == "xgb":
         return XGBClassifier(
             n_estimators=RF_N_ESTIMATORS,
@@ -48,6 +58,16 @@ def make_classifier(name: str) -> Any:
             n_jobs=-1,
         )
     raise ValueError(f"Unknown classifier: {name!r} (expected one of {CLASSIFIER_NAMES})")
+
+
+def balanced_sample_weight_params(classifier_name: str, y: np.ndarray) -> dict[str, np.ndarray]:
+    """``clf__sample_weight`` fit param giving XGBoost the same class balancing RF/DT get via
+    ``class_weight="balanced"``.  Empty for RF/DT — weighting them again on top of their own
+    ``class_weight`` would double-apply the correction.
+    """
+    if classifier_name != "xgb":
+        return {}
+    return {"clf__sample_weight": compute_sample_weight("balanced", y)}
 
 
 def resolve_classifiers(spec: str) -> list[str]:

@@ -234,13 +234,28 @@ PROFILES: Final[dict[str, Profile]] = {
 # Default profile when nothing is specified.
 DEFAULT_PROFILE: Final[str] = "bulk_upload"
 
+# Profiles eligible for the Part 3 background-blending corpus schedule.
+# `bulk_upload` is Part 2's operational-comparison default: it has no
+# `PROFILE_TARGET_CLASS` mimicry target, a degenerate (non-randomized)
+# bytes_c2s/duration_s budget, and no s2c traffic, so pooling it with the
+# camouflage profiles would dilute what Part 3's classifiers actually measure.
+PART3_PROFILES: Final[tuple[str, ...]] = tuple(name for name in PROFILES if name != "bulk_upload")
+
+# Class label TYPHOON flows carry throughout Part 3 (corpus `ip_map`, ML
+# feature labels, HELD_OUT_BG_CLASSES comparisons) — single source of truth
+# so `background/corpus.py`, `background/ml_blending.py`, and
+# `background/dist_plot.py` don't each define their own copy.
+TYPHOON_CLASS: Final[str] = "typhoon"
+
 
 # ── Per-service IP allocation (Part 3) ───────────────────────────────────────
 
-# Each service slot occupies one IP on each `/24`.  Slot 0 is TYPHOON; slots
-# 1..8 are background generators.  The corpus orchestrator writes the active
-# slot map into per-run metadata.json so the ML labeller can map flows back
-# to source classes by (src_ip, dst_ip).
+# Each service slot occupies one IP on each `/24`.  Every corpus run now
+# instantiates every slot below simultaneously (all `PART3_PROFILES` TYPHOON
+# instances + all `BACKGROUND_PROFILES` classes) — see `background/corpus.py`.
+# The corpus orchestrator writes the active slot map into per-run
+# metadata.json so the ML labeller can map flows back to source classes by
+# (src_ip, dst_ip).
 
 NET_LEFT_PREFIX: Final[str]  = "172.20.0."
 NET_RIGHT_PREFIX: Final[str] = "172.21.0."
@@ -264,8 +279,11 @@ class ServiceSlot:
         return NET_RIGHT_PREFIX + str(self.suffix)
 
 
+# Background-class slots (suffixes 11-19) plus one slot per `PART3_PROFILES`
+# TYPHOON mimicry profile (suffixes 20-27) — each profile gets its own
+# dedicated client/server pair + IP so all 8 can run concurrently within one
+# corpus run without colliding, mirroring the background generators.
 SERVICE_SLOTS: Final[dict[str, ServiceSlot]] = {
-    "typhoon":       ServiceSlot("typhoon",       10),
     "quic_download": ServiceSlot("quic_download", 11),
     "quic_upload":   ServiceSlot("quic_upload",   12),
     "dns":           ServiceSlot("dns",           13),
@@ -275,6 +293,7 @@ SERVICE_SLOTS: Final[dict[str, ServiceSlot]] = {
     "wireguard_idle":ServiceSlot("wireguard_idle",17),
     "control_plane": ServiceSlot("control_plane", 18),
     "unknown":       ServiceSlot("unknown",       19),
+    **{name: ServiceSlot(name, 20 + i) for i, name in enumerate(PART3_PROFILES)},
 }
 
 # Slots that model the long-tail "private / custom / legacy UDP" protocols an
@@ -282,22 +301,6 @@ SERVICE_SLOTS: Final[dict[str, ServiceSlot]] = {
 # in any open-set classifier's training set — they exist solely to populate
 # the held-out unknown-class evaluation bucket (see detectability Tests D/E/F).
 HELD_OUT_BG_CLASSES: Final[frozenset[str]] = frozenset({"unknown"})
-
-
-# Per-class sampling weights for the corpus orchestrator (uniform inclusion
-# probability after R6 — kept here as a single source if we ever want
-# weighting).  Currently uniform; see `background/corpus.py:_sample_generators`.
-GENERATOR_WEIGHTS: Final[dict[str, float]] = {
-    "quic_download":  1.0,
-    "quic_upload":    1.0,
-    "dns":            1.0,
-    "rtp_voice":      1.0,
-    "rtp_video":      1.0,
-    "gaming":         1.0,
-    "wireguard_idle": 1.0,
-    "control_plane":  1.0,
-    "unknown":        1.0,
-}
 
 
 # ── Background-class natural parameter profiles ──────────────────────────────

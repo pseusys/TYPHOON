@@ -2,7 +2,9 @@
 
 Closed two-class detection: for each TYPHOON profile that mimics a natural
 class (e.g. ``as_quic_d`` → ``quic_download``), train a binary classifier on
-(TYPHOON-as-X) vs (real-X) flows only, with 10-fold ``KFold``.  Reports
+(TYPHOON-as-X) vs (real-X) flows only, with 10-fold ``GroupKFold``, grouped
+by corpus run id (see ``cli.py``'s module docstring for why plain non-grouped
+KFold would leak a run's shared chaos draw across train/test).  Reports
 AUC-ROC, TPR @ 1% FPR, and the Barradas FPR-@-TPR table from out-of-fold
 predictions, plus per-pair feature-importance diagnostics.  AUC ≈ 0.5 means
 indistinguishable; AUC = 1.0 means trivially detected.  Threat model:
@@ -18,7 +20,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from rich.table import Table
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import KFold, cross_val_predict
+from sklearn.model_selection import GroupKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -26,11 +28,12 @@ from typhoon_eval.background.classifiers import (
     CLASSIFIER_LABELS,
     CLASSIFIER_NAMES,
     RF_N_ESTIMATORS,
-    RF_RANDOM_STATE,
+    balanced_sample_weight_params,
     make_classifier,
 )
 from typhoon_eval.background.detectability._common import (
     KFOLD_SPLITS,
+    MIN_GROUPS_FOR_KFOLD,
     MIN_SAMPLES_PER_CLASS,
     _fpr_at_tpr,
     _tpr_at_fpr,
@@ -81,9 +84,10 @@ def _run_pair_binary(
     X: np.ndarray,
     y: list[str],
     profiles: list[str],
+    groups: np.ndarray,
     classifier_name: str = "rf",
 ) -> dict[str, object] | None:
-    """Barradas USENIX'18 pair-binary test: 10-fold KFold, AUC + FPR @ TPR thresholds.
+    """Barradas USENIX'18 pair-binary test: 10-fold GroupKFold, AUC + FPR @ TPR thresholds.
 
     AUC and the FPR-at-TPR table come from out-of-fold predictions (no
     leakage).  Feature importance is averaged across the per-fold models — the
@@ -92,6 +96,8 @@ def _run_pair_binary(
     computed in z-space against a scaler fit on the pooled pair.
 
     *classifier_name* selects DT / RF / XGBoost — Barradas reports all three.
+    *groups* is the per-row corpus run id (see ``features._load_corpus``);
+    folds never split a run's TYPHOON and real-X flows across train/test.
     """
 
     pos_mask = np.array([(c == TYPHOON_CLASS) and (p == profile) for c, p in zip(y, profiles, strict=True)])
@@ -103,15 +109,44 @@ def _run_pair_binary(
     X_neg = X[neg_mask]
     X_pair = np.vstack([X_pos, X_neg])
     y_pair = np.concatenate([np.ones(int(pos_mask.sum())), np.zeros(int(neg_mask.sum()))])
+    groups_pair = np.concatenate([groups[pos_mask], groups[neg_mask]])
+    if len(np.unique(groups_pair)) < MIN_GROUPS_FOR_KFOLD:
+        return None
 
-    # 10-fold non-stratified CV with shuffling — matches Barradas USENIX'18.
-    # Class-balance is approximate; the per-fold y can be skewed, but ROC-AUC
-    # and threshold-based metrics are robust to mild imbalance.
-    scaler = StandardScaler()
-    clf = make_classifier(classifier_name)
-    kfold = KFold(n_splits=KFOLD_SPLITS, shuffle=True, random_state=RF_RANDOM_STATE)
-    pipe = Pipeline([("scaler", scaler), ("clf", clf)])
-    proba = cross_val_predict(pipe, X_pair, y_pair, cv=kfold, method="predict_proba")[:, 1]
+    # 10-fold GroupKFold, grouped by corpus run id — see cli.py's module
+    # docstring for why plain (non-grouped) KFold would leak a run's shared
+    # chaos draw across train/test.  `make_classifier` weights RF/DT by
+    # class_weight="balanced" so the *fitted model* isn't biased toward
+    # whichever side of the pair has more captured flows; XGBoost gets the
+    # same balancing via a `clf__sample_weight` fit param instead.
+    #
+    # Hand-rolled OOF loop (rather than `cross_val_predict`) for two reasons:
+    # it lets XGBoost's sample weights be recomputed from each fold's own
+    # training labels — `compute_sample_weight("balanced", ...)` on the full
+    # pooled y_pair would apply the *global* class balance to every fold,
+    # drifting from the fold's actual balance when GroupKFold produces
+    # unevenly-sized folds — and it reuses the one fitted model per fold for
+    # both the OOF prediction and the feature-importance average, instead of
+    # fitting every fold twice (once inside `cross_val_predict`, again here).
+    kfold = GroupKFold(n_splits=KFOLD_SPLITS)
+    proba = np.empty(len(y_pair))
+    importances = np.zeros(X_pair.shape[1])
+    importance_folds = 0
+    for train_idx, test_idx in kfold.split(X_pair, y_pair, groups=groups_pair):
+        fold_pipe = Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", make_classifier(classifier_name)),
+        ])
+        fold_fit_params = balanced_sample_weight_params(classifier_name, y_pair[train_idx])
+        fold_pipe.fit(X_pair[train_idx], y_pair[train_idx], **fold_fit_params)
+        proba[test_idx] = fold_pipe.predict_proba(X_pair[test_idx])[:, 1]
+        fold_clf = fold_pipe.named_steps["clf"]
+        fimp = getattr(fold_clf, "feature_importances_", None)
+        if fimp is not None:
+            importances += np.asarray(fimp, dtype=np.float64)
+            importance_folds += 1
+    if importance_folds > 0:
+        importances /= importance_folds
 
     pos_scores = proba[y_pair == 1]
     neg_scores = proba[y_pair == 0]
@@ -122,26 +157,6 @@ def _run_pair_binary(
     # Barradas-style FPR @ target TPR table.  One FPR value per requested TPR.
     fpr_at_tpr = {target: _fpr_at_tpr(pos_scores, neg_scores, target)
                   for target in BARRADAS_TPR_LEVELS}
-
-    # Feature importance: average across per-fold classifiers trained inside
-    # the same pipeline.  Only tree-based classifiers expose
-    # ``feature_importances_`` directly; if a particular classifier doesn't,
-    # we record zeros (XGBoost provides it; RF/DT obviously do).
-    importances = np.zeros(X_pair.shape[1])
-    importance_folds = 0
-    for train_idx, _ in kfold.split(X_pair, y_pair):
-        fold_pipe = Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", make_classifier(classifier_name)),
-        ])
-        fold_pipe.fit(X_pair[train_idx], y_pair[train_idx])
-        fold_clf = fold_pipe.named_steps["clf"]
-        fimp = getattr(fold_clf, "feature_importances_", None)
-        if fimp is not None:
-            importances += np.asarray(fimp, dtype=np.float64)
-            importance_folds += 1
-    if importance_folds > 0:
-        importances /= importance_folds
 
     # Z-scored mean comparison against the pooled pair distribution.  Fitting
     # on the negative class alone makes features where bg has near-zero
@@ -175,7 +190,7 @@ def _print_pair_binary(
     Each row is ``(profile, target, classifier_name, result_or_None)``.
     """
     summary = Table(show_header=True,
-                    title=f"Test A — pair-binary detection (Barradas USENIX'18: {KFOLD_SPLITS}-fold KFold, n_estimators={RF_N_ESTIMATORS})",
+                    title=f"Test A — pair-binary detection (Barradas USENIX'18: {KFOLD_SPLITS}-fold GroupKFold, n_estimators={RF_N_ESTIMATORS})",
                     title_style="bold")
     summary.add_column("TYPHOON profile", style="magenta")
     summary.add_column("Target class", style="cyan")

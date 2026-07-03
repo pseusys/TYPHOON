@@ -117,7 +117,7 @@ numpy                = "np"
 
   [tool.poe.tasks.background-corpus]
   cmd  = "python -m typhoon_eval.background.corpus"
-  help = "Run the randomised background-blending corpus (default 70 runs)"
+  help = "Run the background-blending corpus — every TYPHOON profile + bg class per run (default 70 runs)"
 
   [tool.poe.tasks.background-blending]
   cmd  = "python -m typhoon_eval.background.ml_blending"

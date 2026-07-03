@@ -15,6 +15,7 @@ console = Console()
 
 KFOLD_SPLITS = 10                    # Barradas USENIX'18 uses 10-fold non-stratified.
 MIN_SAMPLES_PER_CLASS = KFOLD_SPLITS  # need ≥ k flows per class to run KFold(k).
+MIN_GROUPS_FOR_KFOLD = KFOLD_SPLITS   # GroupKFold(k) needs ≥ k distinct corpus runs to fill every fold.
 
 # Minimum number of distinct classes required for the multi-class classifier to
 # run (Test B) or for the 3-of-7 bg hold-out enumerator to produce a non-trivial
@@ -23,14 +24,41 @@ MIN_SAMPLES_PER_CLASS = KFOLD_SPLITS  # need ≥ k flows per class to run KFold(
 MIN_CLASSES_FOR_FIT = 2
 
 
+def _threshold_for_tpr(scores_pos: np.ndarray, target_tpr: float) -> float:
+    """Smallest *observed* positive score achieving TPR ``(# pos >= threshold) / n_pos ≥ target_tpr``.
+
+    Selects an actual order statistic rather than ``np.quantile``'s default
+    linearly-interpolated value — interpolation can land strictly between two
+    tied scores and silently overshoot or undershoot ``target_tpr`` when the
+    classifier emits few distinct probabilities (routine for DT/RF/XGB, whose
+    ``predict_proba`` output is bounded by leaf/tree-vote granularity).
+    """
+    sorted_pos = np.sort(scores_pos)
+    quantile_idx = int(np.floor((1.0 - target_tpr) * len(sorted_pos)))
+    quantile_idx = max(0, min(quantile_idx, len(sorted_pos) - 1))
+    return float(sorted_pos[quantile_idx])
+
+
+def _threshold_for_fpr(scores_neg: np.ndarray, target_fpr: float) -> float:
+    """Largest *observed* negative score achieving FPR ``(# neg >= threshold) / n_neg`` closest to
+    *target_fpr*.  Mirrors ``_threshold_for_tpr``'s order-statistic convention (same reasoning:
+    ``np.quantile`` interpolation can silently overshoot or undershoot the target), applied to the
+    negative side instead of the positive side.
+    """
+    sorted_neg = np.sort(scores_neg)
+    quantile_idx = int(np.floor((1.0 - target_fpr) * len(sorted_neg)))
+    quantile_idx = max(0, min(quantile_idx, len(sorted_neg) - 1))
+    return float(sorted_neg[quantile_idx])
+
+
 def _tpr_at_fpr(scores_pos: np.ndarray, scores_neg: np.ndarray, target_fpr: float) -> tuple[float, float]:
-    """TPR at FPR ≤ *target_fpr* given out-of-fold positive (TYPHOON) and negative (natural) scores."""
+    """TPR at FPR ≈ *target_fpr* given out-of-fold positive (TYPHOON) and negative (natural) scores."""
     if len(scores_neg) == 0 or len(scores_pos) == 0:
         return float("nan"), float("nan")
-    sorted_neg = np.sort(scores_neg)[::-1]
-    cutoff_idx = max(0, int(np.floor(target_fpr * len(sorted_neg))) - 1)
-    threshold = float(sorted_neg[cutoff_idx])
-    tpr = float((scores_pos > threshold).sum()) / len(scores_pos)
+    # The "captured" side must use >= (not >), same reasoning as `_fpr_at_tpr` below — otherwise
+    # the achieved FPR lands one sample short of target_fpr.
+    threshold = _threshold_for_fpr(scores_neg, target_fpr)
+    tpr = float((scores_pos >= threshold).sum()) / len(scores_pos)
     return threshold, tpr
 
 
@@ -43,13 +71,12 @@ def _fpr_at_tpr(scores_pos: np.ndarray, scores_neg: np.ndarray, target_tpr: floa
     """
     if len(scores_neg) == 0 or len(scores_pos) == 0:
         return float("nan")
-    sorted_pos = np.sort(scores_pos)
-    # We want the smallest threshold such that TPR = (# pos > threshold) / n_pos >= target.
-    # Equivalent: threshold is the (1 - target_tpr) quantile of the positive scores.
-    quantile_idx = int(np.floor((1.0 - target_tpr) * len(sorted_pos)))
-    quantile_idx = max(0, min(quantile_idx, len(sorted_pos) - 1))
-    threshold = float(sorted_pos[quantile_idx])
-    return float((scores_neg > threshold).sum()) / len(scores_neg)
+    # Threshold is the (1 - target_tpr) quantile of the positive scores.  The
+    # "captured" side must use >= (not >) — the threshold score itself has to
+    # count as caught, otherwise the achieved TPR lands one sample short of
+    # target_tpr.
+    threshold = _threshold_for_tpr(scores_pos, target_tpr)
+    return float((scores_neg >= threshold).sum()) / len(scores_neg)
 
 
 def _ms(mean_std: tuple[float, float] | None) -> dict[str, float] | None:

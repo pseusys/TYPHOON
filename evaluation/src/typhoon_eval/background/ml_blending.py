@@ -49,6 +49,7 @@ from typhoon_eval.background.features import (
     _load_corpus,
     get_feature_names,
 )
+from typhoon_eval.shared.profiles import HELD_OUT_BG_CLASSES
 
 console = Console()
 
@@ -224,20 +225,24 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, out_di
         f"Barradas USENIX'18 layout) · Classifiers: [bold]{', '.join(classifiers)}[/bold][/dim]"
     )
 
-    X, y, profiles, skipped = _load_corpus(root, feature_set)
+    X, y, profiles, _run_ids, skipped = _load_corpus(root, feature_set)
     if X.size == 0:
         console.print("[yellow]No flows extracted from corpus.[/yellow]")
         exit(1)
 
-    bg_mask = np.array([lbl != TYPHOON_CLASS for lbl in y])
-    typhoon_mask = ~bg_mask
+    bg_mask = np.array([lbl != TYPHOON_CLASS and lbl not in HELD_OUT_BG_CLASSES for lbl in y])
+    typhoon_mask = np.array([lbl == TYPHOON_CLASS for lbl in y])
     if bg_mask.sum() == 0 or typhoon_mask.sum() == 0:
         console.print("[red]Corpus must contain both TYPHOON and background flows.[/red]")
         exit(1)
 
+    n_held_out = sum(1 for lbl in y if lbl in HELD_OUT_BG_CLASSES)
+    if n_held_out:
+        console.print(f"  [dim]Excluded {n_held_out} held-out-class flows ({', '.join(sorted(HELD_OUT_BG_CLASSES))}) from training.[/dim]")
+
     bg_classes = sorted({lbl for lbl, m in zip(y, bg_mask, strict=True) if m})
     class_to_idx = {c: i for i, c in enumerate(bg_classes)}
-    y_bg_idx = np.array([class_to_idx[lbl] for lbl in y if lbl != TYPHOON_CLASS])
+    y_bg_idx = np.array([class_to_idx[lbl] for lbl, m in zip(y, bg_mask, strict=True) if m])
     X_bg = X[bg_mask]
     X_typhoon = X[typhoon_mask]
     profiles_arr = np.array(profiles)[typhoon_mask]

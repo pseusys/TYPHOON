@@ -73,8 +73,18 @@ PAIR_SPEC_PARTS = 2
 def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_spec: str | None, out_dir: str | None) -> None:
     """Held-out detectability metrics — Tests A / B / D / E / F.
 
-    * Test A replicates the Barradas USENIX'18 protocol verbatim — 10-fold KFold,
-      AUC + FPR @ TPR ∈ {70%, 80%, 90%, 95%}, run independently for each
+    Every test cross-validates with ``GroupKFold``, grouped by corpus run id,
+    instead of Barradas USENIX'18's plain non-grouped ``KFold`` — a run's
+    flows share one chaos (latency/jitter/loss) draw, so an ungrouped split
+    could train and test on flows from the same run.  Tests D/E/F
+    additionally restrict every evaluation bucket (held-out background,
+    unseen classes, `unknown`, per-class breakdown) to the fold's test-run
+    set, so a background flow from a run that fed training is never scored
+    as if it were independently held out.
+
+    * Test A replicates the Barradas USENIX'18 protocol, grouped by corpus run
+      (see above) instead of Barradas's plain non-grouped KFold — AUC + FPR
+      @ TPR ∈ {70%, 80%, 90%, 95%}, run independently for each
       selected classifier (DT / RF / XGBoost).
     * Test B is our closed-world (n+1)-class extension, RF-only.
     * Test D is open-set binary detection with 3-of-7 bg hold-out — TYPHOON +
@@ -104,10 +114,11 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
         f"Barradas USENIX'18 layout) · Classifiers: [bold]{', '.join(classifiers)}[/bold][/dim]"
     )
 
-    X, y, profiles, _ = _load_corpus(root, feature_set)
+    X, y, profiles, run_ids, _ = _load_corpus(root, feature_set)
     if X.size == 0:
         console.print("[yellow]No flows extracted from corpus.[/yellow]")
         exit(1)
+    groups = np.array(run_ids)
 
     if selected_profile is not None:
         keep = np.array([
@@ -118,6 +129,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
         X = X[keep]
         y = [cls for cls, k in zip(y, keep, strict=True) if k]
         profiles = [prof for prof, k in zip(profiles, keep, strict=True) if k]
+        groups = groups[keep]
         console.print(
             f"[dim]Pair filter active: TYPHOON profile = "
             f"[bold]{selected_profile}[/bold] ({kept_typhoon} flows kept); "
@@ -142,7 +154,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
     rows: list[tuple[str, str, str, dict[str, object] | None]] = []
     for prof, target in pair_iter:
         for clf_name in classifiers:
-            res = _run_pair_binary(prof, target, X, y, profiles, classifier_name=clf_name)
+            res = _run_pair_binary(prof, target, X, y, profiles, groups, classifier_name=clf_name)
             rows.append((prof, target, clf_name, res))
     _print_pair_binary(rows, feature_names)
 
@@ -156,7 +168,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
     # ── Test B — Closed-world (n+1)-class ───────────────────────────────────
     # Test B is our extension to Barradas — kept as RF-only since the multi-
     # classifier sweep is meaningful only in the binary detection setting.
-    b_res = _run_closed_world(X, y)
+    b_res = _run_closed_world(X, y, groups)
     _print_closed_world(b_res)
 
     # ── Test D — Open-set binary detection ──────────────────────────────────
@@ -166,13 +178,13 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
     # Reported once per classifier so DT/RF/XGBoost can be compared directly.
     test_d_results: list[tuple[str, dict[str, object]]] = []
     for clf_name in classifiers:
-        d_res = _run_open_set_binary(X, y, profiles, classifier_name=clf_name)
+        d_res = _run_open_set_binary(X, y, profiles, groups, classifier_name=clf_name)
         _print_open_set(f"Test D — Open-set binary detection [{CLASSIFIER_LABELS.get(clf_name, clf_name)}]", d_res)
         test_d_results.append((clf_name, d_res))
 
     # ── Test E — One-class TYPHOON detector ─────────────────────────────────
     # OneClassSVM trained on TYPHOON flows only; FPR breakdown matches Test D.
-    e_res = _run_one_class_typhoon(X, y)
+    e_res = _run_one_class_typhoon(X, y, groups)
     _print_open_set("Test E — One-class TYPHOON detector (OCSVM)", e_res)
 
     # ── Test F — One-class OCSVM + 3-of-7 bg evaluation hold-out ───────────
@@ -181,7 +193,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
     # directly comparable.  Models a "leaked-client + partial DPI catalog"
     # adversary — has TYPHOON labels via OCSVM, uses a partial catalogue as
     # filter (not training data).
-    f_res = _run_one_class_open_set(X, y)
+    f_res = _run_one_class_open_set(X, y, groups)
     _print_open_set("Test F — One-class OCSVM with 3-of-7 bg eval hold-out", f_res)
 
     # ── Confusion matrix — emitted when --pair is used so the per-class
@@ -189,7 +201,7 @@ def main(corpus_root: str | None, feature_set: str, classifier_spec: str, pair_s
     if selected_profile is not None:
         cm_label = (
             f"Multi-class confusion matrix — TYPHOON({selected_profile}) vs all bg "
-            f"({KFOLD_SPLITS}-fold KFold, n_estimators={RF_N_ESTIMATORS})"
+            f"({KFOLD_SPLITS}-fold GroupKFold, n_estimators={RF_N_ESTIMATORS})"
         )
         _print_confusion_matrix(cm_label, b_res, typhoon_row_label=f"TYPHOON({selected_profile})")
 
