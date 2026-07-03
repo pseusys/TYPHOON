@@ -448,8 +448,8 @@ fn test_seeded_packet_is_deterministic() {
         // PN embeds the real wall-clock timestamp (see `next_packet_number`), which the seeded
         // RNG does not control, so it can differ by a second between the two calls below. Mask
         // it out before comparing the rest of the packet for determinism.
-        let tailer_start = bytes.len() - (TAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
-        bytes[tailer_start + PN_OFFSET..tailer_start + PL_OFFSET].fill(0);
+        let trailer_start = bytes.len() - (TRAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
+        bytes[trailer_start + PN_OFFSET..trailer_start + PL_OFFSET].fill(0);
         bytes
     };
 
@@ -503,8 +503,8 @@ fn test_seeded_packet_snapshot() {
         // PN embeds the real wall-clock timestamp (see `next_packet_number`), which the seeded
         // RNG does not control, so it can differ by a second between the two calls below. Mask
         // it out before comparing the rest of the packet for determinism.
-        let tailer_start = bytes.len() - (TAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
-        bytes[tailer_start + PN_OFFSET..tailer_start + PL_OFFSET].fill(0);
+        let trailer_start = bytes.len() - (TRAILER_LENGTH + DEFAULT_TYPHOON_ID_LENGTH);
+        bytes[trailer_start + PN_OFFSET..trailer_start + PL_OFFSET].fill(0);
         bytes
     };
 
