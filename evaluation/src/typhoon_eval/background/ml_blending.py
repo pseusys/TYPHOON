@@ -1,4 +1,10 @@
-"""Primary blending metric for Part 3.
+"""Primary blending metric for Part 3 — Test C (open-world confidence-threshold detection).
+
+Models the realistic-adversary threat model: an observer that has labels for
+the background classes only (no TYPHOON samples), runs a multi-class
+classifier over the traffic mix, and thresholds prediction confidence.  The
+headline number is the confident-blend fraction — the share of TYPHOON flows
+the classifier confidently labels as a concrete background class.
 
 Implements the Barradas USENIX'18 feature pipeline literally: one feature
 vector per flow, with statistics computed three times (total / c2s / s2c)
@@ -268,7 +274,7 @@ def _per_flow_features(
     typically expose a single server port and contribute one row per run.
     TYPHOON exposes up to three server ports (see `eval_server.rs::PORTS`)
     and the client may open any subset of them, so it contributes 1–3 rows
-    per run — matching what a censor would actually classify.
+    per run — matching what an adversary would actually classify.
 
     Server-port discovery is automatic: whichever IP matches the protocol's
     ``server_ip`` from ``ip_map`` contributes its UDP port number as the
@@ -449,7 +455,7 @@ def main(corpus_root: str | None, feature_set: str, out_dir: str | None) -> None
     console.print(f"  Held-out background:       mean {bg_holdout_conf.mean():.3f}  median {float(np.median(bg_holdout_conf)):.3f}  (max {bg_holdout_conf.max():.3f})")
     console.print(f"  [dim]Uniform-over-{len(bg_classes)}-classes baseline = {1.0 / len(bg_classes):.3f}; TYPHOON should approach the held-out figure to blend perfectly.[/dim]")
 
-    # Confidence-threshold detector: a censor without labelled TYPHOON data
+    # Confidence-threshold detector: an adversary without labelled TYPHOON data
     # can still flag flows whose multi-class confidence falls below a
     # threshold.  We pick the threshold at the 1st-percentile of held-out
     # background confidence (i.e. allow ~1 % bg false-positives) and report

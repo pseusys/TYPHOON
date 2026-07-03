@@ -16,9 +16,7 @@ evaluation/
 │   ├── shared/            # capture, parse pcaps, common stats
 │   ├── self/              # Part 1
 │   ├── protocols_op/      # Part 2
-│   ├── background/        # Part 3
-│   └── ml/                # ML utilities (re-used by Part 3)
-├── docs/                  # methodology references
+│   └── background/        # Part 3 corpus + ML (ml_blending = Test C, ml_open_world = Tests A/B/D/E/F)
 └── results/               # generated pcaps, plots, ML artefacts (gitignored)
 ```
 
@@ -38,7 +36,7 @@ Protocols compared: `raw_udp`, `raw_tcp`, `tls`, `wireguard`, `quic`, `obfs4` (�
 
 ### Part 3 — Background-blending
 
-*Can a passive observer pick TYPHOON out of a realistic UDP traffic mix?* Runs TYPHOON alongside a randomised subset of 8 generators producing common UDP traffic classes (QUIC d/l + u/l, DNS, RTP voice/video, gaming, WireGuard idle, control plane) plus one open-set `unknown` class held out from training. Five ML setups, each modelling a different threat model:
+*Can a passive observer pick TYPHOON out of a realistic UDP traffic mix?* Runs TYPHOON alongside a randomised subset of 8 generators producing common UDP traffic classes (QUIC d/l + u/l, DNS, RTP voice/video, gaming, WireGuard idle, control plane) plus one open-set `unknown` class held out from training. Six ML setups, each modelling a different threat model. Test C is the primary blending metric and lives in [`ml_blending.py`](src/typhoon_eval/background/ml_blending.py); Tests A, B, D, E and F live in [`ml_open_world.py`](src/typhoon_eval/background/ml_open_world.py):
 
 | Test | Threat model | TYPHOON wins when… |
 | --- | --- | --- |
@@ -46,7 +44,8 @@ Protocols compared: `raw_udp`, `raw_tcp`, `tls`, `wireguard`, `quic`, `obfs4` (�
 | **B** Closed-world | Observer has labels for every class incl. TYPHOON | TYPHOON recall low (often confused with a real class) |
 | **C** Open-world threshold | Observer has labels for background only and flags low-confidence flows | TPR @ 1 % FPR low |
 | **D** Open-set binary | Observer has labels for TYPHOON + a *subset* of background classes; unseen classes + `unknown` held out at test time | high FPR on unseen background and `unknown` |
-| **E** One-class TYPHOON | Observer has only TYPHOON labels (e.g. from a leaked client) | high FPR on `unknown` |
+| **E** One-class TYPHOON | Observer has only TYPHOON labels (e.g. from a leaked client) trained into a one-class SVM, evaluated against pooled background | high FPR on `unknown` |
+| **F** One-class + partial catalogue | Same one-class TYPHOON SVM as E, but the FPR breakdown reuses D's 3-of-7 background hold-out — models a leaked-client observer who also has a *partial* protocol catalogue used post-hoc as a filter; bridges D and E | high FPR on unseen background and `unknown` |
 
 ### Part 4 — Rust-level benchmarking
 
@@ -56,7 +55,9 @@ Protocols compared: `raw_udp`, `raw_tcp`, `tls`, `wireguard`, `quic`, `obfs4` (�
 
 - **Docker** (or rootful Podman — rootless cannot grant `NET_ADMIN` to the observer).
 - **Python 3.11+** with [Poetry](https://python-poetry.org/). `poetry install` pulls in everything needed for Parts 1–3, including scikit-learn and XGBoost.
-- Optional, Linux only: `perf` + [`cargo-flamegraph`](https://github.com/flamegraph-rs/flamegraph) — enables Part 4 (`benchmark`). Without them, `poe benchmark` / the pipeline's `benchmark` phase is skipped. `rsvg-convert` (`librsvg2-bin`) is also recommended to additionally render flamegraphs as `.pdf`; without it, only the interactive `.svg` is produced.
+- Optional, Linux only: `perf` + [`cargo-flamegraph`](https://github.com/flamegraph-rs/flamegraph) — enables Part 4 (`benchmark`). Without them, `poe benchmark` / the pipeline's `benchmark` phase is skipped.
+  Flamegraphs additionally need perf sampling access: set `kernel.perf_event_paranoid` low enough (see [Part 4](#part-4--rust-level-benchmarking-cli)) — otherwise `cargo flamegraph` fails and the flamegraph step is skipped (the `cargo bench` numbers are still produced).
+  `rsvg-convert` (`librsvg2-bin`) is also recommended to additionally render flamegraphs as `.pdf`; without it, only the interactive `.svg` is produced.
 
 ## Installation
 
@@ -95,8 +96,8 @@ Useful flags: `--protocol <name>` (single protocol), `--scenario {bulk,interacti
 
 ```shell
 poe background-corpus         # randomised corpus (default 70 runs)
-poe background-blending       # confident-blend fraction (primary metric)
-poe background-openworld      # Tests A–E open-world scores
+poe background-blending       # Test C — confident-blend fraction (primary metric)
+poe background-openworld      # Tests A, B, D, E, F held-out detectability scores
 poe background-distplot       # per-pair size/IAT distribution overlays
 ```
 
@@ -107,6 +108,16 @@ poe benchmark                 # cargo bench (roundtrip, handshake) + example fla
 ```
 
 Linux only — requires `perf` and `cargo-flamegraph` already installed on the host (see `.github/workflows/benchmarks.yaml` for the one-time setup commands); this task does not install them for you. Each flamegraph is kept as the interactive `.svg` (search/zoom) plus a `.pdf` rendered via `rsvg-convert` (`librsvg2-bin`) for embedding in reports; without `rsvg-convert`, only the `.svg` is produced.
+
+**perf sampling access.** `cargo flamegraph` runs `perf record`, which needs `kernel.perf_event_paranoid` low enough to sample CPU events.
+To enable it:
+
+```shell
+echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid      # this session
+echo 'kernel.perf_event_paranoid = -1' | sudo tee /etc/sysctl.d/99-perf.conf  # persist across reboots
+```
+
+Alternatively, run the benchmark under `sudo` (perf as root ignores the paranoid setting), though that also builds/runs cargo as root.
 
 ### Pipeline
 
@@ -150,7 +161,7 @@ artifacts/pipeline_<timestamp>/
 └── background/                    # Part 3 derived outputs (no PCAPs)
     ├── corpus_metadata/run_*/{metadata,config}.json
     ├── blending/blending.json     # confident-blend fraction + per-profile breakdown
-    ├── openworld/                 # Tests A–E PDFs + JSON
+    ├── openworld/                 # Tests A, B, D, E, F PDFs + JSON
     └── distplot/                  # per-pair size/IAT overlays PDFs + JSON
 ```
 
@@ -186,8 +197,8 @@ Computed separately per direction (`c2s`, `s2c`, `all`). Packet sizes are **tran
 
 ### Part 3 outputs
 
-- `background-blending` prints the **confident-blend fraction** — the share of TYPHOON flows the open-world classifier labels as a concrete background class with high confidence. Higher = less distinguishable.
-- `background-openworld` reports per-test scores (Tests A–E above). Each test answers a distinct ML setup; treat them as complementary not redundant.
+- `background-blending` prints the **confident-blend fraction** (Test C) — the share of TYPHOON flows the open-world classifier labels as a concrete background class with high confidence. Higher = less distinguishable.
+- `background-openworld` reports per-test scores (Tests A, B, D, E, F above). Each test answers a distinct ML setup; treat them as complementary not redundant.
 - `background-distplot` overlays the actual TYPHOON size/IAT distributions on each background class — visual check of where TYPHOON differs.
 
 ## Settings overrides

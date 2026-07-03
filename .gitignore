@@ -33,6 +33,7 @@ evaluation/poetry.lock
 
 # Capture results (pcaps can be hundreds of MB)
 evaluation/results/
+perf.data*
 
 # Diagrams and graphs
 flamegraphs
