@@ -176,7 +176,7 @@ PROFILES: Final[dict[str, Profile]] = {
     ),
     "silent_idle": Profile(
         name="silent_idle",
-        description="Silent connection: no application data, no decoy traffic — just the session handshake.  Models an idle VPN-style tunnel where the user is connected but doing nothing.",
+        description="Silent connection: no application data, no decoy traffic — just the session handshake.  Models an idle encrypted tunnel where the user is connected but doing nothing.",
         chunk_c2s=IntRange(0, 0),
         chunk_s2c=IntRange(0, 0),
         iat_c2s_ms=Range(0.0, 0.0),
@@ -296,10 +296,10 @@ SERVICE_SLOTS: Final[dict[str, ServiceSlot]] = {
     **{name: ServiceSlot(name, 20 + i) for i, name in enumerate(PART3_PROFILES)},
 }
 
-# Slots that model the long-tail "private / custom / legacy UDP" protocols a
-# real censor cannot enumerate.  By policy these labels must **never** appear
+# Slots that model the long-tail "private / custom / legacy UDP" protocols an
+# adversary cannot enumerate.  By policy these labels must **never** appear
 # in any open-set classifier's training set — they exist solely to populate
-# the held-out unknown-class evaluation bucket (see ml_open_world Tests D/E).
+# the held-out unknown-class evaluation bucket (see ml_open_world Tests D/E/F).
 HELD_OUT_BG_CLASSES: Final[frozenset[str]] = frozenset({"unknown"})
 
 

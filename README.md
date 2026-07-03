@@ -238,7 +238,7 @@ On a server using Linux's default UDP socket buffer (`net.core.rmem_default = ne
 | `net.core.wmem_max` | 16777216 |
 | `net.core.wmem_default` | 4194304 |
 
-These are the same values the standard UDP-VPN guides recommend.
+These are the same values the standard UDP tunnelling guides recommend.
 At default sizes, both TYPHOON _and_ other UDP-native services (WireGuard, OpenVPN, raw UDP) under-deliver on heavily loaded paths; with these set, the kernel keeps up with the highest decoy rate the protocol's reference providers emit.
 
 ## Evaluation
