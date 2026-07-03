@@ -216,6 +216,7 @@ def _phase_visualize(bulk_run_ids: list[str], artifacts_dir: Path, log_dir: Path
 def _phase_typhoon(
     typhoon_runs: int,
     typhoon_uc_runs: int,
+    typhoon_traffic_runs: int,
     artifacts_dir: Path,
     log_dir: Path,
 ) -> list[Path]:
@@ -235,8 +236,8 @@ def _phase_typhoon(
     if _invoke("uc-compare", _use_case_compare_main, ["--runs-per-case", str(typhoon_uc_runs), "--out-dir", str(uc_cmp_dir)], log_path):
         generated.extend(uc_cmp_dir.glob("*.pdf"))
 
-    console.print("\n  [cyan]traffic-compare[/cyan]")
-    if _invoke("traffic-compare", _traffic_compare_main, ["--out-dir", str(traffic_cmp_dir)], log_path):
+    console.print(f"\n  [cyan]traffic-compare[/cyan] ({typhoon_traffic_runs} runs/mode)")
+    if _invoke("traffic-compare", _traffic_compare_main, ["--runs", str(typhoon_traffic_runs), "--out-dir", str(traffic_cmp_dir)], log_path):
         generated.extend(traffic_cmp_dir.glob("*.pdf"))
 
     return generated
@@ -507,6 +508,8 @@ def _generate_report(
               help="Repeated runs for self-compare.")
 @option("--typhoon-uc-runs", default=3, show_default=True, type=int,
               help="Runs per use case for use-case-compare.")
+@option("--typhoon-traffic-runs", default=3, show_default=True, type=int,
+              help="Runs per payload×wait mode for traffic-compare (4 modes × this many runs).")
 @option("--background-runs", default=7500, show_default=True, type=int,
               help="Number of randomised background-blending corpus runs (long). Ignored when --corpus-root is given.")
 @option("--corpus-root", "corpus_root", default=None, type=ClickPath(),
@@ -523,6 +526,7 @@ def main(
     chaos: bool,
     typhoon_runs: int,
     typhoon_uc_runs: int,
+    typhoon_traffic_runs: int,
     background_runs: int,
     corpus_root: str | None,
     artifacts_dir: str,
@@ -558,15 +562,16 @@ def main(
 
     # Snapshot the resolved pipeline parameters for reproducibility.
     (artifacts_dir_run / "pipeline_config.json").write_text(dumps({
-        "pipeline_id":         pipeline_id,
-        "classification_runs": classification_runs,
-        "profiles":            profile_list,
-        "chaos":               chaos,
-        "typhoon_runs":        typhoon_runs,
-        "typhoon_uc_runs":     typhoon_uc_runs,
-        "background_runs":     background_runs,
-        "corpus_root":         str(corpus_root_path) if corpus_root_path else None,
-        "skipped_phases":      sorted(skipped),
+        "pipeline_id":          pipeline_id,
+        "classification_runs":  classification_runs,
+        "profiles":             profile_list,
+        "chaos":                chaos,
+        "typhoon_runs":         typhoon_runs,
+        "typhoon_uc_runs":      typhoon_uc_runs,
+        "typhoon_traffic_runs": typhoon_traffic_runs,
+        "background_runs":      background_runs,
+        "corpus_root":          str(corpus_root_path) if corpus_root_path else None,
+        "skipped_phases":       sorted(skipped),
     }, indent=2))
 
     if "build" not in skipped:
@@ -601,7 +606,7 @@ def main(
         _phase_visualize(bulk_run_ids, artifacts_dir_run, log_dir)
 
     if "typhoon" not in skipped:
-        _phase_typhoon(typhoon_runs, typhoon_uc_runs, artifacts_dir_run, log_dir)
+        _phase_typhoon(typhoon_runs, typhoon_uc_runs, typhoon_traffic_runs, artifacts_dir_run, log_dir)
 
     if "background" not in skipped:
         _phase_background(background_runs, pipeline_id, artifacts_dir_run, log_dir, corpus_root_path)

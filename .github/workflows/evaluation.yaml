@@ -1,0 +1,71 @@
+name: Evaluation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'typhoon/**'
+      - 'evaluation/**'
+      - '.github/workflows/evaluation.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    name: Run Full Evaluation Pipeline (Validation Scale)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v4
+
+      - name: Free disk space 🧹
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          docker image prune -af
+
+      - name: Setup Rust 🦀
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.89.0"
+          rust-src-dir: typhoon
+          override: true
+
+      - name: Install perf and flamegraph 🔥
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y linux-tools-common linux-tools-generic librsvg2-bin
+          echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+          cargo install flamegraph
+
+      - name: Setup Python 🐍
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry 📦
+        run: pipx install poetry
+
+      - name: Install evaluation dependencies 📦
+        working-directory: evaluation
+        run: poetry install
+
+      - name: Run full evaluation pipeline (validation scale) 🧪
+        working-directory: evaluation
+        run: |
+          poetry poe evaluate --classification-runs 1 --typhoon-runs 2 --typhoon-uc-runs 1 --typhoon-traffic-runs 1 --background-runs 15
+
+      - name: Upload evaluation artifacts 📈
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-artifacts
+          path: artifacts/
+          retention-days: 5

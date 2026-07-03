@@ -1,7 +1,7 @@
 """Rust-level performance benchmarks: cargo bench + example flamegraphs.
 
 Linux only — flamegraphs need `perf` and `cargo-flamegraph`, neither of which
-is portable to macOS/Windows. Mirrors `.github/workflows/benchmarks.yaml`.
+is portable to macOS/Windows. Mirrors `.github/workflows/evaluation.yaml`.
 
 Outputs: `<out-dir>/bench-{roundtrip,handshake}.txt` (bencher format) and, per
 example, `<out-dir>/flamegraphs/<example>.{svg,pdf}` — the interactive SVG
