@@ -22,7 +22,6 @@ Env vars:
 """
 
 from os import environ
-from socket import SHUT_WR
 from subprocess import run
 from sys import exit
 from time import monotonic, sleep
@@ -56,8 +55,7 @@ for attempt in range(retries):
         sent, total_sleep = run_profile(s.sendall)
         transfer_time_s = monotonic() - transfer_start - total_sleep
         try:
-            s.shutdown(SHUT_WR)
-            s.settimeout(120)
+            s.settimeout(180)
             while s.recv(65536):
                 pass
         except OSError:
