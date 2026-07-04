@@ -1,8 +1,16 @@
-FROM python:3.12-slim
+## Stage 1: build the native Rust QUIC binary (quinn + BBR)
+## Context is ../protocols, so the crate lives at quic/quic-eval.
+FROM rust:1-bookworm AS build
+WORKDIR /build/quic-eval
+COPY quic/quic-eval/ ./
+RUN cargo build --release
+
+## Stage 2: runtime image
+FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         iproute2 \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir aioquic
-COPY quic/client.py       /app/client.py
-COPY common/_profile.py   /app/_profile.py
-CMD ["python3", "/app/client.py"]
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /build/quic-eval/target/release/quic-eval /usr/local/bin/quic-eval
+
+CMD ["quic-eval", "client"]

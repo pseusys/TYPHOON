@@ -463,9 +463,9 @@ CHAOS_LATENCY_MS: Final[Range]  = Range(10.0, 100.0)
 # Jitter is sampled relative to the per-run latency (see corpus._sample_chaos);
 # this Range is the *fraction* of latency used for the jitter ceiling.
 CHAOS_JITTER_FRACTION: Final[Range] = Range(0.0, 0.5)
-# Loss capped at 1.0 % — aioquic destabilises under sustained higher loss.
-# Real residential / mobile loss rates (Paxson 1999; Bauer 2009) sit in
-# 0.05–1 % range, so this also matches measured wild-internet rates.
+# Loss capped at 1.0 %.  Real residential / mobile loss rates (Paxson 1999;
+# Bauer 2009) sit in the 0.05–1 % range, so this matches measured wild-internet
+# rates.
 CHAOS_LOSS_PCT: Final[Range]    = Range(0.0, 1.0)
 # Duplicate rate.  Bellardo & Savage IMC 2005 measure 0.001–0.1 % duplicates
 # on real transit links; we extend slightly to 0.2 % so chaos can probe the
