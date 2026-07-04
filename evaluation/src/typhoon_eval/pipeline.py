@@ -313,7 +313,7 @@ def _phase_background(
         ok = _invoke(
             "bg-corpus",
             _bg_corpus_main,
-            ["--runs", str(background_runs), "--out-dir", str(corpus_pcap_root)],
+            ["--runs", str(background_runs), "--out-dir", str(corpus_pcap_root), "--no-build"],
             log_path,
         )
         if not ok or not corpus_pcap_root.is_dir():
