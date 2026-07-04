@@ -32,7 +32,6 @@ from sys import exit
 import numpy as np
 from click import Choice, command, option
 from click import Path as ClickPath
-from rich.console import Console
 from rich.table import Table
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
@@ -49,9 +48,8 @@ from typhoon_eval.background.features import (
     _load_corpus,
     get_feature_names,
 )
+from typhoon_eval.shared.console import console
 from typhoon_eval.shared.profiles import HELD_OUT_BG_CLASSES
-
-console = Console()
 
 CONFIDENT_THRESHOLD = 0.9
 # k for the background out-of-fold cross-validation.  Reduced automatically when

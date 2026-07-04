@@ -31,7 +31,6 @@ from sys import exit
 
 from click import ClickException, Command, command, option
 from click import Path as ClickPath
-from rich.console import Console
 from rich.rule import Rule
 
 from typhoon_eval.background.corpus import main as _bg_corpus_main
@@ -45,10 +44,9 @@ from typhoon_eval.self.traffic_compare import main as _traffic_compare_main
 from typhoon_eval.self.use_case_compare import main as _use_case_compare_main
 from typhoon_eval.shared.analysis import CAPTURES_ROOT, _latest_run
 from typhoon_eval.shared.analysis import main as _analysis_main
+from typhoon_eval.shared.console import console
 from typhoon_eval.shared.orchestrator import main as _orchestrator_main
 from typhoon_eval.shared.pcap_flow_plot import main as _pcap_flow_plot_main
-
-console = Console()
 
 PROJECT_ROOT   = Path(__file__).parent.parent.parent.parent
 RESULTS_DIR    = PROJECT_ROOT / "evaluation" / "results"

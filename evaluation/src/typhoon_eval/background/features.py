@@ -23,7 +23,7 @@ from scapy.layers.inet import IP, UDP
 from scapy.utils import PcapReader
 
 from typhoon_eval.shared.pcap_stats import _entropy, _size_entropy
-from typhoon_eval.shared.profiles import TYPHOON_CLASS
+from typhoon_eval.shared.profiles import TYPHOON_CLASS as TYPHOON_CLASS  # re-exported for ml_blending/dist_stats/detectability
 
 # Minimum packets per flow required to compute the Barradas feature vector.
 MIN_SAMPLES_FOR_STATS = 2

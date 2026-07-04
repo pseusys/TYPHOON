@@ -13,7 +13,6 @@ from json import loads
 from pathlib import Path
 
 import numpy as np
-from rich.console import Console
 from scapy.layers.inet import IP, UDP
 from scapy.utils import PcapReader
 
@@ -26,9 +25,8 @@ from typhoon_eval.background.features import (
     TYPHOON_CLASS,
     _compute_bursts_per_direction,
 )
+from typhoon_eval.shared.console import console
 from typhoon_eval.shared.pcap_stats import _entropy
-
-console = Console()
 
 # Number of packets per flow retained in the packet-index diagnostic (plot + JSON).
 POSITION_PLOT_PACKETS = 200

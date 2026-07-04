@@ -9,9 +9,8 @@ Holds no test logic of its own; the Barradas classifier catalogue lives in
 from __future__ import annotations
 
 import numpy as np
-from rich.console import Console
 
-console = Console()
+from typhoon_eval.shared.console import console as console  # re-exported for pair_binary/closed_world/open_set/cli
 
 KFOLD_SPLITS = 10                    # Barradas USENIX'18 uses 10-fold non-stratified.
 MIN_SAMPLES_PER_CLASS = KFOLD_SPLITS  # need ≥ k flows per class to run KFold(k).

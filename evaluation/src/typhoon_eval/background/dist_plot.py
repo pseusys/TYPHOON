@@ -36,8 +36,11 @@ from click import Path as ClickPath
 from click import command, option
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
-from rich.console import Console
 
+# (TYPHOON profile, target natural class) mapping — imported rather than
+# redefined so this module's plots always compare the same pair Test A
+# actually trains on.
+from typhoon_eval.background.detectability.pair_binary import PROFILE_TARGET_CLASS
 from typhoon_eval.background.dist_stats import (
     POSITION_PLOT_PACKETS,
     FlowRec,
@@ -60,15 +63,7 @@ from typhoon_eval.background.features import (
     DIRECTIONS,
     PERCENTILES,
 )
-
-# (TYPHOON profile, target natural class) mapping — imported rather than
-# redefined so this module's plots always compare the same pair Test A
-# actually trains on.  A previously-duplicated copy of this dict had drifted
-# (`silent_idle` pointed at `dns` here vs. `wireguard_idle` in Test A),
-# silently comparing distributions against the wrong natural class.
-from typhoon_eval.background.detectability.pair_binary import PROFILE_TARGET_CLASS
-
-console = Console()
+from typhoon_eval.shared.console import console
 
 # Histogram bins for size / IAT.
 SIZE_BINS = 80
