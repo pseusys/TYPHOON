@@ -1472,6 +1472,27 @@ Flushing too eagerly (on every packet) eliminates the syscall reduction; flushin
 The queue must also account for the fact that `sendmmsg` batches datagrams for a single socket, while the server may manage multiple sockets simultaneously (one per flow on SO_REUSEPORT platforms), meaning coalescing must happen per-socket.
 The right flush policy — fixed threshold, fixed deadline, or adaptive — requires empirical benchmarking under realistic load patterns.
 
+#### Multi-job send/receive queue routine
+
+The batching described above coalesces the wire packets of a _single_ user message, but the dominant cost under sustained bulk transfer is different: profiling a saturated flow shows the process spending the large majority of its on-CPU time inside the per-datagram `sendto`/`recvfrom` syscalls, with symmetric crypto a rounding error by comparison.
+The reason is architectural rather than cryptographic — the current data path issues one syscall per wire packet and, on the sender side, the caller `await`s each `send_bytes` through the full flow-manager stack before the next packet is prepared, so throughput is bounded by _per-packet round-trips through the executor_ rather than by how fast bytes can be encrypted.
+A multi-job queue routine decouples the application-visible send/receive calls from the syscalls that move bytes, so that many packets amortise into few kernel crossings and the crypto work spreads across cores.
+
+**Send path.**
+Each socket owns a bounded multi-producer queue of ready-to-send jobs.
+A `send_bytes` call splits its user message into wire packets, performs the trailer/crypto work — optionally handed to a small crypto worker pool so several messages encrypt in parallel — and enqueues the finished `(wire_bytes, addr)` jobs, returning as soon as they are accepted rather than after the datagrams have left the host.
+A dedicated per-socket flusher job drains the queue and issues one `sendmmsg` per drained batch, bounded by a maximum batch width (the `sendmmsg` vector limit) and a flush policy that fires on whichever of a fill threshold or a short deadline is reached first.
+Decoy emission feeds the same queue, so real and decoy datagrams interleave in the batched syscall exactly as they would on the wire and no separate send path can be timed apart from the data path.
+
+**Receive path.**
+A dedicated per-socket reader job pulls a batch of datagrams in a single `recvmmsg` call and hands the raw buffers to a decrypt worker pool; each worker locates and verifies the trailer, strips fake header/body padding, and routes the recovered payload to the owning session's receive queue keyed by identity.
+Batched receive matters most on the server, where a single listening socket may carry datagrams for many concurrent sessions in one `recvmmsg` sweep; per-session ordering is preserved because a single reader assigns arrival order before fan-out, and the worker pool only parallelises the per-packet crypto, not the enqueue.
+
+**The challenge**: the queue routine reintroduces, at a larger granularity, every tension the single-message batching already faces — flush eagerness versus syscall amortisation, and per-socket rather than per-process coalescing — but adds three of its own.
+First, ordering: parallel crypto workers may finish out of order, so the design must either restore per-session sequence before delivery or rely on the existing trailer sequencing to tolerate reordering, and must not let a slow worker head-of-line-block an unrelated session.
+Second, backpressure: when a queue fills — a stalled link, a slow consumer — `send_bytes` must block or shed rather than grow memory unboundedly, and that backpressure has to surface to the caller without deadlocking the flusher that drains the same queue.
+Third, timing fidelity: coalescing must not distort the very inter-packet timing the flow shaper works to produce, so the flush deadline has to stay well below the smallest inter-arrival gap the shaper and health-check scheduler rely on, or the batching becomes a fingerprint of its own.
+
 ### Per-deployment randomisation seed
 
 In the current design, every TYPHOON deployment draws `FlowConfig` and decoy parameters from the same global distributions defined in `TYPHOON_*` settings keys.

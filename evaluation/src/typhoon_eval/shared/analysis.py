@@ -15,6 +15,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from .pcap_stats import analyze_pcap
+from .profiles import DEFAULT_BATCH_SIZE, DEFAULT_INTER_BATCH_DELAY_MS, expected_pacing_s
 from .protocols import BY_NAME
 
 console = Console()
@@ -73,6 +74,14 @@ def main(run_id: str | None) -> None:
     if cfg_path.exists():
         cfg = loads(cfg_path.read_text())
 
+    # Deliberate sender pacing reconstructed from the run profile — subtracted
+    # from the pcap wire span to give the fair, cross-protocol active time.
+    profile_env: dict = cfg.get("profile_env", {})
+    batch_delay_ms = float(cfg.get("inter_batch_delay_ms", DEFAULT_INTER_BATCH_DELAY_MS))
+    batch_size = int(cfg.get("batch_size", DEFAULT_BATCH_SIZE))
+    pacing_c2s_s = expected_pacing_s(profile_env, "c2s", batch_delay_ms, batch_size) if profile_env else None
+    pacing_s2c_s = expected_pacing_s(profile_env, "s2c", batch_delay_ms, batch_size) if profile_env else None
+
     console.print("\n[bold]TYPHOON pcap analysis[/bold]")
     console.print(f"  Run       : [dim]{run_dir.name}[/dim]")
     if cfg:
@@ -100,7 +109,13 @@ def main(run_id: str | None) -> None:
             transfer_bytes: int | None = metadata.get(proto_key, {}).get("transfer_bytes")
             sniffer = BY_NAME[proto_key].handshake_sniffer if proto_key in BY_NAME else None
 
-            stats = analyze_pcap(pcap, transfer_bytes=transfer_bytes, handshake_sniffer=sniffer)
+            stats = analyze_pcap(
+                pcap,
+                transfer_bytes=transfer_bytes,
+                handshake_sniffer=sniffer,
+                pacing_c2s_s=pacing_c2s_s,
+                pacing_s2c_s=pacing_s2c_s,
+            )
             all_stats[name] = stats
 
             progress.update(task, total=1, completed=1,
@@ -200,12 +215,11 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                 )
             else:
                 meta = metadata.get(proto_key, {})
-                if meta.get("transfer_time_s") is not None:
+                fair_active = dirs.get("all", {}).get("active_time_s")
+                if fair_active is not None:
+                    eff_s = float(fair_active)
+                elif meta.get("transfer_time_s") is not None:
                     eff_s = float(meta["transfer_time_s"])
-                elif meta.get("recv_time_s") is not None:
-                    eff_s = float(meta["recv_time_s"])
-                elif meta.get("effective_time_s") is not None:
-                    eff_s = float(meta["effective_time_s"])
                 else:
                     t_s = s.get("transmission_time_s", 0)
                     eff_s = max(t_s - injected_delay_s, 0.0) if injected_delay_s > 0 else t_s

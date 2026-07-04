@@ -197,10 +197,41 @@ def handshake_end(
     return first_ts + _HANDSHAKE_WINDOW_S
 
 
+def _fair_transfer(
+    stats: dict,
+    transfer_bytes: int | None,
+    pacing_s: float | None,
+) -> None:
+    """Annotate a direction's stats in place with the fair transfer metric.
+
+    ``transmission_time_s`` is the pcap wire span for the direction — from the
+    first data packet leaving the client to the last one reaching the server,
+    so it charges every protocol for all processing that gates the wire (kernel
+    driver, userspace crypto, batching), regardless of where it happens.
+    Subtracting the deliberate ``pacing_s`` (the same sleep the sender injected)
+    yields the *active* transfer time; goodput is then transfer_bytes over that.
+
+    This is measurement-symmetric across in-process senders (TYPHOON, whose
+    send path is fully on the measured clock) and cross-process tunnels (whose
+    client-side ``transfer_time_s`` stops at the local kernel buffer and hides
+    their crypto/forward cost).
+    """
+    if not stats or pacing_s is None:
+        return
+    span = stats.get("transmission_time_s", 0.0)
+    active = max(span - pacing_s, 1e-6)
+    stats["pacing_s"] = pacing_s
+    stats["active_time_s"] = active
+    if transfer_bytes:
+        stats["fair_goodput_mbps"] = transfer_bytes * 8 / active / 1_000_000
+
+
 def analyze_pcap(
     path: Path,
     transfer_bytes: int | None = None,
     handshake_sniffer: HandshakeSniffer | None = None,
+    pacing_c2s_s: float | None = None,
+    pacing_s2c_s: float | None = None,
 ) -> dict[str, dict]:
     """
     Parse *path* and return {"c2s": {...}, "s2c": {...}, "all": {...}}.
@@ -208,6 +239,9 @@ def analyze_pcap(
     Each value is a dict of computed metrics (empty dict if no packets in that
     direction).  transfer_bytes is used only for the overhead_ratio field.
     handshake_sniffer overrides the default time-window handshake detection.
+    pacing_c2s_s / pacing_s2c_s are the deliberate sender sleeps (seconds) for
+    each direction; when given, the direction's stats gain ``active_time_s`` and
+    ``fair_goodput_mbps`` — the pacing-subtracted, cross-protocol-fair metric.
     """
     c2s, s2c = parse_pcap(path)
 
@@ -268,5 +302,16 @@ def analyze_pcap(
             all_stats["hs_duration_s"] = hs_end_ts - first_ts
             all_stats["hs_pkt_count"]  = hs_pkt_count
             all_stats["hs_byte_frac"]  = hs_bytes / total_bytes if total_bytes else 0.0
+
+    # Fair, pacing-subtracted transfer metric per direction; surface the
+    # data-bearing direction's result into "all" for the summary/plots.
+    _fair_transfer(result["c2s"], transfer_bytes, pacing_c2s_s)
+    _fair_transfer(result["s2c"], None, pacing_s2c_s)
+    if all_stats:
+        data_dir = result["c2s"] if result["c2s"].get("active_time_s") else result["s2c"]
+        if data_dir.get("active_time_s") is not None:
+            all_stats["active_time_s"]    = data_dir["active_time_s"]
+            all_stats["pacing_s"]         = data_dir.get("pacing_s")
+            all_stats["fair_goodput_mbps"] = data_dir.get("fair_goodput_mbps")
 
     return result
