@@ -58,8 +58,7 @@ jobs:
 
       - name: Run full evaluation pipeline (validation scale) 🧪
         working-directory: evaluation
-        run: |
-          poetry poe evaluate --classification-runs 1 --typhoon-runs 2 --typhoon-uc-runs 1 --typhoon-traffic-runs 1 --background-runs 15
+        run: poetry poe evaluate --classification-runs 1 --typhoon-runs 2 --typhoon-uc-runs 1 --typhoon-traffic-runs 1 --background-runs 15 --quiet-build
 
       - name: Upload evaluation artifacts 📈
         uses: actions/upload-artifact@v4

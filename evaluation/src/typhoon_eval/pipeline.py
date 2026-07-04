@@ -26,7 +26,7 @@ from json import dumps, loads
 from pathlib import Path
 from platform import system
 from shutil import copy2
-from subprocess import DEVNULL, run
+from subprocess import DEVNULL, STDOUT, run
 from sys import exit
 
 from click import ClickException, Command, command, option
@@ -56,6 +56,10 @@ ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts"
 BACKGROUND_ROOT = RESULTS_DIR / "background"
 
 _ALL_PHASES = ("build", "capture", "analyze", "visualize", "typhoon", "background", "benchmark", "report")
+
+# Lines of captured output to show on a --quiet-build failure — enough to see
+# the actual Docker error without dumping the full (often 1000s-of-lines) log.
+_QUIET_FAILURE_TAIL_LINES = 200
 
 EVAL_ROOT = Path(__file__).parent.parent.parent
 PROTOCOL_COMPOSE   = EVAL_ROOT / "compose" / "docker-compose.build.yml"
@@ -87,23 +91,48 @@ def _invoke(label: str, command: Command, args: list[str], log_path: Path | None
     return exit_code == 0
 
 
-def _shell(label: str, cmd: list[str], log_path: Path | None = None) -> bool:
-    """Run *cmd* as a subprocess; for modules without a direct import target."""
+def _shell(label: str, cmd: list[str], log_path: Path | None = None, quiet: bool = False) -> bool:
+    """Run *cmd* as a subprocess; for modules without a direct import target.
+
+    *quiet* redirects stdout/stderr into *log_path* instead of streaming them
+    to the console — ``docker compose build`` alone can emit thousands of
+    lines of layer output, which drowns everything else in CI logs. The
+    command is still fully captured in the log file, and on failure the last
+    ``_QUIET_FAILURE_TAIL_LINES`` lines are printed so the actual error stays
+    visible. Silently does nothing (falls back to streaming) when *quiet* is
+    requested without a *log_path* to capture into.
+    """
     console.print(f"\n  [dim]$ {' '.join(cmd)}[/dim]")
     if log_path:
         with log_path.open("a") as lf:
             lf.write(f"\n$ {' '.join(cmd)}\n")
-    result = run(cmd, stdin=DEVNULL)
+    if quiet and log_path:
+        with log_path.open("a") as lf:
+            result = run(cmd, stdin=DEVNULL, stdout=lf, stderr=STDOUT)
+    else:
+        result = run(cmd, stdin=DEVNULL)
     if log_path:
         with log_path.open("a") as lf:
             lf.write(f"exit_code={result.returncode}\n")
+    if quiet and log_path:
+        if result.returncode == 0:
+            console.print(f"  [green]✓[/green] {label} (output suppressed — see {log_path})")
+        else:
+            console.print(f"  [red]✗ {label} failed (exit {result.returncode}) — last {_QUIET_FAILURE_TAIL_LINES} lines:[/red]")
+            tail = log_path.read_text().splitlines()[-_QUIET_FAILURE_TAIL_LINES:]
+            console.print("[dim]" + "\n".join(tail) + "[/dim]")
     return result.returncode == 0
 
 
 # ── Phase 1: build ────────────────────────────────────────────────────────────
 
-def _phase_build(log_dir: Path) -> None:
-    """Build protocol + background-generator Docker images via docker compose."""
+def _phase_build(log_dir: Path, quiet: bool = False) -> None:
+    """Build protocol + background-generator Docker images via docker compose.
+
+    *quiet* suppresses the (often 1000s-of-lines) build output from the
+    console — still fully captured in ``build.log`` — printing only a
+    per-target pass/fail line. See ``_shell``.
+    """
     console.print(Rule("[bold]Phase 1 — Build[/bold]"))
     log_path = log_dir / "build.log"
 
@@ -112,7 +141,7 @@ def _phase_build(log_dir: Path) -> None:
             console.print(f"  [yellow]Skipping {label}: compose file not found at {compose_file}[/yellow]")
             continue
         console.print(f"\n  [cyan]{label}[/cyan] ← {compose_file.relative_to(EVAL_ROOT)}")
-        _shell(label, ["docker", "compose", "-f", str(compose_file), "build"], log_path)
+        _shell(label, ["docker", "compose", "-f", str(compose_file), "build"], log_path, quiet=quiet)
 
 
 # ── Phase 2: captures ─────────────────────────────────────────────────────────
@@ -518,6 +547,10 @@ def _generate_report(
                    "run on the stored PCAPs. Pair with '--skip build,capture' to reuse everything.")
 @option("--artifacts-dir", default=str(ARTIFACTS_ROOT), show_default=True, type=ClickPath(),
               help="Root directory for per-pipeline-run artifact subdirectories.")
+@option("--quiet-build/--no-quiet-build", default=False, show_default=True,
+              help="Suppress the build phase's docker compose output (1000s of lines) from the "
+                   "console — still fully captured in logs/build.log, with the last "
+                   f"{_QUIET_FAILURE_TAIL_LINES} lines printed on failure.")
 @option("--skip", default="", show_default=True,
               help=f"Comma-separated phases to skip: {', '.join(_ALL_PHASES)}.")
 def main(
@@ -530,6 +563,7 @@ def main(
     background_runs: int,
     corpus_root: str | None,
     artifacts_dir: str,
+    quiet_build: bool,
     skip: str,
 ) -> None:
     """TYPHOON total evaluation pipeline: build → capture → analyze → visualize → typhoon → background → report."""
@@ -571,11 +605,12 @@ def main(
         "typhoon_traffic_runs": typhoon_traffic_runs,
         "background_runs":      background_runs,
         "corpus_root":          str(corpus_root_path) if corpus_root_path else None,
+        "quiet_build":          quiet_build,
         "skipped_phases":       sorted(skipped),
     }, indent=2))
 
     if "build" not in skipped:
-        _phase_build(log_dir)
+        _phase_build(log_dir, quiet=quiet_build)
 
     bulk_run_ids: list[str] = []
 

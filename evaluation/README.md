@@ -130,15 +130,16 @@ poe evaluate                    # build → capture → analyze → Part 1 + 2 p
 poe evaluate --skip background  # everything except the 7500-run Part 3 corpus
 poe evaluate --skip build       # reuse existing Docker images
 poe evaluate --skip benchmark   # skip cargo bench + flamegraphs (auto-skipped on non-Linux anyway)
+poe evaluate --quiet-build      # build phase output → logs/build.log only (docker compose build is 1000s of lines)
 
 # Re-analyze already-stored PCAPs without regenerating the corpus — e.g. after
 # changing feature sets or classifier options:
 poe evaluate --skip build,capture --corpus-root results/background/pipeline_<id>
 
 # Validation-scale run — every phase, tiny sample sizes (~minutes, not days).
-# This is what CI runs on every push/PR; see .github/workflows/evaluation.yaml.
+# This is what CI runs on every push; see .github/workflows/evaluation.yaml.
 poe evaluate --classification-runs 1 --typhoon-runs 2 --typhoon-uc-runs 1 \
-    --typhoon-traffic-runs 1 --background-runs 15
+    --typhoon-traffic-runs 1 --background-runs 15 --quiet-build
 
 poe clean                       # delete results/captures and results/background
 ```
