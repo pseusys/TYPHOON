@@ -163,11 +163,10 @@ def _phase_capture(
     for i in range(classification_runs):
         console.print(f"\n  [cyan]Bulk classification run {i + 1}/{classification_runs}[/cyan]")
         ok = _invoke("capture-bulk", _orchestrator_main, ["--all", "--profile", "bulk_upload"], log_path)
-        if ok:
-            rd = _latest_run()
-            if rd:
-                bulk_run_ids.append(rd.name.removeprefix("run_"))
-                console.print(f"  [green]✓[/green] Created {rd.name}")
+        rd = _latest_run()
+        if rd and any(rd.glob("*.pcap")):
+            bulk_run_ids.append(rd.name.removeprefix("run_"))
+            console.print(f"  [green]✓[/green] Created {rd.name}" + ("" if ok else " [yellow](partial — some protocols failed)[/yellow]"))
         else:
             console.print("  [yellow]⚠ Bulk capture failed — continuing[/yellow]")
 

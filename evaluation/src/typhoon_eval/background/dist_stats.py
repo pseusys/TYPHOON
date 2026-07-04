@@ -103,12 +103,14 @@ def _load_corpus_packets(
             continue
         meta = loads(meta_path.read_text())
         ip_map = meta.get("ip_map", {})
-        typhoon_profile = meta.get("typhoon_profile", "unknown")
         # Map every IP in the slot table to (class_key, role) so we can
         # classify each captured packet's direction without an explicit pair.
+        # TYPHOON slots get a per-profile display key so its 8 concurrently
+        # running profiles don't collapse into one "typhoon" bucket.
         ip_to_key_role: dict[str, tuple[str, str]] = {}
-        for cls, slot in ip_map.items():
-            key = f"typhoon::{typhoon_profile}" if cls == TYPHOON_CLASS else cls
+        for map_key, slot in ip_map.items():
+            cls = slot.get("class", map_key)
+            key = f"typhoon::{slot['profile']}" if cls == TYPHOON_CLASS else cls
             ip_to_key_role[slot["client_ip"]] = (key, "client")
             ip_to_key_role[slot["server_ip"]] = (key, "server")
 

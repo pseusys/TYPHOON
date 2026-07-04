@@ -19,7 +19,7 @@ jobs:
   evaluate:
     name: Run Full Evaluation Pipeline (Validation Scale)
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
 
     steps:
       - name: Checkout 🛎️
@@ -56,9 +56,57 @@ jobs:
         working-directory: evaluation
         run: poetry install
 
-      - name: Run full evaluation pipeline (validation scale) 🧪
+      - name: Restore protocol image cache 💾
+        id: protocol-images-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/docker-cache/protocol-images.tar
+          key: protocol-images-${{ runner.os }}-${{ hashFiles('evaluation/compose/docker-compose.build.yml', 'evaluation/protocols/**', 'typhoon/src/**', 'typhoon/Cargo.toml', 'typhoon/Cargo.lock') }}
+
+      - name: Load protocol images 📦
+        if: steps.protocol-images-cache.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/docker-cache/protocol-images.tar
+
+      - name: Restore background image cache 💾
+        id: background-images-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/docker-cache/background-images.tar
+          key: background-images-${{ runner.os }}-${{ hashFiles('evaluation/background/compose/docker-compose.build.yml', 'evaluation/background/**') }}
+
+      - name: Load background images 📦
+        if: steps.background-images-cache.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/docker-cache/background-images.tar
+
+      - name: Build protocol images 🏗️
         working-directory: evaluation
-        run: poetry poe evaluate --classification-runs 1 --typhoon-runs 2 --typhoon-uc-runs 1 --typhoon-traffic-runs 1 --background-runs 15 --quiet-build
+        env:
+          DOCKER_BUILDKIT: 0
+        run: poetry poe build
+
+      - name: Build background images 🏗️
+        working-directory: evaluation
+        env:
+          DOCKER_BUILDKIT: 0
+        run: poetry poe background-build
+
+      - name: Save protocol images to cache 💾
+        if: steps.protocol-images-cache.outputs.cache-hit != 'true'
+        working-directory: evaluation
+        run: |
+          mkdir -p /tmp/docker-cache
+          docker save -o /tmp/docker-cache/protocol-images.tar $(docker compose -f compose/docker-compose.build.yml config --images)
+
+      - name: Save background images to cache 💾
+        if: steps.background-images-cache.outputs.cache-hit != 'true'
+        working-directory: evaluation
+        run: |
+          mkdir -p /tmp/docker-cache
+          docker save -o /tmp/docker-cache/background-images.tar $(docker compose -f background/compose/docker-compose.build.yml config --images)
+
+      - name: Run full evaluation pipeline 🧪
+        working-directory: evaluation
+        run: poetry poe evaluate --skip build --classification-runs 1 --typhoon-runs 2 --typhoon-uc-runs 1 --typhoon-traffic-runs 1 --background-runs 15 --quiet-build
 
       - name: Upload evaluation artifacts 📈
         uses: actions/upload-artifact@v4
