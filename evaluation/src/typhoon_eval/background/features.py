@@ -1,0 +1,354 @@
+"""Shared Barradas USENIX'18 feature extraction + corpus loading for Part 3.
+
+One feature vector per wire flow, computed identically for every Part 3
+metric so the blending (Test C) and held-out detectability (Tests A/B/D/E/F)
+scripts operate on the exact same representation.  Statistics are computed
+three times (total / c2s / s2c) and concatenated, plus per-direction burst
+statistics; the alternative ``histogram`` feature set is a 300-bin
+packet-length histogram over 0–1500 B.
+
+Selectable via ``--features {stats,histogram,both}``.  ``stats`` mirrors
+Barradas's primary feature set (174 features); ``histogram`` mirrors the
+alternative 5-byte-binning set (300 features); ``both`` concatenates them.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from json import loads
+from pathlib import Path
+
+import numpy as np
+from scapy.layers.inet import IP, UDP
+from scapy.utils import PcapReader
+
+from typhoon_eval.shared.pcap_stats import _entropy, _size_entropy
+from typhoon_eval.shared.profiles import TYPHOON_CLASS as TYPHOON_CLASS  # re-exported for ml_blending/dist_stats/detectability
+
+# Minimum packets per flow required to compute the Barradas feature vector.
+MIN_SAMPLES_FOR_STATS = 2
+
+# Direction grouping for the Barradas concatenated feature layout.
+# ``DIRECTION_GROUPS`` covers what Barradas calls (total, out, in) — we use
+# (total, c2s, s2c).  ``DIRECTIONS`` is the strict directional set used for
+# burst attribution and per-direction visualisations.
+DIRECTION_GROUPS: tuple[str, str, str] = ("total", "c2s", "s2c")
+DIRECTIONS: tuple[str, str] = ("c2s", "s2c")
+
+# Percentiles computed for sizes / IATs / burst stats — matches Barradas
+# USENIX'18 (deciles p10..p90).
+PERCENTILES: tuple[int, ...] = (10, 20, 30, 40, 50, 60, 70, 80, 90)
+
+# Moment statistics computed alongside percentiles.  "var" and "std" both
+# appear in Barradas; we keep both to stay literal to the reference set.
+_MOMENT_NAMES: tuple[str, ...] = ("min", "max", "mean", "std", "var", "kurt", "skew")
+
+# Barradas alternative feature set: 5-byte-bin packet-length histogram over
+# 0..1500 B inclusive → 300 bins.
+BARRADAS_HIST_BIN_WIDTH = 5
+BARRADAS_HIST_MAX = 1500
+BARRADAS_HIST_N_BINS = BARRADAS_HIST_MAX // BARRADAS_HIST_BIN_WIDTH
+
+
+def _moment_and_percentile_names(prefix: str) -> list[str]:
+    return [f"{prefix}_{m}" for m in _MOMENT_NAMES] + [f"{prefix}_p{p}" for p in PERCENTILES]
+
+
+def _build_stats_feature_names() -> list[str]:
+    """Layout: 3 globals + 3 × (entropies + size block + IAT block) + 2 × (burst-count + pkt block + byte block).
+
+    Matches Barradas USENIX'18:
+      total / c2s / s2c × (size entropy + IAT entropy + payload entropy + 7 moments + 9 deciles for sizes + 7 moments + 9 deciles for IATs)
+      + outgoing-burst stats (count + 7 moments + 9 deciles for packet counts + same for byte sums)
+      + incoming-burst stats (same)
+    Resulting feature count: 3 + 3 × 35 + 2 × 33 = 174.
+    """
+    names: list[str] = ["n_packets", "byte_sum", "duration_s"]
+    for group in DIRECTION_GROUPS:
+        names += [
+            f"{group}_size_entropy",
+            f"{group}_iat_entropy",
+            f"{group}_payload_entropy",
+            *_moment_and_percentile_names(f"{group}_size"),
+            *_moment_and_percentile_names(f"{group}_iat"),
+        ]
+    for direction in DIRECTIONS:
+        names += [
+            f"{direction}_burst_count",
+            *_moment_and_percentile_names(f"{direction}_burst_pkts"),
+            *_moment_and_percentile_names(f"{direction}_burst_bytes"),
+        ]
+    return names
+
+
+STATS_FEATURE_NAMES: list[str] = _build_stats_feature_names()
+
+HISTOGRAM_FEATURE_NAMES: list[str] = [
+    f"hist_{i * BARRADAS_HIST_BIN_WIDTH}_{(i + 1) * BARRADAS_HIST_BIN_WIDTH}"
+    for i in range(BARRADAS_HIST_N_BINS)
+]
+
+FEATURE_SETS: tuple[str, str, str] = ("stats", "histogram", "both")
+
+
+def get_feature_names(feature_set: str) -> list[str]:
+    """Return the ordered feature-name list for the requested feature_set."""
+    if feature_set == "stats":
+        return list(STATS_FEATURE_NAMES)
+    if feature_set == "histogram":
+        return list(HISTOGRAM_FEATURE_NAMES)
+    if feature_set == "both":
+        return list(STATS_FEATURE_NAMES) + list(HISTOGRAM_FEATURE_NAMES)
+    raise ValueError(f"Unknown feature_set: {feature_set!r} (expected one of {FEATURE_SETS})")
+
+
+# Back-compat alias for callers that still import FEATURE_NAMES.
+FEATURE_NAMES: list[str] = STATS_FEATURE_NAMES
+
+
+def _moment_and_decile_block(vals: np.ndarray) -> list[float]:
+    """Compute the Barradas per-metric block: 7 moments + 9 deciles = 16 features.
+
+    Order matches :data:`_MOMENT_NAMES` followed by :data:`PERCENTILES`.
+    Skewness and kurtosis are computed manually (no scipy dependency) — kurtosis
+    is Fisher / excess (subtract 3).  Returns zeros for empty inputs.
+    """
+    if len(vals) == 0:
+        return [0.0] * (len(_MOMENT_NAMES) + len(PERCENTILES))
+    arr = vals.astype(np.float64)
+    mean = float(arr.mean())
+    std  = float(arr.std())
+    var  = float(arr.var())
+    if std > 0:
+        z = (arr - mean) / std
+        skew = float(np.mean(z ** 3))
+        kurt = float(np.mean(z ** 4) - 3.0)
+    else:
+        skew = 0.0
+        kurt = 0.0
+    moments = [float(arr.min()), float(arr.max()), mean, std, var, kurt, skew]
+    deciles = [float(np.percentile(arr, p)) for p in PERCENTILES]
+    return moments + deciles
+
+
+def _compute_bursts_per_direction(
+    timeline: list[tuple[float, int, str]],
+) -> dict[str, dict[str, np.ndarray]]:
+    """Identify contiguous same-direction runs (bursts) across the full flow.
+
+    Returns ``{direction: {"pkts": np.ndarray, "bytes": np.ndarray}}`` where the
+    arrays hold per-burst packet counts and byte sums.  Bursts are attributed
+    to their direction — c2s bursts go in ``out["c2s"]`` etc.
+    """
+    bursts: dict[str, dict[str, list[int]]] = {d: {"pkts": [], "bytes": []} for d in DIRECTIONS}
+    if not timeline:
+        return {d: {"pkts": np.array([]), "bytes": np.array([])} for d in DIRECTIONS}
+
+    sorted_timeline = sorted(timeline, key=lambda r: r[0])
+    current_dir: str | None = None
+    current_pkts = 0
+    current_bytes = 0
+    for _, size, direction in sorted_timeline:
+        if direction != current_dir:
+            if current_dir is not None and current_pkts > 0:
+                bursts[current_dir]["pkts"].append(current_pkts)
+                bursts[current_dir]["bytes"].append(current_bytes)
+            current_dir = direction
+            current_pkts = 1
+            current_bytes = size
+        else:
+            current_pkts += 1
+            current_bytes += size
+    if current_dir is not None and current_pkts > 0:
+        bursts[current_dir]["pkts"].append(current_pkts)
+        bursts[current_dir]["bytes"].append(current_bytes)
+    return {
+        d: {"pkts": np.array(b["pkts"], dtype=np.int64),
+            "bytes": np.array(b["bytes"], dtype=np.int64)}
+        for d, b in bursts.items()
+    }
+
+
+def _packet_length_histogram(sizes: np.ndarray) -> np.ndarray:
+    """Barradas alternative feature set — 5-byte-bin packet-length histogram 0..1500B.
+
+    Returns ``BARRADAS_HIST_N_BINS`` (300) floats, where bin *i* counts packets
+    with size in ``[i * 5, (i + 1) * 5)``.  Packets ≥ 1500 B fall outside the
+    range and are dropped by ``np.histogram``.
+    """
+    if len(sizes) == 0:
+        return np.zeros(BARRADAS_HIST_N_BINS, dtype=np.float64)
+    edges = np.arange(0, BARRADAS_HIST_MAX + BARRADAS_HIST_BIN_WIDTH, BARRADAS_HIST_BIN_WIDTH)
+    hist, _ = np.histogram(sizes, bins=edges)
+    return hist.astype(np.float64)
+
+
+def _features_stats(
+    timeline: list[tuple[float, int, bytes, str]],
+    bursts: dict[str, dict[str, np.ndarray]],
+) -> np.ndarray:
+    """Build the 174-element Barradas stats feature vector for one full flow.
+
+    The layout exactly matches :data:`STATS_FEATURE_NAMES`: 3 global fields,
+    then total / c2s / s2c entropy + size + IAT blocks, then per-direction
+    burst blocks (count + pkts + bytes).  Missing directions yield zeros
+    inside the corresponding block.
+    """
+    ts_all = np.array([r[0] for r in timeline])
+    sz_all = np.array([r[1] for r in timeline], dtype=np.int64)
+    duration_s = float(ts_all.max() - ts_all.min()) if len(ts_all) > 1 else 0.0
+    globals_block = [float(len(timeline)), float(sz_all.sum()), duration_s]
+
+    blocks: list[float] = list(globals_block)
+    for group in DIRECTION_GROUPS:
+        recs = timeline if group == "total" else [r for r in timeline if r[3] == group]
+        ts = np.array([r[0] for r in recs])
+        sz = np.array([r[1] for r in recs], dtype=np.int64)
+        payload = b"".join(r[2] for r in recs[:200])
+        iats_ms = np.diff(np.sort(ts)) * 1000.0 if len(ts) > 1 else np.array([])
+        blocks.extend([
+            float(_size_entropy(sz)) if len(sz) else 0.0,
+            float(_size_entropy(np.round(iats_ms).astype(np.int64))) if len(iats_ms) else 0.0,
+            float(_entropy(payload)),
+        ])
+        blocks.extend(_moment_and_decile_block(sz))
+        blocks.extend(_moment_and_decile_block(iats_ms))
+
+    for direction in DIRECTIONS:
+        blocks.append(float(len(bursts[direction]["pkts"])))
+        blocks.extend(_moment_and_decile_block(bursts[direction]["pkts"]))
+        blocks.extend(_moment_and_decile_block(bursts[direction]["bytes"]))
+
+    return np.array(blocks, dtype=np.float64)
+
+
+def _features_histogram(timeline: list[tuple[float, int, bytes, str]]) -> np.ndarray:
+    sizes = np.array([r[1] for r in timeline], dtype=np.int64)
+    return _packet_length_histogram(sizes)
+
+
+def _features_from_flow(
+    timeline: list[tuple[float, int, bytes, str]],
+    bursts: dict[str, dict[str, np.ndarray]],
+    feature_set: str,
+) -> np.ndarray:
+    if feature_set == "stats":
+        return _features_stats(timeline, bursts)
+    if feature_set == "histogram":
+        return _features_histogram(timeline)
+    if feature_set == "both":
+        return np.concatenate([_features_stats(timeline, bursts), _features_histogram(timeline)])
+    raise ValueError(f"Unknown feature_set: {feature_set!r}")
+
+
+def _per_flow_features(
+    pcap: Path,
+    ip_map: dict[str, dict],
+    feature_set: str = "stats",
+) -> list[tuple[str, str, np.ndarray]]:
+    """Emit one feature row per wire flow (Barradas USENIX'18 concatenated layout).
+
+    A "wire flow" is the 5-tuple as it would be seen by a passive observer:
+    one (client_ip, server_ip, server_port) per ``ip_map`` slot.  Every
+    background class and every mimicry-profile (``as_*``, ``silent_idle``)
+    TYPHOON instance opens exactly one server port per run and so contributes
+    one row per run — the mimicry profiles pin a single randomly-chosen
+    address deliberately (see `eval_client.rs`), matching what a censor would
+    actually classify against those profiles' real-flow targets.
+    ``raw_default``/``tuned_default`` are the exception: they exercise the
+    protocol's genuine auto-fill flow selection (1 to
+    ``eval_server.rs::PORTS`` addresses, each independently randomised) so
+    they can contribute 1–3 rows per run.  Every row still carries the same
+    run id (see ``_load_corpus``), so `GroupKFold` folds never split a run's
+    rows across train/test regardless of how many a given run/class/profile
+    combination produced.
+
+    Server-port discovery is automatic: whichever IP matches a slot's
+    ``server_ip`` in ``ip_map`` contributes its UDP port number as the
+    flow's discriminator.  Returns ``(class_label, typhoon_profile_or_na,
+    feature_vector)`` triples — every non-TYPHOON slot's ``profile`` is
+    ``"n/a"``.
+    """
+    ip_to_slot: dict[str, tuple[str, str, str]] = {}
+    for key, slot in ip_map.items():
+        cls = slot.get("class", key)
+        profile = slot.get("profile", "n/a")
+        ip_to_slot[slot["client_ip"]] = (cls, profile, "client")
+        ip_to_slot[slot["server_ip"]] = (cls, profile, "server")
+
+    timelines: dict[tuple[str, str, int], list[tuple[float, int, bytes, str]]] = defaultdict(list)
+    with PcapReader(str(pcap)) as reader:
+        for pkt in reader:
+            if IP not in pkt or UDP not in pkt:
+                continue
+            ip_layer = pkt[IP]
+            src_meta = ip_to_slot.get(ip_layer.src)
+            dst_meta = ip_to_slot.get(ip_layer.dst)
+            # Compare the full (class, profile) slot identity, not just class —
+            # every TYPHOON mimicry profile shares the "typhoon" class label, so
+            # a class-only check would silently accept (and mis-attribute) a
+            # packet between two *different* concurrently-running TYPHOON
+            # profile instances as belonging to one flow.
+            if src_meta is None or dst_meta is None or src_meta[:2] != dst_meta[:2]:
+                continue
+            cls, profile, src_role = src_meta
+            udp_layer = pkt[UDP]
+            if src_role == "client" and dst_meta[2] == "server":
+                direction = "c2s"
+                server_port = int(udp_layer.dport)
+            elif src_role == "server" and dst_meta[2] == "client":
+                direction = "s2c"
+                server_port = int(udp_layer.sport)
+            else:
+                continue
+            payload = bytes(udp_layer.payload)
+            timelines[(cls, profile, server_port)].append((float(pkt.time), len(payload), payload, direction))
+
+    out: list[tuple[str, str, np.ndarray]] = []
+    for (cls, profile, _port), timeline in timelines.items():
+        # Need ≥ 2 packets total across both directions for the flow to be usable;
+        # individual directions may have 0–1 packets and the corresponding blocks
+        # land at zero (Barradas-compatible behaviour).
+        if len(timeline) < MIN_SAMPLES_FOR_STATS:
+            continue
+        bursts = _compute_bursts_per_direction([(t, s, d) for t, s, _, d in timeline])
+        out.append((cls, profile, _features_from_flow(timeline, bursts, feature_set)))
+    return out
+
+
+def _load_corpus(
+    corpus_root: Path,
+    feature_set: str = "stats",
+) -> tuple[np.ndarray, list[str], list[str], list[str], list[Path]]:
+    """Walk every run dir under *corpus_root* and assemble per-flow features + labels.
+
+    Returns ``(X, class_labels, typhoon_profiles_or_na, run_ids, skipped_runs)``.
+    One row per (run × class) flow — Barradas USENIX'18 layout — with the row's
+    feature vector encoding the full conversation in *feature_set* format.
+    ``run_ids`` (the ``run_<timestamp>`` directory name) lets callers keep
+    same-run rows out of opposite sides of a cross-validation split — a run's
+    background flows share its chaos (latency/jitter/loss) draw with that
+    run's TYPHOON flow, so splitting them across train/test would leak that
+    shared, class-independent signal.
+    """
+    feats: list[np.ndarray] = []
+    labels: list[str] = []
+    profiles: list[str] = []
+    run_ids: list[str] = []
+    skipped: list[Path] = []
+    for run_dir in sorted(corpus_root.glob("run_*")):
+        meta_path = run_dir / "metadata.json"
+        if not meta_path.exists():
+            skipped.append(run_dir)
+            continue
+        meta = loads(meta_path.read_text())
+        ip_map = meta.get("ip_map", {})
+        for pcap in run_dir.glob("*.pcap"):
+            for cls, profile, vec in _per_flow_features(pcap, ip_map, feature_set):
+                feats.append(vec)
+                labels.append(cls)
+                profiles.append(profile)
+                run_ids.append(run_dir.name)
+    if not feats:
+        return np.empty((0, 0)), [], [], [], skipped
+    return np.vstack(feats), labels, profiles, run_ids, skipped

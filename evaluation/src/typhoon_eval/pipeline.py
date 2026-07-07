@@ -5,7 +5,7 @@
   3. analyze     — pcap statistics per capture run
   4. visualize   — protocol comparison and flow plots
   5. typhoon     — TYPHOON intrinsic comparisons (self, use-case, traffic)
-  6. background  — Part 3 corpus + blending + open-world + dist plots
+  6. background  — Part 3 corpus + blending + detectability + dist plots
   7. benchmark   — cargo bench + example flamegraphs (Linux only, auto-skipped elsewhere)
   8. report      — aggregate everything into artifacts/<pipeline_id>/report.md
 
@@ -26,18 +26,17 @@ from json import dumps, loads
 from pathlib import Path
 from platform import system
 from shutil import copy2
-from subprocess import DEVNULL, run
+from subprocess import DEVNULL, STDOUT, run
 from sys import exit
 
 from click import ClickException, Command, command, option
 from click import Path as ClickPath
-from rich.console import Console
 from rich.rule import Rule
 
 from typhoon_eval.background.corpus import main as _bg_corpus_main
+from typhoon_eval.background.detectability.cli import main as _bg_detectability_main
 from typhoon_eval.background.dist_plot import main as _bg_distplot_main
 from typhoon_eval.background.ml_blending import main as _bg_blending_main
-from typhoon_eval.background.ml_open_world import main as _bg_openworld_main
 from typhoon_eval.benchmark import main as _benchmark_main
 from typhoon_eval.protocols_op.proto_compare_plots import main as _proto_compare_main
 from typhoon_eval.self.self_compare import main as _self_compare_main
@@ -45,10 +44,9 @@ from typhoon_eval.self.traffic_compare import main as _traffic_compare_main
 from typhoon_eval.self.use_case_compare import main as _use_case_compare_main
 from typhoon_eval.shared.analysis import CAPTURES_ROOT, _latest_run
 from typhoon_eval.shared.analysis import main as _analysis_main
+from typhoon_eval.shared.console import console
 from typhoon_eval.shared.orchestrator import main as _orchestrator_main
 from typhoon_eval.shared.pcap_flow_plot import main as _pcap_flow_plot_main
-
-console = Console()
 
 PROJECT_ROOT   = Path(__file__).parent.parent.parent.parent
 RESULTS_DIR    = PROJECT_ROOT / "evaluation" / "results"
@@ -56,6 +54,10 @@ ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts"
 BACKGROUND_ROOT = RESULTS_DIR / "background"
 
 _ALL_PHASES = ("build", "capture", "analyze", "visualize", "typhoon", "background", "benchmark", "report")
+
+# Lines of captured output to show on a --quiet-build failure — enough to see
+# the actual Docker error without dumping the full (often 1000s-of-lines) log.
+_QUIET_FAILURE_TAIL_LINES = 200
 
 EVAL_ROOT = Path(__file__).parent.parent.parent
 PROTOCOL_COMPOSE   = EVAL_ROOT / "compose" / "docker-compose.build.yml"
@@ -87,23 +89,48 @@ def _invoke(label: str, command: Command, args: list[str], log_path: Path | None
     return exit_code == 0
 
 
-def _shell(label: str, cmd: list[str], log_path: Path | None = None) -> bool:
-    """Run *cmd* as a subprocess; for modules without a direct import target."""
+def _shell(label: str, cmd: list[str], log_path: Path | None = None, quiet: bool = False) -> bool:
+    """Run *cmd* as a subprocess; for modules without a direct import target.
+
+    *quiet* redirects stdout/stderr into *log_path* instead of streaming them
+    to the console — ``docker compose build`` alone can emit thousands of
+    lines of layer output, which drowns everything else in CI logs. The
+    command is still fully captured in the log file, and on failure the last
+    ``_QUIET_FAILURE_TAIL_LINES`` lines are printed so the actual error stays
+    visible. Silently does nothing (falls back to streaming) when *quiet* is
+    requested without a *log_path* to capture into.
+    """
     console.print(f"\n  [dim]$ {' '.join(cmd)}[/dim]")
     if log_path:
         with log_path.open("a") as lf:
             lf.write(f"\n$ {' '.join(cmd)}\n")
-    result = run(cmd, stdin=DEVNULL)
+    if quiet and log_path:
+        with log_path.open("a") as lf:
+            result = run(cmd, stdin=DEVNULL, stdout=lf, stderr=STDOUT)
+    else:
+        result = run(cmd, stdin=DEVNULL)
     if log_path:
         with log_path.open("a") as lf:
             lf.write(f"exit_code={result.returncode}\n")
+    if quiet and log_path:
+        if result.returncode == 0:
+            console.print(f"  [green]✓[/green] {label} (output suppressed — see {log_path})")
+        else:
+            console.print(f"  [red]✗ {label} failed (exit {result.returncode}) — last {_QUIET_FAILURE_TAIL_LINES} lines:[/red]")
+            tail = log_path.read_text().splitlines()[-_QUIET_FAILURE_TAIL_LINES:]
+            console.print("[dim]" + "\n".join(tail) + "[/dim]")
     return result.returncode == 0
 
 
 # ── Phase 1: build ────────────────────────────────────────────────────────────
 
-def _phase_build(log_dir: Path) -> None:
-    """Build protocol + background-generator Docker images via docker compose."""
+def _phase_build(log_dir: Path, quiet: bool = False) -> None:
+    """Build protocol + background-generator Docker images via docker compose.
+
+    *quiet* suppresses the (often 1000s-of-lines) build output from the
+    console — still fully captured in ``build.log`` — printing only a
+    per-target pass/fail line. See ``_shell``.
+    """
     console.print(Rule("[bold]Phase 1 — Build[/bold]"))
     log_path = log_dir / "build.log"
 
@@ -112,7 +139,7 @@ def _phase_build(log_dir: Path) -> None:
             console.print(f"  [yellow]Skipping {label}: compose file not found at {compose_file}[/yellow]")
             continue
         console.print(f"\n  [cyan]{label}[/cyan] ← {compose_file.relative_to(EVAL_ROOT)}")
-        _shell(label, ["docker", "compose", "-f", str(compose_file), "build"], log_path)
+        _shell(label, ["docker", "compose", "-f", str(compose_file), "build"], log_path, quiet=quiet)
 
 
 # ── Phase 2: captures ─────────────────────────────────────────────────────────
@@ -136,11 +163,10 @@ def _phase_capture(
     for i in range(classification_runs):
         console.print(f"\n  [cyan]Bulk classification run {i + 1}/{classification_runs}[/cyan]")
         ok = _invoke("capture-bulk", _orchestrator_main, ["--all", "--profile", "bulk_upload"], log_path)
-        if ok:
-            rd = _latest_run()
-            if rd:
-                bulk_run_ids.append(rd.name.removeprefix("run_"))
-                console.print(f"  [green]✓[/green] Created {rd.name}")
+        rd = _latest_run()
+        if rd and any(rd.glob("*.pcap")):
+            bulk_run_ids.append(rd.name.removeprefix("run_"))
+            console.print(f"  [green]✓[/green] Created {rd.name}" + ("" if ok else " [yellow](partial — some protocols failed)[/yellow]"))
         else:
             console.print("  [yellow]⚠ Bulk capture failed — continuing[/yellow]")
 
@@ -216,6 +242,7 @@ def _phase_visualize(bulk_run_ids: list[str], artifacts_dir: Path, log_dir: Path
 def _phase_typhoon(
     typhoon_runs: int,
     typhoon_uc_runs: int,
+    typhoon_traffic_runs: int,
     artifacts_dir: Path,
     log_dir: Path,
 ) -> list[Path]:
@@ -235,8 +262,8 @@ def _phase_typhoon(
     if _invoke("uc-compare", _use_case_compare_main, ["--runs-per-case", str(typhoon_uc_runs), "--out-dir", str(uc_cmp_dir)], log_path):
         generated.extend(uc_cmp_dir.glob("*.pdf"))
 
-    console.print("\n  [cyan]traffic-compare[/cyan]")
-    if _invoke("traffic-compare", _traffic_compare_main, ["--out-dir", str(traffic_cmp_dir)], log_path):
+    console.print(f"\n  [cyan]traffic-compare[/cyan] ({typhoon_traffic_runs} runs/mode)")
+    if _invoke("traffic-compare", _traffic_compare_main, ["--runs", str(typhoon_traffic_runs), "--out-dir", str(traffic_cmp_dir)], log_path):
         generated.extend(traffic_cmp_dir.glob("*.pdf"))
 
     return generated
@@ -283,7 +310,7 @@ def _phase_background(
         ok = _invoke(
             "bg-corpus",
             _bg_corpus_main,
-            ["--runs", str(background_runs), "--out-dir", str(corpus_pcap_root)],
+            ["--runs", str(background_runs), "--out-dir", str(corpus_pcap_root), "--no-build"],
             log_path,
         )
         if not ok or not corpus_pcap_root.is_dir():
@@ -302,7 +329,7 @@ def _phase_background(
                 copy2(src, dst)
 
     blending_dir = bg_dir / "blending"
-    openworld_dir = bg_dir / "openworld"
+    detectability_dir = bg_dir / "detectability"
     distplot_dir = bg_dir / "distplot"
 
     console.print(f"\n  [cyan]background-blending[/cyan] → {blending_dir}")
@@ -314,15 +341,15 @@ def _phase_background(
     ):
         generated.extend(blending_dir.glob("*.json"))
 
-    console.print(f"\n  [cyan]background-openworld[/cyan] → {openworld_dir}")
+    console.print(f"\n  [cyan]background-detectability[/cyan] → {detectability_dir}")
     if _invoke(
-        "bg-openworld",
-        _bg_openworld_main,
-        ["--corpus-root", str(corpus_pcap_root), "--out-dir", str(openworld_dir)],
+        "bg-detectability",
+        _bg_detectability_main,
+        ["--corpus-root", str(corpus_pcap_root), "--out-dir", str(detectability_dir)],
         log_path,
     ):
-        generated.extend(openworld_dir.glob("*.pdf"))
-        generated.extend(openworld_dir.glob("*.json"))
+        generated.extend(detectability_dir.glob("*.pdf"))
+        generated.extend(detectability_dir.glob("*.json"))
 
     console.print(f"\n  [cyan]background-distplot[/cyan] → {distplot_dir}")
     if _invoke(
@@ -367,7 +394,7 @@ def _generate_report(
     bulk_run_ids: list[str],
     artifacts_dir: Path,
 ) -> Path:
-    console.print(Rule("[bold]Phase 7 — Report[/bold]"))
+    console.print(Rule("[bold]Phase 8 — Report[/bold]"))
 
     lines: list[str] = [
         "# TYPHOON Evaluation Report",
@@ -480,7 +507,7 @@ def _generate_report(
         "poe background-build",
         "poe background-corpus",
         "poe background-blending",
-        "poe background-openworld",
+        "poe background-detectability",
         "poe background-distplot",
         "poe benchmark",
         "```",
@@ -507,6 +534,8 @@ def _generate_report(
               help="Repeated runs for self-compare.")
 @option("--typhoon-uc-runs", default=3, show_default=True, type=int,
               help="Runs per use case for use-case-compare.")
+@option("--typhoon-traffic-runs", default=3, show_default=True, type=int,
+              help="Runs per payload×wait mode for traffic-compare (4 modes × this many runs).")
 @option("--background-runs", default=7500, show_default=True, type=int,
               help="Number of randomised background-blending corpus runs (long). Ignored when --corpus-root is given.")
 @option("--corpus-root", "corpus_root", default=None, type=ClickPath(),
@@ -515,6 +544,10 @@ def _generate_report(
                    "run on the stored PCAPs. Pair with '--skip build,capture' to reuse everything.")
 @option("--artifacts-dir", default=str(ARTIFACTS_ROOT), show_default=True, type=ClickPath(),
               help="Root directory for per-pipeline-run artifact subdirectories.")
+@option("--quiet-build/--no-quiet-build", default=False, show_default=True,
+              help="Suppress the build phase's docker compose output (1000s of lines) from the "
+                   "console — still fully captured in logs/build.log, with the last "
+                   f"{_QUIET_FAILURE_TAIL_LINES} lines printed on failure.")
 @option("--skip", default="", show_default=True,
               help=f"Comma-separated phases to skip: {', '.join(_ALL_PHASES)}.")
 def main(
@@ -523,9 +556,11 @@ def main(
     chaos: bool,
     typhoon_runs: int,
     typhoon_uc_runs: int,
+    typhoon_traffic_runs: int,
     background_runs: int,
     corpus_root: str | None,
     artifacts_dir: str,
+    quiet_build: bool,
     skip: str,
 ) -> None:
     """TYPHOON total evaluation pipeline: build → capture → analyze → visualize → typhoon → background → report."""
@@ -558,19 +593,21 @@ def main(
 
     # Snapshot the resolved pipeline parameters for reproducibility.
     (artifacts_dir_run / "pipeline_config.json").write_text(dumps({
-        "pipeline_id":         pipeline_id,
-        "classification_runs": classification_runs,
-        "profiles":            profile_list,
-        "chaos":               chaos,
-        "typhoon_runs":        typhoon_runs,
-        "typhoon_uc_runs":     typhoon_uc_runs,
-        "background_runs":     background_runs,
-        "corpus_root":         str(corpus_root_path) if corpus_root_path else None,
-        "skipped_phases":      sorted(skipped),
+        "pipeline_id":          pipeline_id,
+        "classification_runs":  classification_runs,
+        "profiles":             profile_list,
+        "chaos":                chaos,
+        "typhoon_runs":         typhoon_runs,
+        "typhoon_uc_runs":      typhoon_uc_runs,
+        "typhoon_traffic_runs": typhoon_traffic_runs,
+        "background_runs":      background_runs,
+        "corpus_root":          str(corpus_root_path) if corpus_root_path else None,
+        "quiet_build":          quiet_build,
+        "skipped_phases":       sorted(skipped),
     }, indent=2))
 
     if "build" not in skipped:
-        _phase_build(log_dir)
+        _phase_build(log_dir, quiet=quiet_build)
 
     bulk_run_ids: list[str] = []
 
@@ -601,7 +638,7 @@ def main(
         _phase_visualize(bulk_run_ids, artifacts_dir_run, log_dir)
 
     if "typhoon" not in skipped:
-        _phase_typhoon(typhoon_runs, typhoon_uc_runs, artifacts_dir_run, log_dir)
+        _phase_typhoon(typhoon_runs, typhoon_uc_runs, typhoon_traffic_runs, artifacts_dir_run, log_dir)
 
     if "background" not in skipped:
         _phase_background(background_runs, pipeline_id, artifacts_dir_run, log_dir, corpus_root_path)

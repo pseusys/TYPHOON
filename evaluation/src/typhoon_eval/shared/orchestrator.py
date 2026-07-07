@@ -15,15 +15,13 @@ from random import Random
 from sys import exit
 
 from click import Choice, command, option
-from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
+from .console import console
 from .docker_utils import COMPOSE_DIR, _purge_stale_stacks, compose_up
 from .profiles import DEFAULT_PROFILE, PROFILES, profile_to_env
 from .protocols import ALL, BY_NAME, Protocol
-
-console = Console()
 
 RESULTS_DIR = Path(__file__).parent.parent.parent.parent / "results"
 

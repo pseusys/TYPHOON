@@ -17,7 +17,7 @@ evaluation/
 │   ├── shared/            # capture, parse pcaps, common stats
 │   ├── self/              # Part 1
 │   ├── protocols_op/      # Part 2
-│   └── background/        # Part 3 corpus + ML (ml_blending = Test C, ml_open_world = Tests A/B/D/E/F)
+│   └── background/        # Part 3 corpus + ML (features + classifiers shared; ml_blending = Test C, detectability/ = Tests A/B/D/E/F)
 └── results/               # generated pcaps, plots, ML artefacts (gitignored)
 ```
 
@@ -41,24 +41,24 @@ Protocols compared: `raw_udp`, `raw_tcp`, `tls`, `wireguard`, `quic`, `obfs4` (�
 
 ### Part 3 — Background-blending
 
-*Can a passive observer pick TYPHOON out of a realistic UDP traffic mix?* Every corpus run captures all 8 TYPHOON mimicry profiles alongside all 8 generators producing common UDP traffic classes (QUIC d/l + u/l, DNS, RTP voice/video, gaming, WireGuard idle, control plane) plus one open-set `unknown` class held out from training — no per-run sampling, so no profile/class is ever absent from a run its peers are in. Every profile/class contributes exactly one flow per run, except `raw_default`/`tuned_default`: they exercise the protocol's genuine auto-fill flow selection and so may contribute 1–3 flows per run (see `background/corpus.py`'s module docstring). Six ML setups, each modelling a different threat model. Test C is the primary blending metric and lives in [`ml_blending.py`](src/typhoon_eval/background/ml_blending.py); Tests A, B, D, E and F live in [`ml_open_world.py`](src/typhoon_eval/background/ml_open_world.py):
+*Can a passive observer pick TYPHOON out of a realistic UDP traffic mix?* Every corpus run captures all 8 TYPHOON mimicry profiles alongside all 8 generators producing common UDP traffic classes (QUIC d/l + u/l, DNS, RTP voice/video, gaming, WireGuard idle, control plane) plus one open-set `unknown` class held out from training — no per-run sampling, so no profile/class is ever absent from a run its peers are in. Every profile/class contributes exactly one flow per run, except `raw_default`/`tuned_default`: they exercise the protocol's genuine auto-fill flow selection and so may contribute 1–3 flows per run (see `background/corpus.py`'s module docstring). Six ML setups, each modelling a different threat model. Test C is the primary blending metric and lives in [`ml_blending.py`](src/typhoon_eval/background/ml_blending.py); Tests A, B, D, E and F live in the [`detectability/`](src/typhoon_eval/background/detectability/) package (`pair_binary.py` = A, `closed_world.py` = B, `open_set.py` = D/E/F). Both share the feature pipeline in [`features.py`](src/typhoon_eval/background/features.py):
 
 | Test | Threat model | TYPHOON wins when… |
 | --- | --- | --- |
 | **A** Pair-binary | Observer suspects TYPHOON-as-X and trains a binary classifier on real X vs TYPHOON-as-X | AUC near 0.5 |
 | **B** Closed-world | Observer has labels for every class incl. TYPHOON | TYPHOON recall low (often confused with a real class) |
-| **C** Open-world threshold | Observer has labels for background only and flags low-confidence flows | TPR @ 1 % FPR low |
+| **C** Open-world threshold | Observer has labels for background only and flags low-confidence flows; every Barradas classifier (rf/dt/xgb) is evaluated and the adversary-strongest one headlines | TPR @ 1 % FPR low |
 | **D** Open-set binary | Observer has labels for TYPHOON + a *subset* of background classes; unseen classes + `unknown` held out at test time | high FPR on unseen background and `unknown` |
 | **E** One-class TYPHOON | Observer has only TYPHOON labels (e.g. from a leaked client) trained into a one-class SVM, evaluated against pooled background | high FPR on `unknown` |
 | **F** One-class + partial catalogue | Same one-class TYPHOON SVM as E, but the FPR breakdown reuses D's 3-of-7 background hold-out — models a leaked-client observer who also has a *partial* protocol catalogue used post-hoc as a filter; bridges D and E | high FPR on unseen background and `unknown` |
 
 > NB! Tests A/B/D/E/F cross-validate with `GroupKFold`, grouped by corpus run id, instead of Barradas USENIX'18's plain non-grouped `KFold` — a run's flows share one chaos (latency/jitter/loss) draw, so an ungrouped split could train and test on flows from the same run. Tests D/E/F additionally restrict every evaluation bucket (held-out background, unseen classes, `unknown`, per-class breakdown) to the fold's test-run set, so a background flow from a run that fed training is never scored as if it were independently held out.
-> See `background/ml_open_world.py`'s module docstring and each test's own docstring for the full rationale.
+> See `background/detectability/cli.py`'s module docstring and each test's own docstring for the full rationale.
 
 ### Part 4 — Rust-level benchmarking
 
 *How fast is the TYPHOON implementation itself?* `cargo bench` roundtrip/handshake timings plus `perf`-based flamegraphs (kept as interactive `.svg` and a static `.pdf` for embedding) for every example binary.
-Linux only (needs `perf` + `cargo-flamegraph` on the host) — mirrors `.github/workflows/benchmarks.yaml` and auto-skips on non-Linux hosts.
+Linux only (needs `perf` + `cargo-flamegraph` on the host) — mirrors `.github/workflows/evaluation.yaml` and auto-skips on non-Linux hosts.
 
 ## Requirements
 
@@ -106,7 +106,7 @@ Useful `capture` flags: `--protocol <name>` (single protocol); `--chaos` + `--lo
 ```shell
 poe background-corpus         # every TYPHOON profile + bg class per run (default 70 runs)
 poe background-blending       # Test C — confident-blend fraction (primary metric)
-poe background-openworld      # Tests A, B, D, E, F held-out detectability scores
+poe background-detectability  # Tests A, B, D, E, F held-out detectability scores
 poe background-distplot       # per-pair size/IAT distribution overlays
 ```
 
@@ -116,7 +116,7 @@ poe background-distplot       # per-pair size/IAT distribution overlays
 poe benchmark                 # cargo bench (roundtrip, handshake) + example flamegraphs
 ```
 
-Linux only — requires `perf` and `cargo-flamegraph` already installed on the host (see `.github/workflows/benchmarks.yaml` for the one-time setup commands); this task does not install them for you. Each flamegraph is kept as the interactive `.svg` (search/zoom) plus a `.pdf` rendered via `rsvg-convert` (`librsvg2-bin`) for embedding in reports; without `rsvg-convert`, only the `.svg` is produced.
+Linux only — requires `perf` and `cargo-flamegraph` already installed on the host (see `.github/workflows/evaluation.yaml` for the one-time setup commands); this task does not install them for you. Each flamegraph is kept as the interactive `.svg` (search/zoom) plus a `.pdf` rendered via `rsvg-convert` (`librsvg2-bin`) for embedding in reports; without `rsvg-convert`, only the `.svg` is produced.
 
 **perf sampling access.** `cargo flamegraph` runs `perf record`, which needs `kernel.perf_event_paranoid` low enough to sample CPU events.
 To enable it:
@@ -135,10 +135,16 @@ poe evaluate                    # build → capture → analyze → Part 1 + 2 p
 poe evaluate --skip background  # everything except the 7500-run Part 3 corpus
 poe evaluate --skip build       # reuse existing Docker images
 poe evaluate --skip benchmark   # skip cargo bench + flamegraphs (auto-skipped on non-Linux anyway)
+poe evaluate --quiet-build      # build phase output → logs/build.log only (docker compose build is 1000s of lines)
 
 # Re-analyze already-stored PCAPs without regenerating the corpus — e.g. after
 # changing feature sets or classifier options:
 poe evaluate --skip build,capture --corpus-root results/background/pipeline_<id>
+
+# Validation-scale run — every phase, tiny sample sizes (~minutes, not days).
+# This is what CI runs on every push; see .github/workflows/evaluation.yaml.
+poe evaluate --classification-runs 1 --typhoon-runs 2 --typhoon-uc-runs 1 \
+    --typhoon-traffic-runs 1 --background-runs 15 --quiet-build
 
 poe clean                       # delete results/captures and results/background
 ```
@@ -169,8 +175,8 @@ artifacts/pipeline_<timestamp>/
 ├── self_compare/, use_case_compare/, traffic_compare/  # Part 1 PDFs + JSON
 └── background/                    # Part 3 derived outputs (no PCAPs)
     ├── corpus_metadata/run_*/{metadata,config}.json
-    ├── blending/blending.json     # confident-blend fraction + per-profile breakdown
-    ├── openworld/                 # Tests A, B, D, E, F PDFs + JSON
+    ├── blending/blending.json     # per-classifier blend metrics + headline (adversary-strongest) + per-profile
+    ├── detectability/             # Tests A, B, D, E, F PDFs + JSON
     └── distplot/                  # per-pair size/IAT overlays PDFs + JSON
 ```
 
@@ -228,8 +234,8 @@ Computed separately per direction (`c2s`, `s2c`, `all`). Packet sizes are **tran
 
 ### Part 3 outputs
 
-- `background-blending` prints the **confident-blend fraction** (Test C) — the share of TYPHOON flows the open-world classifier labels as a concrete background class with high confidence. Higher = less distinguishable.
-- `background-openworld` reports per-test scores (Tests A, B, D, E, F above). Each test answers a distinct ML setup; treat them as complementary not redundant.
+- `background-blending` prints the **confident-blend fraction** (Test C) — the share of TYPHOON flows the open-world classifier labels as a concrete background class with high confidence. Higher = less distinguishable. It evaluates every Barradas classifier (`rf`/`dt`/`xgb`) with k-fold out-of-fold scoring and reports them all, headlining the **adversary-strongest** (the one catching the most TYPHOON at the shared ~1 % background false-positive point) — so the reported worst case tracks whichever classifier is best on the data, not a hard-coded one. `--classifier` narrows the set.
+- `background-detectability` reports per-test scores (Tests A, B, D, E, F above). Each test answers a distinct ML setup; treat them as complementary not redundant.
 - `background-distplot` overlays the actual TYPHOON size/IAT distributions on each background class — visual check of where TYPHOON differs.
 
 ## Settings overrides

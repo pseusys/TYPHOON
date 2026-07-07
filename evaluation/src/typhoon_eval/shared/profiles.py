@@ -299,7 +299,7 @@ SERVICE_SLOTS: Final[dict[str, ServiceSlot]] = {
 # Slots that model the long-tail "private / custom / legacy UDP" protocols an
 # adversary cannot enumerate.  By policy these labels must **never** appear
 # in any open-set classifier's training set — they exist solely to populate
-# the held-out unknown-class evaluation bucket (see ml_open_world Tests D/E/F).
+# the held-out unknown-class evaluation bucket (see detectability Tests D/E/F).
 HELD_OUT_BG_CLASSES: Final[frozenset[str]] = frozenset({"unknown"})
 
 

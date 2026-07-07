@@ -1,7 +1,7 @@
 """Rust-level performance benchmarks: cargo bench + example flamegraphs.
 
 Linux only — flamegraphs need `perf` and `cargo-flamegraph`, neither of which
-is portable to macOS/Windows. Mirrors `.github/workflows/benchmarks.yaml`.
+is portable to macOS/Windows. Mirrors `.github/workflows/evaluation.yaml`.
 
 Outputs: `<out-dir>/bench-{roundtrip,handshake}.txt` (bencher format) and, per
 example, `<out-dir>/flamegraphs/<example>.{svg,pdf}` — the interactive SVG
@@ -20,9 +20,8 @@ from subprocess import DEVNULL, STDOUT, run
 
 from click import ClickException, command, option
 from click import Path as ClickPath
-from rich.console import Console
 
-console = Console()
+from typhoon_eval.shared.console import console
 
 TYPHOON_ROOT = Path(__file__).parent.parent.parent.parent / "typhoon"
 BENCH_KEY    = TYPHOON_ROOT / ".bench_keys" / "server_fast.key"
