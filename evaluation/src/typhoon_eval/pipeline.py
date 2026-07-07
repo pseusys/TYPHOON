@@ -394,7 +394,7 @@ def _generate_report(
     bulk_run_ids: list[str],
     artifacts_dir: Path,
 ) -> Path:
-    console.print(Rule("[bold]Phase 7 — Report[/bold]"))
+    console.print(Rule("[bold]Phase 8 — Report[/bold]"))
 
     lines: list[str] = [
         "# TYPHOON Evaluation Report",
