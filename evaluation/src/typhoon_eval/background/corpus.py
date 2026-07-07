@@ -37,8 +37,8 @@ from subprocess import DEVNULL, STDOUT, TimeoutExpired, run
 from click import Path as ClickPath
 from click import command, option
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
-from rich.console import Console
 
+from typhoon_eval.shared.console import console
 from typhoon_eval.shared.profiles import (
     BACKGROUND_PROFILES,
     CHAOS_DUPLICATE_PCT,
@@ -55,8 +55,6 @@ from typhoon_eval.shared.profiles import (
     bg_profile_to_env,
     profile_to_env,
 )
-
-console = Console()
 
 RESULTS_ROOT = Path(__file__).parent.parent.parent.parent / "results" / "background"
 COMPOSE_DIR = Path(__file__).parent.parent.parent.parent / "compose"
@@ -295,8 +293,11 @@ def main(runs: int, seed: int | None, out_dir: str, chaos: bool, build: bool, mo
             *(float(e["PROFILE_DURATION_S"]) for e in bg_envs.values()),
         )
         run_timeout = max_duration + 90.0
-        cmd_up = ["docker", "compose", "-f", str(compose_path), "up",
-                  "--abort-on-container-exit", "--no-build"]
+        # No --abort-on-container-exit: every sender/sink here exits on its own
+        # once its own transfer completes (or on idle-timeout/SIGTERM), and
+        # this run concurrently mixes ~17 services with wildly different
+        # sampled durations.
+        cmd_up = ["docker", "compose", "-f", str(compose_path), "up", "--no-build"]
         with log_path.open("a") as lf:
             lf.write(f"\n$ {' '.join(cmd_up)} (timeout {run_timeout:.0f}s)\n")
             try:

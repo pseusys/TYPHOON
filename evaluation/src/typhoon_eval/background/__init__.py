@@ -2,6 +2,9 @@
 
 Modules:
     * `corpus`         — orchestrate randomised mixed-UDP captures.
-    * `ml_blending`    — primary blending metric (confident-blend fraction).
-    * `ml_open_world`  — secondary metrics (one-class SVM, TPR @ 0.1 % FPR).
+    * `features`       — shared Barradas feature extraction + corpus loading.
+    * `ml_blending`    — Test C: primary blending metric (confident-blend fraction).
+    * `detectability`  — Tests A/B/D/E/F: held-out pair-binary, closed-world, and open-set metrics.
+    * `dist_stats`     — corpus walk + macro aggregation/statistics for dist_plot.
+    * `dist_plot`      — per-pair size/IAT distribution overlays (drawing + CLI).
 """

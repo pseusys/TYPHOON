@@ -10,14 +10,12 @@ from pathlib import Path
 from sys import exit
 
 from click import command, option
-from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
+from .console import console
 from .pcap_stats import analyze_pcap
 from .protocols import BY_NAME
-
-console = Console()
 
 RESULTS_DIR = Path(__file__).parent.parent.parent.parent / "results"
 CAPTURES_ROOT = RESULTS_DIR / "captures"
