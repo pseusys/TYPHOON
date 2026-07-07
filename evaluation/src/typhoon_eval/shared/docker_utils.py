@@ -30,6 +30,7 @@ from python_on_whales import DockerClient, DockerException
 COMPOSE_DIR = Path(__file__).parent.parent.parent.parent / "compose"
 BASE_COMPOSE = COMPOSE_DIR / "docker-compose.yml"
 TEARDOWN_GRACE_S = 15
+BUILDKIT_ENV = {**environ, "DOCKER_BUILDKIT": "1", "COMPOSE_DOCKER_CLI_BUILD": "1"}
 
 
 def _project_name(protocol_name: str) -> str:

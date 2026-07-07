@@ -39,6 +39,7 @@ from click import command, option
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from typhoon_eval.shared.console import console
+from typhoon_eval.shared.docker_utils import BUILDKIT_ENV
 from typhoon_eval.shared.profiles import (
     BACKGROUND_PROFILES,
     CHAOS_DUPLICATE_PCT,
@@ -89,6 +90,7 @@ def _build_images() -> None:
         result = run(
             ["docker", "compose", "-f", str(compose_file), "build"],
             stdin=DEVNULL,
+            env=BUILDKIT_ENV,
         )
         if result.returncode != 0:
             console.print(f"[red]docker compose build failed[/red] for {compose_file}")

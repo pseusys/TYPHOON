@@ -45,6 +45,7 @@ from typhoon_eval.self.use_case_compare import main as _use_case_compare_main
 from typhoon_eval.shared.analysis import CAPTURES_ROOT, _latest_run
 from typhoon_eval.shared.analysis import main as _analysis_main
 from typhoon_eval.shared.console import console
+from typhoon_eval.shared.docker_utils import BUILDKIT_ENV
 from typhoon_eval.shared.orchestrator import main as _orchestrator_main
 from typhoon_eval.shared.pcap_flow_plot import main as _pcap_flow_plot_main
 
@@ -106,9 +107,9 @@ def _shell(label: str, cmd: list[str], log_path: Path | None = None, quiet: bool
             lf.write(f"\n$ {' '.join(cmd)}\n")
     if quiet and log_path:
         with log_path.open("a") as lf:
-            result = run(cmd, stdin=DEVNULL, stdout=lf, stderr=STDOUT)
+            result = run(cmd, stdin=DEVNULL, stdout=lf, stderr=STDOUT, env=BUILDKIT_ENV)
     else:
-        result = run(cmd, stdin=DEVNULL)
+        result = run(cmd, stdin=DEVNULL, env=BUILDKIT_ENV)
     if log_path:
         with log_path.open("a") as lf:
             lf.write(f"exit_code={result.returncode}\n")
