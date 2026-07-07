@@ -1,12 +1,12 @@
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        shadowsocks-libev iproute2 python3 \
+        shadowsocks-libev iproute2 \
     && rm -rf /var/lib/apt/lists/*
 COPY shadowsocks/server.json /etc/shadowsocks-libev/config.json
-COPY common/tcp_sink.py /app/server.py
+COPY --from=transport /usr/local/bin/tcp-sink /usr/local/bin/tcp-sink
 CMD sh -c 'ip route add 172.20.0.0/24 via "$OBSERVER_GW" 2>/dev/null || true; \
            PROFILE_BYTES_C2S="${PROFILE_BYTES_C2S:-104857600}" OBSERVER_GW="" \
-           python3 /app/server.py & SINK=$!; \
+           tcp-sink & SINK=$!; \
            ss-server -c /etc/shadowsocks-libev/config.json & SS=$!; \
            wait $SINK'
 HEALTHCHECK --interval=1s --timeout=3s --retries=15 --start-period=3s \

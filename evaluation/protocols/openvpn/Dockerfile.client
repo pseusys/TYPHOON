@@ -1,9 +1,8 @@
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        openvpn iproute2 python3 \
+        openvpn iproute2 \
     && rm -rf /var/lib/apt/lists/*
 COPY openvpn/client-entrypoint.sh /entrypoint.sh
-COPY common/udp_sender.py /app/client.py
-COPY common/_profile.py   /app/_profile.py
+COPY --from=transport /usr/local/bin/udp-sender /usr/local/bin/udp-sender
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]

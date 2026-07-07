@@ -51,6 +51,6 @@ SOCKS5_USERNAME="${SOCKS5_USERNAME}" \
 SERVER_HOST="${SERVER_HOST:-172.21.0.10}" \
 SERVER_PORT=9000 \
 OBSERVER_GW="" \
-python3 /app/client.py
+socks5-sender
 
 kill "${PT_PID}" 2>/dev/null || true

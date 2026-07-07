@@ -25,7 +25,7 @@ print(binascii.hexlify(base64.b64decode(b64)).decode())
 # Start tcp_sink
 PROFILE_BYTES_C2S="${PROFILE_BYTES_C2S:-104857600}" \
 OBSERVER_GW="" \
-python3 /app/server.py &
+udp-sink &
 SINK_PID=$!
 
 # Wait for client public key (written as base64 by client)

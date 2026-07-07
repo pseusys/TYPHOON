@@ -29,6 +29,7 @@ from python_on_whales import DockerClient, DockerException
 
 COMPOSE_DIR = Path(__file__).parent.parent.parent.parent / "compose"
 BASE_COMPOSE = COMPOSE_DIR / "docker-compose.yml"
+TEARDOWN_GRACE_S = 15
 
 
 def _project_name(protocol_name: str) -> str:
@@ -65,50 +66,47 @@ def _overlay_env(extra: dict[str, str]) -> Generator[None, None, None]:
                 environ[k] = v
 
 
-def _parse_delivery(dc: DockerClient, protocol_name: str) -> float | None:
-    """Extract the delivery percentage from the server container's logs."""
-    server_name = f"{_project_name(protocol_name)}-server-1"
-    try:
-        logs: str = dc.container.logs(server_name)
-        for line in reversed(logs.splitlines()):
-            m = search(r"\((\d+(?:\.\d+)?)%\)", line)
-            if m:
-                return float(m.group(1))
-    except Exception:
-        pass
-    return None
+# Endpoint values reported by the sender (client log) and sink (server log).
+_CLIENT_FIELDS = {
+    "rtt_min_ms": (r"rtt_min_ms=([\d.]+)", float),
+    "rtt_p50_ms": (r"rtt_p50_ms=([\d.]+)", float),
+    "rtt_p95_ms": (r"rtt_p95_ms=([\d.]+)", float),
+    "rtt_p99_ms": (r"rtt_p99_ms=([\d.]+)", float),
+    "rtt_jitter_ms": (r"rtt_jitter_ms=([\d.]+)", float),
+    "roundtrip_delivery_pct": (r"roundtrip_delivery_pct=([\d.]+)", float),
+}
+_SERVER_FIELDS = {
+    "delivery_pct": (r"\((\d+(?:\.\d+)?)%\)", float),
+    "received_packets": (r"received (\d+)/\d+ packets", int),
+}
 
 
-def _parse_timing(dc: DockerClient, protocol_name: str) -> tuple[float | None, float | None]:
+def _parse_endpoint_stats(dc: DockerClient, protocol_name: str) -> dict:
+    """Extract all endpoint-reported values from the client + server logs.
+
+    Returns a dict with the sink's delivery_pct + received_packets and the
+    client's per-packet rtt_* / roundtrip_delivery_pct. Missing keys are None.
+    The last match on each line-scan wins.
     """
-    Extract transfer_time_s from the client log and recv_time_s from the server log.
-    Both are printed as 'transfer_time_s=<float>' / 'recv_time_s=<float>'.
-    """
-    client_name = f"{_project_name(protocol_name)}-client-1"
-    server_name = f"{_project_name(protocol_name)}-server-1"
+    stats: dict = dict.fromkeys(
+        ("delivery_pct", "received_packets", "rtt_min_ms", "rtt_p50_ms",
+         "rtt_p95_ms", "rtt_p99_ms", "rtt_jitter_ms", "roundtrip_delivery_pct")
+    )
 
-    transfer_time_s: float | None = None
-    recv_time_s: float | None = None
-
-    try:
-        logs: str = dc.container.logs(client_name)
+    def scan(name: str, fields: dict) -> None:
+        try:
+            logs: str = dc.container.logs(name)
+        except Exception:
+            return
         for line in logs.splitlines():
-            m = search(r"transfer_time_s=([\d.]+)", line)
-            if m:
-                transfer_time_s = float(m.group(1))
-    except Exception:
-        pass
+            for key, (rx, cast) in fields.items():
+                m = search(rx, line)
+                if m:
+                    stats[key] = cast(m.group(1))
 
-    try:
-        logs = dc.container.logs(server_name)
-        for line in logs.splitlines():
-            m = search(r"recv_time_s=([\d.]+)", line)
-            if m:
-                recv_time_s = float(m.group(1))
-    except Exception:
-        pass
-
-    return transfer_time_s, recv_time_s
+    scan(f"{_project_name(protocol_name)}-client-1", _CLIENT_FIELDS)
+    scan(f"{_project_name(protocol_name)}-server-1", _SERVER_FIELDS)
+    return stats
 
 
 def _make_client(protocol_name: str, env_file: Path, chaos: bool) -> DockerClient:
@@ -152,17 +150,16 @@ def _docker_op(fn: Callable[[], None], timeout_s: int = 60) -> None:
     t.join(timeout=timeout_s)
 
 
-def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], chaos: bool, timeout: int, log_dir: Path | None = None) -> tuple[bool, float | None, float | None, float | None]:
+def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], chaos: bool, timeout: int, log_dir: Path | None = None) -> tuple[bool, dict]:
     """
     Run `docker compose up` for a protocol capture.
 
-    Non-chaos: blocks until the client container exits or timeout fires, then
-    tears down.  Returns True iff the client exited with code 0.
-
-    Chaos: starts the stack detached so that the client can exit while the
-    chaos service keeps draining the netem queue to the server.  Polls until
-    the server exits (it finishes or hits idle-timeout), then tears down.
-    Returns True iff the client exited with code 0.
+    Starts the stack detached (both clean and chaos) and waits for the SERVER
+    (sink) container to exit — it is authoritative for delivery and finishes on
+    target / DONE / idle-timeout. The client may exit much earlier (an unpaced
+    UDP sender empties into the tunnel tx-queue and returns at once), so the
+    server, not the client, is what we wait on. Returns True iff the server
+    exited with code 0; timeout fires the same teardown.
 
     Ctrl-C (KeyboardInterrupt) is propagated to the caller; cleanup (stop +
     down) still runs via the finally block so containers and networks are
@@ -180,52 +177,46 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
         _docker_op(lambda: dc.compose.down(volumes=True, remove_orphans=True, quiet=True))
 
         try:
-            if not chaos:
-                def _run_up() -> None:
-                    with suppress(DockerException):
-                        dc.compose.up(abort_on_container_exit=True, no_build=True, quiet=True)
+            # Run detached and wait for the SERVER (echo sink) to finish: it is
+            # authoritative for delivery and exits on count / idle-timeout.
+            try:
+                dc.compose.up(detach=True, no_build=True, quiet=True)
+            except DockerException:
+                timed_out = True
 
-                _up_thread = Thread(target=_run_up, daemon=True)
+            if not timed_out:
+                server_name = f"{_project_name(protocol_name)}-server-1"
+
+                def _wait_server() -> None:
+                    with suppress(Exception):
+                        dc.container.wait(server_name)
+
+                _up_thread = Thread(target=_wait_server, daemon=True)
                 _up_thread.start()
                 _up_thread.join(timeout=timeout)
 
                 if _up_thread.is_alive():
                     timed_out = True
-                    _docker_op(lambda: dc.compose.stop(), timeout_s=30)
-                    _up_thread.join(timeout=30)
+                else:
+                    client_name = f"{_project_name(protocol_name)}-client-1"
 
-            else:
-                try:
-                    dc.compose.up(detach=True, no_build=True, quiet=True)
-                except DockerException:
-                    timed_out = True
-
-                if not timed_out:
-                    server_name = f"{_project_name(protocol_name)}-server-1"
-
-                    def _wait_server() -> None:
+                    def _wait_client() -> None:
                         with suppress(Exception):
-                            dc.container.wait(server_name)
+                            dc.container.wait(client_name)
 
-                    _up_thread = Thread(target=_wait_server, daemon=True)
-                    _up_thread.start()
-                    _up_thread.join(timeout=timeout)
+                    _client_thread = Thread(target=_wait_client, daemon=True)
+                    _client_thread.start()
+                    _client_thread.join(timeout=TEARDOWN_GRACE_S)
 
-                    if _up_thread.is_alive():
-                        timed_out = True
-
-                    _docker_op(lambda: dc.compose.stop(), timeout_s=30)
-                    # Brief pause so tcpdump flushes its write buffer before down.
-                    sleep(2)
+                _docker_op(lambda: dc.compose.stop(), timeout_s=30)
+                # Brief pause so tcpdump flushes its write buffer before down.
+                sleep(2)
 
             if not timed_out:
-                # In chaos mode the client is killed by SIGTERM after the server exits
-                # naturally, so its exit code is 143 (not meaningful). Use server exit.
-                target = "server" if chaos else "client"
                 try:
                     for container in dc.compose.ps(all=True):
                         service = container.config.labels.get("com.docker.compose.service", "")
-                        if service == target:
+                        if service == "server":
                             success = container.state.exit_code == 0
                             break
                 except Exception:
@@ -235,10 +226,9 @@ def compose_up(protocol_name: str, env_file: Path, extra_env: dict[str, str], ch
             _docker_op(lambda: dc.compose.stop(), timeout_s=30)
             if _up_thread is not None:
                 _up_thread.join(timeout=10)
-            delivery_pct = _parse_delivery(dc, protocol_name)
-            transfer_time_s, recv_time_s = _parse_timing(dc, protocol_name)
+            stats = _parse_endpoint_stats(dc, protocol_name)
             if log_dir is not None:
                 _save_logs(dc, protocol_name, log_dir)
             _docker_op(lambda: dc.compose.down(volumes=True, remove_orphans=True, quiet=True), timeout_s=60)
 
-    return success, delivery_pct, transfer_time_s, recv_time_s
+    return success, stats

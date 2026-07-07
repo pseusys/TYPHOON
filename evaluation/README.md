@@ -8,7 +8,8 @@ For the protocol itself, see [PROTOCOL.md](../PROTOCOL.md).
 
 ```text
 evaluation/
-├── protocols/             # Dockerfiles for the 15 comparison protocols
+├── protocols/             # Dockerfiles for the 16 comparison protocols
+├── transport/             # shared Rust crate: the senders/sinks every protocol runs
 ├── background/            # Dockerfiles for the 8 UDP-traffic generators + open-set unknown
 ├── compose/, observer/    # docker-compose stacks and the tcpdump observer container
 ├── chaos/                 # tc/netem sidecar for latency / jitter / loss
@@ -30,7 +31,11 @@ Four independent parts; each answers one question.
 
 ### Part 2 — Operational comparison
 
-*Where does TYPHOON sit on throughput / overhead / handshake-cost relative to 15 other UDP/TCP secure-transport protocols?* Captures each protocol once under the same Docker network and emits direct operational metrics. **No classifiers** — a closed-world classifier across these 16 protocols would score near 100 % because each protocol has a distinct wire footprint by design, which says nothing about Part 3's question.
+*How does TYPHOON compare on reliability and cost to 15 other UDP/TCP secure-transport protocols?*
+Runs a **per-packet latency ping** against each: a spaced sequence of small equal-sized probes (500 × 256 B @ 20 ms) that the sink echoes, measuring per-packet **round-trip time** in tunnel-like conditions.
+It reports **delivery** (what fraction the receiver gets / echoes back) and the **RTT distribution**.
+See [Operational metrics](#operational-metrics-delivery--latency) for what actually discriminates the protocols (spoiler: the tail, not the median).
+**No classifiers** — a closed-world classifier across these 16 protocols would score near 100 % because each protocol has a distinct wire footprint by design, which says nothing about Part 3's question.
 
 Protocols compared: `raw_udp`, `raw_tcp`, `tls`, `wireguard`, `quic`, `obfs4` (×3 IAT modes), `amneziawg`, `hysteria2`, `shadowsocks`, `tor`, `vless_reality`, `openvpn`, `wireguard_daita`, `typhoon`.
 
@@ -88,13 +93,13 @@ poe plot --example heavy_traffic --out-dir out/   # per-flow packet-structure SV
 ### Part 2 — Operational comparison (CLI)
 
 ```shell
-poe capture --all             # capture all 16 protocols (default: bulk, 10 MB)
-poe capture --all --chaos     # …with latency + jitter + loss
-poe analyze                   # parse pcaps → stats.json
+poe capture --all             # per-packet latency ping across all 16 protocols
+poe capture --all --chaos     # …under netem (2% loss, 100 ms±30 ms delay)
+poe analyze                   # parse pcaps → stats.json (detectability metrics)
 poe proto-compare             # plots + comparison table for the latest run
 ```
 
-Useful flags: `--protocol <name>` (single protocol), `--scenario {bulk,interactive,streaming,burst,echo,idle}`, `--run YYYYMMDD_HHMMSS` (target an earlier run).
+Useful `capture` flags: `--protocol <name>` (single protocol); `--chaos` + `--loss-pct <n>`; `--seed <n>` (reproducible). `--profile <name>` selects the TYPHOON *settings* profile (fake-body mode, decoys); `bulk_upload` is the operational default, the rest are the Part-3 mimicry profiles. `analyze`/`proto-compare` take `--run YYYYMMDD_HHMMSS` to target an earlier run.
 
 ### Part 3 — Background-blending (CLI)
 
@@ -149,8 +154,8 @@ Outputs are split into two trees:
 results/
 ├── captures/run_<timestamp>/
 │   ├── <protocol>.pcap            # raw capture (handshake + data)
-│   ├── stats.json                 # per-pcap metrics — see below
-│   ├── metadata.json              # transfer_bytes, scenario, timing
+│   ├── stats.json                 # per-pcap detectability metrics — see below
+│   ├── metadata.json              # delivery %, per-packet RTT distribution (rtt_*)
 │   └── logs/<protocol>/           # client + server + observer container logs
 └── background/pipeline_<id>/run_*/  # Part 3 per-run pcaps + metadata
 
@@ -168,6 +173,28 @@ artifacts/pipeline_<timestamp>/
     ├── openworld/                 # Tests A, B, D, E, F PDFs + JSON
     └── distplot/                  # per-pair size/IAT overlays PDFs + JSON
 ```
+
+### Operational metrics (delivery / latency)
+
+Part 2's numbers come from the two endpoints (recorded in `metadata.json`), not the pcap:
+
+| Metric | Meaning |
+| --- | --- |
+| `delivery_pct` | probes the sink received ÷ sent (one-way); `roundtrip_delivery_pct` is the client's echoes-received ÷ sent |
+| `rtt_min / p50 / p95 / p99_ms`, `rtt_jitter_ms` | per-packet round-trip distribution |
+
+**Read the tail, not the median.**
+The p50 RTT is dominated by the shared path — the observer hop in clean mode, the netem delay under chaos — and is ~identical across protocols, so it is *not* a discriminator.
+The signal lives in two places:
+
+- **Delivery** separates best-effort from reliable: under chaos, UDP-family transports settle at the raw ~2 % one-way loss (they *drop* it) while TCP/QUIC/proxies stay 100 % (they *retransmit*).
+- **The latency tail (p95/p99)** exposes the *cost* of a protocol's design that the median hides:
+  - clean — traffic-shapers pay a visible tail (wireguard_daita p95 ~45 ms, obfs4 IAT-mode ~24 ms) from their padding / inter-arrival machines, while plain transports sit at ~7 ms;
+  - chaos — reliable transports pay a retransmit spike (p99 ~600–850 ms) that best-effort UDP does not (p99 ≈ p95).
+
+So the metric answers *"how reliable is it, and what does its obfuscation / loss-recovery cost in latency"* — e.g. TYPHOON delivers like the other UDP transports yet keeps a flat tail (its decoys / fake-headers add no measurable latency penalty), unlike DAITA.
+It is deliberately **not** a throughput benchmark: the shared capture point and best-effort UDP's lack of congestion control make bulk throughput an artifact *across* transport classes (an earlier bulk-transfer design was abandoned for exactly this reason — see the git history).
+For the TYPHOON implementation's raw speed on loopback, free of these network artifacts, see **Part 4** (`cargo bench`).
 
 ### Per-pcap metrics (`stats.json`)
 
@@ -195,7 +222,7 @@ Computed separately per direction (`c2s`, `s2c`, `all`). Packet sizes are **tran
 
 ### Part 2 plots (under `artifacts/<pipeline_id>/proto_compare/`)
 
-- `run_<id>_proto_compare.pdf` — six panels: (A) size CDF, (B) IAT CDF, (C) throughput vs goodput-efficiency scatter, (D) overhead bars, (E) byte entropy by phase, (F) normalised heatmap.
+- `run_<id>_proto_compare.pdf` — six panels: (A) size CDF, (B) IAT CDF, (C) per-packet RTT vs delivery scatter, (D) overhead bars, (E) byte entropy by phase, (F) normalised heatmap.
 - `run_<id>_handshake.pdf` — handshake duration / packet count / byte fraction across protocols.
 - `run_<id>_compare_table.md` — one row per protocol; quick-glance ranking by any column.
 

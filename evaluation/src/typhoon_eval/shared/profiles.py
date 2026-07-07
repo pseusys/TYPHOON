@@ -194,7 +194,7 @@ PROFILES: Final[dict[str, Profile]] = {
         description="Operational-comparison default for `poe capture --all`",
         chunk_c2s=IntRange(1100, 1200),
         chunk_s2c=IntRange(0, 0),
-        iat_c2s_ms=Range(4.0, 4.0),
+        iat_c2s_ms=Range(0.0, 0.0),
         iat_s2c_ms=Range(0.0, 0.0),
         bytes_c2s=IntRange(10_000_000, 10_000_000),
         bytes_s2c=IntRange(0, 0),
@@ -516,74 +516,6 @@ def profile_to_env(profile: Profile, rng: Random) -> dict[str, str]:
         "PROFILE_DECOYS_ENABLED":   "1" if profile.decoys_enabled else "0",
         "PROFILE_ID_LENGTH":        str(profile.id_length),
     }
-
-
-# Compose defaults for the receiver-safe rate cap (see compose/docker-compose.yml
-# `client` service: INTER_PACKET_DELAY_MS / DELAY_EVERY_N).  Both the generic
-# senders (`protocols/common/_profile.py`) and the TYPHOON eval client
-# (`protocols/typhoon/src/bin/eval_client.rs`) read these, so the pacing they
-# inject is identical across every protocol in a capture run.
-DEFAULT_INTER_BATCH_DELAY_MS: Final[float] = 40.0
-DEFAULT_BATCH_SIZE: Final[int] = 10
-
-
-def expected_pacing_s(
-    profile_env: dict[str, str],
-    direction: str = "c2s",
-    inter_batch_delay_ms: float = DEFAULT_INTER_BATCH_DELAY_MS,
-    batch_size: int = DEFAULT_BATCH_SIZE,
-) -> float:
-    """Reconstruct the deliberate sender sleep (seconds) for one direction.
-
-    Mirrors the pacing accounting in ``_profile._send_until`` and the TYPHOON
-    eval client's ``send_until``: a per-packet ``PROFILE_IAT_*_MS`` delay fires
-    after every packet, and an extra ``inter_batch_delay_ms`` sleep fires every
-    ``batch_size`` packets.  ``bursty`` profiles add ``burst_idle_s`` between
-    bursts.  The packet count is derived from the byte budget and chunk size,
-    matching how the senders drive the loop.
-
-    This is the quantity to subtract from a pcap wire span to recover the
-    *active* transfer time — the fair, cross-protocol cost of moving the bytes
-    once the intentional shaping delay is removed.  Because every protocol in a
-    run is paced identically, the same reconstruction applies to all of them.
-    """
-    suffix = direction.upper()
-
-    def _int(key: str, default: int = 0) -> int:
-        try:
-            return int(float(profile_env.get(key, default)))
-        except (TypeError, ValueError):
-            return default
-
-    def _float(key: str, default: float = 0.0) -> float:
-        try:
-            return float(profile_env.get(key, default))
-        except (TypeError, ValueError):
-            return default
-
-    chunk = _int(f"PROFILE_CHUNK_{suffix}")
-    total_bytes = _int(f"PROFILE_BYTES_{suffix}")
-    if chunk <= 0 or total_bytes <= 0:
-        return 0.0
-
-    delay_s = max(0.0, _float(f"PROFILE_IAT_{suffix}_MS")) / 1000.0
-    batch_delay_s = max(0.0, inter_batch_delay_ms) / 1000.0
-    bursty = _int("PROFILE_BURSTY") != 0
-    burst_count = max(1, _int("PROFILE_BURST_COUNT", 1))
-    burst_idle_s = max(0.0, _float("PROFILE_BURST_IDLE_S"))
-
-    def _leg_sleep(leg_bytes: int) -> float:
-        packets = -(-leg_bytes // chunk)  # ceil division
-        sleep = packets * delay_s
-        if batch_delay_s > 0.0 and batch_size > 0:
-            sleep += (packets // batch_size) * batch_delay_s
-        return sleep
-
-    if bursty and burst_count > 1:
-        bytes_per_burst = total_bytes // burst_count
-        total = sum(_leg_sleep(bytes_per_burst) for _ in range(burst_count))
-        return total + (burst_count - 1) * burst_idle_s
-    return _leg_sleep(total_bytes)
 
 
 def bg_profile_to_env(bg_profile: BackgroundProfile, rng: Random) -> dict[str, str]:

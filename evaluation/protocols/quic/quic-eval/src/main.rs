@@ -6,14 +6,10 @@
 //! no BBR — only NewReno. quinn ships a BBR controller, which is loss-tolerant,
 //! so this build stays fast on lossy links.
 //!
-//! One binary, two roles selected by argv[1] (`client` | `server`). The
-//! wire/console contract matches the previous implementations so the harness
-//! needs no changes:
-//!   - server writes a self-signed cert to /keys/quic_cert.pem (client readiness
-//!     gate) and prints "received N/T bytes (P%)" for delivery parsing;
-//!   - client prints "transfer_time_s=<f>" (wall time minus deliberate pacing).
-
-mod profile;
+//! One binary, two roles selected by argv[1] (`client` | `server`). The server
+//! writes a self-signed cert to /keys/quic_cert.pem (client readiness gate) and
+//! echoes each probe on the client-opened bidi stream; the client pings probes
+//! and prints the `rtt_*` / delivery contract the harness parses (see `lat`).
 
 use std::env::var;
 use std::error::Error;
@@ -26,11 +22,8 @@ use std::time::{Duration, Instant};
 
 use quinn::congestion::BbrConfig;
 use quinn::crypto::rustls::QuicClientConfig;
-use quinn::{ClientConfig, Endpoint, RecvStream, SendStream, ServerConfig, TransportConfig};
-use rand::RngCore;
+use quinn::{ClientConfig, Endpoint, ServerConfig, TransportConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
-
-use profile::ProfileConfig;
 
 const PORT: u16 = 9000;
 const CERT_PATH: &str = "/keys/quic_cert.pem";
@@ -57,6 +50,20 @@ async fn main() {
     }
 }
 
+/// Host-wide monotonic clock in nanoseconds. Docker containers share the kernel
+/// clock (no time namespace by default), so client `send_start/end` and server
+/// `recv_first/last` are directly comparable — the cross-endpoint transfer base.
+fn monotonic_ns() -> u128 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe {
+        libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
+    }
+    (ts.tv_sec as u128) * 1_000_000_000 + (ts.tv_nsec as u128)
+}
+
 /// Best-effort forward route to the opposite /24 via the observer tap.
 fn add_route(subnet: &str) {
     if let Ok(gw) = var("OBSERVER_GW") {
@@ -79,18 +86,67 @@ fn transport() -> Arc<TransportConfig> {
     Arc::new(t)
 }
 
-fn env_u64(key: &str, default: u64) -> u64 {
-    var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+// ── Latency mode: per-packet round-trip ping over a bidi stream ──────────────
+// A duplicate of the shared `eval-transport::latency` contract (the eval crates
+// don't share a dependency). QUIC is reliable, so echoes always return and RTT
+// grows under loss (like TCP) rather than dropping.
+mod lat {
+    use std::env::var;
+    use std::time::Duration;
+
+    pub const HEADER: usize = 20; // seq(4) + send_ns(16)
+
+    pub fn count() -> u32 {
+        envu("LAT_COUNT", 500)
+    }
+    pub fn interval() -> Duration {
+        Duration::from_secs_f64(envf("LAT_INTERVAL_MS", 20.0) / 1000.0)
+    }
+    pub fn size() -> usize {
+        (envu("LAT_SIZE", 256) as usize).max(HEADER)
+    }
+    pub fn recv_timeout() -> Duration {
+        Duration::from_secs_f64(envf("LAT_RECV_TIMEOUT_MS", 5000.0) / 1000.0)
+    }
+    pub fn pack(seq: u32, send_ns: u128, size: usize) -> Vec<u8> {
+        let mut m = vec![0u8; size];
+        m[0..4].copy_from_slice(&seq.to_be_bytes());
+        m[4..HEADER].copy_from_slice(&send_ns.to_be_bytes());
+        m
+    }
+    pub fn send_ns_of(msg: &[u8]) -> u128 {
+        let mut b = [0u8; 16];
+        b.copy_from_slice(&msg[4..HEADER]);
+        u128::from_be_bytes(b)
+    }
+    pub fn report(rtts: &mut [f64], count: u32) {
+        println!("sent {count} packets");
+        let delivery = rtts.len() as f64 / count.max(1) as f64 * 100.0;
+        println!("roundtrip_delivery_pct={delivery:.1}");
+        if !rtts.is_empty() {
+            rtts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let pct = |p: f64| rtts[(((rtts.len() - 1) as f64) * p).round() as usize];
+            let p50 = pct(0.50);
+            let p95 = pct(0.95);
+            println!("rtt_min_ms={:.3}", rtts[0]);
+            println!("rtt_p50_ms={p50:.3}");
+            println!("rtt_p95_ms={p95:.3}");
+            println!("rtt_p99_ms={:.3}", pct(0.99));
+            println!("rtt_jitter_ms={:.3}", p95 - p50);
+        }
+    }
+    fn envu(k: &str, d: u32) -> u32 {
+        var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
+    }
+    fn envf(k: &str, d: f64) -> f64 {
+        var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
+    }
 }
 
 // ── Server ───────────────────────────────────────────────────────────────────
 
 async fn run_server() -> Result<(), BoxErr> {
     add_route("172.20.0.0/24");
-    let transfer_bytes = env_u64("PROFILE_BYTES_C2S", 104_857_600) as usize;
 
     // Self-signed cert; write the PEM last so its presence gates the client.
     let cert = rcgen::generate_simple_self_signed(vec!["quic-eval".to_string()])?;
@@ -112,27 +168,25 @@ async fn run_server() -> Result<(), BoxErr> {
     let connection = connecting.await?;
     println!("connection accepted");
 
-    let mut recv = connection.accept_uni().await?;
-    let received = drain_stream(&mut recv, transfer_bytes).await?;
-
-    let pct = received as f64 / transfer_bytes as f64 * 100.0;
-    println!("received {received}/{transfer_bytes} bytes ({pct:.1}%)");
+    // Echo each probe back on the client-opened bidi stream (see `lat`).
+    let (mut send, mut recv) = connection.accept_bi().await?;
+    let cnt = lat::count();
+    let mut buf = vec![0u8; lat::size()];
+    let mut received = 0u32;
+    while received < cnt {
+        match recv.read_exact(&mut buf).await {
+            Ok(()) => {
+                send.write_all(&buf).await?;
+                received += 1;
+            }
+            Err(_) => break,
+        }
+    }
+    let pct = received as f64 / cnt.max(1) as f64 * 100.0;
+    println!("received {received}/{cnt} packets ({pct:.1}%)");
     connection.close(0u32.into(), b"done");
     endpoint.wait_idle().await;
     Ok(())
-}
-
-/// Read the stream to its end (or until `limit` bytes), returning the byte count.
-async fn drain_stream(recv: &mut RecvStream, limit: usize) -> Result<usize, BoxErr> {
-    let mut received = 0usize;
-    let mut buf = vec![0u8; 64 * 1024];
-    while received < limit {
-        match recv.read(&mut buf).await? {
-            Some(n) => received += n,
-            None => break, // peer finished the stream
-        }
-    }
-    Ok(received)
 }
 
 // ── Client ───────────────────────────────────────────────────────────────────
@@ -140,7 +194,6 @@ async fn drain_stream(recv: &mut RecvStream, limit: usize) -> Result<usize, BoxE
 async fn run_client() -> Result<(), BoxErr> {
     add_route("172.21.0.0/24");
     let server_host = var("SERVER_HOST").map_err(|_| "SERVER_HOST not set")?;
-    let wait_timeout = Duration::from_secs(env_u64("QUIC_WAIT_TIMEOUT_S", 240));
 
     // Gate on the server's cert file, mirroring the prior implementations.
     let mut ready = false;
@@ -170,117 +223,35 @@ async fn run_client() -> Result<(), BoxErr> {
     let connection = endpoint.connect(server_addr, "quic-eval")?.await?;
     println!("Connected, sending data...");
 
-    let mut stream = connection.open_uni().await?;
-    let transfer_start = Instant::now();
-    let (sent, total_sleep) = send_profile(&mut stream).await?;
-    let transfer_time = (transfer_start.elapsed().as_secs_f64() - total_sleep).max(0.0);
-
-    stream.finish()?; // FIN — signal end of stream to the server
-
-    println!("All {sent} bytes enqueued, waiting for server close...");
-    if tokio::time::timeout(wait_timeout, connection.closed())
-        .await
-        .is_err()
-    {
-        println!("wait_closed timed out after {wait_timeout:?}");
+    // Ping probes over a bidi stream, timing round-trips (see `lat`).
+    let (mut send, mut recv) = connection.open_bi().await?;
+    let cnt = lat::count();
+    let interval = lat::interval();
+    let rto = lat::recv_timeout();
+    let mut rbuf = vec![0u8; lat::size()];
+    let mut rtts: Vec<f64> = Vec::with_capacity(cnt as usize);
+    for seq in 0..cnt {
+        let send_ns = monotonic_ns();
+        let msg = lat::pack(seq, send_ns, lat::size());
+        let t0 = Instant::now();
+        send.write_all(&msg).await?;
+        match tokio::time::timeout(rto, recv.read_exact(&mut rbuf)).await {
+            Ok(Ok(())) => {
+                let rtt = (monotonic_ns().saturating_sub(lat::send_ns_of(&rbuf))) as f64 / 1e6;
+                rtts.push(rtt);
+            }
+            _ => break, // reliable stream: timeout/err means the peer is gone
+        }
+        let el = t0.elapsed();
+        if el < interval {
+            tokio::time::sleep(interval - el).await;
+        }
     }
+    lat::report(&mut rtts, cnt);
+    connection.close(0u32.into(), b"done");
     endpoint.wait_idle().await;
-
-    println!("sent {sent} bytes via QUIC");
-    println!("transfer_time_s={transfer_time:.3}");
     Ok(())
 }
-
-/// Drive the c2s send loop over `stream`, honouring per-packet IAT and the
-/// every-N-packets batch delay; returns (bytes_sent, total_sleep_s).
-async fn send_profile(stream: &mut SendStream) -> Result<(usize, f64), BoxErr> {
-    let cfg = ProfileConfig::from_env();
-    if cfg.bytes_c2s == 0 {
-        return Ok((0, 0.0));
-    }
-    let mut chunk = vec![0u8; cfg.chunk_c2s];
-    rand::thread_rng().fill_bytes(&mut chunk);
-
-    let delay = Duration::from_secs_f64((cfg.iat_c2s_ms.max(0.0)) / 1000.0);
-    let batch_delay = Duration::from_secs_f64((cfg.inter_batch_ms.max(0.0)) / 1000.0);
-    let deadline = Instant::now() + Duration::from_secs_f64(cfg.duration_s.max(0.0));
-
-    let mut sent = 0usize;
-    let mut total_sleep = 0.0f64;
-
-    if cfg.bursty && cfg.burst_count > 1 {
-        let bytes_per_burst = cfg.bytes_c2s / cfg.burst_count;
-        for i in 0..cfg.burst_count {
-            let target = sent + bytes_per_burst;
-            send_until(
-                stream,
-                &chunk,
-                &mut sent,
-                target,
-                delay,
-                batch_delay,
-                cfg.batch_size,
-                deadline,
-                &mut total_sleep,
-            )
-            .await?;
-            if sent >= cfg.bytes_c2s || Instant::now() >= deadline {
-                break;
-            }
-            if i + 1 < cfg.burst_count && cfg.burst_idle_s > 0.0 {
-                tokio::time::sleep(Duration::from_secs_f64(cfg.burst_idle_s)).await;
-                total_sleep += cfg.burst_idle_s;
-            }
-        }
-    } else {
-        let target = cfg.bytes_c2s;
-        send_until(
-            stream,
-            &chunk,
-            &mut sent,
-            target,
-            delay,
-            batch_delay,
-            cfg.batch_size,
-            deadline,
-            &mut total_sleep,
-        )
-        .await?;
-    }
-    Ok((sent, total_sleep))
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn send_until(
-    stream: &mut SendStream,
-    chunk: &[u8],
-    sent: &mut usize,
-    target: usize,
-    delay: Duration,
-    batch_delay: Duration,
-    batch_size: usize,
-    deadline: Instant,
-    total_sleep: &mut f64,
-) -> Result<(), BoxErr> {
-    let mut packets_in_batch = 0usize;
-    while *sent < target && Instant::now() < deadline {
-        let n = (target - *sent).min(chunk.len());
-        stream.write_all(&chunk[..n]).await?;
-        *sent += n;
-        packets_in_batch += 1;
-        if !delay.is_zero() {
-            tokio::time::sleep(delay).await;
-            *total_sleep += delay.as_secs_f64();
-        }
-        if !batch_delay.is_zero() && packets_in_batch >= batch_size {
-            tokio::time::sleep(batch_delay).await;
-            *total_sleep += batch_delay.as_secs_f64();
-            packets_in_batch = 0;
-        }
-    }
-    Ok(())
-}
-
 // ── TLS: accept the eval's self-signed cert (verification is out of scope) ─────
 
 #[derive(Debug)]

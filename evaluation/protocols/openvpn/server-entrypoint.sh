@@ -50,7 +50,7 @@ EOF
 
 PROFILE_BYTES_C2S="${PROFILE_BYTES_C2S:-104857600}" \
 OBSERVER_GW="" \
-python3 /app/server.py &
+udp-sink &
 SINK_PID=$!
 
 openvpn --config /tmp/server.conf &

@@ -246,7 +246,7 @@ At default sizes, both TYPHOON _and_ other UDP-native services (WireGuard, OpenV
 The [`evaluation/`](evaluation/) directory contains a Docker-based traffic capture and analysis harness, organised into three independent parts:
 
 1. **TYPHOON self-comparison** — measure run-to-run and scenario-to-scenario variability of TYPHOON's own traffic profile.
-2. **Operational comparison** — capture all 16 protocols (TYPHOON + 15 comparators) under a controlled Docker network and compare throughput, overhead, goodput efficiency, byte entropy, burstiness, and handshake metrics. _Operational, not detectability._
+2. **Operational comparison** — run a per-packet latency ping against all 16 protocols (TYPHOON + 15 comparators) under a controlled Docker network and compare **delivery** and the **round-trip latency distribution** (clean and under netem loss/jitter), plus wire-shape metrics (overhead, entropy, burstiness, handshake). _Operational, not detectability._
 3. **Background-blending evaluation** — generate a corpus of natural UDP traffic (QUIC HTTPS, DNS, RTP voice/video, gaming, control plane), run TYPHOON alongside, and measure how often a passive classifier mistakes TYPHOON for benign traffic.
 
 See [evaluation/README.md](evaluation/README.md) for requirements, install steps, CLI reference, and instructions for reading the results.

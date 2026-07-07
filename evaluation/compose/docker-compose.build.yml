@@ -15,6 +15,12 @@ name: typhoon-eval-build
 
 services:
 
+  # ── Shared transport binaries (built once, COPY --from into each protocol) ──
+  transport:
+    build:
+      context: ../transport
+    image: typhoon-eval-transport
+
   # ── Observer ──────────────────────────────────────────────────────────────
   observer:
     build:
@@ -32,12 +38,16 @@ services:
     build:
       context: ../protocols/raw_udp
       dockerfile: Dockerfile.server
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-raw-udp-server
 
   raw-udp-client:
     build:
       context: ../protocols/raw_udp
       dockerfile: Dockerfile.client
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-raw-udp-client
 
   # ── raw_tcp ───────────────────────────────────────────────────────────────
@@ -45,12 +55,16 @@ services:
     build:
       context: ../protocols
       dockerfile: raw_tcp/Dockerfile.server
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-raw-tcp-server
 
   raw-tcp-client:
     build:
       context: ../protocols
       dockerfile: raw_tcp/Dockerfile.client
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-raw-tcp-client
 
   # ── tls ───────────────────────────────────────────────────────────────────
@@ -58,12 +72,16 @@ services:
     build:
       context: ../protocols/tls
       dockerfile: Dockerfile.server
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-tls-server
 
   tls-client:
     build:
       context: ../protocols
       dockerfile: tls/Dockerfile.client
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-tls-client
 
   # ── wireguard ─────────────────────────────────────────────────────────────
@@ -71,12 +89,16 @@ services:
     build:
       context: ../protocols
       dockerfile: wireguard/Dockerfile.server
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-wireguard-server
 
   wireguard-client:
     build:
       context: ../protocols
       dockerfile: wireguard/Dockerfile.client
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-wireguard-client
 
   # ── quic ──────────────────────────────────────────────────────────────────
@@ -97,12 +119,16 @@ services:
     build:
       context: ../protocols
       dockerfile: obfs4/Dockerfile.server
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-obfs4-server
 
   obfs4-client:
     build:
       context: ../protocols
       dockerfile: obfs4/Dockerfile.client
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-obfs4-client
 
   # ── shadowsocks ───────────────────────────────────────────────────────────
@@ -110,12 +136,16 @@ services:
     build:
       context: ../protocols
       dockerfile: shadowsocks/Dockerfile.server
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-shadowsocks-server
 
   shadowsocks-client:
     build:
       context: ../protocols
       dockerfile: shadowsocks/Dockerfile.client
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-shadowsocks-client
 
   # ── tor ───────────────────────────────────────────────────────────────────
@@ -123,12 +153,16 @@ services:
     build:
       context: ../protocols/tor
       dockerfile: Dockerfile.server
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-tor-server
 
   tor-client:
     build:
       context: ../protocols
       dockerfile: tor/Dockerfile.client
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-tor-client
 
   # ── vless_reality ─────────────────────────────────────────────────────────
@@ -136,12 +170,16 @@ services:
     build:
       context: ../protocols
       dockerfile: vless_reality/Dockerfile.server
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-vless-reality-server
 
   vless-reality-client:
     build:
       context: ../protocols
       dockerfile: vless_reality/Dockerfile.client
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-vless-reality-client
 
   # ── amneziawg ─────────────────────────────────────────────────────────────
@@ -149,12 +187,16 @@ services:
     build:
       context: ../protocols
       dockerfile: amneziawg/Dockerfile.server
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-amneziawg-server
 
   amneziawg-client:
     build:
       context: ../protocols
       dockerfile: amneziawg/Dockerfile.client
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-amneziawg-client
 
   # ── hysteria2 ─────────────────────────────────────────────────────────────
@@ -162,12 +204,16 @@ services:
     build:
       context: ../protocols
       dockerfile: hysteria2/Dockerfile.server
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-hysteria2-server
 
   hysteria2-client:
     build:
       context: ../protocols
       dockerfile: hysteria2/Dockerfile.client
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-hysteria2-client
 
   # ── openvpn ───────────────────────────────────────────────────────────────
@@ -175,12 +221,16 @@ services:
     build:
       context: ../protocols
       dockerfile: openvpn/Dockerfile.server
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-openvpn-server
 
   openvpn-client:
     build:
       context: ../protocols
       dockerfile: openvpn/Dockerfile.client
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-openvpn-client
 
   # ── wireguard_daita ───────────────────────────────────────────────────────
@@ -188,12 +238,16 @@ services:
     build:
       context: ../protocols
       dockerfile: wireguard_daita/Dockerfile.server
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-wireguard-daita-server
 
   wireguard-daita-client:
     build:
       context: ../protocols
       dockerfile: wireguard_daita/Dockerfile.client
+      additional_contexts:
+        transport: service:transport
     image: typhoon-eval-wireguard-daita-client
 
   # ── typhoon ───────────────────────────────────────────────────────────────

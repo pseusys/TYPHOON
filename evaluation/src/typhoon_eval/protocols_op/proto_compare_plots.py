@@ -3,14 +3,13 @@
 Reads pcaps from a capture-run directory and produces:
 
   {run}_proto_compare.pdf — six panels:
-    A) packet-size CDF, B) IAT CDF (log x), C) throughput vs goodput-eff scatter,
+    A) packet-size CDF, B) IAT CDF (log x), C) per-packet RTT vs delivery scatter,
     D) protocol-overhead bars, E) byte entropy by phase, F) operational heatmap.
   {run}_handshake.pdf — three panels (duration, packet count, byte fraction).
   {run}_compare_table.md — markdown comparison table.
 """
 
 from json import loads
-from math import isnan
 from pathlib import Path
 from sys import exit
 
@@ -38,8 +37,14 @@ def _compute_metrics(
     s2c: list[tuple[float, int, bytes]],
     proto: Protocol | None,
     transfer_bytes: int | None,
+    meta: dict,
 ) -> dict:
-    """Compute operational metrics for one protocol from raw packet records."""
+    """Compute operational metrics for one protocol from raw packet records.
+
+    Detectability (sizes, IAT, entropy, overhead) comes from the pcap; the
+    operational metrics (per-packet RTT, delivery) come from `meta` (the run's
+    endpoint-reported values), not the wire span.
+    """
     all_recs = sorted(c2s + s2c, key=lambda r: r[0])
     if not all_recs:
         return {}
@@ -68,9 +73,6 @@ def _compute_metrics(
             overhead_ratio = (total_bytes - transfer_bytes) / transfer_bytes
         goodput_efficiency = transfer_bytes / total_bytes
 
-    tx_time_s = float(all_ts.max() - all_ts.min()) if len(all_ts) > 1 else 0.0
-    throughput_mbps = (total_bytes * 8 / tx_time_s / 1e6) if tx_time_s > 0 else 0.0
-
     iat_mean = float(iats_ms.mean()) if len(iats_ms) else 0.0
     iat_std  = float(iats_ms.std())  if len(iats_ms) else 0.0
     burstiness = iat_std / iat_mean if iat_mean > 0 else 0.0
@@ -88,7 +90,9 @@ def _compute_metrics(
         "entropy_data":        _entropy(data_payload) if data_payload else None,
         "overhead_ratio":      overhead_ratio,
         "goodput_efficiency":  goodput_efficiency,
-        "throughput_mbps":     throughput_mbps,
+        "rtt_p50_ms":          meta.get("rtt_p50_ms"),
+        "rtt_p95_ms":          meta.get("rtt_p95_ms"),
+        "delivery_pct":        meta.get("delivery_pct"),
         "burstiness":          burstiness,
         "direction_asymmetry": direction_asymmetry,
         "hs_duration_s":       (hs_end - all_ts.min()) if hs_end and len(all_ts) > 0 else None,
@@ -135,25 +139,23 @@ def _plot_main(metrics: list[dict], run_name: str, out_dir: Path) -> None:
     ax_iat_cdf.set_title("B  Inter-arrival-time CDF", fontweight="bold")
     ax_iat_cdf.grid(True, alpha=0.3, which="both")
 
-    # C — throughput vs goodput efficiency scatter
+    # C — per-packet RTT (p50) vs delivery scatter
     valid = [
-        (m["throughput_mbps"], m["goodput_efficiency"], colors[i], m["label"])
+        (m["rtt_p50_ms"], m["delivery_pct"], colors[i], m["label"])
         for i, m in enumerate(metrics)
-        if m.get("goodput_efficiency") is not None and not isnan(m["goodput_efficiency"])
+        if m.get("rtt_p50_ms") is not None and m.get("delivery_pct") is not None
     ]
     if valid:
-        tps, effs, clrs, lbls = zip(*valid, strict=True)
-        ax_thru.scatter(tps, effs, c=clrs, s=80, zorder=3, edgecolors="white", linewidth=0.5)
-        for tp, eff, lbl in zip(tps, effs, lbls, strict=True):
-            ax_thru.annotate(lbl, (tp, eff), fontsize=6, textcoords="offset points", xytext=(4, 2))
-        ax_thru.axhline(1.0, color="gray", linestyle="--", linewidth=0.8, label="perfect efficiency")
-        ax_thru.legend(fontsize=8, loc="lower right")
+        rtts, dels, clrs, lbls = zip(*valid, strict=True)
+        ax_thru.scatter(rtts, dels, c=clrs, s=80, zorder=3, edgecolors="white", linewidth=0.5)
+        for rt, dl, lbl in zip(rtts, dels, lbls, strict=True):
+            ax_thru.annotate(lbl, (rt, dl), fontsize=6, textcoords="offset points", xytext=(4, 2))
     else:
-        ax_thru.text(0.5, 0.5, "No transfer_bytes data available", ha="center", va="center",
+        ax_thru.text(0.5, 0.5, "No latency data available", ha="center", va="center",
                      transform=ax_thru.transAxes, fontsize=9, color="gray")
-    ax_thru.set_xlabel("Throughput (Mbps)")
-    ax_thru.set_ylabel("Goodput efficiency (payload / total bytes)")
-    ax_thru.set_title("C  Throughput vs. efficiency", fontweight="bold")
+    ax_thru.set_xlabel("Median RTT (ms)")
+    ax_thru.set_ylabel("Delivery (%)")
+    ax_thru.set_title("C  Per-packet RTT vs. delivery", fontweight="bold")
     ax_thru.grid(True, alpha=0.3)
 
     # D — overhead bars
@@ -188,24 +190,24 @@ def _plot_main(metrics: list[dict], run_name: str, out_dir: Path) -> None:
     ax_ent.set_title("E  Byte entropy by phase", fontweight="bold")
     ax_ent.legend(fontsize=8)
 
-    # F — operational metric heatmap (normalised)
-    metric_names = ["Throughput", "Goodput eff.", "Data entropy", "Burstiness", "HS duration", "HS byte frac"]
+    # F — operational metric heatmap (normalised; green = better)
+    metric_names = ["RTT p50 (↓)", "Delivery", "Data entropy", "Burstiness", "HS duration", "HS byte frac"]
 
     def _norm(vals: list) -> ndarray:
         arr = array(vals, dtype=float)
         lo, hi = nanmin(arr), nanmax(arr)
         return (arr - lo) / (hi - lo) if hi > lo else zeros_like(arr)
 
-    throughputs = [m["throughput_mbps"] for m in metrics]
-    effs        = [m["goodput_efficiency"] if m["goodput_efficiency"] is not None else float("nan") for m in metrics]
+    rtts        = [m["rtt_p50_ms"] if m["rtt_p50_ms"] is not None else float("nan") for m in metrics]
+    dels        = [m["delivery_pct"] if m["delivery_pct"] is not None else float("nan") for m in metrics]
     data_ents   = [m["entropy_data"] or 0.0 for m in metrics]
     bursts      = [m["burstiness"] for m in metrics]
     hs_durs     = [m["hs_duration_s"] if m["hs_duration_s"] is not None else float("nan") for m in metrics]
     hs_fracs    = [m["hs_byte_frac"] for m in metrics]
 
     heat = vstack([
-        _norm(throughputs),
-        _norm(effs),
+        1.0 - _norm(rtts),  # lower RTT is better → green
+        _norm(dels),
         _norm(data_ents),
         _norm(bursts),
         _norm(hs_durs),
@@ -273,20 +275,22 @@ def _write_table(metrics: list[dict], run_name: str, out_dir: Path) -> None:
     lines = [
         f"# Operational comparison — `{run_name}`",
         "",
-        "| Protocol | Throughput (Mbps) | Bytes (MB) | Overhead | Goodput | Data entropy (bits) | Burstiness | HS duration (s) | HS pkts | HS byte % | c2s/s2c |",
+        "| Protocol | Delivery | RTT p50 (ms) | RTT p95 (ms) | Overhead | Data entropy (bits) | Burstiness | HS duration (s) | HS pkts | HS byte % | c2s/s2c |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for m in metrics:
         oh        = f"{m['overhead_ratio']:.1%}"      if m["overhead_ratio"]      is not None else "—"
-        eff       = f"{m['goodput_efficiency']:.1%}"  if m["goodput_efficiency"]  is not None else "—"
         hs_dur    = f"{m['hs_duration_s']:.3f}"       if m["hs_duration_s"]       is not None else "—"
         ent_data  = f"{m['entropy_data']:.3f}"        if m["entropy_data"]        is not None else "—"
+        delivery  = f"{m['delivery_pct']:.1f}%"       if m["delivery_pct"]        is not None else "—"
+        rtt50     = f"{m['rtt_p50_ms']:.2f}"          if m["rtt_p50_ms"]          is not None else "—"
+        rtt95     = f"{m['rtt_p95_ms']:.2f}"          if m["rtt_p95_ms"]          is not None else "—"
         lines.append(
             f"| {m['label']} | "
-            f"{m['throughput_mbps']:.1f} | "
-            f"{m['total_bytes'] / 1e6:.1f} | "
+            f"{delivery} | "
+            f"{rtt50} | "
+            f"{rtt95} | "
             f"{oh} | "
-            f"{eff} | "
             f"{ent_data} | "
             f"{m['burstiness']:.2f} | "
             f"{hs_dur} | "
@@ -336,7 +340,7 @@ def main(run_id: str | None, out_dir: str) -> None:
         if not c2s and not s2c:
             continue
 
-        m = _compute_metrics(name, c2s, s2c, proto, transfer_bytes)
+        m = _compute_metrics(name, c2s, s2c, proto, transfer_bytes, metadata.get(proto_key, {}))
         if m:
             metrics_list.append(m)
 

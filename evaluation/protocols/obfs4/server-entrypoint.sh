@@ -8,7 +8,7 @@ ip route add 172.20.0.0/24 via "${OBSERVER_GW}" || true
 PROFILE_BYTES_C2S="${PROFILE_BYTES_C2S:-104857600}" \
 OBSERVER_GW="" \
 LISTEN_PORT=9001 \
-python3 /app/server.py &
+tcp-sink &
 SINK_PID=$!
 
 mkdir -p /state

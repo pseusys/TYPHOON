@@ -40,11 +40,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=go-build /usr/local/bin/wg-daita /usr/local/bin/wg-daita
 COPY --from=rust-build /build/machines-server.txt /etc/daita/machines.txt
-COPY common/tcp_sink.py /app/server.py
+COPY --from=transport /usr/local/bin/udp-sink /usr/local/bin/udp-sink
 COPY wireguard_daita/server-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 HEALTHCHECK --interval=1s --timeout=3s --retries=30 --start-period=10s \
-    CMD ss -tln | grep -q ':9000'
+    CMD ss -uln | grep -q ':9000'
 
 ENTRYPOINT ["/entrypoint.sh"]

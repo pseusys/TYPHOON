@@ -1,32 +1,24 @@
 //! TYPHOON evaluation server.
 //!
 //! Generates a `ServerKeyPair`, saves the `ClientCertificate` to
-//! `/keys/typhoon.cert` (so the client container can load it from the
-//! shared `eval_keys` volume), then accepts one connection and runs the
-//! traffic profile selected by the `TRAFFIC_PROFILE` env variable.
-//!
-//! Profile parameters are read from the same `PROFILE_*` env vars that the
-//! client receives, so both ends drive matching c2s/s2c loops without any
-//! in-band negotiation.
+//! `/keys/typhoon.cert` (so the client container can load it from the shared
+//! `eval_keys` volume), then accepts one connection and echoes the client's
+//! latency-ping probes (see `typhoon_eval::latency`). `TRAFFIC_PROFILE` /
+//! `PROFILE_*` select the TYPHOON flow settings, matching the client's, so the
+//! ping runs over a realistically shaped flow.
 
 use std::env::var;
 use std::net::SocketAddr;
 use std::process::Command;
 use std::process::exit;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Instant;
 
 use env_logger::{Builder, Env};
 use log::info;
-use rand::SeedableRng;
-use rand::rngs::StdRng;
-use tokio::signal::unix::{SignalKind, signal};
-use tokio::sync::Notify;
-use tokio::time::{Duration, sleep, timeout};
+use tokio::time::{Duration, timeout};
 
-const SIGTERM_DRAIN_GRACE: Duration = Duration::from_secs(3);
 use typhoon_eval::identity::{EvalServerConnectionHandler, ShortIdentity};
+use typhoon_eval::latency;
 use typhoon_eval::profile::TrafficProfile;
 
 use typhoon::certificate::ServerKeyPair;
@@ -283,200 +275,31 @@ async fn main() {
     let client = Arc::new(listener.accept().await.expect("accept"));
     println!("Client connected");
 
-    let session_start = Instant::now();
-    let deadline = session_start + profile.duration();
-
-    let received_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
-    let sent_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
-
-    let terminate_signal: Arc<Notify> = Arc::new(Notify::new());
-    {
-        let terminate_signal = terminate_signal.clone();
-        tokio::spawn(async move {
-            let mut sigterm = signal(SignalKind::terminate()).expect("install SIGTERM handler");
-            sigterm.recv().await;
-            terminate_signal.notify_one();
-        });
-    }
-
-    // Concurrent c2s receive and s2c send loops bounded by deadline and byte budgets.
-    let recv_handle = if profile.has_c2s_traffic() {
-        Some(tokio::spawn(run_c2s_recv(
-            client.clone(),
-            profile.clone(),
-            deadline,
-            received_counter.clone(),
-            terminate_signal.clone(),
-        )))
-    } else {
-        None
-    };
-    let send_handle = if profile.has_s2c_traffic() {
-        Some(tokio::spawn(run_s2c_send(
-            client.clone(),
-            profile.clone(),
-            deadline,
-            sent_counter.clone(),
-        )))
-    } else {
-        None
-    };
-
-    let had_recv = recv_handle.is_some();
-    let had_send = send_handle.is_some();
-    let received = match recv_handle {
-        Some(h) => h.await.expect("c2s join"),
-        None => 0,
-    };
-    let sent = match send_handle {
-        Some(h) => h.await.expect("s2c join"),
-        None => 0,
-    };
-
-    if !had_recv && !had_send {
-        let now = Instant::now();
-        if deadline > now {
-            sleep(deadline - now).await;
-        }
-    }
-
-    let pct_c2s = if profile.bytes_c2s > 0 {
-        received as f64 / profile.bytes_c2s as f64 * 100.0
-    } else {
-        100.0
-    };
-    println!(
-        "Received {received}/{} bytes c2s ({pct_c2s:.1}%); sent {sent}/{} bytes s2c — done",
-        profile.bytes_c2s, profile.bytes_s2c
-    );
-    println!("recv_time_s={:.3}", session_start.elapsed().as_secs_f64());
+    run_latency_echo(&client).await;
     exit(0);
 }
 
-/// Drive the c2s receive loop until the byte budget or deadline is met.
-async fn run_c2s_recv(
-    client: Arc<ClientHandle<ShortIdentity, DefaultExecutor>>,
-    profile: TrafficProfile,
-    deadline: Instant,
-    counter: Arc<AtomicUsize>,
-    terminate_signal: Arc<Notify>,
-) -> usize {
-    let mut received: usize = 0;
-    let mut effective_deadline = deadline;
-    let mut signalled = false;
-
-    while received < profile.bytes_c2s && Instant::now() < effective_deadline {
-        let remaining = effective_deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
-        tokio::select! {
-            biased;
-            // Listen for SIGTERM only while we haven't already shortened the deadline.
-            _ = terminate_signal.notified(), if !signalled => {
-                effective_deadline = (Instant::now() + SIGTERM_DRAIN_GRACE).min(deadline);
-                signalled = true;
-            }
-            result = timeout(remaining, client.receive_bytes()) => {
-                match result {
-                    Ok(Ok(data)) => {
-                        received += data.len();
-                        counter.store(received, Ordering::Relaxed);
-                    }
-                    _ => break,
-                }
-            }
-        }
-    }
-    received
-}
-
-/// Drive the s2c send loop, respecting `bytes_s2c`, `chunk_s2c`, IAT, and bursty mode.
-async fn run_s2c_send(
-    client: Arc<ClientHandle<ShortIdentity, DefaultExecutor>>,
-    profile: TrafficProfile,
-    deadline: Instant,
-    counter: Arc<AtomicUsize>,
-) -> usize {
-    let buf_size = profile.chunk_s2c.max(profile.chunk_s2c_max);
-    let chunk = vec![0u8; buf_size];
-    let mut sent: usize = 0;
-
-    if profile.bursty && profile.burst_count > 1 {
-        let bytes_per_burst = profile.bytes_s2c / profile.burst_count.max(1);
-        for i in 0..profile.burst_count {
-            sent += send_until_s(
-                &client,
-                &chunk,
-                &profile,
-                deadline,
-                sent + bytes_per_burst,
-                counter.clone(),
-            )
-            .await;
-            if sent >= profile.bytes_s2c || Instant::now() >= deadline {
-                break;
-            }
-            if i + 1 < profile.burst_count {
-                let idle_until = Instant::now() + profile.burst_idle();
-                if idle_until > deadline {
+/// Echo each probe back to the client until `count` seen or idle.
+async fn run_latency_echo(client: &ClientHandle<ShortIdentity, DefaultExecutor>) {
+    let cfg = latency::Config::from_env();
+    let idle = Duration::from_secs(
+        var("IDLE_TIMEOUT_S")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30),
+    );
+    let mut received = 0u32;
+    while received < cfg.count {
+        match timeout(idle, client.receive_bytes()).await {
+            Ok(Ok(data)) => {
+                if client.send_bytes(&data).await.is_err() {
                     break;
                 }
-                sleep(profile.burst_idle()).await;
+                received += 1;
             }
-        }
-    } else {
-        sent += send_until_s(
-            &client,
-            &chunk,
-            &profile,
-            deadline,
-            profile.bytes_s2c,
-            counter,
-        )
-        .await;
-    }
-    sent
-}
-
-async fn send_until_s(
-    client: &ClientHandle<ShortIdentity, DefaultExecutor>,
-    chunk: &[u8],
-    profile: &TrafficProfile,
-    deadline: Instant,
-    target: usize,
-    counter: Arc<AtomicUsize>,
-) -> usize {
-    let mut sent = 0;
-    let mut packets = 0;
-    let fixed_delay = profile.s2c_delay();
-    let randomise = profile.is_unrestricted();
-    // `StdRng::from_entropy()` is `Send` — see eval_client.rs for rationale.
-    let mut rng = StdRng::from_entropy();
-    while sent < target && Instant::now() < deadline && packets < profile.max_packets() {
-        let pkt_size = if randomise {
-            profile.sample_chunk_s2c(&mut rng)
-        } else {
-            profile.chunk_s2c
-        };
-        let n = pkt_size.min(target - sent).min(chunk.len());
-        if n == 0 {
-            break;
-        }
-        if client.send_bytes(&chunk[..n]).await.is_err() {
-            break;
-        }
-        sent += n;
-        counter.store(sent, Ordering::Relaxed);
-        packets += 1;
-        let delay = if randomise {
-            profile.sample_s2c_delay(&mut rng)
-        } else {
-            fixed_delay
-        };
-        if !delay.is_zero() {
-            sleep(delay).await;
+            _ => break, // idle / error ends the run
         }
     }
-    sent
+    let delivery = received as f64 / cfg.count.max(1) as f64 * 100.0;
+    println!("received {received}/{} packets ({delivery:.1}%)", cfg.count);
 }

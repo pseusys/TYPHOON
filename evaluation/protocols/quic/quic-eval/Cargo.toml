@@ -13,6 +13,7 @@ rustls  = { version = "0.23", default-features = false, features = ["ring", "std
 rcgen   = { version = "0.13", default-features = false, features = ["ring", "pem"] }
 tokio   = { version = "1", features = ["rt-multi-thread", "macros", "time", "io-util"] }
 rand    = "0.8"
+libc    = "0.2"
 
 [[bin]]
 name = "quic-eval"

@@ -14,7 +14,11 @@ typhoon/.test_keys
 
 # Evaluation:
 
-evaluation/protocols/quic/quic-eval/go.sum
+evaluation/transport/target
+evaluation/transport/Cargo.lock
+
+evaluation/protocols/quic/quic-eval/target
+evaluation/protocols/quic/quic-eval/Cargo.lock
 
 evaluation/protocols/wireguard_daita/wg-daita/go.sum
 evaluation/protocols/wireguard_daita/wireguard-go

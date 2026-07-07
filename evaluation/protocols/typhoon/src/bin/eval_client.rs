@@ -1,11 +1,10 @@
 //! TYPHOON evaluation client.
 //!
 //! Polls `/keys/typhoon.cert` until the server writes it, loads the certificate,
-//! connects to the server, and runs the traffic profile selected by the
-//! `TRAFFIC_PROFILE` env variable.  Profile parameters (chunk sizes, IATs, byte
-//! budgets, FlowConfig overrides) are read from the `PROFILE_*` env vars; both
-//! the client and server containers receive identical values from the same
-//! per-run env file written by the orchestrator.
+//! connects, and runs the per-packet latency ping (see `typhoon_eval::latency`).
+//! `TRAFFIC_PROFILE` / `PROFILE_*` still select the TYPHOON flow settings (decoys,
+//! fake headers, FlowConfig overrides) so the ping runs over a realistically
+//! shaped flow; the profile's transfer fields (chunk/bytes/IAT) are unused here.
 
 use std::env::var;
 use std::path::Path;
@@ -39,6 +38,8 @@ use typhoon::settings::keys::{
 };
 use typhoon::socket::ClientSocketBuilder;
 use typhoon_eval::identity::ShortIdentity;
+use typhoon_eval::latency;
+use typhoon_eval::monotonic_ns;
 use typhoon_eval::profile::TrafficProfile;
 
 // ── Eval-side overrides (skipped for `raw_default`) ──────────────────────────
@@ -281,191 +282,37 @@ async fn main() {
     println!("Connected to server");
 
     let socket = Arc::new(socket);
-    let transfer_start = Instant::now();
-    let deadline = transfer_start + profile.duration();
-
-    // Concurrent c2s send / s2c receive loops bounded by deadline and byte budgets.
-    let send_handle = if profile.has_c2s_traffic() {
-        Some(tokio::spawn(run_c2s_send(
-            socket.clone(),
-            profile.clone(),
-            deadline,
-        )))
-    } else {
-        None
-    };
-    let recv_handle = if profile.has_s2c_traffic() {
-        Some(tokio::spawn(run_s2c_recv(
-            socket.clone(),
-            profile.clone(),
-            deadline,
-        )))
-    } else {
-        None
-    };
-
-    let had_send = send_handle.is_some();
-    let had_recv = recv_handle.is_some();
-    let (sent, total_sleep_s) = match send_handle {
-        Some(h) => h.await.expect("c2s join"),
-        None => (0, 0.0),
-    };
-    let received = match recv_handle {
-        Some(h) => h.await.expect("s2c join"),
-        None => 0,
-    };
-
-    if !had_send && !had_recv {
-        let now = Instant::now();
-        if deadline > now {
-            sleep(deadline - now).await;
-        }
-    }
-
-    let elapsed_s = transfer_start.elapsed().as_secs_f64();
-    let transfer_time_s = (elapsed_s - total_sleep_s).max(0.0);
-    println!("Sent {sent} bytes c2s, received {received} bytes s2c — done");
-    println!("transfer_time_s={transfer_time_s:.3}");
+    run_latency(&socket).await;
 }
 
-/// Drive the c2s send loop, respecting `bytes_c2s`, `chunk_c2s`, IAT, and bursty mode.
-async fn run_c2s_send(
-    socket: Arc<
-        typhoon::socket::ClientSocket<
-            ShortIdentity,
-            DefaultExecutor,
-            DefaultClientConnectionHandler,
-        >,
-    >,
-    profile: TrafficProfile,
-    deadline: Instant,
-) -> (usize, f64) {
-    let buf_size = profile.chunk_c2s.max(profile.chunk_c2s_max);
-    let chunk = vec![0u8; buf_size];
-    let mut sent: usize = 0;
-    let mut total_sleep_s: f64 = 0.0;
-
-    if profile.bursty && profile.burst_count > 1 {
-        let bytes_per_burst = profile.bytes_c2s / profile.burst_count.max(1);
-        for i in 0..profile.burst_count {
-            let (s, slept) =
-                send_until(&socket, &chunk, &profile, deadline, sent + bytes_per_burst).await;
-            sent += s;
-            total_sleep_s += slept;
-            if sent >= profile.bytes_c2s || Instant::now() >= deadline {
-                break;
-            }
-            if i + 1 < profile.burst_count {
-                let burst_idle = profile.burst_idle();
-                let idle_until = Instant::now() + burst_idle;
-                if idle_until > deadline {
-                    break;
-                }
-                sleep(burst_idle).await;
-                total_sleep_s += burst_idle.as_secs_f64();
-            }
-        }
-    } else {
-        let (s, slept) = send_until(&socket, &chunk, &profile, deadline, profile.bytes_c2s).await;
-        sent += s;
-        total_sleep_s += slept;
-    }
-    (sent, total_sleep_s)
-}
-
-async fn send_until(
+/// Sequential ping — send a probe, await its echo, record RTT.
+async fn run_latency(
     socket: &typhoon::socket::ClientSocket<
         ShortIdentity,
         DefaultExecutor,
         DefaultClientConnectionHandler,
     >,
-    chunk: &[u8],
-    profile: &TrafficProfile,
-    deadline: Instant,
-    target: usize,
-) -> (usize, f64) {
-    let mut sent = 0;
-    let mut packets = 0;
-    let mut total_sleep_s: f64 = 0.0;
-    let fixed_delay = profile.c2s_delay();
-    let randomise = profile.is_unrestricted();
-    let inter_batch_delay_ms: f64 = var("INTER_PACKET_DELAY_MS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(40.0);
-    let batch_size: u64 = var("DELAY_EVERY_N")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(10)
-        .max(1);
-    let batch_delay = Duration::from_micros((inter_batch_delay_ms * 1000.0) as u64);
-    let mut packets_in_batch: u64 = 0;
-
-    let mut rng = StdRng::from_entropy();
-    while sent < target && Instant::now() < deadline && packets < profile.max_packets() {
-        let pkt_size = if randomise {
-            profile.sample_chunk_c2s(&mut rng)
-        } else {
-            profile.chunk_c2s
-        };
-        let n = pkt_size.min(target - sent).min(chunk.len());
-        if n == 0 {
+) {
+    let cfg = latency::Config::from_env();
+    let mut rtts: Vec<f64> = Vec::with_capacity(cfg.count as usize);
+    for seq in 0..cfg.count {
+        let send_ns = monotonic_ns();
+        let msg = latency::pack(seq, send_ns, cfg.size);
+        let t0 = Instant::now();
+        if socket.send_bytes(&msg).await.is_err() {
             break;
         }
-        if socket.send_bytes(&chunk[..n]).await.is_err() {
-            break;
+        match timeout(cfg.recv_timeout, socket.receive_bytes()).await {
+            Ok(Ok(echo)) if echo.len() >= latency::HEADER => {
+                let rtt = (monotonic_ns().saturating_sub(latency::send_ns_of(&echo))) as f64 / 1e6;
+                rtts.push(rtt);
+            }
+            _ => {} // lost echo — keep pinging
         }
-        sent += n;
-        packets += 1;
-        packets_in_batch += 1;
-        let delay = if randomise {
-            profile.sample_c2s_delay(&mut rng)
-        } else {
-            fixed_delay
-        };
-        if !delay.is_zero() {
-            sleep(delay).await;
-            total_sleep_s += delay.as_secs_f64();
-        }
-        if !batch_delay.is_zero() && packets_in_batch >= batch_size {
-            sleep(batch_delay).await;
-            total_sleep_s += batch_delay.as_secs_f64();
-            packets_in_batch = 0;
+        let elapsed = t0.elapsed();
+        if elapsed < cfg.interval {
+            sleep(cfg.interval - elapsed).await;
         }
     }
-    (sent, total_sleep_s)
-}
-
-/// Drive the s2c receive loop until the byte budget or deadline is met.
-async fn run_s2c_recv(
-    socket: Arc<
-        typhoon::socket::ClientSocket<
-            ShortIdentity,
-            DefaultExecutor,
-            DefaultClientConnectionHandler,
-        >,
-    >,
-    profile: TrafficProfile,
-    deadline: Instant,
-) -> usize {
-    let mut received: usize = 0;
-    let now = Instant::now();
-    let mut remaining = if deadline > now {
-        deadline - now
-    } else {
-        Duration::from_secs(0)
-    };
-    while received < profile.bytes_s2c && !remaining.is_zero() {
-        match timeout(remaining, socket.receive_bytes()).await {
-            Ok(Ok(data)) => received += data.len(),
-            _ => break,
-        }
-        let now = Instant::now();
-        remaining = if deadline > now {
-            deadline - now
-        } else {
-            Duration::from_secs(0)
-        };
-    }
-    received
+    latency::print_client_report(&mut rtts, cfg.count);
 }

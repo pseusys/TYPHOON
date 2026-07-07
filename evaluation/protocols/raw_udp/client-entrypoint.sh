@@ -11,4 +11,4 @@ if [[ -n "${OBSERVER_GW}" ]]; then
         || echo "[client] WARNING: route add failed (already exists?)"
 fi
 
-exec python3 /app/client.py
+exec udp-sender
