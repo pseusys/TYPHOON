@@ -84,7 +84,7 @@ jobs:
 
       - name: Run full evaluation pipeline 🧪
         working-directory: evaluation
-        run: poetry poe evaluate --skip build --classification-runs 1 --typhoon-runs 2 --typhoon-uc-runs 1 --typhoon-traffic-runs 1 --background-runs 15 --quiet-build
+        run: poetry poe evaluate --skip build --classification-runs 1 --typhoon-runs 2 --typhoon-uc-runs 1 --typhoon-traffic-runs 1 --background-runs 15 --loadtest-durations 5 --loadtest-flows 1,2 --loadtest-readers 1,2 --loadtest-profile bulk_upload --quiet-build
 
       - name: Upload evaluation artifacts 📈
         uses: actions/upload-artifact@v4

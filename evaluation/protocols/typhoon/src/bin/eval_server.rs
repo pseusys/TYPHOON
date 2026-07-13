@@ -14,12 +14,12 @@ use std::process::exit;
 use std::sync::Arc;
 
 use env_logger::{Builder, Env};
-use log::info;
+use log::{info, trace};
 use tokio::time::{Duration, timeout};
 
 use typhoon_eval::identity::{EvalServerConnectionHandler, ShortIdentity};
-use typhoon_eval::latency;
 use typhoon_eval::profile::TrafficProfile;
+use typhoon_eval::{is_load_mode, latency, load};
 
 use typhoon::certificate::ServerKeyPair;
 use typhoon::defaults::DefaultExecutor;
@@ -222,11 +222,21 @@ async fn main() {
     };
     let settings = Arc::new(settings_builder.build().expect("eval settings"));
 
-    let cert_addrs: Vec<SocketAddr> = PORTS
+    // Load mode binds LOAD_FLOWS ports (descending from the primary) each with LOAD_READERS
+    // SO_REUSEPORT reader sockets; latency mode keeps the fixed 3-port array with a single reader.
+    let load_cfg = load::Config::from_env();
+    let ports: Vec<u16> = if is_load_mode() {
+        (0..load_cfg.flows).map(|i| PORTS[0] - i as u16).collect()
+    } else {
+        PORTS.to_vec()
+    };
+    let readers = if is_load_mode() { load_cfg.readers } else { 1 };
+
+    let cert_addrs: Vec<SocketAddr> = ports
         .iter()
         .map(|p| format!("{cert_host}:{p}").parse().unwrap())
         .collect();
-    let bind_addrs: Vec<SocketAddr> = PORTS
+    let bind_addrs: Vec<SocketAddr> = ports
         .iter()
         .map(|p| format!("0.0.0.0:{p}").parse().unwrap())
         .collect();
@@ -246,7 +256,9 @@ async fn main() {
     };
     let flows: Vec<ServerFlowConfiguration<ShortIdentity, DefaultExecutor>> = bind_addrs
         .into_iter()
-        .map(|addr| ServerFlowConfiguration::with_address(flow_cfg.clone(), addr))
+        .map(|addr| {
+            ServerFlowConfiguration::with_address(flow_cfg.clone(), addr).with_reader_count(readers)
+        })
         .collect();
 
     let listener_builder = ServerBuilder::<
@@ -270,13 +282,47 @@ async fn main() {
             .expect("listener build"),
     );
     listener.start().await;
-    println!("TYPHOON eval server listening on ports {:?}", PORTS);
+    println!("TYPHOON eval server listening on ports {ports:?} (readers={readers})");
 
     let client = Arc::new(listener.accept().await.expect("accept"));
     println!("Client connected");
 
-    run_latency_echo(&client).await;
+    if is_load_mode() {
+        run_load_drain(&client).await;
+    } else {
+        run_latency_echo(&client).await;
+    }
     exit(0);
+}
+
+/// Load mode: drain the client's one-way flood, counting packets and deriving loss from sequence
+/// gaps. Emits a `LoadStats` record plus the core `drain_drops`/`recv_errors` counters (via
+/// `typhoon::record_loss`) on the `typhoon::capture` target for the harness to parse.
+async fn run_load_drain(client: &ClientHandle<ShortIdentity, DefaultExecutor>) {
+    let idle = Duration::from_secs(
+        var("IDLE_TIMEOUT_S")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30),
+    );
+    let mut received = 0usize;
+    let mut bytes = 0usize;
+    let mut max_seq = 0u64;
+    loop {
+        match timeout(idle, client.receive_bytes()).await {
+            Ok(Ok(data)) => {
+                received += 1;
+                bytes += data.len();
+                max_seq = max_seq.max(load::seq_of(&data));
+            }
+            _ => break, // idle / error ends the run
+        }
+    }
+    let sent_estimate = if received == 0 { 0 } else { max_seq + 1 };
+    let seq_gaps = sent_estimate.saturating_sub(received as u64);
+    trace!(target: "typhoon::capture", "{{\"kind\":\"LoadStats\",\"bytes\":{bytes},\"packets\":{received},\"max_seq\":{max_seq},\"seq_gaps\":{seq_gaps}}}");
+    typhoon::record_loss();
+    println!("LOAD_SERVER_DONE packets={received} bytes={bytes} seq_gaps={seq_gaps}");
 }
 
 /// Echo each probe back to the client until `count` seen or idle.

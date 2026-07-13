@@ -1,0 +1,90 @@
+name: typhoon-eval-load
+
+# Minimal load-test topology: just the TYPHOON server + client on one bridge network, sharing the
+# cert via the eval_keys volume. No observer / tcpdump (which would bottleneck and skew a load
+# test) — the point here is the raw client<->server veth path, throughput, loss, and per-container
+# memory (sampled externally via `docker stats`). Load mode is selected with EVAL_MODE=load; the
+# same images as the capture topology are reused.
+
+x-load-env: &load-env
+  EVAL_MODE:              load
+  LOAD_DURATION_S:        ${LOAD_DURATION_S:-10}
+  LOAD_PAYLOAD:           ${LOAD_PAYLOAD:-1024}
+  LOAD_FLOWS:             ${LOAD_FLOWS:-3}
+  LOAD_READERS:           ${LOAD_READERS:-1}
+  IDLE_TIMEOUT_S:         ${IDLE_TIMEOUT_S:-30}
+  # Realistic profile: the Python side samples these PROFILE_* values (shared/profiles.py) so the
+  # eval binaries' FlowConfig / fake-body / fake-header match a real obfuscated flow.
+  TRAFFIC_PROFILE:        ${TRAFFIC_PROFILE:-bulk_upload}
+  PROFILE_CHUNK_C2S:      ${PROFILE_CHUNK_C2S:-}
+  PROFILE_CHUNK_S2C:      ${PROFILE_CHUNK_S2C:-}
+  PROFILE_CHUNK_C2S_MIN:  ${PROFILE_CHUNK_C2S_MIN:-}
+  PROFILE_CHUNK_C2S_MAX:  ${PROFILE_CHUNK_C2S_MAX:-}
+  PROFILE_CHUNK_S2C_MIN:  ${PROFILE_CHUNK_S2C_MIN:-}
+  PROFILE_CHUNK_S2C_MAX:  ${PROFILE_CHUNK_S2C_MAX:-}
+  PROFILE_IAT_C2S_MS:     ${PROFILE_IAT_C2S_MS:-}
+  PROFILE_IAT_S2C_MS:     ${PROFILE_IAT_S2C_MS:-}
+  PROFILE_IAT_C2S_MIN_MS: ${PROFILE_IAT_C2S_MIN_MS:-}
+  PROFILE_IAT_C2S_MAX_MS: ${PROFILE_IAT_C2S_MAX_MS:-}
+  PROFILE_IAT_S2C_MIN_MS: ${PROFILE_IAT_S2C_MIN_MS:-}
+  PROFILE_IAT_S2C_MAX_MS: ${PROFILE_IAT_S2C_MAX_MS:-}
+  PROFILE_BYTES_C2S:      ${PROFILE_BYTES_C2S:-10485760}
+  PROFILE_BYTES_S2C:      ${PROFILE_BYTES_S2C:-0}
+  PROFILE_DURATION_S:     ${PROFILE_DURATION_S:-60}
+  PROFILE_FAKE_BODY_MODE: ${PROFILE_FAKE_BODY_MODE:-}
+  PROFILE_FAKE_BODY_CONST: ${PROFILE_FAKE_BODY_CONST:-}
+  PROFILE_FAKE_BODY_MIN:  ${PROFILE_FAKE_BODY_MIN:-}
+  PROFILE_FAKE_BODY_MAX:  ${PROFILE_FAKE_BODY_MAX:-}
+  PROFILE_FAKE_HEADER_LEN: ${PROFILE_FAKE_HEADER_LEN:-}
+  PROFILE_BURSTY:         ${PROFILE_BURSTY:-0}
+  PROFILE_BURST_COUNT:    ${PROFILE_BURST_COUNT:-1}
+  PROFILE_BURST_IDLE_S:   ${PROFILE_BURST_IDLE_S:-0}
+  PROFILE_DECOYS_ENABLED: ${PROFILE_DECOYS_ENABLED:-1}
+  PROFILE_ID_LENGTH:      ${PROFILE_ID_LENGTH:-}
+
+volumes:
+  eval_keys: {}
+
+networks:
+  net_load:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+services:
+
+  server:
+    init: true
+    image: ${SERVER_IMAGE}
+    networks:
+      net_load:
+        ipv4_address: 172.30.0.10
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    environment:
+      <<: *load-env
+      CERT_HOST: 172.30.0.10
+      RUST_LOG: ${SERVER_RUST_LOG:-typhoon::capture=trace}
+      TYPHOON_DRAIN_CHANNEL_CAPACITY: ${TYPHOON_DRAIN_CHANNEL_CAPACITY:-}
+    volumes:
+      - eval_keys:/keys
+
+  client:
+    init: true
+    image: ${CLIENT_IMAGE}
+    networks:
+      net_load:
+        ipv4_address: 172.30.0.20
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    environment:
+      <<: *load-env
+      SERVER_HOST: 172.30.0.10
+      RUST_LOG: ${CLIENT_RUST_LOG:-eval_client=info}
+    volumes:
+      - eval_keys:/keys
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: "no"

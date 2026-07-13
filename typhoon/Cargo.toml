@@ -106,14 +106,8 @@ path = "src/bin/typhoon_gen_key.rs"
 required-features = ["server", "clap"]
 
 [[bench]]
-name = "roundtrip"
-path = "benches/roundtrip.rs"
-harness = false
-required-features = ["client", "server", "tokio"]
-
-[[bench]]
-name = "handshake"
-path = "benches/handshake.rs"
+name = "load"
+path = "benches/load.rs"
 harness = false
 required-features = ["client", "server", "tokio"]
 

@@ -21,6 +21,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::{Duration, sleep, timeout};
 use typhoon::certificate::ClientCertificate;
 use typhoon::defaults::{DefaultClientConnectionHandler, DefaultExecutor};
+use typhoon::flow::FlowConfig;
 use typhoon::flow::decoy::{SimpleDecoyProvider, SparseDecoyProvider};
 use typhoon::settings::SettingsBuilder;
 use typhoon::settings::keys::{
@@ -38,9 +39,9 @@ use typhoon::settings::keys::{
 };
 use typhoon::socket::ClientSocketBuilder;
 use typhoon_eval::identity::ShortIdentity;
-use typhoon_eval::latency;
 use typhoon_eval::monotonic_ns;
 use typhoon_eval::profile::TrafficProfile;
+use typhoon_eval::{is_load_mode, latency, load};
 
 // ── Eval-side overrides (skipped for `raw_default`) ──────────────────────────
 
@@ -257,12 +258,24 @@ async fn main() {
     >::new(certificate.clone(), DefaultClientConnectionHandler)
     .with_settings(settings.clone());
 
+    // Load mode spreads the one-way flood across *every* server flow (not the single pinned flow
+    // the latency mimicry path uses), so all LOAD_FLOWS sockets carry traffic concurrently.
+    if is_load_mode() {
+        let flow_cfg = if profile.is_unrestricted() {
+            FlowConfig::random(&settings)
+        } else {
+            profile.flow_config()
+        };
+        for addr in certificate.addresses() {
+            builder = builder.with_flow_config(*addr, flow_cfg.clone());
+        }
+    }
     // `raw_default`/`tuned_default` (is_unrestricted()) must NOT pin a flow config here —
     // they exist to measure genuine protocol-default behaviour, which includes the builder's
     // auto-fill flow-count selection (1..=addresses().len(), each independently randomised).
     // Pinning a single address here (as the mimicry branch below does deliberately) would
     // silently narrow "default" to just the N=1 sub-case of that distribution.
-    if !profile.is_unrestricted() {
+    else if !profile.is_unrestricted() {
         if is_quic {
             builder = builder.with_decoy::<SparseDecoyProvider<ShortIdentity, DefaultExecutor>>();
         } else if !profile.is_bulk_upload() {
@@ -282,7 +295,48 @@ async fn main() {
     println!("Connected to server");
 
     let socket = Arc::new(socket);
-    run_latency(&socket).await;
+    if is_load_mode() {
+        run_load_flood(&socket).await;
+    } else {
+        run_latency(&socket).await;
+    }
+}
+
+/// Load mode: flood `LOAD_BYTES` of sequence-numbered fixed-size packets one-way across all flows,
+/// then report throughput. Delivery is not awaited (the server counts + derives loss), so this
+/// measures the raw send pipeline under the profile's obfuscation.
+async fn run_load_flood(
+    socket: &typhoon::socket::ClientSocket<
+        ShortIdentity,
+        DefaultExecutor,
+        DefaultClientConnectionHandler,
+    >,
+) {
+    let cfg = load::Config::from_env();
+    let payload = cfg.payload.min(socket.max_data_payload());
+    let deadline = Duration::from_secs_f64(cfg.duration_s);
+    let mut message = vec![0u8; payload];
+
+    let start = Instant::now();
+    let mut seq = 0u64;
+    while start.elapsed() < deadline {
+        message[..load::SEQ_BYTES].copy_from_slice(&seq.to_le_bytes());
+        if socket.send_bytes(&message).await.is_err() {
+            break;
+        }
+        seq += 1;
+    }
+    sleep(Duration::from_millis(500)).await; // let in-flight packets drain before teardown
+    let elapsed = start.elapsed();
+
+    let packets = seq;
+    let sent_bytes = packets as usize * payload;
+    let throughput = sent_bytes as f64 / (1024.0 * 1024.0) / elapsed.as_secs_f64();
+    println!("throughput_mbps={throughput:.2}");
+    println!(
+        "LOAD_CLIENT_DONE packets={packets} bytes={sent_bytes} payload={payload} duration_s={:.2}",
+        elapsed.as_secs_f64()
+    );
 }
 
 /// Sequential ping — send a probe, await its echo, record RTT.
