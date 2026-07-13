@@ -67,6 +67,7 @@ compile_error!("one of the features 'server' and 'client' should be selected");
 pub mod bytes;
 pub(crate) mod cache;
 pub(crate) mod capture;
+pub use capture::record_loss;
 pub mod certificate;
 pub(crate) mod crypto;
 #[cfg(feature = "debug")]

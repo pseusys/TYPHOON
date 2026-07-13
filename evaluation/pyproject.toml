@@ -133,15 +133,15 @@ numpy                = "np"
   cmd  = "python -m typhoon_eval.background.dist_plot"
   help = "Plot size / IAT distribution overlays per TYPHOON-vs-target pair + per-flow packet-index diagnostic"
 
-  # ── PART 4 — Rust-level performance benchmarking (Linux only) ────────────
-  [tool.poe.tasks.benchmark]
-  cmd  = "python -m typhoon_eval.benchmark"
-  help = "Run cargo bench (roundtrip, handshake) + example flamegraphs. Linux only — requires perf and cargo-flamegraph already installed."
+  # ── PART 4 — Load / stress testing (Linux + Docker) ─────────────────────
+  [tool.poe.tasks.load-test]
+  cmd  = "python -m typhoon_eval.self.load_test"
+  help = "Stress TYPHOON across size × flows × readers: host criterion send bench + dockerized realistic-profile flood (throughput/loss/per-container memory) + server flamegraph. Linux + Docker; needs perf + cargo-flamegraph."
 
   # ── Pipeline orchestrator ────────────────────────────────────────────────
   [tool.poe.tasks.evaluate]
   cmd  = "python -m typhoon_eval.pipeline"
-  help = "Run the full evaluation pipeline: build → capture → analyze → visualize → typhoon → background → benchmark → report. Derived artifacts under artifacts/<pipeline_id>/; PCAPs stay in results/. Pass --corpus-root to re-analyze a stored corpus without regenerating it. Benchmark phase auto-skips on non-Linux hosts."
+  help = "Run the full evaluation pipeline: build → capture → analyze → visualize → typhoon → background → loadtest → report. Derived artifacts under artifacts/<pipeline_id>/; PCAPs stay in results/. Pass --corpus-root to re-analyze a stored corpus without regenerating it. Load-test phase auto-skips on non-Linux hosts."
 
   [tool.poe.tasks.clean]
   shell = "rm -rf results/captures results/background"

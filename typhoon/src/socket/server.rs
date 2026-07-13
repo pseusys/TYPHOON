@@ -9,6 +9,7 @@ use log::{debug, info, warn};
 
 use crate::bytes::{ByteBuffer, DynamicByteBuffer};
 use crate::cache::SharedMap;
+use crate::capture::record_recv_error;
 #[cfg(any(feature = "fast_software", feature = "fast_hardware"))]
 use crate::certificate::ObfuscationBufferContainer;
 use crate::certificate::{ServerKeyPair, ServerSecret};
@@ -433,7 +434,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
         let drain_capacity = self.settings.get(&keys::DRAIN_CHANNEL_CAPACITY) as usize;
 
         for (index, flow) in self.router.flows.iter().enumerate() {
-            let (drain_tx, mut drain_rx) = create_bounded_notify_queue(drain_capacity);
+            let (drain_tx, mut drain_rx) = create_bounded_notify_queue(drain_capacity, Some("drain"));
             let drain_tx = Arc::new(drain_tx);
 
             for (sock_index, sock) in flow.recv_socks().iter().enumerate() {
@@ -448,6 +449,7 @@ impl<T: IdentityType + Clone + Eq + Hash + Send + ToString + 'static, AE: AsyncE
                             Ok(raw_packet) => drain_tx.push(raw_packet),
                             Err(err) => {
                                 warn!("flow manager {index} socket {sock_index}: receive error: {err}");
+                                record_recv_error();
                                 break;
                             }
                         }

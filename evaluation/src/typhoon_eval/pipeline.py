@@ -6,7 +6,7 @@
   4. visualize   — protocol comparison and flow plots
   5. typhoon     — TYPHOON intrinsic comparisons (self, use-case, traffic)
   6. background  — Part 3 corpus + blending + detectability + dist plots
-  7. benchmark   — cargo bench + example flamegraphs (Linux only, auto-skipped elsewhere)
+  7. loadtest    — stress sweep: host criterion send bench + dockerized realistic-profile flood (throughput/loss/per-container memory) + flamegraph (Linux + Docker only)
   8. report      — aggregate everything into artifacts/<pipeline_id>/report.md
 
 All derived artifacts go under ARTIFACTS_ROOT/<pipeline_id>/ (default
@@ -37,8 +37,8 @@ from typhoon_eval.background.corpus import main as _bg_corpus_main
 from typhoon_eval.background.detectability.cli import main as _bg_detectability_main
 from typhoon_eval.background.dist_plot import main as _bg_distplot_main
 from typhoon_eval.background.ml_blending import main as _bg_blending_main
-from typhoon_eval.benchmark import main as _benchmark_main
 from typhoon_eval.protocols_op.proto_compare_plots import main as _proto_compare_main
+from typhoon_eval.self.load_test import main as _loadtest_main
 from typhoon_eval.self.self_compare import main as _self_compare_main
 from typhoon_eval.self.traffic_compare import main as _traffic_compare_main
 from typhoon_eval.self.use_case_compare import main as _use_case_compare_main
@@ -54,7 +54,7 @@ RESULTS_DIR    = PROJECT_ROOT / "evaluation" / "results"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts"
 BACKGROUND_ROOT = RESULTS_DIR / "background"
 
-_ALL_PHASES = ("build", "capture", "analyze", "visualize", "typhoon", "background", "benchmark", "report")
+_ALL_PHASES = ("build", "capture", "analyze", "visualize", "typhoon", "background", "loadtest", "report")
 
 # Lines of captured output to show on a --quiet-build failure — enough to see
 # the actual Docker error without dumping the full (often 1000s-of-lines) log.
@@ -367,24 +367,29 @@ def _phase_background(
     return generated
 
 
-# ── Phase 7: benchmark ────────────────────────────────────────────────────────
+# ── Phase 7: loadtest ─────────────────────────────────────────────────────────
 
-def _phase_benchmark(artifacts_dir: Path, log_dir: Path) -> list[Path]:
-    """Run cargo bench + example flamegraphs. Linux only — auto-skipped elsewhere."""
-    console.print(Rule("[bold]Phase 7 — Benchmark[/bold]"))
+def _phase_loadtest(durations: str, flows: str, readers: str, profile: str, artifacts_dir: Path, log_dir: Path) -> list[Path]:
+    """Stress sweep (duration × flows × readers): host criterion send bench + dockerized realistic-
+    profile flood (throughput / loss / per-container memory) + load-bench flamegraph. Linux + Docker."""
+    console.print(Rule("[bold]Phase 7 — Load test[/bold]"))
     generated: list[Path] = []
 
     if system() != "Linux":
-        console.print("  [yellow]Skipping benchmark phase — requires Linux (perf + cargo-flamegraph).[/yellow]")
+        console.print("  [yellow]Skipping load-test phase — requires Linux + Docker (perf + cargo-flamegraph for the flamegraph).[/yellow]")
         return generated
 
-    log_path = log_dir / "benchmark.log"
-    bench_dir = artifacts_dir / "benchmark"
+    log_path = log_dir / "loadtest.log"
+    load_dir = artifacts_dir / "loadtest"
 
-    if _invoke("benchmark", _benchmark_main, ["--out-dir", str(bench_dir)], log_path):
-        generated.extend(bench_dir.glob("*.txt"))
-        generated.extend((bench_dir / "flamegraphs").glob("*.pdf"))
-        generated.extend((bench_dir / "flamegraphs").glob("*.svg"))
+    # Images are already built by the build phase; --no-build avoids rebuilding them here.
+    args = ["--durations", durations, "--flows", flows, "--readers", readers, "--profile", profile, "--no-build", "--out-dir", str(load_dir)]
+    if _invoke("loadtest", _loadtest_main, args, log_path):
+        generated.extend(load_dir.glob("*.pdf"))
+        generated.extend(load_dir.glob("*.json"))
+        generated.extend(load_dir.glob("*.md"))
+        generated.extend((load_dir / "flamegraphs").glob("*.pdf"))
+        generated.extend((load_dir / "flamegraphs").glob("*.svg"))
     return generated
 
 
@@ -453,10 +458,10 @@ def _generate_report(
         "use_case_compare":  "TYPHOON per-use-case profiles (throughput / interactive / transparent / security)",
         "traffic_compare":   "TYPHOON traffic modes (constant/random payload × constant/random wait)",
         "background":        "Part 3 background-blending corpus: blending fraction, open-world detectability, distribution overlays",
-        "benchmark":         "Rust-level cargo bench results + example flamegraphs (Linux only)",
+        "loadtest":          "Stress sweep: host criterion send bench + dockerized realistic-profile flood (throughput/loss/per-container memory) plots, table + server flamegraph (Linux + Docker)",
     }
     for section in ("proto_compare", "flow_plots", "self_compare", "use_case_compare",
-                    "traffic_compare", "background", "benchmark"):
+                    "traffic_compare", "background", "loadtest"):
         sd = artifacts_dir / section
         if not sd.exists():
             continue
@@ -491,9 +496,9 @@ def _generate_report(
         "# Reuse existing Docker images + capture runs, skip the 7500-run corpus:",
         "poe evaluate --skip build,capture,background",
         "",
-        "# Skip Rust-level benchmarking (cargo bench + flamegraphs) — it auto-skips",
-        "# on non-Linux hosts anyway:",
-        "poe evaluate --skip benchmark",
+        "# Skip the load-test sweep (criterion + process CPU/RSS/loss + flamegraph) —",
+        "# it auto-skips on non-Linux hosts anyway:",
+        "poe evaluate --skip loadtest",
         "",
         "# Re-analyze already-stored PCAPs (e.g. after changing feature sets or",
         "# classifier options) without regenerating the corpus:",
@@ -510,7 +515,7 @@ def _generate_report(
         "poe background-blending",
         "poe background-detectability",
         "poe background-distplot",
-        "poe benchmark",
+        "poe load-test",
         "```",
         "",
     ]
@@ -539,6 +544,14 @@ def _generate_report(
               help="Runs per payload×wait mode for traffic-compare (4 modes × this many runs).")
 @option("--background-runs", default=7500, show_default=True, type=int,
               help="Number of randomised background-blending corpus runs (long). Ignored when --corpus-root is given.")
+@option("--loadtest-durations", default="5,15", show_default=True,
+              help="Comma-separated load-test flood durations in seconds.")
+@option("--loadtest-flows", default="1,2,4", show_default=True,
+              help="Comma-separated load-test flow (UDP port) counts.")
+@option("--loadtest-readers", default="1,2", show_default=True,
+              help="Comma-separated load-test SO_REUSEPORT reader counts per flow.")
+@option("--loadtest-profile", default="bulk_upload", show_default=True,
+              help="TYPHOON traffic profile for the dockerized load flood.")
 @option("--corpus-root", "corpus_root", default=None, type=ClickPath(),
               help="Re-analyze an already-stored background corpus at this path instead of "
                    "generating a new one. Skips corpus generation; blending/open-world/distplot "
@@ -559,12 +572,16 @@ def main(
     typhoon_uc_runs: int,
     typhoon_traffic_runs: int,
     background_runs: int,
+    loadtest_durations: str,
+    loadtest_flows: str,
+    loadtest_readers: str,
+    loadtest_profile: str,
     corpus_root: str | None,
     artifacts_dir: str,
     quiet_build: bool,
     skip: str,
 ) -> None:
-    """TYPHOON total evaluation pipeline: build → capture → analyze → visualize → typhoon → background → report."""
+    """TYPHOON total evaluation pipeline: build → capture → analyze → visualize → typhoon → background → loadtest → report."""
 
     skipped = {s.strip() for s in skip.split(",") if s.strip()}
     invalid = skipped - set(_ALL_PHASES)
@@ -602,6 +619,10 @@ def main(
         "typhoon_uc_runs":      typhoon_uc_runs,
         "typhoon_traffic_runs": typhoon_traffic_runs,
         "background_runs":      background_runs,
+        "loadtest_durations":   loadtest_durations,
+        "loadtest_flows":       loadtest_flows,
+        "loadtest_readers":     loadtest_readers,
+        "loadtest_profile":     loadtest_profile,
         "corpus_root":          str(corpus_root_path) if corpus_root_path else None,
         "quiet_build":          quiet_build,
         "skipped_phases":       sorted(skipped),
@@ -644,8 +665,8 @@ def main(
     if "background" not in skipped:
         _phase_background(background_runs, pipeline_id, artifacts_dir_run, log_dir, corpus_root_path)
 
-    if "benchmark" not in skipped:
-        _phase_benchmark(artifacts_dir_run, log_dir)
+    if "loadtest" not in skipped:
+        _phase_loadtest(loadtest_durations, loadtest_flows, loadtest_readers, loadtest_profile, artifacts_dir_run, log_dir)
 
     if "report" not in skipped:
         _generate_report(pipeline_id, bulk_run_ids, artifacts_dir_run)

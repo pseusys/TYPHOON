@@ -90,21 +90,18 @@ cargo clippy --no-default-features --features "full_hardware,server,client,async
 
 ### Benchmarks
 
-Criterion benchmarks measure pipelined echo throughput: 20 concurrent 1400 B messages round-tripped
-under realistic traffic obfuscation (`FlowConfig::random`), matching the `heavy_traffic` example.
+The criterion `load` bench measures one-way send throughput across the `flows × size` grid under realistic traffic obfuscation (`FlowConfig::random`) — the raw client send pipeline, which is the throughput ceiling.
+The grid is overridable via the `TYPHOON_LOAD_BENCH_FLOWS`, `TYPHOON_LOAD_BENCH_READERS`, and `TYPHOON_LOAD_BENCH_SIZES` env vars.
 
 ```shell
-# Run all benchmarks (default features)
-cargo bench --bench roundtrip
+# Run the load bench (default features)
+cargo bench --bench load
 
 # Re-use a pre-generated key pair to skip expensive McEliece keygen on each run
-TYPHOON_TEST_SERVER_KEY_FAST=server.key cargo bench --bench roundtrip
+TYPHOON_TEST_SERVER_KEY_FAST=server.key cargo bench --bench load
 ```
 
-CI runs benchmarks on every push to `main` and on pull requests that touch `typhoon/**`.
-Results are stored as a workflow artifact (`bench-results`) on each run.
-The CI also generates per-example flamegraph SVGs and per-flow packet structure diagrams
-(stored as `flamegraphs` and `flow-diagrams` artifacts respectively, retained for 5 days).
+For a realistic end-to-end stress sweep — throughput, packet loss, and per-container memory over a real network, plus a flamegraph of this bench's hot path — use the evaluation harness (`poe load-test`; see `evaluation/README.md`, Part 4).
 
 ### Flow capture
 

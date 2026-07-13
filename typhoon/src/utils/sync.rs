@@ -298,9 +298,11 @@ cfg_if! {
             closed: AtomicBool,
         }
 
-        /// Push side of a bounded notifying queue.
+        /// Push side of a bounded notifying queue. The optional label names the queue for
+        /// drop reporting: a `Some(name)` queue logs and counts overflow drops (see
+        /// `crate::capture::record_drain_drop`), a `None` queue drops silently.
         #[cfg(feature = "server")]
-        pub struct BoundedNotifyQueueSender<T: Send>(Arc<BoundedNotifyQueueState<T>>);
+        pub struct BoundedNotifyQueueSender<T: Send>(Arc<BoundedNotifyQueueState<T>>, Option<&'static str>);
 
         /// Pop side of a bounded notifying queue.
         #[cfg(feature = "server")]
@@ -308,10 +310,14 @@ cfg_if! {
 
         #[cfg(feature = "server")]
         impl<T: Send> BoundedNotifyQueueSender<T> {
-            /// Push an item; silently drops it (with a debug log) if the queue is full.
+            /// Push an item; silently drops it if the queue is full. Named queues additionally
+            /// log the drop and increment the capture drain-drop counter.
             pub fn push(&self, item: T) {
                 if self.0.queue.push(item).is_err() {
-                    debug!("BoundedNotifyQueue: queue full, dropping item");
+                    if let Some(name) = self.1 {
+                        debug!("BoundedNotifyQueue '{name}': queue full, dropping item");
+                        crate::capture::record_drain_drop();
+                    }
                     return;
                 }
                 self.0.notify.notify_one();
@@ -348,15 +354,16 @@ cfg_if! {
             }
         }
 
-        /// Create a bounded notifying queue with the given capacity.
+        /// Create a bounded notifying queue with the given capacity. `name` labels the queue for
+        /// overflow-drop reporting; pass `None` to drop silently without counting.
         #[cfg(feature = "server")]
-        pub fn create_bounded_notify_queue<T: Send>(cap: usize) -> (BoundedNotifyQueueSender<T>, BoundedNotifyQueueReceiver<T>) {
+        pub fn create_bounded_notify_queue<T: Send>(cap: usize, name: Option<&'static str>) -> (BoundedNotifyQueueSender<T>, BoundedNotifyQueueReceiver<T>) {
             let state = Arc::new(BoundedNotifyQueueState {
                 queue: ArrayQueue::new(cap),
                 notify: Notify::new(),
                 closed: AtomicBool::new(false),
             });
-            (BoundedNotifyQueueSender(Arc::clone(&state)), BoundedNotifyQueueReceiver(state))
+            (BoundedNotifyQueueSender(Arc::clone(&state), name), BoundedNotifyQueueReceiver(state))
         }
 
     } else if #[cfg(feature = "async-std")] {
@@ -388,9 +395,11 @@ cfg_if! {
             (NotifyQueueSender(tx), NotifyQueueReceiver(rx))
         }
 
-        /// Push side of a bounded notifying queue.
+        /// Push side of a bounded notifying queue. The optional label names the queue for
+        /// drop reporting: a `Some(name)` queue logs and counts overflow drops (see
+        /// `crate::capture::record_drain_drop`), a `None` queue drops silently.
         #[cfg(feature = "server")]
-        pub struct BoundedNotifyQueueSender<T: Send>(Sender<T>);
+        pub struct BoundedNotifyQueueSender<T: Send>(Sender<T>, Option<&'static str>);
 
         /// Pop side of a bounded notifying queue.
         #[cfg(feature = "server")]
@@ -399,8 +408,11 @@ cfg_if! {
         #[cfg(feature = "server")]
         impl<T: Send> BoundedNotifyQueueSender<T> {
             pub fn push(&self, item: T) {
-                if self.0.try_send(item).is_err() {
-                    debug!("BoundedNotifyQueue: queue full, dropping item");
+                if self.0.try_send(item).is_err()
+                    && let Some(name) = self.1
+                {
+                    debug!("BoundedNotifyQueue '{name}': queue full, dropping item");
+                    crate::capture::record_drain_drop();
                 }
             }
         }
@@ -412,11 +424,12 @@ cfg_if! {
             }
         }
 
-        /// Create a bounded notifying queue with the given capacity.
+        /// Create a bounded notifying queue with the given capacity. `name` labels the queue for
+        /// overflow-drop reporting; pass `None` to drop silently without counting.
         #[cfg(feature = "server")]
-        pub fn create_bounded_notify_queue<T: Send>(cap: usize) -> (BoundedNotifyQueueSender<T>, BoundedNotifyQueueReceiver<T>) {
+        pub fn create_bounded_notify_queue<T: Send>(cap: usize, name: Option<&'static str>) -> (BoundedNotifyQueueSender<T>, BoundedNotifyQueueReceiver<T>) {
             let (tx, rx) = bounded(cap);
-            (BoundedNotifyQueueSender(tx), BoundedNotifyQueueReceiver(rx))
+            (BoundedNotifyQueueSender(tx, name), BoundedNotifyQueueReceiver(rx))
         }
     }
 }

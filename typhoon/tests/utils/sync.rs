@@ -97,7 +97,7 @@ async fn test_notify_queue_sender_drop_closes_receiver() {
 #[cfg(feature = "server")]
 #[tokio::test]
 async fn test_bounded_queue_fifo_within_capacity() {
-    let (tx, mut rx) = create_bounded_notify_queue::<u32>(4);
+    let (tx, mut rx) = create_bounded_notify_queue::<u32>(4, None);
     tx.push(10);
     tx.push(20);
     tx.push(30);
@@ -110,7 +110,7 @@ async fn test_bounded_queue_fifo_within_capacity() {
 #[cfg(feature = "server")]
 #[tokio::test]
 async fn test_bounded_queue_drops_on_full() {
-    let (tx, mut rx) = create_bounded_notify_queue::<u32>(2);
+    let (tx, mut rx) = create_bounded_notify_queue::<u32>(2, Some("test"));
     tx.push(1);
     tx.push(2);
     tx.push(3); // dropped — queue full
@@ -125,7 +125,7 @@ async fn test_bounded_queue_drops_on_full() {
 #[cfg(feature = "server")]
 #[tokio::test]
 async fn test_bounded_queue_recv_wakes_on_push() {
-    let (tx, mut rx) = create_bounded_notify_queue::<u32>(8);
+    let (tx, mut rx) = create_bounded_notify_queue::<u32>(8, None);
     let handle = spawn(async move { rx.recv().await });
     sleep(Duration::from_millis(10)).await;
     tx.push(42);

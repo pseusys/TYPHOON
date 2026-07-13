@@ -8,6 +8,12 @@
 pub mod identity;
 pub mod profile;
 
+/// True when the binaries should run the one-way load/throughput test instead of the latency ping,
+/// selected by `EVAL_MODE=load`.
+pub fn is_load_mode() -> bool {
+    std::env::var("EVAL_MODE").map(|m| m == "load").unwrap_or(false)
+}
+
 /// Host-wide monotonic clock in nanoseconds. Docker containers share the kernel
 /// clock (no time namespace by default), so the client's `send_start/end` and
 /// the server's `recv_first/last` readings are directly comparable — the basis
@@ -98,5 +104,62 @@ pub mod latency {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(default)
+    }
+}
+
+/// One-way load / throughput helpers (`EVAL_MODE=load`). The client floods sequence-numbered
+/// fixed-size packets across all flows; the server counts them and derives loss from sequence gaps.
+/// Unlike `latency`, delivery is not awaited, so this measures raw send/receive throughput and
+/// exposes packet loss under sustained pressure.
+pub mod load {
+    use std::env::var;
+
+    /// Little-endian sequence-number prefix on every load packet.
+    pub const SEQ_BYTES: usize = 8;
+
+    /// Load parameters read from the `LOAD_*` env vars (harness-set). The flood is duration-driven
+    /// (`LOAD_DURATION_S`): the client sends as fast as it can for that long, which gives the harness
+    /// a stable window to sample memory/throughput regardless of how fast the host is.
+    pub struct Config {
+        pub duration_s: f64,
+        pub payload: usize,
+        pub flows: usize,
+        pub readers: usize,
+    }
+
+    impl Config {
+        pub fn from_env() -> Self {
+            Self {
+                duration_s: env_f64("LOAD_DURATION_S", 10.0),
+                payload: env_usize("LOAD_PAYLOAD", 1024),
+                flows: env_usize("LOAD_FLOWS", 3).max(1),
+                readers: env_usize("LOAD_READERS", 1).max(1),
+            }
+        }
+    }
+
+    /// Build a `size`-byte packet whose first `SEQ_BYTES` carry `seq`.
+    pub fn pack(seq: u64, size: usize) -> Vec<u8> {
+        let mut m = vec![0u8; size.max(SEQ_BYTES)];
+        m[0..SEQ_BYTES].copy_from_slice(&seq.to_le_bytes());
+        m
+    }
+
+    /// Read the sequence number from a load packet (0 if too short).
+    pub fn seq_of(msg: &[u8]) -> u64 {
+        if msg.len() < SEQ_BYTES {
+            return 0;
+        }
+        let mut b = [0u8; SEQ_BYTES];
+        b.copy_from_slice(&msg[0..SEQ_BYTES]);
+        u64::from_le_bytes(b)
+    }
+
+    fn env_usize(key: &str, default: usize) -> usize {
+        var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    }
+
+    fn env_f64(key: &str, default: f64) -> f64 {
+        var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
     }
 }

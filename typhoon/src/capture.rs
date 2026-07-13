@@ -16,6 +16,8 @@
 //! when the `capture` feature is disabled.
 
 use std::net::SocketAddr;
+#[cfg(feature = "capture")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use cfg_if::cfg_if;
 
@@ -25,6 +27,58 @@ cfg_if!(
         use crate::utils::unix_timestamp_ms;
     }
 );
+
+/// Process-global count of packets dropped because a named bounded drain channel was full.
+/// Only tracked with the `capture` feature; incremented from [`record_drain_drop`], which the
+/// bounded queue calls only for queues created with a `Some(name)` label (see
+/// `crate::utils::sync::create_bounded_notify_queue`).
+#[cfg(feature = "capture")]
+static DRAIN_DROPS: AtomicU64 = AtomicU64::new(0);
+
+/// Process-global count of drain-task receive errors. Only tracked with the `capture` feature.
+#[cfg(feature = "capture")]
+static RECV_ERRORS: AtomicU64 = AtomicU64::new(0);
+
+/// Record a bounded-drain-channel overflow drop. No-op without the `capture` feature.
+#[cfg(feature = "capture")]
+#[inline]
+pub(crate) fn record_drain_drop() {
+    DRAIN_DROPS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(not(feature = "capture"))]
+#[inline(always)]
+pub(crate) fn record_drain_drop() {}
+
+/// Record a drain-task receive error. No-op without the `capture` feature.
+#[cfg(feature = "capture")]
+#[inline]
+pub(crate) fn record_recv_error() {
+    RECV_ERRORS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(not(feature = "capture"))]
+#[inline(always)]
+pub(crate) fn record_recv_error() {}
+
+/// Emit the accumulated loss counters as a `Loss` JSONL record on the `typhoon::capture`
+/// target. Intended to be called once, at server shutdown, by a load-testing harness.
+/// No-op without the `capture` feature.
+#[cfg(feature = "capture")]
+pub fn record_loss() {
+    trace!(
+        target: "typhoon::capture",
+        "{{\"t\":{},\"kind\":\"Loss\",\"drain_drops\":{},\"recv_errors\":{}}}",
+        unix_timestamp_ms(),
+        DRAIN_DROPS.load(Ordering::Relaxed),
+        RECV_ERRORS.load(Ordering::Relaxed),
+    );
+}
+
+/// No-op stand-in for [`record_loss`] when the `capture` feature is disabled.
+#[cfg(not(feature = "capture"))]
+#[inline(always)]
+pub fn record_loss() {}
 
 /// Per-flow capture context embedded in [`crate::flow::common::FlowSendInternal`].
 ///
