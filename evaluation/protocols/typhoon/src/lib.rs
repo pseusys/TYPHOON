@@ -11,7 +11,9 @@ pub mod profile;
 /// True when the binaries should run the one-way load/throughput test instead of the latency ping,
 /// selected by `EVAL_MODE=load`.
 pub fn is_load_mode() -> bool {
-    std::env::var("EVAL_MODE").map(|m| m == "load").unwrap_or(false)
+    std::env::var("EVAL_MODE")
+        .map(|m| m == "load")
+        .unwrap_or(false)
 }
 
 /// Host-wide monotonic clock in nanoseconds. Docker containers share the kernel
@@ -156,10 +158,16 @@ pub mod load {
     }
 
     fn env_usize(key: &str, default: usize) -> usize {
-        var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+        var(key)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
     }
 
     fn env_f64(key: &str, default: f64) -> f64 {
-        var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+        var(key)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
     }
 }

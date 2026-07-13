@@ -40,7 +40,11 @@ fn grid_from_env(env_var: &str, default: &[usize]) -> Vec<usize> {
     match std::env::var(env_var) {
         Ok(raw) => {
             let parsed: Vec<usize> = raw.split(',').filter_map(|v| v.trim().parse().ok()).filter(|&n| n > 0).collect();
-            if parsed.is_empty() { default.to_vec() } else { parsed }
+            if parsed.is_empty() {
+                default.to_vec()
+            } else {
+                parsed
+            }
         }
         Err(_) => default.to_vec(),
     }

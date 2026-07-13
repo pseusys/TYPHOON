@@ -21,6 +21,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::{Duration, sleep, timeout};
 use typhoon::certificate::ClientCertificate;
 use typhoon::defaults::{DefaultClientConnectionHandler, DefaultExecutor};
+use typhoon::flow::FlowConfig;
 use typhoon::flow::decoy::{SimpleDecoyProvider, SparseDecoyProvider};
 use typhoon::settings::SettingsBuilder;
 use typhoon::settings::keys::{
@@ -36,7 +37,6 @@ use typhoon::settings::keys::{
     FAKE_HEADER_VOLATILE_CHANGE_PROB_MAX, HEALTH_CHECK_NEXT_IN_MAX, HEALTH_CHECK_NEXT_IN_MIN,
     SEND_BYTES_CHUNK, SEND_BYTES_JITTER,
 };
-use typhoon::flow::FlowConfig;
 use typhoon::socket::ClientSocketBuilder;
 use typhoon_eval::identity::ShortIdentity;
 use typhoon_eval::monotonic_ns;
@@ -333,7 +333,10 @@ async fn run_load_flood(
     let sent_bytes = packets as usize * payload;
     let throughput = sent_bytes as f64 / (1024.0 * 1024.0) / elapsed.as_secs_f64();
     println!("throughput_mbps={throughput:.2}");
-    println!("LOAD_CLIENT_DONE packets={packets} bytes={sent_bytes} payload={payload} duration_s={:.2}", elapsed.as_secs_f64());
+    println!(
+        "LOAD_CLIENT_DONE packets={packets} bytes={sent_bytes} payload={payload} duration_s={:.2}",
+        elapsed.as_secs_f64()
+    );
 }
 
 /// Sequential ping — send a probe, await its echo, record RTT.

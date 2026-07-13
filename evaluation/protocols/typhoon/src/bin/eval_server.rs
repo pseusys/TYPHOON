@@ -256,7 +256,9 @@ async fn main() {
     };
     let flows: Vec<ServerFlowConfiguration<ShortIdentity, DefaultExecutor>> = bind_addrs
         .into_iter()
-        .map(|addr| ServerFlowConfiguration::with_address(flow_cfg.clone(), addr).with_reader_count(readers))
+        .map(|addr| {
+            ServerFlowConfiguration::with_address(flow_cfg.clone(), addr).with_reader_count(readers)
+        })
         .collect();
 
     let listener_builder = ServerBuilder::<
