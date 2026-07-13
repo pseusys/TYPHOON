@@ -1,0 +1,50 @@
+[package]
+name = "eval-transport"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rand   = "0.8"
+socks  = "0.3"
+libc   = "0.2"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen  = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "tcp-sender"
+path = "src/bin/tcp_sender.rs"
+
+[[bin]]
+name = "tcp-sink"
+path = "src/bin/tcp_sink.rs"
+
+[[bin]]
+name = "udp-sender"
+path = "src/bin/udp_sender.rs"
+
+[[bin]]
+name = "udp-sink"
+path = "src/bin/udp_sink.rs"
+
+[[bin]]
+name = "socks5-sender"
+path = "src/bin/socks5_sender.rs"
+
+[[bin]]
+name = "tls-sender"
+path = "src/bin/tls_sender.rs"
+
+[[bin]]
+name = "tls-sink"
+path = "src/bin/tls_sink.rs"
+
+[[bin]]
+name = "tor-sender"
+path = "src/bin/tor_sender.rs"
+
+[[bin]]
+name = "tor-sink"
+path = "src/bin/tor_sink.rs"

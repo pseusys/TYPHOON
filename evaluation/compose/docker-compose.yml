@@ -27,6 +27,10 @@ x-profile-env: &profile-env
   PROFILE_BURST_IDLE_S:   ${PROFILE_BURST_IDLE_S:-0}
   PROFILE_DECOYS_ENABLED: ${PROFILE_DECOYS_ENABLED:-1}
   PROFILE_ID_LENGTH:      ${PROFILE_ID_LENGTH:-}
+  LAT_COUNT:              ${LAT_COUNT:-}
+  LAT_INTERVAL_MS:        ${LAT_INTERVAL_MS:-}
+  LAT_SIZE:               ${LAT_SIZE:-}
+  LAT_RECV_TIMEOUT_MS:    ${LAT_RECV_TIMEOUT_MS:-}
 
 volumes:
   eval_keys: {}
@@ -88,15 +92,11 @@ services:
       - net.ipv6.conf.all.disable_ipv6=1
     environment:
       <<: *profile-env
-      # Observer's net_right IP — server adds return route via this gateway
       OBSERVER_GW: 172.21.0.2
-      # Server's own externally-reachable IP — embedded in the TYPHOON certificate
-      # so the client knows where to connect (0.0.0.0 is unroutable as a peer address)
       CERT_HOST:   172.21.0.10
-      # obfs4_iat: when set, obfs4proxy uses the given IAT mode (0=off, 1=on, 2=paranoid)
       OBFS4_IAT_MODE: ${OBFS4_IAT_MODE:-}
+      IDLE_TIMEOUT_S: ${IDLE_TIMEOUT_S:-30}
       RUST_LOG: ${RUST_LOG:-}
-      # TYPHOON crate settings overrides (read by SettingsBuilder via env; empty for non-typhoon protocols so they're not affected).
       TYPHOON_DRAIN_CHANNEL_CAPACITY:  ${TYPHOON_DRAIN_CHANNEL_CAPACITY:-}
       TYPHOON_RECEIVE_BUFFER_SIZE:     ${TYPHOON_RECEIVE_BUFFER_SIZE:-}
       TYPHOON_DECOY_HEAVY_BASE_RATE:   ${TYPHOON_DECOY_HEAVY_BASE_RATE:-}
@@ -124,9 +124,8 @@ services:
     environment:
       <<: *profile-env
       SERVER_HOST:    172.21.0.10
-      # Observer's net_left IP — client adds forward route via this gateway
       OBSERVER_GW:    172.20.0.2
-      INTER_PACKET_DELAY_MS:  ${INTER_PACKET_DELAY_MS:-40}
+      INTER_PACKET_DELAY_MS:  ${INTER_PACKET_DELAY_MS:-0}
       DELAY_EVERY_N:          ${DELAY_EVERY_N:-10}
       TRAFFIC_SCENARIO:       ${TRAFFIC_SCENARIO:-bulk}
       QUIC_WAIT_TIMEOUT_S:    ${QUIC_WAIT_TIMEOUT_S:-240}

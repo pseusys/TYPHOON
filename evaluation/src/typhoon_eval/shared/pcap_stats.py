@@ -208,6 +208,10 @@ def analyze_pcap(
     Each value is a dict of computed metrics (empty dict if no packets in that
     direction).  transfer_bytes is used only for the overhead_ratio field.
     handshake_sniffer overrides the default time-window handshake detection.
+
+    This produces only the packet-shape / entropy statistics used for
+    detectability; the operational metrics (delivery, per-packet RTT) come from
+    the endpoints, not the pcap.
     """
     c2s, s2c = parse_pcap(path)
 

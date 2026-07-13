@@ -71,6 +71,7 @@ numpy                = "np"
   [tool.poe.tasks.build]
   cmd  = "docker compose -f compose/docker-compose.build.yml build"
   help = "Build all protocol Docker images"
+  env  = { DOCKER_BUILDKIT = "1", COMPOSE_DOCKER_CLI_BUILD = "1" }
 
   [tool.poe.tasks.capture]
   cmd  = "python -m typhoon_eval.shared.orchestrator"
@@ -114,6 +115,7 @@ numpy                = "np"
   [tool.poe.tasks.background-build]
   cmd  = "docker compose -f background/compose/docker-compose.build.yml build"
   help = "Build all background generator Docker images (DNS, gaming, RTP, QUIC, control plane, WG idle)"
+  env  = { DOCKER_BUILDKIT = "1", COMPOSE_DOCKER_CLI_BUILD = "1" }
 
   [tool.poe.tasks.background-corpus]
   cmd  = "python -m typhoon_eval.background.corpus"

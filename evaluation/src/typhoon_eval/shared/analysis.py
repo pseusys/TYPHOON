@@ -98,7 +98,11 @@ def main(run_id: str | None) -> None:
             transfer_bytes: int | None = metadata.get(proto_key, {}).get("transfer_bytes")
             sniffer = BY_NAME[proto_key].handshake_sniffer if proto_key in BY_NAME else None
 
-            stats = analyze_pcap(pcap, transfer_bytes=transfer_bytes, handshake_sniffer=sniffer)
+            stats = analyze_pcap(
+                pcap,
+                transfer_bytes=transfer_bytes,
+                handshake_sniffer=sniffer,
+            )
             all_stats[name] = stats
 
             progress.update(task, total=1, completed=1,
@@ -132,9 +136,17 @@ def _fmt_pct(v: float | None) -> str:
     return f"[{color}]{v:+.1%}[/{color}]"
 
 
+def _fmt_rtt(meta: dict) -> str:
+    """`p50 / p95 / jit ms` from the client's per-packet RTT distribution."""
+    p50, p95, jit = meta.get("rtt_p50_ms"), meta.get("rtt_p95_ms"), meta.get("rtt_jitter_ms")
+    if p50 is None or p95 is None:
+        return "[dim]—[/dim]"
+    jit_s = f"{jit:.2f}" if jit is not None else "—"
+    return f"{p50:.2f} / {p95:.2f} / {jit_s}"
+
+
 def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> None:
     chaos = cfg.get("chaos", False)
-    injected_delay_s: float = cfg.get("injected_delay_s", 0.0)
 
     if chaos:
         title = "Analysis summary (chaos mode)"
@@ -152,8 +164,8 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
         table.add_column("Capture", style="cyan", no_wrap=True)
         table.add_column("Dir", style="dim")
         table.add_column("Pkts", justify="right", style="dim")
-        table.add_column("Eff.Time (s)", justify="right")
-        table.add_column("Throughput", justify="right")
+        table.add_column("Delivery%", justify="right")
+        table.add_column("RTT p50/p95/jit (ms)", justify="right")
         table.add_column("Overhead", justify="right")
         table.add_column("Size p5/p50/p95 (B)", justify="right")
         table.add_column("Burst / Reg / Eff", justify="right")
@@ -176,8 +188,6 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
             ip50 = f"{iat.get('p50', 0):.2f}" if iat else "—"
             ip95 = f"{iat.get('p95', 0):.2f}" if iat else "—"
 
-            byte_count = s.get("byte_count", 0)
-
             if chaos:
                 delivery_pct: float | None = metadata.get(proto_key, {}).get("delivery_pct")
                 ent_str = (
@@ -198,24 +208,6 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                 )
             else:
                 meta = metadata.get(proto_key, {})
-                if meta.get("transfer_time_s") is not None:
-                    eff_s = float(meta["transfer_time_s"])
-                elif meta.get("recv_time_s") is not None:
-                    eff_s = float(meta["recv_time_s"])
-                elif meta.get("effective_time_s") is not None:
-                    eff_s = float(meta["effective_time_s"])
-                else:
-                    t_s = s.get("transmission_time_s", 0)
-                    eff_s = max(t_s - injected_delay_s, 0.0) if injected_delay_s > 0 else t_s
-                transfer_bytes_meta = meta.get("transfer_bytes")
-                if eff_s > 0 and direction == "c2s" and transfer_bytes_meta:
-                    mbps = transfer_bytes_meta * 8 / eff_s / 1_000_000
-                    throughput = f"{mbps:.1f} Mbps"
-                elif eff_s > 0 and direction == "c2s" and byte_count > 0:
-                    mbps = byte_count * 8 / eff_s / 1_000_000
-                    throughput = f"{mbps:.1f} Mbps"
-                else:
-                    throughput = "[dim]—[/dim]"
                 overhead = _fmt_pct(s.get("overhead_ratio"))
                 if direction == "all":
                     burst = s.get("burstiness")
@@ -231,8 +223,8 @@ def _print_summary(all_stats: dict[str, dict], metadata: dict, cfg: dict) -> Non
                     name if first else "",
                     direction,
                     str(s.get("packet_count", 0)),
-                    f"{eff_s:.1f}" if eff_s > 0 else "[dim]—[/dim]",
-                    throughput,
+                    _fmt_delivery(meta.get("delivery_pct")) if first else "",
+                    _fmt_rtt(meta) if first else "",
                     overhead,
                     f"{p5} / {p50} / {p95}" if ps else "[dim]—[/dim]",
                     fingerprint,

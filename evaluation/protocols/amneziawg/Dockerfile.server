@@ -19,12 +19,12 @@ RUN make
 ## Final image
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        iproute2 python3 libmnl0 \
+        iproute2 libmnl0 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=go-builder    /build/amneziawg-go           /usr/local/bin/amneziawg-go
 COPY --from=tools-builder /src/src/wg                   /usr/local/bin/awg
 COPY amneziawg/server-entrypoint.sh /entrypoint.sh
-COPY common/udp_sink.py              /app/server.py
+COPY --from=transport /usr/local/bin/udp-sink /usr/local/bin/udp-sink
 RUN chmod +x /entrypoint.sh
 HEALTHCHECK --interval=1s --timeout=3s --retries=20 --start-period=15s \
     CMD ip link show awg0 >/dev/null 2>&1 && ss -uln | grep -q ':9000'

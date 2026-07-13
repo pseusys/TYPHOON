@@ -41,6 +41,6 @@ done
 SERVER_HOST=10.200.0.1 \
 SERVER_PORT=9000 \
 OBSERVER_GW="" \
-python3 /app/client.py
+udp-sender
 
 kill "${OVP_PID}" 2>/dev/null || true

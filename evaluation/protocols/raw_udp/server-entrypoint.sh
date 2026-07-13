@@ -10,4 +10,4 @@ if [[ -n "${OBSERVER_GW}" ]]; then
         || echo "[server] WARNING: route add failed (already exists?)"
 fi
 
-exec python3 /app/server.py
+exec udp-sink

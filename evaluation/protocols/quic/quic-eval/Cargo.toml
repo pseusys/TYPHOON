@@ -1,0 +1,20 @@
+[package]
+name = "quic-eval"
+version = "0.1.0"
+edition = "2021"
+
+# Native Rust QUIC sender/receiver for the protocol comparison, using quinn with
+# its BBR congestion controller — the loss-tolerant CC that quic-go lacks, so
+# QUIC no longer collapses under chaos (2% loss + 100 ms RTT).
+
+[dependencies]
+quinn   = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"] }
+rustls  = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen   = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+tokio   = { version = "1", features = ["rt-multi-thread", "macros", "time", "io-util"] }
+rand    = "0.8"
+libc    = "0.2"
+
+[[bin]]
+name = "quic-eval"
+path = "src/main.rs"

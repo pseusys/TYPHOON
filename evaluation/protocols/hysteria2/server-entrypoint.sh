@@ -30,7 +30,7 @@ EOF
 # tcp_sink receives the data proxied through Hysteria2
 PROFILE_BYTES_C2S="${PROFILE_BYTES_C2S:-104857600}" \
 OBSERVER_GW="" \
-python3 /app/server.py &
+tcp-sink &
 SINK_PID=$!
 
 hysteria server -c /tmp/server.yaml &

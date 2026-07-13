@@ -30,4 +30,4 @@ for i in {1..30}; do
     sleep 1
 done
 
-SERVER_HOST=10.100.0.1 SERVER_PORT=9000 OBSERVER_GW="" exec python3 /app/client.py
+SERVER_HOST=10.100.0.1 SERVER_PORT=9000 OBSERVER_GW="" exec udp-sender

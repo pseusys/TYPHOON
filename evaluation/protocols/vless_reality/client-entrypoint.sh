@@ -60,6 +60,6 @@ done
 SERVER_HOST=127.0.0.1 \
 SERVER_PORT=9000 \
 OBSERVER_GW="" \
-python3 /app/client.py
+socks5-sender
 
 kill "${XRAY_PID}" 2>/dev/null || true

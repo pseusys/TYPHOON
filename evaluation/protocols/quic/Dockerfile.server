@@ -1,10 +1,19 @@
-FROM python:3.12-slim
+## Stage 1: build the native Rust QUIC binary (quinn + BBR)
+FROM rust:1-bookworm AS build
+WORKDIR /build/quic-eval
+COPY quic-eval/ ./
+RUN cargo build --release
+
+## Stage 2: runtime image
+FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        iproute2 openssl \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir aioquic
-COPY server.py /app/server.py
-# UDP port 9000 bound AND cert file present
+        iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /build/quic-eval/target/release/quic-eval /usr/local/bin/quic-eval
+
+# UDP port 9000 bound AND self-signed cert written (client readiness gate)
 HEALTHCHECK --interval=1s --timeout=3s --retries=20 --start-period=5s \
     CMD ss -u -l -n | grep -q ':9000' && test -f /keys/quic_cert.pem
-CMD ["python3", "/app/server.py"]
+
+CMD ["quic-eval", "server"]
